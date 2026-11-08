@@ -1,3 +1,12 @@
+import { timingSafeEqual } from 'node:crypto'
+import type { ClientRequest, IncomingMessage } from 'node:http'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
+
+import {
+  REVERSE_PROXY_PROOF_BODY_LIMIT_BYTES,
+  REVERSE_PROXY_PROOF_PATH_PREFIX,
+} from '../constants'
 import type { ReverseProxyRefusalReason } from '../constants'
 
 import type { ParsedReverseProxyOrigin } from './parseReverseProxyOrigin'
@@ -52,6 +61,171 @@ export type ReverseProxyProofResult =
       timeoutMs?: number
     }
 
+/** Transport error codes that mean nothing answered (before or after the write). */
+const UNREACHABLE_CODES: ReadonlySet<string> = new Set([
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+])
+
+/** Certificate codes of a chain the system store does not vouch for. */
+const UNTRUSTED_CODES: ReadonlySet<string> = new Set([
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_GET_ISSUER_CERT',
+])
+
+/** Certificate codes of a certificate outside its validity period. */
+const EXPIRED_CODES: ReadonlySet<string> = new Set([
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+])
+
+/**
+ * Names the refusal reason of a transport error from its Node error code.
+ * @param code - `error.code`, when the error has one.
+ * @returns The reason; anything unlisted (an HTTP parse error included) is `proof-unclassified`.
+ * @example
+ * reasonOfTransportCode('ECONNREFUSED') // => 'proof-unreachable'
+ * reasonOfTransportCode('ERR_TLS_CERT_ALTNAME_INVALID') // => 'certificate-host-mismatch'
+ */
+export function reasonOfTransportCode(
+  code: string | undefined,
+): ReverseProxyProofFailureReason {
+  if (code === undefined) return 'proof-unclassified'
+  if (UNREACHABLE_CODES.has(code)) return 'proof-unreachable'
+  if (UNTRUSTED_CODES.has(code)) return 'certificate-untrusted'
+  if (EXPIRED_CODES.has(code)) return 'certificate-expired'
+  if (code === 'ERR_TLS_CERT_ALTNAME_INVALID')
+    return 'certificate-host-mismatch'
+  return /^(CERT_|ERR_TLS_|ERR_SSL_)/.test(code)
+    ? 'certificate-invalid'
+    : 'proof-unclassified'
+}
+
+/**
+ * Reads the pid header the identity preload answers with.
+ * @param header - The raw header value.
+ * @returns The positive integer pid, or `undefined`.
+ * @example
+ * pidOfHeader('4242') // => 4242
+ * pidOfHeader('abc') // => undefined
+ */
+function pidOfHeader(
+  header: string | string[] | undefined,
+): number | undefined {
+  if (typeof header !== 'string' || !/^[1-9]\d*$/.test(header)) return undefined
+  const pid = Number(header)
+  return Number.isSafeInteger(pid) ? pid : undefined
+}
+
+/**
+ * Whether a body equals the expected keyed answer, in constant time.
+ * @param body - What the server sent.
+ * @param expected - The answer the secret and challenge give.
+ * @returns True only for equal bytes.
+ */
+function isExpectedBody(body: Buffer, expected: string): boolean {
+  const expectedBytes = Buffer.from(expected)
+  return (
+    body.length === expectedBytes.length && timingSafeEqual(body, expectedBytes)
+  )
+}
+
+/**
+ * Reads at most the body limit; a longer body is reported as `undefined` and the response is cut off.
+ * @param response - The response to read.
+ * @returns The body, or `undefined` when it is longer than {@link REVERSE_PROXY_PROOF_BODY_LIMIT_BYTES}.
+ */
+function readBoundedBody(
+  response: IncomingMessage,
+): Promise<Buffer | undefined> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let total = 0
+    response.on('data', (chunk: Buffer) => {
+      total += chunk.length
+      chunks.push(chunk)
+      // Stop reading at the limit: a proof answer is 64 characters.
+      if (total > REVERSE_PROXY_PROOF_BODY_LIMIT_BYTES) {
+        response.destroy()
+        resolve(undefined)
+      }
+    })
+    response.on('end', () => resolve(Buffer.concat(chunks)))
+    response.on('error', reject)
+    response.on('close', () => resolve(Buffer.concat(chunks)))
+  })
+}
+
+/**
+ * Judges a response: status first, then the keyed body and the pid header.
+ * @param response - The proof response.
+ * @param input - The proof input (the expected answer).
+ * @returns The proof result; `requestWritten` is true because a response exists.
+ */
+async function judgeResponse(
+  response: IncomingMessage,
+  input: ReverseProxyProofInput,
+): Promise<ReverseProxyProofResult> {
+  const status = response.statusCode ?? 0
+  const failure = { ok: false, requestWritten: true, status } as const
+  if (status >= 300 && status < 400) {
+    response.destroy()
+    return { ...failure, reason: 'proof-redirected' }
+  }
+  if (status !== 200) {
+    response.destroy()
+    return { ...failure, reason: 'proof-wrong-server' }
+  }
+  const body = await readBoundedBody(response)
+  const serverPid = pidOfHeader(response.headers['x-codebook-proof-pid'])
+  if (!body || !isExpectedBody(body, input.expected) || serverPid === undefined)
+    return { ...failure, reason: 'proof-wrong-server' }
+  return { ok: true, serverPid }
+}
+
+/**
+ * Starts the one proof request: the validated address as the socket target, the declared host as SNI and `Host`, nothing else.
+ * @param input - The proof input.
+ * @param signal - Aborts (destroys) the request.
+ * @returns The request.
+ */
+function startRequest(
+  input: ReverseProxyProofInput,
+  signal: AbortSignal,
+): ClientRequest {
+  const { origin } = input
+  const send = origin.scheme === 'https' ? httpsRequest : httpRequest
+  return send({
+    host: input.address,
+    port: origin.effectivePort,
+    method: 'GET',
+    path: `${REVERSE_PROXY_PROOF_PATH_PREFIX}${input.challenge}`,
+    // The Host header carries the declared host (and its non-default port), as a browser's request would.
+    headers: {
+      host: new URL(origin.origin).host,
+      accept: 'text/plain',
+      connection: 'close',
+    },
+    agent: false,
+    signal,
+    ...(origin.scheme === 'https'
+      ? {
+          servername: origin.hostname,
+          rejectUnauthorized: true,
+          ca: [...input.ca],
+        }
+      : {}),
+  })
+}
+
 /**
  * Sends the single proof request to the declared origin and classifies the outcome.
  *
@@ -63,11 +237,44 @@ export type ReverseProxyProofResult =
  * @example
  * await proveReverseProxy({ origin, address: '127.0.0.1', challenge, expected, ca, timeoutMs: 10_000 }, signal) // => { ok: true, serverPid: 4242 }
  */
-export async function proveReverseProxy(
+export function proveReverseProxy(
   input: ReverseProxyProofInput,
   signal: AbortSignal,
 ): Promise<ReverseProxyProofResult> {
-  void input
-  void signal
-  throw new Error('not implemented')
+  signal.throwIfAborted()
+  const bound = AbortSignal.any([signal, AbortSignal.timeout(input.timeoutMs)])
+  return new Promise((resolve, reject) => {
+    let requestWritten = false
+    const failWith = (error: unknown): void => {
+      // The run's own cancellation rethrows its reason; the bound alone is a timeout.
+      if (signal.aborted) return reject(signal.reason)
+      if (bound.aborted)
+        return resolve({
+          ok: false,
+          reason: 'proof-timeout',
+          requestWritten,
+          timeoutMs: input.timeoutMs,
+        })
+      const code =
+        error instanceof Error && 'code' in error
+          ? String(error.code)
+          : undefined
+      const reason = reasonOfTransportCode(code)
+      resolve({
+        ok: false,
+        reason,
+        requestWritten,
+        ...(reason.startsWith('certificate-') ? { tlsCode: code } : {}),
+      })
+    }
+    const request = startRequest(input, bound)
+    request.on('finish', () => {
+      requestWritten = true
+    })
+    request.on('error', failWith)
+    request.on('response', (response) => {
+      judgeResponse(response, input).then(resolve, failWith)
+    })
+    request.end()
+  })
 }

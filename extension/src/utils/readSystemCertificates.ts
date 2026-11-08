@@ -1,3 +1,19 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+
+import { z } from 'zod'
+
+const execFileAsync = promisify(execFile)
+
+/** The room the child gets to print the whole system store (a few hundred certificates are well under it). */
+const SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES = 16 * 1024 * 1024
+
+/** The one-line program the learner's Node runs to print its view of the operating system's trust store. */
+const PRINT_SYSTEM_CERTIFICATES_PROGRAM =
+  'process.stdout.write(JSON.stringify(require("node:tls").getCACertificates("system")))'
+
+const certificateListSchema = z.array(z.string())
+
 /** What {@link readSystemCertificates} needs to run the learner's own Node. */
 export type SystemCertificatesInput = {
   /** The run's resolved Node executable. */
@@ -27,7 +43,39 @@ export async function readSystemCertificates(
   input: SystemCertificatesInput,
   signal: AbortSignal,
 ): Promise<SystemCertificatesResult> {
-  void input
-  void signal
-  throw new Error('not implemented')
+  signal.throwIfAborted()
+  try {
+    const { stdout } = await execFileAsync(
+      input.nodeExecutable,
+      ['-e', PRINT_SYSTEM_CERTIFICATES_PROGRAM],
+      {
+        env: input.environment,
+        timeout: input.timeoutMs,
+        maxBuffer: SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES,
+        signal,
+        windowsHide: true,
+      },
+    )
+    return certificatesOf(stdout)
+  } catch {
+    // The run's own cancellation is no store failure.
+    signal.throwIfAborted()
+    return { ok: false }
+  }
+}
+
+/**
+ * Parses the child's output into a non-empty certificate list.
+ * @param stdout - What the child printed.
+ * @returns The list, or `{ ok: false }` for invalid JSON, a wrong shape or an empty list.
+ * @example
+ * certificatesOf('["-----BEGIN CERTIFICATE-----"]') // => { ok: true, certificates: ['-----BEGIN CERTIFICATE-----'] }
+ */
+function certificatesOf(stdout: string): SystemCertificatesResult {
+  try {
+    const certificates = certificateListSchema.parse(JSON.parse(stdout))
+    return certificates.length > 0 ? { ok: true, certificates } : { ok: false }
+  } catch {
+    return { ok: false }
+  }
 }
