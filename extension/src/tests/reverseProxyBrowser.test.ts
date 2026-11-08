@@ -231,13 +231,16 @@ test('probe refuses with browser-address-mismatch when a forward proxy answers i
   assert.equal(target.requests.length, 0)
 })
 
-// Value: protects=the redirect of a wrong server is seen and named; fails_when=the probe fetch uses redirect manual (a network error that sends nothing) or follows a redirect into a pass; no_claim=where the redirect leads.
-test('probe reports proof-redirected with the status when the server answers 302', async (context) => {
+// Value: protects=the redirect of a wrong server is seen and named, and its target is never contacted; fails_when=the probe fetch uses redirect manual (a network error that sends nothing), follows a redirect into a pass, or sends the redirected request before Codebook sees the 3xx; no_claim=where the redirect leads.
+test('probe reports proof-redirected with the status and sends no request to the redirect target', async (context) => {
   // Arrange
   const chrome = await chromeOf(context)
   if (chrome === undefined) return
+  const elsewhere = await listen(context, ok)
   const target = await listen(context, (_request, response) => {
-    response.writeHead(302, { location: '/elsewhere' })
+    response.writeHead(302, {
+      location: `http://127.0.0.1:${elsewhere.port}/elsewhere`,
+    })
     response.end()
   })
 
@@ -254,7 +257,81 @@ test('probe reports proof-redirected with the status when the server answers 302
     status: 302,
     cleanupConfirmed: true,
   })
-  assert.ok(target.requests.length >= 1)
+  assert.equal(target.requests.length, 1)
+  assert.equal(elsewhere.requests.length, 0)
+})
+
+// Value: protects=a reset after the probe's GET is not reported as nothing sent; fails_when=a server that reads the GET and closes the socket gives requestWritten false or a reason other than proof-unreachable; no_claim=which net error Chrome names for the close.
+test('probe reports proof-unreachable with requestWritten true when the server reads the GET and closes the socket', async (context) => {
+  // Arrange
+  const chrome = await chromeOf(context)
+  if (chrome === undefined) return
+  const target = await listen(context, (request) => {
+    request.socket.destroy()
+  })
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(chrome, target.port),
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.equal(result.ok, false)
+  assert.equal(!result.ok && result.reason, 'proof-unreachable')
+  assert.equal(!result.ok && result.requestWritten, true)
+  assert.equal(target.requests.length >= 1, true)
+})
+
+// Value: protects=a refused connection is reported as nothing sent; fails_when=a port nobody listens on gives requestWritten true or a reason other than proof-unreachable; no_claim=errors other than a refusal.
+test('probe reports proof-unreachable with requestWritten false when the connection is refused', async (context) => {
+  // Arrange
+  const chrome = await chromeOf(context)
+  if (chrome === undefined) return
+  const closed = await listen(context, ok)
+  closed.server.close()
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(chrome, closed.port),
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'proof-unreachable',
+    browserError: 'net::ERR_CONNECTION_REFUSED',
+    requestWritten: false,
+    cleanupConfirmed: true,
+  })
+})
+
+// Value: protects=a dead system or PAC proxy is not reported as a server problem; fails_when=a proxy that refuses connections gives a reason other than browser-address-mismatch or loses Chrome's error text; no_claim=a proxy that answers.
+test('probe reports browser-address-mismatch when the system proxy refuses connections', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') return context.skip('POSIX wrapper script')
+  const chrome = await chromeOf(context)
+  if (chrome === undefined) return
+  const target = await listen(context, ok)
+  const deadProxy = await listen(context, ok)
+  deadProxy.server.close()
+  const wrapper = await proxiedChrome(context, chrome, deadProxy.port)
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(wrapper, target.port),
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.equal(result.ok, false)
+  assert.equal(!result.ok && result.reason, 'browser-address-mismatch')
+  assert.match(
+    !result.ok ? (result.browserError ?? '') : '',
+    /^net::ERR_PROXY_/,
+  )
+  assert.equal(target.requests.length, 0)
 })
 
 // Value: protects=another application on the port is not taken for the started server; fails_when=a 404 answer passes or loses its status; no_claim=what the other application is.
@@ -504,5 +581,118 @@ test('probe removes its profile folder when the spawn throws', async () => {
     reason: 'proof-unclassified',
     cleanupConfirmed: true,
   })
+  assert.deepEqual(await probeFolders(), foldersBefore)
+})
+
+/**
+ * Writes an executable that locks a folder inside the probe's profile (so its removal fails), records the profile path and the process id, and then runs `command`.
+ * @param context - The test, which restores the permissions and removes the folder.
+ * @param command - The shell command that replaces the wrapper (the real Chrome with the arguments, or a wait).
+ * @returns The wrapper's path and the files that receive the profile path and the process id.
+ */
+async function lockingChrome(
+  context: TestContext,
+  command: string,
+): Promise<{ script: string; profileFile: string; pidFile: string }> {
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-locking-chrome-'))
+  const script = join(folder, 'chrome.sh')
+  const profileFile = join(folder, 'profile')
+  const pidFile = join(folder, 'pid')
+  context.after(async () => {
+    const profile = await readFile(profileFile, 'utf8').catch(() => '')
+    // The lock is lifted so the leftover folder can be removed even when the test failed early.
+    if (profile.trim() !== '') {
+      await chmod(join(profile.trim(), 'locked'), 0o700).catch(() => undefined)
+      await removeTestFolder(profile.trim())
+    }
+    await removeTestFolder(folder)
+  })
+  await writeFile(
+    script,
+    `#!/bin/sh
+for argument in "$@"; do
+  case "$argument" in --user-data-dir=*) profile="\${argument#--user-data-dir=}";; esac
+done
+mkdir -p "$profile/locked" && : > "$profile/locked/file" && chmod 500 "$profile/locked"
+echo "$profile" > '${profileFile}'
+echo $$ > '${pidFile}'
+exec ${command}
+`,
+  )
+  await chmod(script, 0o755)
+  return { script, profileFile, pidFile }
+}
+
+// Value: protects=a pass whose first cleanup fails still hands the gate a way to release the browser; fails_when=onUnreleased is not called once on a pass with an undeletable profile folder, or release does not end the process and remove the folder; no_claim=a machine where the user is root (skipped).
+test('probe hands onUnreleased a working release function when the first cleanup of a pass fails', async (context) => {
+  // Arrange
+  if (process.platform === 'win32' || process.getuid?.() === 0)
+    return context.skip('needs POSIX permissions as a non-root user')
+  const chrome = await chromeOf(context)
+  if (chrome === undefined) return
+  const target = await listen(context, ok)
+  const locking = await lockingChrome(
+    context,
+    `'${chrome.replaceAll("'", "'\\''")}' "$@"`,
+  )
+  const releases: (() => Promise<boolean>)[] = []
+  const foldersBefore = await probeFolders()
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(locking.script, target.port, {
+      onUnreleased: (release) => releases.push(release),
+    }),
+    new AbortController().signal,
+  )
+  const profile = (await readFile(locking.profileFile, 'utf8')).trim()
+  await chmod(join(profile, 'locked'), 0o700)
+  const released = await releases[0]?.()
+
+  // Assert
+  assert.equal(result.ok, true)
+  assert.equal(result.cleanupConfirmed, false)
+  assert.equal(releases.length, 1)
+  assert.equal(released, true)
+  assert.deepEqual(await probeFolders(), foldersBefore)
+  assert.equal(
+    (await probeProcesses()).some((line) => line.includes(profile)),
+    false,
+  )
+})
+
+// Value: protects=a cancelled check whose first cleanup fails still hands the gate a release function; fails_when=onUnreleased is not called on a cancellation with an undeletable profile folder, or release leaves the process or folder; no_claim=a machine where the user is root (skipped).
+test('probe hands onUnreleased a working release function when the first cleanup of a cancellation fails', async (context) => {
+  // Arrange
+  if (process.platform === 'win32' || process.getuid?.() === 0)
+    return context.skip('needs POSIX permissions as a non-root user')
+  const locking = await lockingChrome(context, 'sleep 60')
+  const controller = new AbortController()
+  const reason = new Error('stopped by the test')
+  const releases: (() => Promise<boolean>)[] = []
+  const foldersBefore = await probeFolders()
+
+  // Act
+  const pending = probeBrowserAddress(
+    inputOf(locking.script, 1, {
+      onUnreleased: (release) => releases.push(release),
+    }),
+    controller.signal,
+  )
+  setTimeout(() => controller.abort(reason), 500)
+  const outcome = await pending.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const profile = (await readFile(locking.profileFile, 'utf8')).trim()
+  await chmod(join(profile, 'locked'), 0o700)
+  const released = await releases[0]?.()
+
+  // Assert
+  assert.equal(outcome, reason)
+  assert.equal(releases.length, 1)
+  assert.equal(released, true)
+  const pid = Number((await readFile(locking.pidFile, 'utf8')).trim())
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
   assert.deepEqual(await probeFolders(), foldersBefore)
 })

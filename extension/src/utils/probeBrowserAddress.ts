@@ -35,6 +35,11 @@ export type BrowserAddressProbeInput = {
   expectedPort: number
   /** Bound on the whole check, {@link REVERSE_PROXY_PROBE_TIMEOUT_MS}. */
   timeoutMs: number
+  /**
+   * Called once, on every path (pass, failure, cancellation, launch failure), when the cleanup (process group ended within its bound and profile folder removed) is not confirmed.
+   * `release` tries the same cleanup again (same process group, same folder) and resolves `true` when both are confirmed.
+   */
+  onUnreleased?: (release: () => Promise<boolean>) => void
 }
 
 /** The refusal reasons the probe can end in. */
@@ -62,6 +67,8 @@ type BrowserAddressVerdict =
       browserAddress?: string
       /** The HTTP status, for `proof-wrong-server` and `proof-redirected`. */
       status?: number
+      /** For `proof-unreachable`: `false` only when the error shows that nothing was sent, `true` when the probe's GET may have reached a server. */
+      requestWritten?: boolean
     }
 
 /** What {@link probeBrowserAddress} answers: the verdict, and whether the probe confirmed that it ended the throwaway Chrome's process group and removed its profile folder. */
@@ -119,12 +126,22 @@ function responseOf(response: unknown): NonNullable<ProbeEvent['response']> {
   }
 }
 
+/** The `net::ERR_*` texts that show Chrome sent nothing (the probe's own interception included), so `proof-unreachable` may say `requestWritten: false`. */
+const NOTHING_SENT_ERRORS: ReadonlySet<string> = new Set([
+  'net::ERR_CONNECTION_REFUSED',
+  'net::ERR_NAME_NOT_RESOLVED',
+  'net::ERR_ADDRESS_UNREACHABLE',
+  'net::ERR_NETWORK_CHANGED',
+  'net::ERR_BLOCKED_BY_CLIENT',
+])
+
 /**
  * Turns one browser failure text into the refusal the learner sees.
  * @param errorText - Chrome's `net::ERR_…` text.
- * @returns `browser-certificate-untrusted` for an unknown issuer, `browser-certificate-rejected` for any other certificate error, `proof-unreachable` otherwise.
+ * @returns `browser-certificate-untrusted` for an unknown issuer, `browser-certificate-rejected` for any other certificate error, `browser-address-mismatch` for a proxy or tunnel error (the browser did not reach the checked address directly), `proof-unreachable` with `requestWritten` otherwise.
  * @example
  * failureOf('net::ERR_CERT_AUTHORITY_INVALID') // => { ok: false, reason: 'browser-certificate-untrusted', browserError: 'net::ERR_CERT_AUTHORITY_INVALID' }
+ * failureOf('net::ERR_EMPTY_RESPONSE') // => { ok: false, reason: 'proof-unreachable', browserError: 'net::ERR_EMPTY_RESPONSE', requestWritten: true }
  */
 function failureOf(errorText: string): BrowserAddressVerdict {
   if (errorText === 'net::ERR_CERT_AUTHORITY_INVALID')
@@ -139,7 +156,22 @@ function failureOf(errorText: string): BrowserAddressVerdict {
       reason: 'browser-certificate-rejected',
       browserError: errorText,
     }
-  return { ok: false, reason: 'proof-unreachable', browserError: errorText }
+  // A dead or refusing system or PAC proxy: the browser never reached the checked address directly.
+  if (
+    errorText.startsWith('net::ERR_PROXY_') ||
+    errorText.startsWith('net::ERR_TUNNEL_')
+  )
+    return {
+      ok: false,
+      reason: 'browser-address-mismatch',
+      browserError: errorText,
+    }
+  return {
+    ok: false,
+    reason: 'proof-unreachable',
+    browserError: errorText,
+    requestWritten: !NOTHING_SENT_ERRORS.has(errorText),
+  }
 }
 
 /**
@@ -388,6 +420,39 @@ function firstPageTarget(
 }
 
 /**
+ * Holds every request of the throwaway page at the request stage: only the probe's own first request (the exact probe URL, the first time) continues, every other one, a redirect's follow-up included, fails with `BlockedByClient` before it is sent.
+ *
+ * Why it exists: with `redirect: 'follow'` Chrome would send the redirected request before Codebook saw the 3xx, so a proxy that answers with a redirect could make the browser contact another destination.
+ * @param cdp - The browser-level connection.
+ * @param sessionId - The page session the Fetch domain is enabled on.
+ * @param url - The probed URL.
+ * @returns The unsubscribe of the listener.
+ */
+function interceptProbeRequests(
+  cdp: FlatCdpConnection,
+  sessionId: string,
+  url: string,
+): () => void {
+  let didAllowProbe = false
+  return cdp.on('Fetch.requestPaused', (params) => {
+    const request = params.request as { url?: unknown } | undefined
+    const requestId = String(params.requestId)
+    // Only the first request for the exact probe URL continues; a repeat or a redirect follow-up is blocked.
+    const isProbe = !didAllowProbe && request?.url === url
+    if (isProbe) didAllowProbe = true
+    const command = isProbe
+      ? cdp.request('Fetch.continueRequest', { requestId }, sessionId)
+      : cdp.request(
+          'Fetch.failRequest',
+          { requestId, errorReason: 'BlockedByClient' },
+          sessionId,
+        )
+    // A command that fails after the page ended is of no use to the verdict.
+    command.catch(() => undefined)
+  })
+}
+
+/**
  * Attaches the first page target and starts the probed request in it.
  * The profile is empty and credentials are omitted, so no cookie exists to send; `redirect: 'follow'` because `manual` with `no-cors` is a network error that sends nothing.
  * Every command is bounded by what is left of the deadline, and the run's signal is checked before each.
@@ -414,6 +479,15 @@ async function startProbedRequest(
   await cdp.request(
     'Network.enable',
     {},
+    String(sessionId),
+    clock.remainingMs(),
+  )
+  clock.signal.throwIfAborted()
+  // The listener lives as long as the connection, which the probe's cleanup closes.
+  interceptProbeRequests(cdp, String(sessionId), url)
+  await cdp.request(
+    'Fetch.enable',
+    { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
     String(sessionId),
     clock.remainingMs(),
   )
@@ -513,7 +587,7 @@ async function runProbe(
  * Why it exists: a system proxy, a PAC file or a VPN can route Chrome past the `--host-resolver-rules` pin, and the saved profile's cookies must never reach a server that was not proved. The probe starts Chrome on an empty profile with the same pin, evaluates `fetch(url, { credentials: 'omit', mode: 'no-cors', cache: 'no-store', redirect: 'follow' })` and reads the first `Network.responseReceived` or `Network.loadingFailed` for the URL. One deadline is computed at entry and every phase gets only what is left of it, so the whole check ends within `input.timeoutMs`; the run's signal is checked at each polling turn and before each command. After every path, a pass, a failure or a cancellation, the process group is ended and the profile folder removed, and the result says whether both were confirmed (`cleanupConfirmed`). Called by `ReverseProxyGate.prove()` after the Node proof, before any browser that holds the saved profile.
  * @param input - {@link BrowserAddressProbeInput}.
  * @param signal - The run's signal; it ends the browser.
- * @returns `{ ok: true, address, port, cleanupConfirmed }` when the browser reached the expected address and port with status 200; otherwise the classified failure (a spawn error such as a missing binary, or any other failure of the browser itself, is `proof-unclassified`), with `cleanupConfirmed`.
+ * @returns `{ ok: true, address, port, cleanupConfirmed }` when the browser reached the expected address and port with status 200; otherwise the classified failure (a spawn error such as a missing binary, or any other failure of the browser itself, is `proof-unclassified`), with `cleanupConfirmed`. When the cleanup is not confirmed, `input.onUnreleased` receives a function that retries it.
  * @throws The signal's reason when the run is cancelled (no refusal), after the cleanup ran.
  * @example
  * await probeBrowserAddress({ chromeBinary, hostResolverRules, url, expectedAddress: '127.0.0.1', expectedPort: 443, timeoutMs: 10_000 }, signal) // => { ok: true, address: '127.0.0.1', port: 443, cleanupConfirmed: true }
@@ -539,6 +613,8 @@ export async function probeBrowserAddress(
     // A failure of the browser itself stays unclassified; a cancelled run is rethrown after the cleanup below.
   }
   const cleanupConfirmed = await endProbeBrowser(browser)
+  // The gate learns of an unconfirmed cleanup on every path, a cancellation included, and may try again.
+  if (!cleanupConfirmed) input.onUnreleased?.(() => endProbeBrowser(browser))
   // A cancelled run is no refusal.
   signal.throwIfAborted()
   return { ...verdict, cleanupConfirmed }
