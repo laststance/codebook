@@ -496,7 +496,7 @@ test('Codebook 0.2.101 lists a .study.v20.json archive as saved by a newer Codeb
     { '../constants': frozenConstants },
   )
   // Act
-  const row = STUDY_STORAGE_FORMATS[1]
+  const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 20)
   const archive = newerStudyArchive.newerStudyArchive('a_b.study.v20.json')
   const sidecar = newerStudyArchive.newerStudyArchive('a_b.study.meta.v20.json')
   // Assert

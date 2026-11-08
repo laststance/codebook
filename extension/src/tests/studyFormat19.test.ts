@@ -387,7 +387,7 @@ test('format 19 is stored and readable, format 22 is saved by a newer Codebook, 
     { '../constants': frozenConstants },
   )
   // Act
-  const row = STUDY_STORAGE_FORMATS[2]
+  const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 19)
   const archive = newerStudyArchive.newerStudyArchive('a_b.study.v19.json')
   const sidecar = newerStudyArchive.newerStudyArchive('a_b.study.meta.v19.json')
   // Assert

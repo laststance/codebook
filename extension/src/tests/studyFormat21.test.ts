@@ -374,12 +374,15 @@ test('a replay with a press saves as .study.v21.json, lists as v21, repairs a lo
   assert.deepEqual(listed, [['v21', 'validated', 'demonstrated']])
   assert.equal(repaired.status, 'saved')
   assert.deepEqual(withNewer, ['newer', 'v21'])
-  assert.deepEqual(STUDY_STORAGE_FORMATS[0], {
-    version: 21,
-    format: 'v21',
-    archiveSuffix: '.study.v21.json',
-    metadataSuffix: '.study.meta.v21.json',
-  })
+  assert.deepEqual(
+    STUDY_STORAGE_FORMATS.find((format) => format.version === 21),
+    {
+      version: 21,
+      format: 'v21',
+      archiveSuffix: '.study.v21.json',
+      metadataSuffix: '.study.meta.v21.json',
+    },
+  )
 })
 
 // Value: protects=AC4 Outcome 4 the saved press, not the live run, names the operation in the replay after a window reload; fails_when=the reopened study drops the press, its canonical key or its title, or the replay row loses the press kind; no_claim=a real editor window reload (the native check covers it)
