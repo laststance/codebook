@@ -87,10 +87,10 @@ test('accepts apiServer on a version 3 expo-web-dev configuration and keeps its 
   assert.equal('loader' in (parsed.apiServer ?? {}), false)
 })
 
-// Value: protects=AC1 every other adapter and the older versions refuse apiServer exactly as an unknown key; fails_when=apiServer is accepted under vite-dev, react-scripts-dev, next-dev-webpack or version 1, or refused with another message; no_claim=the node-server profile, which has its own schema
-test('refuses apiServer as an unknown key on every adapter but expo-web-dev and on version 1', () => {
+// Value: protects=AC1 every other adapter and the older versions refuse apiServer exactly as an unknown key; fails_when=apiServer is accepted under react-scripts-dev, next-dev-webpack or version 1, or refused with another message; no_claim=the node-server profile, which has its own schema
+test('refuses apiServer as an unknown key on every adapter but expo-web-dev and vite-dev and on version 1', () => {
   // Arrange
-  const otherAdapters = ['vite-dev', 'react-scripts-dev', 'next-dev-webpack']
+  const otherAdapters = ['react-scripts-dev', 'next-dev-webpack']
   const candidates = [
     ...otherAdapters.map((adapter) =>
       configuration({ adapter, additionalStops: undefined }),
@@ -211,8 +211,8 @@ test('refuses a TypeScript apiServer entry declared with the node loader', () =>
   assert.equal(results[1], 'accepted')
 })
 
-// Value: protects=AC1 and DX-1 a server participant under expo-web-dev without apiServer is refused with a sentence that names apiServer (API 1.37) as the way out, while vite-dev keeps its plain refusal; fails_when=the sentence loses the way out, or vite-dev gains it; no_claim=the +api route refusal text
-test('a server participant without apiServer is refused with the way out named, and vite-dev keeps its plain refusal', () => {
+// Value: protects=AC1 and DX-1 a server participant under expo-web-dev without apiServer is refused with a sentence that names apiServer (API 1.37) as the way out, while vite-dev names apiServer and API 1.38 (the plain refusal moved to react-scripts-dev); fails_when=the sentence loses the way out, or react-scripts-dev gains it; no_claim=the +api route refusal text
+test('a server participant without apiServer is refused with the way out named, and react-scripts-dev keeps its plain refusal', () => {
   // Arrange
   const expo = configuration({
     apiServer: undefined,
@@ -220,15 +220,15 @@ test('a server participant without apiServer is refused with the way out named, 
     source: API_STOP.source,
     additionalStops: undefined,
   })
-  const vite = configuration({
-    adapter: 'vite-dev',
+  const reactScripts = configuration({
+    adapter: 'react-scripts-dev',
     apiServer: undefined,
     participant: 'server',
     source: API_STOP.source,
     additionalStops: undefined,
   })
   // Act
-  const results = [expo, vite].map(issuesOf)
+  const results = [expo, reactScripts].map(issuesOf)
   // Assert
   assert.match(
     results[0]!,
@@ -236,7 +236,7 @@ test('a server participant without apiServer is refused with the way out named, 
   )
   assert.equal(
     results[1],
-    'participant: adapter "vite-dev" supports browser stops only; participant "server" is declared at configuration.participant.',
+    'participant: adapter "react-scripts-dev" supports browser stops only; participant "server" is declared at configuration.participant.',
   )
 })
 

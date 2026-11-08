@@ -47,6 +47,9 @@ export const EXPO_WEB_MINIMUM_API = '1.30'
 /** The API that first accepts `apiServer` in a version 3 `expo-web-dev` configuration. */
 export const EXPO_WEB_API_SERVER_MINIMUM_API = '1.37'
 
+/** The API that first accepts `apiServer` (with optional `proxyPaths`) in a version 3 `vite-dev` configuration. */
+export const VITE_API_SERVER_MINIMUM_API = '1.38'
+
 /** The API that first accepts the `wxt-build` adapter in a `chrome-extension` configuration (skill 1.0.81). */
 export const WXT_BUILD_MINIMUM_API = '1.32'
 
