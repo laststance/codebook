@@ -22,10 +22,15 @@ import {
   describeNextEntryResponse,
   type NextEntryResponse,
 } from './describeNextEntryResponse'
-import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
+import {
+  buildDevelopmentServerEnvironment,
+  nextOutputHandling,
+} from './developmentServerEnvironment'
+import { followOwnRedirects } from './followOwnRedirects'
 import { isProcessGroupGone } from './isProcessGroupGone'
 import { keepUtf8Tail } from './keepUtf8Tail'
 import {
+  identitySecretOf,
   nextLaunchArguments,
   type NextLaunchOptions,
 } from './nextLaunchArguments'
@@ -124,11 +129,16 @@ export function launchDevelopmentServer(
   nextExecutable: string = join(target, 'node_modules/next/dist/bin/next'),
   nextOptions: NextLaunchOptions = {},
 ) {
-  const environment = spec?.environment ?? buildDevelopmentServerEnvironment()
+  // A run that declares `reverseProxy` hands the server its identity secret through the environment only.
+  const identitySecret = identitySecretOf(nextOptions)
+  const environment =
+    spec?.environment ??
+    buildDevelopmentServerEnvironment(process.env, identitySecret)
   const arguments_ =
     spec?.arguments ?? nextLaunchArguments(nextExecutable, port, nextOptions)
-  // A launcher's own mask wins; the Next server takes the caller's output mask.
-  const mask = spec?.mask ?? outputMask
+  // A launcher's own mask wins; the Next server takes the caller's output mask, extended with the identity secret.
+  const nextOutput = nextOutputHandling(outputMask, identitySecret)
+  const mask = spec?.mask ?? nextOutput.mask
   if (inspectServer && !spec) arguments_.push('--inspect', '127.0.0.1:0')
   const serverName = spec?.name ?? 'Next'
   const child = spawn(node, arguments_, {
@@ -181,7 +191,10 @@ export function launchDevelopmentServer(
     } else {
       // Masking the whole pending text matches every value inside it; its last characters stay pending so a value that crosses this chunk's end is matched with the next chunk.
       const masked = mask(pendingLog + text)
-      const holdback = Math.max(0, (spec?.maskHoldback?.() ?? 0) - 1)
+      const holdback = Math.max(
+        0,
+        (spec?.maskHoldback?.() ?? nextOutput.holdbackCharacters) - 1,
+      )
       const settledEnd = Math.max(0, masked.length - holdback)
       publishedLog += masked.slice(0, settledEnd)
       pendingLog = masked.slice(settledEnd)
@@ -286,16 +299,23 @@ export function launchDevelopmentServer(
    * Asks the root page the way the root readiness check always has: redirects followed, the body discarded; for `ready` and for a redirected root in `confirmAppEntry`.
    * @param listening - The origin {@link waitForListener} returned.
    * @param signal - Ends the request when the run is cancelled.
+   * @param observer - The run's readiness record, for its time bound.
+   * @param declaredOrigin - The origin a `reverseProxy` run declared: redirects are then followed by hand and only on the dev server's own origin ({@link followOwnRedirects}), so no request leaves its loopback address.
    * @returns The final response.
    */
   const rootAnswer = async (
     listening: string,
     signal: AbortSignal,
     observer?: ReadinessObserver,
+    declaredOrigin?: string,
   ): Promise<Response> => {
-    const response = await fetch(listening, {
-      signal: AbortSignal.any([signal, requestTimeoutOf(observer)]),
-    })
+    const timeout = AbortSignal.any([signal, requestTimeoutOf(observer)])
+    const response =
+      declaredOrigin === undefined
+        ? await fetch(listening, { signal: timeout })
+        : await followOwnRedirects(listening, declaredOrigin, (url) =>
+            fetch(url, { redirect: 'manual', signal: timeout }),
+          )
     await response.body?.cancel()
     return response
   }
@@ -440,21 +460,19 @@ export function launchDevelopmentServer(
     assertRunning(): void {
       throwWhenExited()
     },
-    /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @param observer - A Next run's record of its readiness request: told at the send and at the end ({@link ReadinessObserver}); absent for a Vite run. @example await app.ready(signal, '/login') */
+    /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @param observer - A Next run's record of its readiness request: told at the send and at the end ({@link ReadinessObserver}); absent for a Vite run. @param declaredOrigin - The origin a `reverseProxy` run declared: a root redirect is followed by hand, only on the dev server's own origin, and a stop at this origin counts as an answer ({@link followOwnRedirects}). @example await app.ready(signal, '/login') */
     async ready(
       signal: AbortSignal,
       entryPath = '/',
       observer?: ReadinessObserver,
       declaredOrigin?: string,
     ) {
-      // Wave 0 signature only: the declared origin reaches the redirect rules in the launch lane.
-      void declaredOrigin
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal)
       // A selected non-root entry proves readiness itself; an application without a root page is still usable through it.
       if (entryPath === '/') {
         const response = await observedReadinessRequest(observer, signal, () =>
-          rootAnswer(listening, signal, observer),
+          rootAnswer(listening, signal, observer, declaredOrigin),
         )
         if (!response.ok)
           throw new Error(
@@ -484,6 +502,7 @@ export function launchDevelopmentServer(
      * @param entryPath - The configured entry path.
      * @param signInPaths - The configuration's `signInPaths`, so a redirect to one of them is named in the answer.
      * @param observer - The run's record of its readiness request, told at the send and at the end ({@link ReadinessObserver}).
+     * @param declaredOrigin - The origin a `reverseProxy` run declared, so a `Location` at it is read as the app's own origin ({@link describeNextEntryResponse}).
      * @returns The origin and the structured answer.
      * @throws What the listener wait throws (an exit before listening carries the masked output tail), and a failed request.
      * @example
@@ -496,8 +515,6 @@ export function launchDevelopmentServer(
       observer?: ReadinessObserver,
       declaredOrigin?: string,
     ): Promise<{ origin: string; entry: NextEntryResponse }> {
-      // Wave 0 signature only: forwarded to describeNextEntryResponse in the launch lane.
-      void declaredOrigin
       repositoryEntryPathSchema.parse(entryPath)
       const listening = await waitForListener(signal),
         requestUrl = `${listening}${entryPath}`
@@ -514,6 +531,7 @@ export function launchDevelopmentServer(
         requestUrl,
         listening,
         signInPaths,
+        declaredOrigin,
       )
       // Only the status and the redacted target are journaled; the raw Location never leaves this method.
       record('application.entry-answered', {
@@ -529,6 +547,7 @@ export function launchDevelopmentServer(
      * @param entryPath - The configured entry path.
      * @param entry - The answer `readyEntry` read.
      * @param observer - The run's readiness record; only its hold-aware bound is used, so a preparation pause held in the follow-up request does not run out its time.
+     * @param declaredOrigin - The origin a `reverseProxy` run declared; the repeated root request then follows redirects only on the dev server's own origin ({@link followOwnRedirects}).
      * @throws `Application root failed: <status>: <output>` or `Selected application page failed or redirected: <status>. …`, exactly as `ready` throws them.
      * @example
      * await app.confirmAppEntry(signal, '/', { status: 307, location: { sameOrigin: true, path: '/en' } }) // asks / again, following the redirect
@@ -538,6 +557,7 @@ export function launchDevelopmentServer(
       entryPath: string,
       entry: NextEntryResponse,
       observer?: ReadinessObserver,
+      declaredOrigin?: string,
     ): Promise<void> {
       if (origin === undefined)
         throw new Error('The owned listener was not awaited')
@@ -546,7 +566,8 @@ export function launchDevelopmentServer(
         const status =
           entry.status >= HTTP_REDIRECT_STATUS_MIN &&
           entry.status < HTTP_REDIRECT_STATUS_END
-            ? (await rootAnswer(origin, signal, observer)).status
+            ? (await rootAnswer(origin, signal, observer, declaredOrigin))
+                .status
             : entry.status
         if (!isSuccessStatus(status))
           throw new Error(
