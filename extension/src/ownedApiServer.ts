@@ -451,14 +451,27 @@ export class OwnedApiServer {
       ])
       return {
         ...exit,
-        outputTail: hidePrivatePaths(
-          this.launched.output().slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
-          this.input.workspace,
-          homedir(),
-        ),
+        outputTail: this.outputTailNow(),
       }
     })()
     return this.exitFact
+  }
+
+  /**
+   * The API's last output right now: learner secrets masked, private paths hidden, cut to {@link PROCESS_OUTPUT_EVENT_LIMIT_CHARS}.
+   *
+   * Readable while the API runs and after it exits, so a failed operation can show what the API printed without waiting for the exit.
+   * It reads the launcher's live redacted capture, so output held back for a secret is excluded and the tail is never longer than what the live mask published.
+   * Called by {@link OwnedApiServer.whenExited} for the exit tail and by the run's view and error builders on a failure.
+   * @returns The masked, path-hidden tail; empty when the API printed nothing.
+   * @example api.outputTailNow() // => 'listening on 4100\n'
+   */
+  outputTailNow(): string {
+    return hidePrivatePaths(
+      this.launched.output().slice(-PROCESS_OUTPUT_EVENT_LIMIT_CHARS),
+      this.input.workspace,
+      homedir(),
+    )
   }
 
   /**
