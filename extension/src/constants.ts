@@ -2071,6 +2071,10 @@ export const NEXT_LIBRARY_STUDY_VERSION = 18
 export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
+/** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
+export const API_REQUEST_METHOD_TOKEN_PATTERN = /^[A-Z0-9!#$%&'*+.^_`|~-]+$/
+/** The most early request ends (and ids already seen) an API request tracker remembers; separate from the request limit so they cannot evict a needed start. */
+export const API_REQUEST_EARLY_END_LIMIT = 256
 /** The longest request path (without query) an `apiRequest` fact may name. */
 export const API_REQUEST_PATH_LIMIT_CHARS = 2_048
 /** The marker that ends an `apiRequest` path cut to {@link API_REQUEST_PATH_LIMIT_CHARS}. */

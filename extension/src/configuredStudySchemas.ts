@@ -4,6 +4,7 @@ import { citationContextSchema } from './citationSchemas'
 import {
   API_REQUEST_COUNT_LIMIT,
   API_REQUEST_METHOD_LIMIT_CHARS,
+  API_REQUEST_METHOD_TOKEN_PATTERN,
   API_REQUEST_PATH_LIMIT_CHARS,
   API_REQUEST_SEVERAL_MIN_COUNT,
   BOOK_MAX_ANCHORS,
@@ -99,7 +100,10 @@ const apiRequestFactSchema = z.union([
     method: z
       .string()
       .max(API_REQUEST_METHOD_LIMIT_CHARS)
-      .regex(/^[A-Z][A-Z0-9_-]*$/, 'Use an upper-case HTTP method token.'),
+      .regex(
+        API_REQUEST_METHOD_TOKEN_PATTERN,
+        'Use an upper-case HTTP method token.',
+      ),
     path: z
       .string()
       .max(API_REQUEST_PATH_LIMIT_CHARS)

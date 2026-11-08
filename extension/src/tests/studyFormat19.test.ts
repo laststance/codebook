@@ -435,3 +435,39 @@ test('accepts the capped long path and refuses an oversized count or a control c
   // Assert
   assert.deepEqual(results, [true, false, false])
 })
+
+// Value: protects=C2 a fact produced from a custom method token with a dot saves and reopens in a format 19 study, and a method over the length bound is never written as an attributed fact; fails_when=the producer names a method the saved schema refuses, or the schema rejects a valid HTTP token; no_claim=the wording of the sentences
+test('a custom-token or over-long API method produces a fact that saves and reopens', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-format-19-method-'))
+  context.after(() => removeTestFolder(directory))
+  const factOfMethod = (method: string): ApiRequestFact => {
+    const tracker = new ApiRequestTracker(4100)
+    tracker.requestWillBeSent({
+      requestId: 'm',
+      timestamp: 100,
+      wallTime: 1000,
+      request: { method, url: 'http://localhost:4100/api/x' },
+    })
+    return tracker.attribute({
+      windowStartWallMs: 999_000,
+      cutoffWallMs: 1_010_000,
+      operation: 4,
+      title: 'Press',
+      maskText: (text) => text,
+    })
+  }
+  const tokenFact = factOfMethod('m.search')
+  const longFact = factOfMethod('a'.repeat(17))
+  const study = apiServerStudy({ apiRequest: tokenFact, order: 'mixed' })
+  const library = new LearningLibrary(directory, study.workspaceKey)
+  // Act
+  await library.saveStudy(study)
+  const reopened = await library.readStudy(study.id)
+  // Assert
+  assert.equal(tokenFact.state === 'attributed' && tokenFact.method, 'M.SEARCH')
+  assert.equal(reopened.version, 19)
+  assert.deepEqual(reopened.observations[2]!.apiRequest, tokenFact)
+  assert.equal(longFact.state, 'unattributed')
+  assert.equal(refusalOf(apiServerStudy({ apiRequest: longFact })), 'accepted')
+})

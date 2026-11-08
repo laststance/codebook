@@ -238,3 +238,117 @@ test('a 3000-character path is cut to the 2048-character limit with an ellipsis,
   assert.equal(fact.state === 'attributed' && fact.path.length, 2048)
   assert.match(fact.sentence, new RegExp(`POST ${expectedPath},`))
 })
+
+test('a request redirected away from the API origin stops being a candidate', () => {
+  // protects=C1 redirect away; fails_when=a request that left the API origin still waits for the API; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT)
+  start(tracker, 'a', 1005)
+  start(tracker, 'a', 1005.5, 'http://example.test/login', 'GET', {})
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.equal(fact.state === 'unattributed' && fact.reason, 'none')
+})
+
+test('a request redirected within the API origin is judged by the hop time, URL and method current at the cutoff', () => {
+  // protects=C1 redirect hop; fails_when=the first hop time, URL or method is used for the cutoff; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT)
+  start(tracker, 'a', 999, `http://localhost:${PORT}/first`, 'POST')
+  start(tracker, 'a', 1005, `http://localhost:${PORT}/second`, 'GET', {})
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.equal(fact.state === 'attributed' && fact.path, '/second')
+  assert.equal(fact.state === 'attributed' && fact.method, 'GET')
+})
+
+test('a request redirected into the API origin from another origin is an API request from that hop', () => {
+  // protects=C1 redirect into the API from elsewhere; fails_when=the entering hop is dropped; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT)
+  start(tracker, 'a', 999, 'http://example.test/start', 'GET')
+  start(tracker, 'a', 1005, `http://localhost:${PORT}/api/in`, 'GET', {})
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.equal(fact.state === 'attributed' && fact.path, '/api/in')
+})
+
+test('a method that is a valid HTTP token keeps the fact, upper-cased', () => {
+  // protects=C2 method grammar; fails_when=a token with a dot is refused or kept lower-case; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT)
+  start(tracker, 'a', 1005, undefined, 'm.search')
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.equal(fact.state === 'attributed' && fact.method, 'M.SEARCH')
+})
+
+test('an over-long method is counted but never named: alone it gives none, with another request it gives several', () => {
+  // protects=C2 unkeepable method; fails_when=an unsavable method is written in an attributed fact or not counted; no_claim=none
+  // Arrange
+  const alone = new ApiRequestTracker(PORT)
+  start(alone, 'a', 1005, undefined, 'X'.repeat(17))
+  const withOther = new ApiRequestTracker(PORT)
+  start(withOther, 'a', 1005, undefined, 'X'.repeat(17))
+  start(withOther, 'b', 1006)
+  // Act
+  const lone = judge(alone)
+  const pair = judge(withOther)
+  // Assert
+  assert.deepEqual(lone.state === 'unattributed' && [lone.reason, lone.count], [
+    'none',
+    0,
+  ])
+  assert.deepEqual(pair.state === 'unattributed' && [pair.reason, pair.count], [
+    'several',
+    2,
+  ])
+})
+
+test('an in-window request dropped at the limit makes a lone remaining candidate several', () => {
+  // protects=C3 eviction; fails_when=a dropped in-window request leaves a false attributed fact; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT, 1)
+  start(tracker, 'dropped', 1002)
+  start(tracker, 'kept', 1003)
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.deepEqual(fact.state === 'unattributed' && [fact.reason, fact.count], [
+    'several',
+    2,
+  ])
+})
+
+test('a request dropped at the limit that ended before the cutoff does not block attribution', () => {
+  // protects=C3 eviction precision; fails_when=any dropped request refuses uniqueness; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT, 1)
+  start(tracker, 'done', 1002)
+  tracker.requestEnded({ requestId: 'done', timestamp: 1003 - 900 })
+  start(tracker, 'kept', 1004)
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.equal(fact.state, 'attributed')
+})
+
+test('ends of requests that started outside the API origin do not push out an early end of an API request', () => {
+  // protects=C3 early-end bound; fails_when=other requests evict a needed early end; no_claim=none
+  // Arrange
+  const tracker = new ApiRequestTracker(PORT)
+  tracker.requestEnded({ requestId: 'api', timestamp: 1003 - 900 })
+  for (let index = 0; index < 400; index += 1) {
+    start(tracker, `other${index}`, 1001, 'http://example.test/x')
+    tracker.requestEnded({ requestId: `other${index}`, timestamp: 1002 - 900 })
+  }
+  start(tracker, 'api', 1002)
+  // Act
+  const fact = judge(tracker)
+  // Assert
+  assert.equal(fact.state === 'unattributed' && fact.reason, 'none')
+})
