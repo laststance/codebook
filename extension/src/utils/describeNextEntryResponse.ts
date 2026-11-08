@@ -69,8 +69,13 @@ export function describeNextEntryResponse(
     `${target.pathname}${target.search}${target.hash}`,
   )
   // The raw path and query are compared here and dropped; only the verdict leaves.
+  // A redirect to the declared origin with the same path is a canonical-origin redirect, not a loop (D24).
+  const isCanonicalOriginRedirect =
+    declaredOrigin !== undefined && target.origin === declaredOrigin
   const loops =
-    target.pathname === requested.pathname && target.search === requested.search
+    !isCanonicalOriginRedirect &&
+    target.pathname === requested.pathname &&
+    target.search === requested.search
   const signIn = matchSignInPath(
     target,
     ownedOrigin,

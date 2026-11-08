@@ -48,9 +48,11 @@ export function browserOriginOf(origin: string): string {
  * @param pageOrigin - The page's `location.origin`.
  * @param ownedOrigin - The origin of the owned application.
  * @param ipv6 - Whether the run owns `[::1]` at the port; `true` by default.
- * @param declaredOrigin - The normalized `reverseProxy.origin` the run declared (API 1.40); that origin is owned too. Ignored until the run wiring lands.
- * @returns `true` for `localhost`, `127.0.0.1` or (when owned) `[::1]` at the owned port.
- * @example isOwnedApplicationOrigin('http://localhost:3165', 'http://127.0.0.1:3165') // true
+ * @param declaredOrigin - The normalized `reverseProxy.origin` the run declared (API 1.40); that origin is owned too.
+ * @returns `true` for `localhost`, `127.0.0.1` or (when owned) `[::1]` at the owned port, or for the declared origin.
+ * @example
+ * isOwnedApplicationOrigin('http://localhost:3165', 'http://127.0.0.1:3165') // true
+ * isOwnedApplicationOrigin('https://app.example.test', 'http://127.0.0.1:4310', true, 'https://app.example.test') // true
  */
 export function isOwnedApplicationOrigin(
   pageOrigin: unknown,
@@ -58,10 +60,46 @@ export function isOwnedApplicationOrigin(
   ipv6 = true,
   declaredOrigin?: string,
 ): boolean {
-  // Wave 0 signature only: the declared origin joins the owned origins in the run wiring.
-  void declaredOrigin
   return (
     typeof pageOrigin === 'string' &&
-    loopbackOriginsOf(ownedOrigin, ipv6).includes(pageOrigin)
+    ownedOriginsOf(ownedOrigin, ipv6, declaredOrigin).includes(pageOrigin)
   )
+}
+
+/**
+ * Lists every origin the run owns: the loopback names at the server's port, plus the declared reverse-proxy origin when the run declared one.
+ *
+ * Why it exists: a `reverseProxy` run opens the app at the declared origin, so a page there is the run's own application (API 1.40). Called by {@link ConfiguredBrowserRun} for the owned-origin lists it hands to the page and to the operation port, and by {@link isOwnedApplicationOrigin}.
+ * @param origin - The origin the owned server reported, such as `http://127.0.0.1:3165`.
+ * @param ipv6 - Whether the run owns `[::1]` at the port; `true` by default.
+ * @param declaredOrigin - The normalized `reverseProxy.origin` the run declared; absent for every other run.
+ * @returns {@link loopbackOriginsOf} plus the declared origin when given.
+ * @example
+ * ownedOriginsOf('http://127.0.0.1:4310', false, 'https://app.example.test') // => ['http://localhost:4310', 'http://127.0.0.1:4310', 'https://app.example.test']
+ */
+export function ownedOriginsOf(
+  origin: string,
+  ipv6 = true,
+  declaredOrigin?: string,
+): string[] {
+  const loopback = loopbackOriginsOf(origin, ipv6)
+  return declaredOrigin === undefined ? loopback : [...loopback, declaredOrigin]
+}
+
+/**
+ * Names the origin the run opens its entry page at: the declared origin of a `reverseProxy` run, else the loopback browser origin.
+ *
+ * Called by {@link ConfiguredBrowserRun} for the entry URL and the run view's `applicationOrigin`.
+ * @param browserOrigin - The loopback origin the browser would open, such as `http://localhost:3165`.
+ * @param declaredOrigin - The normalized `reverseProxy.origin` once proved; absent for every other run.
+ * @returns The declared origin when given, else `browserOrigin`.
+ * @example
+ * entryOriginOf('http://localhost:4310', 'https://app.example.test') // => 'https://app.example.test'
+ * entryOriginOf('http://localhost:4310') // => 'http://localhost:4310'
+ */
+export function entryOriginOf(
+  browserOrigin: string,
+  declaredOrigin?: string,
+): string {
+  return declaredOrigin ?? browserOrigin
 }

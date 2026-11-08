@@ -117,6 +117,7 @@ import type { RecordingStore, RecordingWriter } from './recordingStore'
 import type { RepositoryBookStore } from './repositoryBook'
 import {
   canonicalizePressKeys,
+  canonicalizeReverseProxy,
   dropDefaultPackageRoot,
 } from './repositoryConfigSchemas'
 import type {
@@ -130,6 +131,7 @@ import type {
   ChromeExtensionClickAnswer,
   ChromeExtensionRuntime,
   ChromeExtensionView,
+  ConfiguredRuntimeView,
   NodeServerRuntime,
   NodeTestRuntime,
   OperationFailure,
@@ -754,6 +756,36 @@ export type StartAnswer = ReturnType<StudyService['start']> & {
   build?: ChromeExtensionView['build']
   failure?: ReturnType<StudyError['describe']>
   state?: ReturnType<StudyService['state']>
+}
+
+/** The run resource's `message` while a declared reverse-proxy origin is being checked (API 1.40); the agent reads the resource again and starts no other run. */
+const REVERSE_PROXY_CHECKING_MESSAGE =
+  'Codebook is checking that the declared origin reaches the development server it started; read this run resource again in a few seconds and start no other run.'
+
+/**
+ * Gives the run resource's reverse-proxy fields: the declaration's state and, while the check is under way, the message that tells the agent to read the resource again.
+ *
+ * Called by the run resource builder of {@link StudyService}; a run without `reverseProxy` adds nothing.
+ * @param runtime - The run's view, when it has one.
+ * @returns `{ reverseProxy }` for a declaring run, plus `message` while its state is `resolving` or `proving`; an empty object otherwise.
+ * @example
+ * reverseProxyFieldsOf(undefined) // => {}
+ * reverseProxyFieldsOf({ reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310, state: 'proved' } }) // => { reverseProxy: { … } }
+ */
+function reverseProxyFieldsOf(
+  runtime: { reverseProxy?: ConfiguredRuntimeView['reverseProxy'] } | undefined,
+): {
+  reverseProxy?: ConfiguredRuntimeView['reverseProxy']
+  message?: string
+} {
+  const reverseProxy = runtime?.reverseProxy
+  if (!reverseProxy) return {}
+  // Only the two checking states hold the message; a proved or refused origin needs none.
+  const isChecking =
+    reverseProxy.state === 'resolving' || reverseProxy.state === 'proving'
+  return isChecking
+    ? { reverseProxy, message: REVERSE_PROXY_CHECKING_MESSAGE }
+    : { reverseProxy }
 }
 
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile: REPOSITORY_BROWSER_PROFILE, key: "study-1", configuration}) */
@@ -1936,8 +1968,10 @@ export class StudyService {
         parsed.data.profile === REPOSITORY_BROWSER_PROFILE
           ? {
               ...parsed.data,
-              configuration: canonicalizePressKeys(
-                dropDefaultPackageRoot(parsed.data.configuration),
+              configuration: canonicalizeReverseProxy(
+                canonicalizePressKeys(
+                  dropDefaultPackageRoot(parsed.data.configuration),
+                ),
               ),
             }
           : parsed.data,
@@ -4323,6 +4357,7 @@ export class StudyService {
           : undefined,
       applicationOrigin: runtime?.applicationOrigin,
       applicationPortSource: runtime?.applicationPortSource,
+      ...reverseProxyFieldsOf(runtime),
       viteVersion: runtime?.viteVersion,
       expoVersion: runtime?.expoVersion,
       // A Vite library run states the library facts (API 1.34) and, while it waits or builds, its phase.
