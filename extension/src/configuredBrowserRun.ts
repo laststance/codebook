@@ -68,7 +68,6 @@ import {
   SERVER_RENDER_PAUSE_POLL_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
   SERVER_RENDER_ROUTE_EXPRESSION,
-  NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
   OWNED_API_SERVER_LOSS_ARBITER_MS,
   ROUTE_HANDLER_REQUEST_POLL_MS,
   ROUTE_HANDLER_REQUEST_WAIT_MS,
@@ -252,7 +251,6 @@ import {
   canonicalDefinition,
   withCanonicalPackageRoot,
 } from './utils/canonicalDefinition'
-import type { ProcessOutputEvent } from './utils/captureProcessOutput'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { causeRootsFor } from './utils/causeRootsFor'
 import {
@@ -265,6 +263,7 @@ import { configuredScrollExpression } from './utils/configuredScrollExpression'
 import { configuredStopFields } from './utils/configuredStopFields'
 import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
+import { createApiServerOutputJournal } from './utils/createApiServerOutputJournal'
 import { createBindingLineRule } from './utils/createBindingLineRule'
 import {
   createBundleVerifier,
@@ -11263,7 +11262,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           version: await readNodeVersion(this.options.node, this.abort.signal),
         },
         record: (type, detail) => this.evidence.record(type, detail),
-        onOutput: (event) => this.onApiServerOutput(event),
+        onOutput: (event) => this.apiOutputJournal(event),
+        // Read on the raw stderr lines, so a notice split by the live mask is still found; the launcher confirms the API is ending before this runs.
+        onDebuggerDisconnectNotice: () => this.onApiDebuggerNotice(),
+        // Streamed output and the exit tail hide the repository, home and storage paths, as the node-server run's do.
+        privateRoots: causeRootsFor(
+          [this.options.directory],
+          this.options.workspace,
+        ),
         // Read at every output chunk: the password the learner types after the launch is masked from then on (E-8).
         secrets: () => this.learnerSecretValues,
         onWithheld: (bytes) =>
@@ -11615,36 +11621,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
 
+  /** Journals the API's masked output within a fixed bound ({@link createApiServerOutputJournal}), so a chatty API cannot use up the run's shared evidence. */
+  private readonly apiOutputJournal = createApiServerOutputJournal(
+    (type, detail) => this.evidence.record(type, detail),
+    (text) => this.maskRunText(text),
+  )
+
   /**
-   * Journals one chunk of the API's masked output and lets go of the debugger when Node says it waits for it.
+   * Lets go of the debugger when Node says it waits for it and the launcher confirmed the API is ending.
    * Why: an API that calls `process.exit` does not exit while a debugger is attached; Node prints a notice and waits, so the run detaches and the exit follows, and `SERVER_EXITED` wins (E-6).
-   * Called by the launcher for every output chunk.
-   * @param event - The stamped, masked chunk.
-   * @example await this.onApiServerOutput({ sequence: 1, elapsedMs: 5, channel: 'stderr', text: 'listening' })
+   * Called by {@link OwnedApiServer} through `onDebuggerDisconnectNotice`.
+   * @example await this.onApiDebuggerNotice()
    */
-  private async onApiServerOutput(event: ProcessOutputEvent): Promise<void> {
-    this.evidence.record('api-server.output', {
-      sequence: event.sequence,
-      elapsedMs: event.elapsedMs,
-      channel: event.channel,
-      text: this.maskRunText(event.text),
-    })
-    const isDisconnectNotice =
-      event.channel === 'stderr' &&
-      event.text
-        .split('\n')
-        .some(
-          (line) =>
-            line.trim().replace(/\.+$/, '') ===
-            NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
-        )
-    if (isDisconnectNotice && !this.cleaning && !this.isApiEnding)
-      await this.detachApiDebugger()
+  private async onApiDebuggerNotice(): Promise<void> {
+    if (!this.cleaning && !this.isApiEnding) await this.detachApiDebugger()
   }
 
   /**
    * Ends the debug session the run attached to the API, which lets a finished program exit.
-   * Called by {@link onApiServerOutput}.
+   * Called by {@link onApiDebuggerNotice}.
    * @example await this.detachApiDebugger()
    */
   private async detachApiDebugger(): Promise<void> {

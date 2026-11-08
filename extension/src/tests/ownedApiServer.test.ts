@@ -553,3 +553,85 @@ test('an owned API that has exited when the ready bound passes fails as SERVER_E
   // Assert
   await assert.rejects(waiting, { code: 'SERVER_EXITED' })
 })
+
+// ---------------------------------------------------------------------------
+// The debugger-disconnect notice, read on the raw stderr lines (Cycle 0099, review round 1)
+// ---------------------------------------------------------------------------
+
+// Value: protects=E-6 with a typed password: the notice is found as a complete raw stderr line although the live secret mask splits the published chunks, so the debugger is let go and SERVER_EXITED wins; fails_when=detection depends on one published chunk holding the whole notice (the run waits for the debugger forever after a password was typed); no_claim=which chunk boundaries the mask makes on another machine (the test asserts the notice is found whatever they are)
+test('the debugger-disconnect notice is found on raw stderr lines after a password was typed and the run ends SERVER_EXITED', async (t) => {
+  // Arrange
+  const secrets = new Set<string>()
+  const repository = await apiRepository(t, {
+    mode: 'exit-after-echo',
+    echo: 'hunter2-password',
+  })
+  let notices = 0
+  let cdp: Cdp | undefined
+  const publishedChunks: string[] = []
+  const { api } = await launchApi(t, repository, {
+    secrets: () => secrets,
+    onOutput: (event) => void publishedChunks.push(event.text),
+    // The run lets go of its debugger on the notice, as the browser run does.
+    onDebuggerDisconnectNotice: () => {
+      notices += 1
+      cdp?.close()
+    },
+  })
+  cdp = await connectInspector(t, api)
+  secrets.add('hunter2-password-of-a-longer-form')
+  // Act
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  const waiting = api.waitForListener(AbortSignal.timeout(10_000))
+  waiting.catch(() => undefined)
+  const exit = await api.whenExited()
+  // Assert
+  // The mask published the notice in pieces, so only the raw lines can show it whole.
+  assert.equal(
+    publishedChunks.some((text) =>
+      text.includes('Waiting for the debugger to disconnect'),
+    ),
+    false,
+  )
+  assert.equal(notices, 1)
+  assert.equal(exit.exitCode, 5)
+  await assert.rejects(waiting, { code: 'SERVER_EXITED' })
+})
+
+// Value: protects=the notice is application-controlled text: a line that repeats it while the API still listens on its declared port does not detach the debugger; fails_when=any stderr line equal to the notice detaches a healthy API; no_claim=a real process.exit under the debugger (the native check)
+test('an application line that repeats the debugger-disconnect notice while the API still listens does not detach', async (t) => {
+  // Arrange
+  const repository = await apiRepository(t, {})
+  await writeFile(
+    join(repository.packageRoot, 'server.cjs'),
+    [
+      "const { createServer } = require('node:net')",
+      "const settings = JSON.parse(require('node:fs').readFileSync('fixture-server.json', 'utf8'))",
+      "createServer().listen(settings.port, '127.0.0.1', () => {",
+      "  console.error('Waiting for the debugger to disconnect...')",
+      '})',
+    ].join('\n'),
+  )
+  let notices = 0
+  const { api, journal } = await launchApi(t, repository, {
+    onDebuggerDisconnectNotice: () => void (notices += 1),
+  })
+  const cdp = await connectInspector(t, api)
+  // Act
+  void cdp
+    .request('Runtime.runIfWaitingForDebugger', undefined)
+    .catch(() => undefined)
+  await api.waitForListener(AbortSignal.timeout(10_000))
+  await waitUntil(
+    () =>
+      journal.some((entry) => entry.type === 'api-server.notice-ignored')
+        ? true
+        : undefined,
+    'the ignored notice',
+    10_000,
+  )
+  // Assert
+  assert.equal(notices, 0)
+})

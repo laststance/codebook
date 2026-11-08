@@ -33,8 +33,11 @@ export interface FakeApiServer {
   events: string[]
   /** What the run gave `OwnedApiServer.check`. */
   checkInputs: {
+    workspace: string
     secrets?: () => ReadonlySet<string>
     onOutput?: (event: ProcessOutputEvent) => void | Promise<void>
+    onDebuggerDisconnectNotice?: () => void | Promise<void>
+    privateRoots?: { workspace?: readonly string[]; home?: readonly string[] }
     declaration: { port: number }
   }[]
   /** Fails the next check with this refusal, as a taken port or a missing entry does. */
@@ -57,6 +60,8 @@ export interface FakeApiServer {
   ): void
   /** Delivers one chunk of the API's output to the run, as the launcher does. */
   emitOutput(text: string, channel?: 'stdout' | 'stderr'): Promise<void>
+  /** Tells the run what the launcher tells it once Node's debugger-disconnect notice was read on the raw stderr and the API is confirmed to be ending. */
+  emitDisconnectNotice(): Promise<void>
   /** Whether the group was killed before anything else. */
   killedFirst: boolean
 }
@@ -96,6 +101,9 @@ export function createFakeApiServer() {
         channel,
         text,
       })
+    },
+    emitDisconnectNotice: async () => {
+      await fake.checkInputs[0]?.onDebuggerDisconnectNotice?.()
     },
   }
   const instance = (packageRoot: string, port: number) => ({
@@ -151,6 +159,11 @@ export function createFakeApiServer() {
         declaration: { packageRoot: string; port: number }
         secrets?: () => ReadonlySet<string>
         onOutput?: (event: ProcessOutputEvent) => void | Promise<void>
+        onDebuggerDisconnectNotice?: () => void | Promise<void>
+        privateRoots?: {
+          workspace?: readonly string[]
+          home?: readonly string[]
+        }
       }) => {
         fake.events.push('check')
         fake.checkInputs.push(input)

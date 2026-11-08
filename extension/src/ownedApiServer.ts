@@ -2,6 +2,7 @@ import { homedir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
+  NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
   NODE_SERVER_GROUP_EXIT_POLL_MS,
   NODE_SERVER_READY_TIMEOUT_MS,
   NODE_SERVER_STOP_DEADLINE_MS,
@@ -17,6 +18,7 @@ import type { Cdp } from './runtimeSupport/cdp'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertNodeServerPortFree } from './utils/assertNodeServerPortFree'
 import type { ProcessOutputEvent } from './utils/captureProcessOutput'
+import { createNoticeLineDetector } from './utils/createNoticeLineDetector'
 import {
   hidePrivatePaths,
   serverExitedError,
@@ -68,6 +70,11 @@ export type OwnedApiServerInput = {
   onOutput?: (event: ProcessOutputEvent) => void | Promise<void>
   /** The values the learner typed during the run, read at every output chunk (the set grows after the launch); they are masked in every form a server may echo. */
   secrets?: () => ReadonlySet<string>
+  /**
+   * Called when Node's debugger-disconnect notice appeared as a complete stderr line (read on the raw stream, before masking) and the process is confirmed to be ending: it listens on nothing but its inspector.
+   * An application line that merely repeats the notice while the API still listens never calls it (`api-server.notice-ignored` is journaled instead).
+   */
+  onDebuggerDisconnectNotice?: () => void | Promise<void>
   /** Called with the byte count of held output that was dropped instead of published. */
   onWithheld?: (bytes: number) => void
   /** The private roots the output must not carry. */
@@ -210,6 +217,14 @@ export class OwnedApiServer {
       resolved,
       launch: async () => {
         const claim = claimOwnedDevelopmentPort(declaration.port)
+        // The notice is read from the raw stderr lines; the instance exists once the launch returned.
+        let owner: OwnedApiServer | undefined
+        const noticeDetector = input.onDebuggerDisconnectNotice
+          ? createNoticeLineDetector(
+              NODE_SERVER_DEBUGGER_DISCONNECT_NOTICE,
+              () => void owner?.forwardDisconnectNotice(),
+            )
+          : undefined
         try {
           const launched = await launchNodeServer(
             {
@@ -227,11 +242,19 @@ export class OwnedApiServer {
                     ),
                   }
                 : {}),
+              ...(noticeDetector
+                ? {
+                    onRawText: (channel: string, text: string): void => {
+                      if (channel === 'stderr') noticeDetector.write(text)
+                    },
+                  }
+                : {}),
             },
             input.record,
             input.onOutput,
           )
-          return new OwnedApiServer(launched, input, resolved, claim)
+          owner = new OwnedApiServer(launched, input, resolved, claim)
+          return owner
         } catch (error) {
           // A launch that never produced a server holds no port.
           releaseOwnedDevelopmentPort(claim)
@@ -239,6 +262,27 @@ export class OwnedApiServer {
         }
       },
     }
+  }
+
+  /**
+   * Passes the debugger-disconnect notice on once the process is confirmed to be ending.
+   * The notice is text the application controls, so it counts only when the process listens on nothing but its inspector; otherwise it is journaled as ignored.
+   * Called by the raw stderr detector of {@link OwnedApiServer.check}'s launch.
+   * @example await api.forwardDisconnectNotice()
+   */
+  private async forwardDisconnectNotice(): Promise<void> {
+    if (this.closing || this.launched.exitedEvent()) return
+    const ports = await readListeningPortsOfProcess(this.pid).catch(
+      () => undefined,
+    )
+    // An unreadable listener table proves nothing, so the notice is not trusted either.
+    if (!ports || ports.some((port) => port !== this.inspectorPort)) {
+      this.input.record('api-server.notice-ignored', { pid: this.pid })
+      return
+    }
+    await Promise.resolve(this.input.onDebuggerDisconnectNotice?.()).catch(
+      () => undefined,
+    )
   }
 
   /**

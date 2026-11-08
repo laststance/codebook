@@ -21,11 +21,7 @@ import {
 } from './utils/apiServerRunHarness'
 import { freeLoopbackPort } from './utils/freeLoopbackPort'
 import { removeTestFolder } from './utils/removeTestFolder'
-import {
-  journalTypes,
-  publishedPause,
-  sendOperation,
-} from './utils/routeHandlerRunHarness'
+import { publishedPause, sendOperation } from './utils/routeHandlerRunHarness'
 
 const SECRET = 'hunter2-typed-by-learner'
 
@@ -235,13 +231,10 @@ test('the debugger-disconnect notice on the API stderr detaches the run from the
   const harness = await apiServerRunHarness(context)
   await harness.run.prepare()
   // Act
-  await harness.fake.emitOutput(
-    'Waiting for the debugger to disconnect...\n',
-    'stderr',
-  )
+  // The launcher reads the notice on the raw stderr lines and calls the run once the API is confirmed to be ending.
+  await harness.fake.emitDisconnectNotice()
   // Assert
   assert.equal(harness.releases.includes('debugger'), true)
-  assert.equal(journalTypes(harness).includes('api-server.output'), true)
 })
 
 // Value: protects=E-13: a port that an earlier Codebook node-server run still holds is refused PORT_UNAVAILABLE for the API before anything starts, in the API's words; fails_when=the API is checked free, or the refusal speaks as the node-server profile; no_claim=a foreign listener's probe (ownedApiServer.test.ts)
