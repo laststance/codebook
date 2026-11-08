@@ -97,6 +97,7 @@ export interface SignInBrowserOptions {
  * @param profile - The saved-session folder.
  * @param url - The sign-in page.
  * @param headless - Test seam only; the product opens a window the learner can see.
+ * @param hostResolverRules - The whole `--host-resolver-rules=…` switch of a declared `reverseProxy` host (API 1.40); absent at localhost.
  * @example
  * signInBrowserArguments('/p', 'http://localhost:3165/login') // => ['--remote-debugging-pipe', '--no-first-run', …, 'http://localhost:3165/login']
  */
@@ -104,6 +105,7 @@ export function signInBrowserArguments(
   profile: string,
   url: string,
   headless = false,
+  hostResolverRules?: string,
 ): string[] {
   return ownedChromeArguments({
     profile,
@@ -111,6 +113,7 @@ export function signInBrowserArguments(
     headless,
     startUrl: url,
     diskCacheBytes: SIGN_IN_PROFILE_DISK_CACHE_BYTES,
+    hostResolverRules,
   })
 }
 
@@ -259,7 +262,12 @@ export async function launchSignInBrowser(
   options.signal.throwIfAborted()
   const browser = dependencies.spawnBrowser(
     options.executable,
-    signInBrowserArguments(options.profile, options.url, options.headless),
+    signInBrowserArguments(
+      options.profile,
+      options.url,
+      options.headless,
+      options.hostResolverRules,
+    ),
   )
   const cdp = new WebSocketFlatCdp(browser.transport)
   const pages = new Set<string>()
