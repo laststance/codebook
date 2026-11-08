@@ -642,11 +642,15 @@ test('killing an owned API whose group id was replaced sends no signal', async (
   const repository = await apiRepository(t, { mode: 'api' })
   const signals: string[] = []
   let processGroup = 0
+  let isOriginalGroupEnded = false
   const { api } = await launchApi(t, repository, {
     signalGroup: (_group, signal) => void signals.push(signal),
-    // The original group ends on its own while the id is checked, as a leader that exited before the probe does; the id then reads as another group's.
+    // The original group ends on its own while the id is checked, as a leader that exited before the probe does; the id then reads as another group's. It ends once: a later check (the teardown's close) finds it gone.
     confirmGroup: async () => {
-      process.kill(-processGroup, 'SIGKILL')
+      if (!isOriginalGroupEnded) {
+        isOriginalGroupEnded = true
+        process.kill(-processGroup, 'SIGKILL')
+      }
       return 'replaced'
     },
   })

@@ -125,7 +125,7 @@ test('a source-drift seal refusal ends with EXPO_WEB_SEAL_FAILED, not SERVER_EXI
   )
 })
 
-// Value: protects=F4: a seal refusal whose group kill times out keeps EXPO_WEB_SEAL_FAILED and the run resource shows cleanup "failed" with the pid; fails_when=the kill's error replaces the seal refusal or no cleanup failure is recorded; no_claim=a real stuck process
+// Value: protects=F4: a seal refusal whose group kill times out keeps EXPO_WEB_SEAL_FAILED and the run resource shows cleanup "failed" with the pid; fails_when=the kill's error replaces the seal refusal, no cleanup failure is recorded or a Stop resolves while the kill is unconfirmed; no_claim=a real stuck process
 test('a seal refusal whose kill times out keeps its code and reports cleanup failed', async (context) => {
   // Arrange
   const harness = await apiServerRunHarness(context, {
@@ -135,6 +135,11 @@ test('a seal refusal whose kill times out keeps its code and reports cleanup fai
   // Act
   await hitDriftedScript(harness)
   const view = harness.run.view()
+  // The failure's own Stop (joined here, or retried when it already ended) rejects while the kill is not confirmed.
+  const firstStop = await harness.run.stop().then(
+    () => 'stopped',
+    (error: Error) => error.message,
+  )
   // Assert
   assert.deepEqual(
     {
@@ -143,12 +148,20 @@ test('a seal refusal whose kill times out keeps its code and reports cleanup fai
       ),
       cleanup: view.apiServer?.cleanup,
       pid: view.apiServer?.pid,
+      firstStop,
     },
-    { sealFailed: true, cleanup: 'failed', pid: 4242 },
+    {
+      sealFailed: true,
+      cleanup: 'failed',
+      pid: 4242,
+      firstStop:
+        'owned API server stop: process 4242 could not be confirmed gone (cleanup failed)',
+    },
   )
-  // The retried Stop of the test's own cleanup closes the group.
+  // A retried Stop whose kill now succeeds releases the API before the harness's own Stop.
   harness.fake.closeFails = false
   harness.fake.events = []
+  await harness.run.stop()
 })
 
 // Value: protects=E-6 regression guard: an API that exits by itself while its pause is held still ends the run with SERVER_EXITED; fails_when=the run's own-ending guard swallows a genuine exit; no_claim=js-debug's real order
