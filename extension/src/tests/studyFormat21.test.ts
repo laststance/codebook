@@ -589,8 +589,8 @@ test('only format 21 holds a press: older formats, a format 21 study without one
   )
 })
 
-// Value: protects=D38 Codebook 0.2.102 (readable up to 20) lists .study.v21.json as saved by a newer Codebook, this one reads 21 and refuses 23; fails_when=the file name rule stops recognising v21, the readable limit stays 20, or format 21 is not an operations format; no_claim=the 0.2.102 binary
-test('Codebook 0.2.102 lists a .study.v21.json archive and its sidecar as saved by a newer Codebook; this one reads 21', async () => {
+// Value: protects=D38 Codebook 0.2.102 (readable up to 20) lists .study.v21.json as saved by a newer Codebook, this one reads 22 and refuses 23; fails_when=the file name rule stops recognising v21, the readable limit stays 20, or format 21 is not an operations format; no_claim=the 0.2.102 binary
+test('Codebook 0.2.102 lists a .study.v21.json archive and its sidecar as saved by a newer Codebook; this one reads 22', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 20 }
   const newerStudyArchive = await loadModule<typeof NewerStudyArchiveModule>(
@@ -605,7 +605,8 @@ test('Codebook 0.2.102 lists a .study.v21.json archive and its sidecar as saved 
   assert.equal(sidecar, undefined)
   assert.equal(READABLE_STUDY_VERSION, 22)
   assert.equal(isOperationsStudyFormat(21), true)
-  assert.equal(isOperationsStudyFormat(22), false)
+  assert.equal(isOperationsStudyFormat(22), true)
+  assert.equal(isOperationsStudyFormat(23), false)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 21 }))
   assert.throws(
     () => assertReadableStudyFormat({ version: 23 }),
