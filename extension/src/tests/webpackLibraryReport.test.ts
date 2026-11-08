@@ -373,6 +373,22 @@ test('wrapped and error lines name their compilers', () => {
   assert.equal(reader.errorCause, 'boom')
 })
 
+test('a server compiler that announces no output folder is named, while a client without one is not', () => {
+  // Value: protects=the reader names the first non-client compiler whose wrapped line carried no output folder, so its scripts are never silently treated as foreign; fails_when=an empty server output path is dropped without a cause or a client line without one is reported; no_claim=the attribution's unreadable sentence (route tests)
+  // Arrange
+  const reader = new WebpackLibraryReportReader()
+
+  // Act
+  reader.append(
+    Buffer.from(
+      '{"wrapped":true,"compiler":"client","outputPath":""}\n{"wrapped":true,"compiler":"edge-server","outputPath":""}\n{"wrapped":true,"compiler":"server","outputPath":""}\n',
+    ),
+  )
+
+  // Assert
+  assert.equal(reader.serverOutputUnknownCause, 'edge-server')
+})
+
 test('a server script matches by real path under the compiler output folder and by hash', () => {
   // Value: protects=a server script is tied to its emitted asset by file path plus SHA-256 and to nothing by script id; fails_when=a wrong hash, a path outside the announced output folder or a page compiler's asset matches a server script; no_claim=js-debug URL spelling
   // Arrange
