@@ -7,7 +7,10 @@ import {
   REVERSE_PROXY_PROOF_BODY_LIMIT_BYTES,
   REVERSE_PROXY_PROOF_PATH_PREFIX,
 } from '../constants'
-import type { ReverseProxyRefusalReason } from '../constants'
+import type {
+  ReverseProxyRefusalReason,
+  ReverseProxyUnreachableKind,
+} from '../constants'
 
 import type { ParsedReverseProxyOrigin } from './parseReverseProxyOrigin'
 
@@ -59,18 +62,21 @@ export type ReverseProxyProofResult =
       tlsCode?: string
       /** The bound that ended the request, for `proof-timeout`. */
       timeoutMs?: number
+      /** Which sentence a `proof-unreachable` refusal uses: `refused` (`ECONNREFUSED`), `no-route` (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`) or `reset` (`ECONNRESET`, `EPIPE`, `ETIMEDOUT`). */
+      unreachableKind?: ReverseProxyUnreachableKind
     }
 
-/** Transport error codes that mean nothing answered (before or after the write). */
-const UNREACHABLE_CODES: ReadonlySet<string> = new Set([
-  'ECONNREFUSED',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ECONNRESET',
-  'EPIPE',
-  'ETIMEDOUT',
-  'ENOTFOUND',
-])
+/** Transport error codes that mean nothing answered (before or after the write), each with the kind of failure the refusal names. */
+const UNREACHABLE_KINDS: ReadonlyMap<string, ReverseProxyUnreachableKind> =
+  new Map([
+    ['ECONNREFUSED', 'refused'],
+    ['EHOSTUNREACH', 'no-route'],
+    ['ENETUNREACH', 'no-route'],
+    ['ENOTFOUND', 'no-route'],
+    ['ECONNRESET', 'reset'],
+    ['EPIPE', 'reset'],
+    ['ETIMEDOUT', 'reset'],
+  ])
 
 /** Certificate codes of a chain the system store does not vouch for. */
 const UNTRUSTED_CODES: ReadonlySet<string> = new Set([
@@ -99,7 +105,7 @@ export function reasonOfTransportCode(
   code: string | undefined,
 ): ReverseProxyProofFailureReason {
   if (code === undefined) return 'proof-unclassified'
-  if (UNREACHABLE_CODES.has(code)) return 'proof-unreachable'
+  if (UNREACHABLE_KINDS.has(code)) return 'proof-unreachable'
   if (UNTRUSTED_CODES.has(code)) return 'certificate-untrusted'
   if (EXPIRED_CODES.has(code)) return 'certificate-expired'
   if (code === 'ERR_TLS_CERT_ALTNAME_INVALID')
@@ -107,6 +113,20 @@ export function reasonOfTransportCode(
   return /^(CERT_|ERR_TLS_|ERR_SSL_)/.test(code)
     ? 'certificate-invalid'
     : 'proof-unclassified'
+}
+
+/**
+ * Names which `proof-unreachable` sentence a transport error code gets.
+ * @param code - `error.code`.
+ * @returns `refused`, `no-route` or `reset`; `undefined` for a code that is not an unreachable code.
+ * @example
+ * unreachableKindOfCode('EHOSTUNREACH') // => 'no-route'
+ * unreachableKindOfCode('EPIPE') // => 'reset'
+ */
+export function unreachableKindOfCode(
+  code: string | undefined,
+): ReverseProxyUnreachableKind | undefined {
+  return code === undefined ? undefined : UNREACHABLE_KINDS.get(code)
 }
 
 /**
@@ -265,6 +285,10 @@ export function proveReverseProxy(
         reason,
         requestWritten,
         ...(reason.startsWith('certificate-') ? { tlsCode: code } : {}),
+        // The three variants of the unreachable sentence.
+        ...(reason === 'proof-unreachable'
+          ? { unreachableKind: unreachableKindOfCode(code) }
+          : {}),
       })
     }
     const request = startRequest(input, bound)

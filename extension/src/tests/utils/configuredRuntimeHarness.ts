@@ -2334,6 +2334,7 @@ export async function configuredRuntimeHarness(
           ok: true as const,
           address: input.expectedAddress,
           port: input.expectedPort,
+          cleanupConfirmed: true,
         })
       )
     },

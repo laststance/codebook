@@ -7,7 +7,10 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
+  PRIVATE_DIRECTORY_MODE,
+  PRIVATE_FILE_MODE,
   REVERSE_PROXY_PROBE_TIMEOUT_MS,
+  REVERSE_PROXY_PROCESS_QUERY_TIMEOUT_MS,
   REVERSE_PROXY_PROOF_PATH_PREFIX,
   REVERSE_PROXY_PROOF_TIMEOUT_MS,
   REVERSE_PROXY_SYSTEM_CERTIFICATES_TIMEOUT_MS,
@@ -82,9 +85,6 @@ export type ReverseProxyView = {
   proofMs?: number
 }
 
-/** The proof of the spawned server's `ps` field query, bounded so a stuck `ps` cannot hold the run. */
-const PROCESS_QUERY_TIMEOUT_MS = 5_000
-
 /** The facts of a proof the gate issues. */
 type ProofFacts = {
   origin: string
@@ -149,7 +149,7 @@ async function readProcessGroup(
   const { stdout } = await promisify(execFile)(
     await psProgramPath('The process group check of the proof'),
     ['-o', 'pgid=', '-p', String(processId)],
-    { timeout: PROCESS_QUERY_TIMEOUT_MS },
+    { timeout: REVERSE_PROXY_PROCESS_QUERY_TIMEOUT_MS },
   )
   if (!/^\s*\d+\s*$/.test(stdout))
     throw new Error('The process group of the proof is unreadable')
@@ -233,7 +233,11 @@ export class ReverseProxyGate {
     this.dependencies = { ...REAL_DEPENDENCIES, ...options.dependencies }
   }
 
-  /** The facts every failure carries. */
+  /**
+   * The facts every failure carries.
+   *
+   * `resourcesReleased` defaults to `true` because at the reasons that do not pass `extra.resourcesReleased` the gate holds nothing: the resolution reasons come before anything starts, and the Node proof comes before the throwaway browser exists (the preload folder is the run's to dispose, and the run ANDs in its own confirmed stop of the server). The probe's reasons pass the probe's own confirmed cleanup instead.
+   */
   private failure(
     reason: ReverseProxyRefusalReason,
     extra: Partial<ReverseProxyRefusalFacts> = {},
@@ -292,10 +296,10 @@ export class ReverseProxyGate {
     if (this.startFacts !== undefined) return this.startFacts
     const folder = await mkdtemp(join(tmpdir(), 'codebook-reverse-proxy-'))
     this.preloadFolder = folder
-    await chmod(folder, 0o700)
+    await chmod(folder, PRIVATE_DIRECTORY_MODE)
     const preloadPath = join(folder, 'identity-preload.cjs')
     await writeFile(preloadPath, buildReverseProxyIdentityPreloadSource(), {
-      mode: 0o600,
+      mode: PRIVATE_FILE_MODE,
     })
     this.startFacts = {
       upstreamPort: this.options.declaration.upstreamPort,
@@ -346,7 +350,12 @@ export class ReverseProxyGate {
       },
       signal,
     )
-    if (!certificates.ok) return this.failure('proof-unclassified', { address })
+    // No request was started, so the refusal reports that nothing was sent.
+    if (!certificates.ok)
+      return this.failure('proof-unclassified', {
+        address,
+        proofNotStarted: true,
+      })
     const challenge = randomHex(16)
     const result = await this.dependencies.prove(
       {
@@ -413,7 +422,7 @@ export class ReverseProxyGate {
     )
     if (result.ok) return undefined
     this.proof = undefined
-    const { ok, reason, ...facts } = result
+    const { ok, reason, cleanupConfirmed, ...facts } = result
     void ok
     return this.failure(reason, {
       address,
@@ -421,6 +430,8 @@ export class ReverseProxyGate {
         ? { timeoutMs: REVERSE_PROXY_PROBE_TIMEOUT_MS }
         : {}),
       ...facts,
+      // The probe's real cleanup (process group ended, profile folder removed), never a constant.
+      resourcesReleased: cleanupConfirmed,
     })
   }
 
@@ -471,12 +482,20 @@ export class ReverseProxyGate {
     }
   }
 
-  /** Removes the preload folder and invalidates the proof; idempotent. */
+  /**
+   * Removes the preload folder and invalidates the proof.
+   *
+   * The folder is forgotten only after the removal succeeded, so a failing `rm` rejects (the run collects it) and a later call tries again; a call after success does nothing.
+   * @throws When the folder cannot be removed.
+   * @example
+   * await gate.dispose()
+   */
   async dispose(): Promise<void> {
     this.proof = undefined
     this.app = undefined
     const folder = this.preloadFolder
+    if (folder === undefined) return
+    await rm(folder, { recursive: true, force: true })
     this.preloadFolder = undefined
-    if (folder !== undefined) await rm(folder, { recursive: true, force: true })
   }
 }

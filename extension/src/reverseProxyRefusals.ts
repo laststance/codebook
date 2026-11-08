@@ -1,6 +1,7 @@
 import {
   REVERSE_PROXY_PROOF_TIMEOUT_MS,
   type ReverseProxyRefusalReason,
+  type ReverseProxyUnreachableKind,
 } from './constants'
 import { StudyError } from './errors'
 
@@ -27,6 +28,10 @@ export type ReverseProxyRefusalFacts = {
   logId?: string
   /** Whether the proof request was written; decides `sideEffects` of `proof-unreachable`. */
   requestWritten?: boolean
+  /** Which sentence `proof-unreachable` uses: connection refused, no route or connection reset. */
+  unreachableKind?: ReverseProxyUnreachableKind
+  /** `true` when the failure came before the proof request was started (the system certificates could not be read), so nothing was sent; only `proof-unclassified` reads it. */
+  proofNotStarted?: boolean
 }
 
 /** What a reason sentence is worded from: the refusal's facts plus the declared origin's host and the port the browser connects to. */
@@ -49,6 +54,13 @@ function browserCertificateSentence({
   return `The browser rejected the certificate of ${origin}${detail} although the proof accepted it.`
 }
 
+/** The parenthesized variant of the `proof-unreachable` sentence, or nothing when the failure came from the browser check, which names its own error. */
+const UNREACHABLE_VARIANTS: Record<ReverseProxyUnreachableKind, string> = {
+  refused: ' (connection refused)',
+  'no-route': ' (no route)',
+  reset: ' (connection reset)',
+}
+
 /** `address:port`, with an IPv6 address bracketed. */
 function addressWithPort(address: string, port: number): string {
   return address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`
@@ -65,8 +77,8 @@ const REASON_SENTENCES: Record<
     `The host ${host} resolves to ${address}, which is not a loopback address; Codebook trusts only a proxy on this machine.`,
   'same-socket': ({ address = '', effectivePort }) =>
     `The origin's address ${addressWithPort(address, effectivePort)} is the address the development server needs, so the proxy and the server cannot share it.`,
-  'proof-unreachable': ({ origin, requestWritten }) =>
-    `No request completed at ${origin} (${requestWritten ? 'connection reset' : 'connection refused or no route'}).`,
+  'proof-unreachable': ({ origin, unreachableKind }) =>
+    `No request completed at ${origin}${unreachableKind === undefined ? '' : UNREACHABLE_VARIANTS[unreachableKind]}.`,
   'proof-wrong-server': ({ origin, status, upstreamPort }) =>
     `${origin} answered${status === undefined ? '' : ` with status ${status}`} but not with the identity of the development server Codebook started on port ${upstreamPort}.`,
   'proof-redirected': ({ origin, status }) =>
@@ -93,7 +105,7 @@ const REASON_SENTENCES: Record<
     `The browser reached ${browserAddress} for ${origin}, not the checked address ${address}.`,
 }
 
-/** The `Fix:` sentence of each reason, shown to the learner (also by the saved-session setup). */
+/** The `Fix:` sentence of each reason, shown to the learner (also by the saved-session setup); {@link fixOf} words `proof-unclassified` by whether a log id exists. */
 const REASON_FIXES: Record<ReverseProxyRefusalReason, string> = {
   'not-resolved':
     'Map the host to a loopback address with a hosts entry or local DNS, then ask for a new run.',
@@ -119,7 +131,7 @@ const REASON_FIXES: Record<ReverseProxyRefusalReason, string> = {
   'browser-certificate-rejected':
     "Check the proxy's certificate in the browser; Codebook never bypasses certificate checks.",
   'browser-address-mismatch':
-    'Let your browser reach your host name directly: add it to your system proxy bypass list.',
+    'Let the browser reach your host name directly: add it to your system proxy bypass list.',
 }
 
 /** The reasons decided before anything starts, whose opening says nothing was started. */
@@ -143,6 +155,10 @@ const REASONS_THAT_REACHED_A_RESPONDER: ReadonlySet<ReverseProxyRefusalReason> =
 const PROOF_GET_SENTENCE =
   'Codebook sent one GET of its proof path and no operation.'
 
+/** The `proof-unclassified` Fix when no log id exists: the saved-session setup refuses without one, so the learner is sent to the reverse proxy line of the Output instead. */
+const PROOF_UNCLASSIFIED_FIX_WITHOUT_LOG_ID =
+  'Look for the reverse proxy line in Output > Codebook; ask for a new run only if you know the cause.'
+
 /** The optional facts that become `details` fields. */
 const OPTIONAL_DETAIL_FIELDS = [
   'address',
@@ -159,18 +175,22 @@ const OPTIONAL_DETAIL_FIELDS = [
  *
  * Called by {@link reverseProxyRefusal} for the message and the details.
  * @param reason - The refusal reason.
- * @param requestWritten - Whether the proof request was written (only `proof-unreachable` reads it).
+ * @param facts - {@link ReverseProxyRefusalFacts}; `requestWritten` is read by `proof-unreachable`, `proofNotStarted` by `proof-unclassified`.
  * @returns `unknown` when a responder Codebook does not control may have received the proof path, else `none`.
  * @example
- * sideEffectsOf('proof-timeout', undefined) // => 'unknown'
- * sideEffectsOf('proof-unreachable', false) // => 'none'
+ * sideEffectsOf('proof-timeout', { origin: 'https://app.example.test', upstreamPort: 4310, resourcesReleased: true }) // => 'unknown'
+ * sideEffectsOf('proof-unclassified', { origin: 'https://app.example.test', upstreamPort: 4310, resourcesReleased: true, proofNotStarted: true }) // => 'none'
  */
 function sideEffectsOf(
   reason: ReverseProxyRefusalReason,
-  requestWritten: boolean | undefined,
+  facts: ReverseProxyRefusalFacts,
 ): 'none' | 'unknown' {
   // A reset after the write may follow a forward by the proxy; a refused connection cannot.
-  if (reason === 'proof-unreachable') return requestWritten ? 'unknown' : 'none'
+  if (reason === 'proof-unreachable')
+    return facts.requestWritten ? 'unknown' : 'none'
+  // No request was started when the system certificates could not be read, so nothing reached any server.
+  if (reason === 'proof-unclassified' && facts.proofNotStarted === true)
+    return 'none'
   return REASONS_THAT_REACHED_A_RESPONDER.has(reason) ? 'unknown' : 'none'
 }
 
@@ -196,6 +216,26 @@ function openingOf(
   return facts.resourcesReleased
     ? `${declared}, so no run browser opened and the development server it started was stopped.`
     : `${declared}, so no run browser opened, and Codebook could not confirm that it stopped the development server it started.`
+}
+
+/**
+ * Words the `Fix:` sentence of a refusal.
+ *
+ * Called by {@link reverseProxyRefusal}.
+ * @param reason - The refusal reason.
+ * @param facts - {@link ReverseProxyRefusalFacts}; only a `proof-unclassified` refusal reads `logId`.
+ * @returns The fix; the one for `proof-unclassified` names the log id only when the refusal carries one.
+ * @example
+ * fixOf('proof-unclassified', { origin: 'https://app.example.test', upstreamPort: 4310, resourcesReleased: true }) // => 'Look for the reverse proxy line in Output > Codebook; ask for a new run only if you know the cause.'
+ */
+function fixOf(
+  reason: ReverseProxyRefusalReason,
+  facts: ReverseProxyRefusalFacts,
+): string {
+  // The saved-session setup refuses without a log id, so its learner gets the variant that needs none.
+  if (reason === 'proof-unclassified' && facts.logId === undefined)
+    return PROOF_UNCLASSIFIED_FIX_WITHOUT_LOG_ID
+  return REASON_FIXES[reason]
 }
 
 /**
@@ -251,12 +291,12 @@ export function reverseProxyRefusal(
     host: url.hostname,
     effectivePort,
   })
-  const sideEffects = sideEffectsOf(reason, facts.requestWritten)
+  const sideEffects = sideEffectsOf(reason, facts)
   // A refusal after which something may have been sent says so before the Fix line.
   const sent = sideEffects === 'unknown' ? ` ${PROOF_GET_SENTENCE}` : ''
   return new StudyError(
     'REVERSE_PROXY_REFUSED',
-    `${openingOf(reason, facts)} ${sentence}${sent} Fix: ${REASON_FIXES[reason]}`,
+    `${openingOf(reason, facts)} ${sentence}${sent} Fix: ${fixOf(reason, facts)}`,
     undefined,
     undefined,
     undefined,

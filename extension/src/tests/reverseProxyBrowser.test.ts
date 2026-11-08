@@ -28,6 +28,7 @@ import {
 import { resolveChromeExecutable } from '../utils/resolveChromeExecutable'
 
 import { removeTestFolder } from './utils/removeTestFolder'
+import { createSelfSignedCertificate } from './utils/selfSignedCertificate'
 
 const run = promisify(execFile)
 
@@ -199,6 +200,7 @@ test('probe passes and reports the pinned address and port for a host name that 
     ok: true,
     address: '127.0.0.1',
     port: target.port,
+    cleanupConfirmed: true,
   })
   assert.equal(target.requests[0]?.headers.host, `${HOST}:${target.port}`)
 })
@@ -250,6 +252,7 @@ test('probe reports proof-redirected with the status when the server answers 302
     ok: false,
     reason: 'proof-redirected',
     status: 302,
+    cleanupConfirmed: true,
   })
   assert.ok(target.requests.length >= 1)
 })
@@ -275,6 +278,7 @@ test('probe reports proof-wrong-server with the status when the server answers 4
     ok: false,
     reason: 'proof-wrong-server',
     status: 404,
+    cleanupConfirmed: true,
   })
 })
 
@@ -292,7 +296,11 @@ test('probe reports proof-timeout when the server never answers', async (context
   )
 
   // Assert
-  assert.deepEqual(result, { ok: false, reason: 'proof-timeout' })
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'proof-timeout',
+    cleanupConfirmed: true,
+  })
 })
 
 // Value: protects=the saved profile's cookies never ride on the check; fails_when=the probe sends a cookie or authorization header, or keeps cookies from an earlier probe; no_claim=cookies of a profile the probe never opens.
@@ -361,31 +369,8 @@ test('probe reports browser-certificate-untrusted for a self-signed https server
   // Arrange
   const chrome = await chromeOf(context)
   if (chrome === undefined) return
-  const folder = await mkdtemp(join(tmpdir(), 'codebook-probe-cert-'))
-  context.after(() => removeTestFolder(folder))
-  const keyFile = join(folder, 'server.pem')
-  const certFile = join(folder, 'server.crt')
-  await run('openssl', [
-    'req',
-    '-x509',
-    '-newkey',
-    'rsa:2048',
-    '-nodes',
-    '-days',
-    '1',
-    '-subj',
-    `/CN=${HOST}`,
-    '-addext',
-    `subjectAltName=DNS:${HOST}`,
-    '-keyout',
-    keyFile,
-    '-out',
-    certFile,
-  ])
-  const options = {
-    key: await readFile(keyFile),
-    cert: await readFile(certFile),
-  }
+  const { certificate, privateKey } = await createSelfSignedCertificate(HOST)
+  const options = { key: privateKey, cert: certificate }
   const target = await listen(context, ok, '127.0.0.1', (handle) =>
     createHttpsServer(options, handle),
   )
@@ -403,6 +388,7 @@ test('probe reports browser-certificate-untrusted for a self-signed https server
     ok: false,
     reason: 'browser-certificate-untrusted',
     browserError: 'net::ERR_CERT_AUTHORITY_INVALID',
+    cleanupConfirmed: true,
   })
 })
 
@@ -424,5 +410,97 @@ test('probe passes for a host pinned to the IPv6 loopback', async (context) => {
   )
 
   // Assert
-  assert.deepEqual(result, { ok: true, address: '::1', port: target.port })
+  assert.deepEqual(result, {
+    ok: true,
+    address: '::1',
+    port: target.port,
+    cleanupConfirmed: true,
+  })
+})
+
+/**
+ * Writes an executable that records its process id and then waits, standing for a Chrome that never opens its debugging port.
+ * @param context - The test, which removes the folder.
+ * @returns The wrapper's path and the file that receives its process id.
+ */
+async function stuckChrome(
+  context: TestContext,
+): Promise<{ script: string; pidFile: string }> {
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-stuck-chrome-'))
+  context.after(() => removeTestFolder(folder))
+  const script = join(folder, 'chrome.sh')
+  const pidFile = join(folder, 'pid')
+  await writeFile(script, `#!/bin/sh\necho $$ > '${pidFile}'\nexec sleep 60\n`)
+  await chmod(script, 0o755)
+  return { script, pidFile }
+}
+
+// Value: protects=O2-2 a Stop during Chrome's start ends the check at once instead of polling for the debugging port to the bound; fails_when=an abort while Chrome is still starting waits for the 20 s bound, or leaves the process or the profile folder behind; no_claim=the length of a real Chrome's start
+test('probe returns within about a second when the run is cancelled while Chrome is still starting and leaves no process or folder', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') return context.skip('POSIX wrapper script')
+  const { script, pidFile } = await stuckChrome(context)
+  const foldersBefore = await probeFolders()
+  const controller = new AbortController()
+  const reason = new Error('stopped by the test')
+  const startedAt = Date.now()
+
+  // Act
+  const pending = probeBrowserAddress(inputOf(script, 1), controller.signal)
+  setTimeout(() => controller.abort(reason), 300)
+  const outcome = await pending.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const elapsedMs = Date.now() - startedAt
+
+  // Assert
+  assert.equal(outcome, reason)
+  assert.ok(elapsedMs < 1_500, `took ${elapsedMs} ms`)
+  const pid = Number((await readFile(pidFile, 'utf8')).trim())
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  assert.deepEqual(await probeFolders(), foldersBefore)
+})
+
+// Value: protects=O2-3 a binary that does not exist ends the check at once as proof-unclassified; fails_when=the probe polls for a port file to its bound or leaves the profile folder; no_claim=what the missing binary was
+test('probe reports proof-unclassified well under the bound for a Chrome binary that does not exist and leaves no folder', async () => {
+  // Arrange
+  const foldersBefore = await probeFolders()
+  const startedAt = Date.now()
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf('/nonexistent/codebook-chrome', 1),
+    new AbortController().signal,
+  )
+  const elapsedMs = Date.now() - startedAt
+
+  // Assert
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'proof-unclassified',
+    cleanupConfirmed: true,
+  })
+  assert.ok(elapsedMs < 3_000, `took ${elapsedMs} ms`)
+  assert.deepEqual(await probeFolders(), foldersBefore)
+})
+
+// Value: protects=O2-1 the profile folder is removed when the spawn itself throws after the folder was made; fails_when=a spawn that throws leaves a codebook-probe folder; no_claim=a failing realpath (the same record covers it)
+test('probe removes its profile folder when the spawn throws', async () => {
+  // Arrange
+  const foldersBefore = await probeFolders()
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf('chrome\0binary', 1),
+    new AbortController().signal,
+  )
+
+  // Assert
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'proof-unclassified',
+    cleanupConfirmed: true,
+  })
+  assert.deepEqual(await probeFolders(), foldersBefore)
 })

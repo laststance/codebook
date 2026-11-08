@@ -371,6 +371,7 @@ test('a failed browser address check refuses the run before the real browser ope
           ok: false,
           reason: 'browser-address-mismatch',
           browserAddress: '192.0.2.7',
+          cleanupConfirmed: true,
         }),
       },
     },

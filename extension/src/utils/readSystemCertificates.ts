@@ -3,10 +3,9 @@ import { promisify } from 'node:util'
 
 import { z } from 'zod'
 
-const execFileAsync = promisify(execFile)
+import { REVERSE_PROXY_SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES } from '../constants'
 
-/** The room the child gets to print the whole system store (a few hundred certificates are well under it). */
-const SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES = 16 * 1024 * 1024
+const execFileAsync = promisify(execFile)
 
 /** The one-line program the learner's Node runs to print its view of the operating system's trust store. */
 const PRINT_SYSTEM_CERTIFICATES_PROGRAM =
@@ -51,7 +50,7 @@ export async function readSystemCertificates(
       {
         env: input.environment,
         timeout: input.timeoutMs,
-        maxBuffer: SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES,
+        maxBuffer: REVERSE_PROXY_SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES,
         signal,
         windowsHide: true,
       },

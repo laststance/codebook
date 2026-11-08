@@ -1,10 +1,8 @@
 import {
   HTTP_REDIRECT_STATUS_END,
   HTTP_REDIRECT_STATUS_MIN,
+  REVERSE_PROXY_OWN_REDIRECT_HOP_LIMIT,
 } from '../constants'
-
-/** How many redirects the readiness request of a reverse proxy run follows by hand before it gives up. */
-const OWN_REDIRECT_HOP_LIMIT = 5
 
 /**
  * Resolves where a redirect answer points.
@@ -53,7 +51,7 @@ export async function followOwnRedirects(
   const ownOrigin = new URL(startUrl).origin
   let url = startUrl
   let response = await send(url)
-  for (let hop = 0; hop < OWN_REDIRECT_HOP_LIMIT; hop += 1) {
+  for (let hop = 0; hop < REVERSE_PROXY_OWN_REDIRECT_HOP_LIMIT; hop += 1) {
     const target = redirectTargetOf(response, url)
     // Not a redirect: this is the final answer.
     if (target === undefined) return response

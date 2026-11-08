@@ -102,6 +102,32 @@ export const REVERSE_PROXY_PROBE_TIMEOUT_MS = 10_000
 export const REVERSE_PROXY_SYSTEM_CERTIFICATES_TIMEOUT_MS = 5_000
 /** The most body bytes of the proof answer that are read (a 64-character hex digest needs 64). */
 export const REVERSE_PROXY_PROOF_BODY_LIMIT_BYTES = 128
+/** What kind of failure a `proof-unreachable` refusal names in its reason sentence: `connection refused`, `no route` or `connection reset`. */
+export const REVERSE_PROXY_UNREACHABLE_KINDS = [
+  'refused',
+  'no-route',
+  'reset',
+] as const
+/** One kind of {@link REVERSE_PROXY_UNREACHABLE_KINDS}. */
+export type ReverseProxyUnreachableKind =
+  (typeof REVERSE_PROXY_UNREACHABLE_KINDS)[number]
+/** How often the browser address check looks for Chrome's `DevToolsActivePort` file and for the first page target. */
+export const REVERSE_PROXY_PROBE_POLL_MS = 50
+/** How long the end of the throwaway Chrome's process group may take before the browser address check stops waiting for it. */
+export const REVERSE_PROXY_PROBE_CLEANUP_BOUND_MS = 5_000
+/** How long the WebSocket to the throwaway Chrome may take to open (also capped by what is left of {@link REVERSE_PROXY_PROBE_TIMEOUT_MS}). */
+export const REVERSE_PROXY_PROBE_CONNECT_BOUND_MS = 5_000
+/** How often the removal of the throwaway Chrome's profile folder is retried (Chrome may still write into it for a moment). */
+export const REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRIES = 20
+/** The pause between two retries of the profile folder removal. */
+export const REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRY_DELAY_MS = 100
+/** How long the `ps` query that binds the proof's answering process to the spawned process group may take. */
+export const REVERSE_PROXY_PROCESS_QUERY_TIMEOUT_MS = 5_000
+/** How many redirects the readiness request of a reverse proxy run follows by hand before it gives up. */
+export const REVERSE_PROXY_OWN_REDIRECT_HOP_LIMIT = 5
+/** The room the child that prints the operating system's trust store gets for its output (a few hundred certificates are well under it). */
+export const REVERSE_PROXY_SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES =
+  16 * 1024 * 1024
 
 /** The kinds of operation a version 3 configuration may declare, the one list every union of operation kinds derives from. @example const kind: OperationKind = 'press' */
 export const OPERATION_KINDS = ['text', 'choose', 'click', 'press'] as const

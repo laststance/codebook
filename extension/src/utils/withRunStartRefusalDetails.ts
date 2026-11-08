@@ -81,8 +81,9 @@ export function withRunStartRefusalDetails(
       runUri,
       sideEffects: 'none',
       retry,
-      logId: `${runId}#start`,
       ...error.details,
+      // The service's id names the line it writes; it wins over a `logId` the refusal carries, which only the run could have guessed.
+      logId: `${runId}#start`,
     },
   )
 }

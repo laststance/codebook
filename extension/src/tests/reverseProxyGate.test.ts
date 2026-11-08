@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile, stat } from 'node:fs/promises'
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import {
@@ -35,7 +36,12 @@ function passingDependencies(
       certificates: ['certificate-text'],
     }),
     prove: async () => ({ ok: true, serverPid: SERVER_PID }),
-    probe: async () => ({ ok: true, address: '127.0.0.1', port: 443 }),
+    probe: async () => ({
+      ok: true,
+      address: '127.0.0.1',
+      port: 443,
+      cleanupConfirmed: true,
+    }),
     processGroupOf: async () => CLI_PID,
     isProcessAlive: () => true,
     ...overrides,
@@ -256,6 +262,69 @@ test('an unreadable system certificate store refuses as proof-unclassified witho
   assert.equal(proofRequests, 0)
 })
 
+// Value: protects=C3-5 the refusal for an unreadable trust store says that no proof request was started; fails_when=the failure facts lack proofNotStarted, so the learner is told one GET was sent; no_claim=the wording of the refusal (reverseProxyRefusals.test)
+test('an unreadable system certificate store marks the failure as before the proof request', async () => {
+  // Arrange
+  const overrides = {
+    readSystemCertificates: async () => ({ ok: false }) as const,
+  }
+  // Act
+  const { failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.facts.proofNotStarted, true)
+})
+
+// Value: protects=C3-5 a proof-unclassified after the Node proof passed stays unknown; fails_when=a failed process-group read after the proof request is reported as nothing sent; no_claim=why ps failed
+test('an unreadable process group after the proof request does not mark the failure as before the proof', async () => {
+  // Arrange
+  const overrides = {
+    processGroupOf: async (): Promise<number> => {
+      throw new Error('ps failed')
+    },
+  }
+  // Act
+  const { failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.reason, 'proof-unclassified')
+  assert.equal(failure?.facts.proofNotStarted, undefined)
+})
+
+// Value: protects=O1-2 the probe's own cleanup decides resourcesReleased; fails_when=a probe that could not end its Chrome or remove its folder still yields resourcesReleased true; no_claim=what the run adds from its own stop
+test('a browser check whose cleanup is unconfirmed refuses with resourcesReleased false', async () => {
+  // Arrange
+  const overrides: Partial<ReverseProxyDependencies> = {
+    probe: async () => ({
+      ok: false,
+      reason: 'browser-address-mismatch',
+      browserAddress: '10.1.2.3',
+      cleanupConfirmed: false,
+    }),
+  }
+  // Act
+  const { failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.reason, 'browser-address-mismatch')
+  assert.equal(failure?.facts.resourcesReleased, false)
+  assert.equal('cleanupConfirmed' in (failure?.facts ?? {}), false)
+})
+
+// Value: protects=O1-2 a confirmed probe cleanup reads as released; fails_when=a confirmed cleanup is reported as false; no_claim=the real Chrome
+test('a browser check whose cleanup is confirmed refuses with resourcesReleased true', async () => {
+  // Arrange
+  const overrides: Partial<ReverseProxyDependencies> = {
+    probe: async () => ({
+      ok: false,
+      reason: 'proof-timeout',
+      cleanupConfirmed: true,
+    }),
+  }
+  // Act
+  const { failure } = await provedGate(overrides)
+  // Assert
+  assert.equal(failure?.reason, 'proof-timeout')
+  assert.equal(failure?.facts.resourcesReleased, true)
+})
+
 // Value: protects=D23 the probe runs after the Node proof with the pin rule, the checked address and a fresh proof path; fails_when=the probe lacks the pin, uses the origin's wrong port, or a probe failure still admits the origin; no_claim=real Chrome (lane H)
 test('a browser address mismatch refuses with both addresses and the probe received the pin and the proof path', async () => {
   // Arrange
@@ -267,6 +336,7 @@ test('a browser address mismatch refuses with both addresses and the probe recei
         ok: false,
         reason: 'browser-address-mismatch',
         browserAddress: '10.1.2.3',
+        cleanupConfirmed: true,
       }
     },
   }
@@ -334,6 +404,38 @@ test('the preload file lives in a private folder with a 64 character secret and 
   assert.equal(fileMode, 0o600)
   assert.equal(content.includes(facts.identity.secret), false)
   await assert.rejects(stat(facts.identity.preloadPath), { code: 'ENOENT' })
+})
+
+// Value: protects=C1-9 a failed removal keeps the preload folder known, so a later dispose removes it; fails_when=dispose forgets the folder before rm succeeded and the folder is never removed; no_claim=other filesystems' error codes
+test('a dispose whose removal failed rejects and a later dispose removes the folder', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') return context.skip('uses POSIX modes')
+  if (process.getuid?.() === 0) return context.skip('root ignores modes')
+  const gate = newGate()
+  await gate.resolve(new AbortController().signal)
+  const { identity } = await gate.preparePreload()
+  const folder = dirname(identity.preloadPath)
+  const locked = join(folder, 'locked')
+  await mkdir(locked)
+  await writeFile(join(locked, 'held'), 'x')
+  await chmod(locked, 0o500)
+
+  // Act
+  const failed = await gate.dispose().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const folderAfterFailure = await stat(folder).then(
+    () => true,
+    () => false,
+  )
+  await chmod(locked, 0o700)
+  await gate.dispose()
+
+  // Assert
+  assert.ok(failed instanceof Error)
+  assert.equal(folderAfterFailure, true)
+  await assert.rejects(stat(folder), { code: 'ENOENT' })
 })
 
 // Value: protects=D25 cancellation during the proof ends the gate with the signal's reason and no admission; fails_when=the abort becomes a refusal or the origin is admitted; no_claim=the transport destroying its socket (lane C)

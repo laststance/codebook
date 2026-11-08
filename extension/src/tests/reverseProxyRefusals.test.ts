@@ -82,13 +82,18 @@ test('same-socket names the shared socket with the IPv6 address bracketed', () =
 // Value: protects=AC 2 proof-unreachable with no request written is side-effect free; fails_when=a refused connection reports unknown side effects or loses its Fix; no_claim=which errno caused it
 test('proof-unreachable before the request was written reports no side effects', () => {
   // Arrange
-  const facts = { ...BASE, requestWritten: false, address: '127.0.0.1' }
+  const facts = {
+    ...BASE,
+    requestWritten: false,
+    address: '127.0.0.1',
+    unreachableKind: 'refused',
+  } as const
   // Act
   const error = reverseProxyRefusal('proof-unreachable', facts)
   // Assert
   assert.equal(
     error.message,
-    `${OPENING_AFTER_START} No request completed at ${ORIGIN} (connection refused or no route). Fix: Start your proxy and check that the host maps to the address it listens on.`,
+    `${OPENING_AFTER_START} No request completed at ${ORIGIN} (connection refused). Fix: Start your proxy and check that the host maps to the address it listens on.`,
   )
   assert.equal(error.details?.sideEffects, 'none')
 })
@@ -96,7 +101,11 @@ test('proof-unreachable before the request was written reports no side effects',
 // Value: protects=D22 a reset after the write may follow a forward, so side effects are unknown; fails_when=a reset reads as none or omits the one-GET sentence; no_claim=that the proxy did forward
 test('proof-unreachable after the request was written reports unknown side effects', () => {
   // Arrange
-  const facts = { ...BASE, requestWritten: true }
+  const facts = {
+    ...BASE,
+    requestWritten: true,
+    unreachableKind: 'reset',
+  } as const
   // Act
   const error = reverseProxyRefusal('proof-unreachable', facts)
   // Assert
@@ -163,6 +172,91 @@ test('proof-unclassified names the log id to look up', () => {
   )
   assert.equal(error.details?.logId, 'r1#start')
   assert.equal(error.details?.sideEffects, 'unknown')
+})
+
+// Value: protects=O3-2 a refused connection, a missing route and a reset are told apart in the sentence; fails_when=two kinds read alike or the no-route kind falls back to the refused sentence; no_claim=which errno caused each kind
+test('proof-unreachable names connection refused, no route and connection reset as three sentences', () => {
+  // Arrange
+  const sentenceOf = (unreachableKind: 'refused' | 'no-route' | 'reset') =>
+    reverseProxyRefusal('proof-unreachable', {
+      ...BASE,
+      requestWritten: false,
+      unreachableKind,
+    }).message
+  // Act
+  const refused = sentenceOf('refused')
+  const noRoute = sentenceOf('no-route')
+  const reset = sentenceOf('reset')
+  // Assert
+  assert.match(
+    refused,
+    /No request completed at https:\/\/app\.example\.test \(connection refused\)\. Fix:/,
+  )
+  assert.match(
+    noRoute,
+    /No request completed at https:\/\/app\.example\.test \(no route\)\. Fix:/,
+  )
+  assert.match(
+    reset,
+    /No request completed at https:\/\/app\.example\.test \(connection reset\)\. Fix:/,
+  )
+})
+
+// Value: protects=C4-4 a refusal without a log id (the saved-session setup) does not send the learner to a log id that does not exist; fails_when=the Fix still says Look up the log id; no_claim=that the Output line exists
+test('proof-unclassified without a log id sends the learner to the reverse proxy line of the Output', () => {
+  // Arrange
+  const facts = { ...BASE }
+  // Act
+  const error = reverseProxyRefusal('proof-unclassified', facts)
+  // Assert
+  assert.equal(
+    error.message,
+    `${OPENING_AFTER_START} The proof request to ${ORIGIN} failed in a way Codebook does not classify. ${SENT} Fix: Look for the reverse proxy line in Output > Codebook; ask for a new run only if you know the cause.`,
+  )
+  assert.equal(error.details?.logId, undefined)
+})
+
+// Value: protects=C3-5 a failure before the proof request reports that nothing was sent; fails_when=the refusal claims one GET was sent or reports unknown side effects although no request was started; no_claim=the system trust store itself
+test('proof-unclassified before the proof request was started reports no side effects and no GET sentence', () => {
+  // Arrange
+  const facts = { ...BASE, logId: 'r1#start', proofNotStarted: true }
+  // Act
+  const error = reverseProxyRefusal('proof-unclassified', facts)
+  // Assert
+  assert.equal(
+    error.message,
+    `${OPENING_AFTER_START} The proof request to ${ORIGIN} failed in a way Codebook does not classify (log id r1#start). Fix: Look up the log id in Output > Codebook.`,
+  )
+  assert.equal(error.details?.sideEffects, 'none')
+  assert.equal('proofNotStarted' in (error.details ?? {}), false)
+})
+
+// Value: protects=O3-4 the Output line the service writes is the one logId names; fails_when=a logId carried by the refusal replaces the service's run id line; no_claim=the run's own id scheme
+test('the service run id names the log line even when the refusal carries another log id', () => {
+  // Arrange
+  const refusal = reverseProxyRefusal('proof-unclassified', {
+    ...BASE,
+    logId: 'other-run#start',
+  })
+  // Act
+  const details = withRunStartRefusalDetails(
+    refusal,
+    'codebook://run/r1',
+    'r1',
+  ).details
+  // Assert
+  assert.equal(details?.logId, 'r1#start')
+})
+
+// Value: protects=C2-10 the base recovery does not claim a stop for the three reasons that start nothing; fails_when=the text again says the development server was stopped without naming not-resolved, not-loopback and same-socket; no_claim=the per-reason sentences
+test('the base recovery says which reasons start nothing and so stop nothing', () => {
+  // Arrange
+  const recovery = ERROR_RECOVERY.REVERSE_PROXY_REFUSED
+  // Act
+  const clause =
+    'Codebook sent no operation; for every reason except not-resolved, not-loopback and same-socket, which start nothing, it stopped the development server it started, and details.resourcesReleased says whether that stop was confirmed (when it is false, start no run, read the run resource and tell the learner)'
+  // Assert
+  assert.ok(recovery.includes(clause))
 })
 
 // Value: protects=AC 2 certificate-untrusted keeps the TLS code and no side effects; fails_when=the TLS code is lost or the handshake failure reads unknown; no_claim=which issuer is missing
@@ -260,7 +354,7 @@ test('browser-address-mismatch names the checked and the browser address with un
   // Assert
   assert.equal(
     error.message,
-    `${OPENING_AFTER_START} The browser reached 10.1.2.3 for ${ORIGIN}, not the checked address 127.0.0.1. ${SENT} Fix: Let your browser reach your host name directly: add it to your system proxy bypass list.`,
+    `${OPENING_AFTER_START} The browser reached 10.1.2.3 for ${ORIGIN}, not the checked address 127.0.0.1. ${SENT} Fix: Let the browser reach your host name directly: add it to your system proxy bypass list.`,
   )
   assert.equal(error.details?.browserAddress, '10.1.2.3')
   assert.equal(error.details?.sideEffects, 'unknown')

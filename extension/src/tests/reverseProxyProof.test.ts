@@ -14,6 +14,7 @@ import { test } from 'node:test'
 import {
   proveReverseProxy,
   reasonOfTransportCode,
+  unreachableKindOfCode,
 } from '../utils/proveReverseProxy'
 import type { ReverseProxyProofInput } from '../utils/proveReverseProxy'
 
@@ -227,6 +228,7 @@ test('a closed port is refused as proof-unreachable with nothing written', async
     ok: false,
     reason: 'proof-unreachable',
     requestWritten: false,
+    unreachableKind: 'refused',
   })
 })
 
@@ -350,6 +352,27 @@ for (const [code, reason] of [
   })
 }
 
+// Value: protects=O3-2 the three proof-unreachable sentences are told apart by errno; fails_when=a code moves to another variant, so refused, no route and reset read alike; no_claim=that Node emits the synthetic codes
+for (const [code, kind] of [
+  ['ECONNREFUSED', 'refused'],
+  ['EHOSTUNREACH', 'no-route'],
+  ['ENETUNREACH', 'no-route'],
+  ['ENOTFOUND', 'no-route'],
+  ['ECONNRESET', 'reset'],
+  ['EPIPE', 'reset'],
+  ['ETIMEDOUT', 'reset'],
+  ['CERT_REVOKED', undefined],
+] as const) {
+  test(`transport code ${code} names the ${kind ?? 'no'} unreachable variant`, () => {
+    // Arrange
+    const transportCode = code
+    // Act
+    const named = unreachableKindOfCode(transportCode)
+    // Assert
+    assert.equal(named, kind)
+  })
+}
+
 // Value: protects=an error without a code is unclassified; fails_when=undefined is read as unreachable; no_claim=the error text
 test('an error without a code is classified as proof-unclassified', () => {
   // Arrange
@@ -465,6 +488,7 @@ test('a connection reset after the request was written is refused as proof-unrea
       ok: false,
       reason: 'proof-unreachable',
       requestWritten: true,
+      unreachableKind: 'reset',
     })
   } finally {
     server.close()

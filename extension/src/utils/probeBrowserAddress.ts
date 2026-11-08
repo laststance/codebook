@@ -5,7 +5,14 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { FlatCdpConnection } from '../chromeExtensionContracts'
-import type { ReverseProxyRefusalReason } from '../constants'
+import {
+  REVERSE_PROXY_PROBE_CLEANUP_BOUND_MS,
+  REVERSE_PROXY_PROBE_CONNECT_BOUND_MS,
+  REVERSE_PROXY_PROBE_POLL_MS,
+  REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRIES,
+  REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRY_DELAY_MS,
+  type ReverseProxyRefusalReason,
+} from '../constants'
 import { connectFlatCdp } from '../runtimeSupport/flatCdpConnection'
 import { ownedChromeArguments } from '../runtimeSupport/utils/ownedChromeArguments'
 import { readDevToolsActivePort } from '../runtimeSupport/utils/readDevToolsActivePort'
@@ -31,7 +38,7 @@ export type BrowserAddressProbeInput = {
 }
 
 /** The refusal reasons the probe can end in. */
-export type BrowserAddressProbeFailureReason = Extract<
+type BrowserAddressProbeFailureReason = Extract<
   ReverseProxyRefusalReason,
   | 'browser-certificate-untrusted'
   | 'browser-certificate-rejected'
@@ -43,8 +50,8 @@ export type BrowserAddressProbeFailureReason = Extract<
   | 'proof-unclassified'
 >
 
-/** What {@link probeBrowserAddress} answers. */
-export type BrowserAddressProbeResult =
+/** What the probe concluded from the browser's first event, before its cleanup is known. */
+type BrowserAddressVerdict =
   | { ok: true; address: string; port: number }
   | {
       ok: false
@@ -57,20 +64,25 @@ export type BrowserAddressProbeResult =
       status?: number
     }
 
-/** How often the probe looks for Chrome's `DevToolsActivePort` file and for the first page target. */
-const PROBE_POLL_MS = 50
-/** How long the end of the throwaway Chrome's process group may take before the probe stops waiting for it. */
-const PROBE_CLEANUP_BOUND_MS = 5_000
-/** How long the WebSocket to the throwaway Chrome may take to open. */
-const PROBE_CONNECT_BOUND_MS = 5_000
+/** What {@link probeBrowserAddress} answers: the verdict, and whether the probe confirmed that it ended the throwaway Chrome's process group and removed its profile folder. */
+export type BrowserAddressProbeResult = BrowserAddressVerdict & {
+  /** `false` when the process group did not end within its bound or the profile folder could not be removed; the gate reports it as `resourcesReleased: false`. */
+  cleanupConfirmed: boolean
+}
+
 /** Folder-name prefix of the probe's empty profile. */
 const PROBE_PROFILE_PREFIX = 'codebook-probe-'
 
-/** The throwaway Chrome the probe owns: its process, its empty profile folder and its CDP connection once open. */
+/**
+ * The throwaway Chrome the probe owns: its empty profile folder, its process and its CDP connection, each set as soon as it exists.
+ * The record is created before anything is made, so the probe's cleanup sees whatever a failed start left behind.
+ */
 type ProbeBrowser = {
-  child: ChildProcess
-  profile: string
+  profile?: string
+  child?: ChildProcess
   cdp?: FlatCdpConnection
+  /** The spawn `error` event (for example `ENOENT` for a missing binary), which ends every wait at once. */
+  spawnError?: Error
 }
 
 /** The facts the verdict reads from the first Network event that ends the probed request. */
@@ -114,7 +126,7 @@ function responseOf(response: unknown): NonNullable<ProbeEvent['response']> {
  * @example
  * failureOf('net::ERR_CERT_AUTHORITY_INVALID') // => { ok: false, reason: 'browser-certificate-untrusted', browserError: 'net::ERR_CERT_AUTHORITY_INVALID' }
  */
-function failureOf(errorText: string): BrowserAddressProbeResult {
+function failureOf(errorText: string): BrowserAddressVerdict {
   if (errorText === 'net::ERR_CERT_AUTHORITY_INVALID')
     return {
       ok: false,
@@ -140,7 +152,7 @@ function failureOf(errorText: string): BrowserAddressProbeResult {
 function verdictOf(
   event: ProbeEvent,
   input: BrowserAddressProbeInput,
-): BrowserAddressProbeResult {
+): BrowserAddressVerdict {
   if (event.response === undefined) return failureOf(event.errorText ?? '')
   const { status, address, port } = event.response
   // A different or empty address, or a different port (a forward proxy on the same loopback address), is a route the proof did not check.
@@ -195,15 +207,17 @@ const PROBE_EVENT_METHODS = [
  * Waits for the first Network event of the probed request, the signal or the bound.
  * @param cdp - The connection to the throwaway Chrome.
  * @param input - The probe input.
- * @param signal - The run's signal.
- * @returns The verdict; `proof-timeout` when nothing arrived within `input.timeoutMs`.
+ * @param signal - The run's signal, or the probe's own when a later phase failed.
+ * @param boundMs - What is left of the probe's deadline.
+ * @returns The verdict; `proof-timeout` when nothing arrived within `boundMs`.
  * @throws The signal's reason when it aborts.
  */
 function waitForVerdict(
   cdp: FlatCdpConnection,
   input: BrowserAddressProbeInput,
   signal: AbortSignal,
-): Promise<BrowserAddressProbeResult> {
+  boundMs: number,
+): Promise<BrowserAddressVerdict> {
   return new Promise((resolve, reject) => {
     const requestIds = new Set<unknown>()
     const off: (() => void)[] = []
@@ -216,7 +230,7 @@ function waitForVerdict(
     const onAbort = (): void => finish(() => reject(signal.reason))
     const timer = setTimeout(
       () => finish(() => resolve({ ok: false, reason: 'proof-timeout' })),
-      input.timeoutMs,
+      boundMs,
     )
     signal.addEventListener('abort', onAbort, { once: true })
     for (const method of PROBE_EVENT_METHODS)
@@ -235,16 +249,31 @@ function waitForVerdict(
   })
 }
 
+/** The one deadline of a probe, computed at its entry; every phase gets only what is left. */
+type ProbeClock = {
+  /** The run's signal. */
+  signal: AbortSignal
+  /** Milliseconds left until the probe's deadline; never negative. */
+  remainingMs: () => number
+}
+
 /**
  * Starts the throwaway headless Chrome on an empty profile with the pin, leading its own process group off Windows.
+ *
+ * The profile folder and the child are recorded on `browser` the moment each exists, so the caller's cleanup finds them even when a later step throws.
  * @param input - The probe input.
- * @returns The browser; the profile folder exists, the debugging port is not known yet.
+ * @param browser - The record to fill; the profile folder exists after this returns, the debugging port is not known yet.
+ * @throws When the folder cannot be made or resolved, or the spawn throws (an invalid binary path); the recorded folder is still removed by the caller.
  */
 async function startProbeBrowser(
   input: BrowserAddressProbeInput,
-): Promise<ProbeBrowser> {
+  browser: ProbeBrowser,
+): Promise<void> {
   const made = await mkdtemp(join(tmpdir(), PROBE_PROFILE_PREFIX))
+  // Recorded before `realpath`, so a failure of the next steps still leaves the folder to remove.
+  browser.profile = made
   const profile = await realpath(made)
+  browser.profile = profile
   const child = spawn(
     input.chromeBinary,
     ownedChromeArguments({
@@ -260,83 +289,135 @@ async function startProbeBrowser(
       detached: process.platform !== 'win32',
     },
   )
-  // A spawn error would be an unhandled event; the wait for the port ends on the missing file instead.
-  child.once('error', () => undefined)
-  return { child, profile }
+  browser.child = child
+  // A spawn error (for example ENOENT) is kept, and the waits for the port and the page end on it at once.
+  child.once('error', (error) => {
+    browser.spawnError = error
+  })
+}
+
+/**
+ * Polls until `attempt` answers, the run is cancelled, Chrome failed to start or ended, or the probe's deadline passes.
+ * @param browser - The probe browser.
+ * @param clock - The probe's signal and deadline.
+ * @param attempt - One look; a value ends the wait, `undefined` keeps polling.
+ * @param failure - The message when the deadline passes first.
+ * @returns What `attempt` answered.
+ * @throws The signal's reason on cancellation, the spawn error, or an `Error` when Chrome ended or the deadline passed.
+ */
+async function pollProbe<Found>(
+  browser: ProbeBrowser,
+  clock: ProbeClock,
+  attempt: () => Promise<Found | undefined>,
+  failure: string,
+): Promise<Found> {
+  // One look per turn; each turn checks the run's signal, the spawn error and Chrome's own exit first.
+  while (clock.remainingMs() > 0) {
+    clock.signal.throwIfAborted()
+    if (browser.spawnError) throw browser.spawnError
+    const child = browser.child
+    if (
+      child !== undefined &&
+      (child.exitCode !== null || child.signalCode !== null)
+    )
+      throw new Error('Chrome ended early')
+    const found = await attempt()
+    if (found !== undefined) return found
+    await delay(REVERSE_PROXY_PROBE_POLL_MS)
+  }
+  throw new Error(failure)
 }
 
 /**
  * Waits for Chrome's `DevToolsActivePort`, then opens the browser-level connection.
  * @param browser - The started probe browser.
- * @param boundMs - How long the start may take.
+ * @param clock - The probe's signal and deadline.
  * @returns The connection.
- * @throws When Chrome exits first or the bound passes.
+ * @throws When Chrome fails to start or ends first, the run is cancelled or the deadline passes.
  */
 async function connectProbeBrowser(
   browser: ProbeBrowser,
-  boundMs: number,
+  clock: ProbeClock,
 ): Promise<FlatCdpConnection> {
-  const file = join(browser.profile, 'DevToolsActivePort')
-  const endAt = Date.now() + boundMs
-  // Poll until the file is complete, Chrome ended or the bound passed.
-  while (Date.now() < endAt) {
-    if (browser.child.exitCode !== null) throw new Error('Chrome ended early')
-    const endpoint = readDevToolsActivePort(
-      await readFile(file, 'utf8').catch(() => ''),
-    )
-    if (endpoint)
-      return connectFlatCdp(
-        `ws://127.0.0.1:${endpoint.port}${endpoint.path}`,
-        PROBE_CONNECT_BOUND_MS,
-      )
-    await delay(PROBE_POLL_MS)
-  }
-  throw new Error('Chrome did not become ready')
+  const file = join(browser.profile ?? '', 'DevToolsActivePort')
+  const endpoint = await pollProbe(
+    browser,
+    clock,
+    async () =>
+      readDevToolsActivePort(await readFile(file, 'utf8').catch(() => '')) ??
+      undefined,
+    'Chrome did not become ready',
+  )
+  return connectFlatCdp(
+    `ws://127.0.0.1:${endpoint.port}${endpoint.path}`,
+    Math.min(REVERSE_PROXY_PROBE_CONNECT_BOUND_MS, clock.remainingMs()),
+  )
 }
 
 /**
  * Finds the first page target of the throwaway Chrome.
+ * @param browser - The probe browser, whose connection is open.
  * @param cdp - The browser-level connection.
- * @param boundMs - How long the page may take to appear.
+ * @param clock - The probe's signal and deadline.
  * @returns The target id.
- * @throws When no page target appears in time.
+ * @throws When no page target appears before the deadline, or the run is cancelled.
  */
-async function firstPageTarget(
+function firstPageTarget(
+  browser: ProbeBrowser,
   cdp: FlatCdpConnection,
-  boundMs: number,
+  clock: ProbeClock,
 ): Promise<string> {
-  const endAt = Date.now() + boundMs
   // The first page may be created a moment after the debugging port opens.
-  while (Date.now() < endAt) {
-    const { targetInfos } = await cdp.request('Target.getTargets', {})
-    const page = (targetInfos as { type?: string; targetId?: string }[]).find(
-      (info) => info.type === 'page',
-    )
-    if (page?.targetId !== undefined) return page.targetId
-    await delay(PROBE_POLL_MS)
-  }
-  throw new Error('No page target')
+  return pollProbe(
+    browser,
+    clock,
+    async () => {
+      const { targetInfos } = await cdp.request(
+        'Target.getTargets',
+        {},
+        undefined,
+        clock.remainingMs(),
+      )
+      const page = (targetInfos as { type?: string; targetId?: string }[]).find(
+        (info) => info.type === 'page',
+      )
+      return page?.targetId
+    },
+    'No page target',
+  )
 }
 
 /**
  * Attaches the first page target and starts the probed request in it.
  * The profile is empty and credentials are omitted, so no cookie exists to send; `redirect: 'follow'` because `manual` with `no-cors` is a network error that sends nothing.
- * @param cdp - The browser-level connection.
+ * Every command is bounded by what is left of the deadline, and the run's signal is checked before each.
+ * @param browser - The probe browser, whose connection is open.
  * @param url - The probed URL.
- * @param boundMs - How long finding the page may take.
- * @throws When no page target appears.
+ * @param clock - The probe's signal and deadline.
+ * @throws When no page target appears, a command fails or times out, or the run is cancelled.
  */
 async function startProbedRequest(
-  cdp: FlatCdpConnection,
+  browser: ProbeBrowser,
   url: string,
-  boundMs: number,
+  clock: ProbeClock,
 ): Promise<void> {
-  const targetId = await firstPageTarget(cdp, boundMs)
-  const { sessionId } = await cdp.request('Target.attachToTarget', {
-    targetId,
-    flatten: true,
-  })
-  await cdp.request('Network.enable', {}, String(sessionId))
+  const cdp = browser.cdp!
+  const targetId = await firstPageTarget(browser, cdp, clock)
+  clock.signal.throwIfAborted()
+  const { sessionId } = await cdp.request(
+    'Target.attachToTarget',
+    { targetId, flatten: true },
+    undefined,
+    clock.remainingMs(),
+  )
+  clock.signal.throwIfAborted()
+  await cdp.request(
+    'Network.enable',
+    {},
+    String(sessionId),
+    clock.remainingMs(),
+  )
+  clock.signal.throwIfAborted()
   await cdp.request(
     'Runtime.evaluate',
     {
@@ -344,74 +425,121 @@ async function startProbedRequest(
       awaitPromise: false,
     },
     String(sessionId),
+    clock.remainingMs(),
   )
 }
 
 /**
  * Ends the throwaway Chrome's process group and waits, bounded, until it is gone.
  * @param pid - The group leader.
+ * @returns `true` when the group is gone (on Windows: when `taskkill` returned).
  */
-async function endProbeProcesses(pid: number): Promise<void> {
+async function endProbeProcesses(pid: number): Promise<boolean> {
   if (process.platform === 'win32') {
     await REAL_PROCESS_STOPPER.taskkill(pid)
-    return
+    return true
   }
-  const endAt = Date.now() + PROBE_CLEANUP_BOUND_MS
+  const endAt = Date.now() + REVERSE_PROXY_PROBE_CLEANUP_BOUND_MS
   signalProcessGroup(pid, 'SIGKILL')
   // A group that still holds a member is signalled again until it is gone or the bound passes.
   while (!isProcessGroupGone(pid) && Date.now() < endAt) {
-    await delay(PROBE_POLL_MS)
+    await delay(REVERSE_PROXY_PROBE_POLL_MS)
     signalProcessGroup(pid, 'SIGKILL')
   }
+  return isProcessGroupGone(pid)
 }
 
 /**
  * Ends the throwaway Chrome and removes its profile; bounded, and silent about its own failures.
- * @param browser - The probe browser.
+ * @param browser - The probe browser, with whatever a failed start left of it.
+ * @returns `true` only when the process group ended (or never existed) and the profile folder is removed.
  */
-async function endProbeBrowser(browser: ProbeBrowser): Promise<void> {
+async function endProbeBrowser(browser: ProbeBrowser): Promise<boolean> {
   browser.cdp?.close()
-  const { pid } = browser.child
-  if (pid !== undefined) await endProbeProcesses(pid).catch(() => undefined)
-  await rm(browser.profile, {
-    recursive: true,
-    force: true,
-    maxRetries: 20,
-    retryDelay: 100,
-  }).catch(() => undefined)
+  const pid = browser.child?.pid
+  const processesEnded =
+    pid === undefined ? true : await endProbeProcesses(pid).catch(() => false)
+  const profileRemoved =
+    browser.profile === undefined
+      ? true
+      : await rm(browser.profile, {
+          recursive: true,
+          force: true,
+          maxRetries: REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRIES,
+          retryDelay: REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRY_DELAY_MS,
+        }).then(
+          () => true,
+          () => false,
+        )
+  return processesEnded && profileRemoved
+}
+
+/**
+ * Runs the phases of one probe on an already created record: start, connect, subscribe, send, wait.
+ * @param browser - The record the phases fill.
+ * @param input - The probe input.
+ * @param clock - The probe's signal and deadline.
+ * @returns The verdict.
+ * @throws When a phase fails or the run is cancelled; the caller turns a failure into `proof-unclassified`.
+ */
+async function runProbe(
+  browser: ProbeBrowser,
+  input: BrowserAddressProbeInput,
+  clock: ProbeClock,
+): Promise<BrowserAddressVerdict> {
+  await startProbeBrowser(input, browser)
+  browser.cdp = await connectProbeBrowser(browser, clock)
+  // The wait ends with this call, whatever phase fails; the verdict listener and its timer never outlive it.
+  const waiting = new AbortController()
+  try {
+    // Subscribe first, then send the request, so the first event cannot be missed.
+    const verdict = waitForVerdict(
+      browser.cdp,
+      input,
+      AbortSignal.any([clock.signal, waiting.signal]),
+      clock.remainingMs(),
+    )
+    verdict.catch(() => undefined)
+    await startProbedRequest(browser, input.url, clock)
+    return await verdict
+  } finally {
+    waiting.abort()
+  }
 }
 
 /**
  * Checks, with a throwaway headless Chrome that holds no cookie, which address and port a browser really reaches for the declared origin.
  *
- * Why it exists: a system proxy, a PAC file or a VPN can route Chrome past the `--host-resolver-rules` pin, and the saved profile's cookies must never reach a server that was not proved. The probe starts Chrome on an empty profile with the same pin, evaluates `fetch(url, { credentials: 'omit', mode: 'no-cors', cache: 'no-store', redirect: 'follow' })` and reads the first `Network.responseReceived` or `Network.loadingFailed` for the URL. A `finally` ends the process group and removes the profile folder. Called by `ReverseProxyGate.prove()` after the Node proof, before any browser that holds the saved profile.
+ * Why it exists: a system proxy, a PAC file or a VPN can route Chrome past the `--host-resolver-rules` pin, and the saved profile's cookies must never reach a server that was not proved. The probe starts Chrome on an empty profile with the same pin, evaluates `fetch(url, { credentials: 'omit', mode: 'no-cors', cache: 'no-store', redirect: 'follow' })` and reads the first `Network.responseReceived` or `Network.loadingFailed` for the URL. One deadline is computed at entry and every phase gets only what is left of it, so the whole check ends within `input.timeoutMs`; the run's signal is checked at each polling turn and before each command. After every path, a pass, a failure or a cancellation, the process group is ended and the profile folder removed, and the result says whether both were confirmed (`cleanupConfirmed`). Called by `ReverseProxyGate.prove()` after the Node proof, before any browser that holds the saved profile.
  * @param input - {@link BrowserAddressProbeInput}.
  * @param signal - The run's signal; it ends the browser.
- * @returns `{ ok: true, address, port }` when the browser reached the expected address and port with status 200; otherwise the classified failure.
- * @throws The signal's reason when the run is cancelled (no refusal).
+ * @returns `{ ok: true, address, port, cleanupConfirmed }` when the browser reached the expected address and port with status 200; otherwise the classified failure (a spawn error such as a missing binary, or any other failure of the browser itself, is `proof-unclassified`), with `cleanupConfirmed`.
+ * @throws The signal's reason when the run is cancelled (no refusal), after the cleanup ran.
  * @example
- * await probeBrowserAddress({ chromeBinary, hostResolverRules, url, expectedAddress: '127.0.0.1', expectedPort: 443, timeoutMs: 10_000 }, signal) // => { ok: true, address: '127.0.0.1', port: 443 }
+ * await probeBrowserAddress({ chromeBinary, hostResolverRules, url, expectedAddress: '127.0.0.1', expectedPort: 443, timeoutMs: 10_000 }, signal) // => { ok: true, address: '127.0.0.1', port: 443, cleanupConfirmed: true }
  */
 export async function probeBrowserAddress(
   input: BrowserAddressProbeInput,
   signal: AbortSignal,
 ): Promise<BrowserAddressProbeResult> {
   signal.throwIfAborted()
-  let browser: ProbeBrowser | undefined
-  try {
-    browser = await startProbeBrowser(input)
-    browser.cdp = await connectProbeBrowser(browser, input.timeoutMs)
-    // Subscribe first, then send the request, so the first event cannot be missed.
-    const verdict = waitForVerdict(browser.cdp, input, signal)
-    verdict.catch(() => undefined)
-    await startProbedRequest(browser.cdp, input.url, input.timeoutMs)
-    return await verdict
-  } catch (error) {
-    // A cancelled run is no refusal; any other failure of the browser itself is unclassified.
-    if (signal.aborted) throw signal.reason
-    void error
-    return { ok: false, reason: 'proof-unclassified' }
-  } finally {
-    if (browser) await endProbeBrowser(browser)
+  const deadline = Date.now() + input.timeoutMs
+  const clock: ProbeClock = {
+    signal,
+    remainingMs: () => Math.max(0, deadline - Date.now()),
   }
+  const browser: ProbeBrowser = {}
+  let verdict: BrowserAddressVerdict = {
+    ok: false,
+    reason: 'proof-unclassified',
+  }
+  try {
+    verdict = await runProbe(browser, input, clock)
+  } catch {
+    // A failure of the browser itself stays unclassified; a cancelled run is rethrown after the cleanup below.
+  }
+  const cleanupConfirmed = await endProbeBrowser(browser)
+  // A cancelled run is no refusal.
+  signal.throwIfAborted()
+  return { ...verdict, cleanupConfirmed }
 }
