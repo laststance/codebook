@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.108.0] - 2026-11-10 (development candidate)
+
+Cycle 0106 ([Issue #274](https://github.com/laststance/codebook/issues/274)), a feature cycle. **A question about what an app's server does for a request the app itself gives up on after a deadline now runs to the request's result.** While a stop holds the program, the app's own clocks keep running, so a request with a client or server deadline ended before the next stop or the result whenever the explanation at a stop took longer than that deadline. A stop can now be recorded instead of held: Codebook captures its values, scopes, call stack and image as for any stop, then continues at once, so the request finishes in time and the chat explains the recorded stops after the result.
+
+### Added
+- **Record a stop without pausing (MCP API 1.43):** a version 3 stop, the top-level one or an `additionalStops` entry, may declare `hold: "record"` (default `"explain"`, the held stop you know). Codebook captures the stop's values, scopes, call stack and image, then continues at once, so the run never shows it paused and the chat does not wait there. `hold: "record"` on an `afterOperation: 0` stop is refused with the field's path; an older Codebook refuses `hold` as `INVALID_CONFIGURATION`.
+- **`recordedStops` in the run resource:** a version 3 run lists the zero-based declared indexes of the stops it recorded, in order. `codebook_continue` for a recorded stop is refused `STALE_PAUSE`.
+- **Recorded values in the replay:** you cannot inspect a recorded stop live, but its recorded values are in the saved replay's native debugger.
+- **Study format 24:** a study of a run in which any stop declares `hold` is saved as format 24 (`.study.v24.json`); a Codebook older than API 1.43 lists it as saved by a newer Codebook, so update Codebook to open it.
+
+### Changed
+- **MCP API 1.43 and bundled skill 1.0.86:** the chat declares `hold: "record"` for a stop inside a request the app bounds with its own deadline or timeout, found by reading that request's code, and explains the recorded stops after the operation's result from their recorded values; stops in code without a deadline stay held. Install the new VSIX and run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to 1.0.86.
+
 ## [0.2.107.0] - 2026-11-09 (development candidate)
 
 Cycle 0105 ([Issue #272](https://github.com/laststance/codebook/issues/272)), a feature cycle. **A question about a plain HTML page, such as a library's simplest Example whose inline script imports the library from a CDN, now runs in Codebook and pauses in the page's script and in the checked-out library's source.** No adapter served such a page, and its CDN import loaded a published copy, not the library you are reading. Codebook now serves the page as written from its own loopback server and, when the run declares `library`, serves the checked-out library's build in place of the CDN import, with the build's source map inline, so stops in the library's source pause and their values read by their source names.
