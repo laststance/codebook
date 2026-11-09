@@ -207,6 +207,8 @@ test('the Next setup steps read as the deadline sentence quotes them', () => {
   assert.deepEqual(steps, {
     validatingProject: 'validating the project',
     startingNext: 'starting Next',
+    provingReverseProxy:
+      'proving that the reverse proxy reaches the started server',
     waitingForServer: 'waiting for the server to answer the entry page',
     readingManifests: 'reading the route manifests',
     sealingStops: 'sealing the declared stops',
@@ -225,6 +227,7 @@ test('the Next setup deadline sentence names the budget, the step and the browse
   const expected = [
     'Repository setup deadline (90 s) exceeded while validating the project. Codebook stopped the server it started; the browser was not opened.',
     'Repository setup deadline (90 s) exceeded while starting Next. Codebook stopped the server it started; the browser was not opened.',
+    'Repository setup deadline (90 s) exceeded while proving that the reverse proxy reaches the started server. Codebook stopped the server it started; the browser was not opened.',
     'Repository setup deadline (90 s) exceeded while waiting for the server to answer the entry page. Codebook stopped the server it started; the browser was not opened.',
     'Repository setup deadline (90 s) exceeded while reading the route manifests. Codebook stopped the server it started; the browser was not opened.',
     'Repository setup deadline (90 s) exceeded while sealing the declared stops. Codebook stopped the server it started; the browser was not opened.',

@@ -7,6 +7,7 @@ import {
   NEXT_LIBRARY_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
   PRESS_STUDY_VERSION,
+  REVERSE_PROXY_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
 } from '../constants'
 
@@ -375,10 +376,11 @@ function assertFormatHoldsItsFields(
   const holdsRouteHandler = study.observations.some(isRouteHandlerObservation)
   const holdsApiRoute = study.observations.some(isApiRouteObservation)
   // Format 18 (`next-dev-webpack` with `library`) holds the fields of formats 12 to 14 itself and moves to none of them, so it may hold any of them or none.
-  // Format 21 (a press) holds those fields itself, like formats 18 to 20: the observation fields do not move it to another format.
+  // Formats 21 (a press) and 22 (a reverse proxy) hold those fields themselves, like formats 18 to 20: the observation fields do not move them to another format.
   if (
     study.version === NEXT_LIBRARY_STUDY_VERSION ||
     study.version === PRESS_STUDY_VERSION ||
+    study.version === REVERSE_PROXY_STUDY_VERSION ||
     isApiServerStudyFormat(study.version)
   )
     return

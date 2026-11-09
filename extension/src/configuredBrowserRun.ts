@@ -90,6 +90,7 @@ import {
   STOP_IMAGE_UNAVAILABLE_TEXT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
+  REVERSE_PROXY_PORT_SOURCE,
   VITE_PAGE_GENERATION_LIMIT,
   VITE_SETUP_STEPS,
   VITE_PAGE_QUIET_MS,
@@ -179,6 +180,14 @@ import {
   type RepositoryOperation,
 } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
+import {
+  ReverseProxyGate,
+  type ReverseProxyDependencies,
+  type ReverseProxyFailure,
+  type ReverseProxyStartFacts,
+} from './reverseProxyGate'
+import { reverseProxyRefusal } from './reverseProxyRefusals'
 import type {
   ConfiguredRuntimeSnapshot,
   ConfiguredRuntimeView,
@@ -374,8 +383,9 @@ import { operationRefusalText } from './utils/operationRefusalText'
 import { OutstandingPageRequests } from './utils/outstandingPageRequests'
 import {
   browserOriginOf,
+  entryOriginOf,
   isOwnedApplicationOrigin,
-  loopbackOriginsOf,
+  ownedOriginsOf,
 } from './utils/ownedApplicationOrigin'
 import {
   pagePauseUnderResumeText,
@@ -418,6 +428,7 @@ import { readPagesApiRequest } from './utils/readPagesApiRequest'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
+import { readSystemCertificates } from './utils/readSystemCertificates'
 import {
   readWithinVerdictBudget,
   type VerdictBudget,
@@ -591,7 +602,13 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
     // The launch re-checks the package root and the executable by real path: the folder may have changed since the preflight (E5).
     if (request.nextPackage && !request.nextPackage.isRoot)
       await assertNextPackageUnchanged(request.nextPackage)
-    const declaredPort = await readDeclaredDevelopmentPort(request.workspace)
+    // A `reverseProxy` run starts the server on the declared upstream port; every other run reads the project's own port.
+    const declaredPort = request.reverseProxy
+      ? {
+          port: request.reverseProxy.upstreamPort,
+          source: REVERSE_PROXY_PORT_SOURCE,
+        }
+      : await readDeclaredDevelopmentPort(request.workspace)
     request.onDeclaredPort(declaredPort)
     await request.assertPortFree(declaredPort)
     request.alive()
@@ -604,9 +621,14 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       undefined,
       request.outputMask,
       request.nextPackage?.nextExecutable,
-      request.nextLibrary
-        ? { preloadPath: request.nextLibrary.preloadPath }
-        : {},
+      {
+        ...(request.nextLibrary
+          ? { preloadPath: request.nextLibrary.preloadPath }
+          : {}),
+        ...(request.reverseProxy
+          ? { identity: request.reverseProxy.identity }
+          : {}),
+      },
     )
     request.onApp(app)
     return { app, port: declaredPort.port }
@@ -727,7 +749,8 @@ interface ConfiguredBrowserOptions {
   directory: string
   workspace: string
   node: string
-  host: HostConfiguration
+  /** The editor host with its Chrome: the environment refuses a configured run before it is built when Chrome is missing, so the type states that a run always has one. */
+  host: HostConfiguration & Required<Pick<HostConfiguration, 'chrome'>>
   definition: ConfiguredDefinition
   assertWorkspace(): void
   createViewport?: BrowserViewportFactory
@@ -736,7 +759,13 @@ interface ConfiguredBrowserOptions {
   /** The saved-session store bound to this repository; absent runs never touch a saved session. */
   savedSession?: SavedSessionRunPort
   /** Called once per run refused with `SIGN_IN_REQUIRED`, so the editor shows its notice. */
-  onSignInRequired?(notice: { reason: SignInRequiredReason }): void
+  onSignInRequired?(notice: {
+    reason: SignInRequiredReason
+    /** The declaration of a run that opens the app at a reverse-proxy origin (API 1.40), so the editor's notice sets up the saved session there. */
+    reverseProxy?: ReverseProxyDeclaration
+  }): void
+  /** Test seam: stand-ins for the resolver, the system certificates and the proof of a run that declares `reverseProxy` (API 1.40); the product uses the real ones. */
+  reverseProxy?: Partial<ReverseProxyDependencies>
   /** The learner's confirmation and the build seams of a `vite-dev` run that declares `library`; a run with `library` and none of this is refused. */
   viteLibrary?: ViteLibraryRouteDependencies
 }
@@ -1462,9 +1491,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly pagesLedger = new PagesHitLedger()
   /** The application's own page requests of the browser's main frame that have no answer yet, which back or contradict the page a Pages hit's stack names (a request alone confirms no hit). */
   private readonly outstandingPageRequests = new OutstandingPageRequests(
-    (origin) =>
-      this.origin !== undefined &&
-      isOwnedApplicationOrigin(origin, this.origin, this.ownsIpv6Loopback),
+    (origin) => this.isOwned(origin),
   )
   /** The text of the Pages renderer by script id, read once and kept; a script announced again is read again. */
   private readonly rendererTexts = new Map<
@@ -1542,6 +1569,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private ipv6Forwarder?: Ipv6LoopbackForwarder
   /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
   private ownsIpv6Loopback = false
+  /** The gate of a run that declares `reverseProxy` (API 1.40), built on first use by {@link ConfiguredBrowserRun.reverseProxyGate}; never built for another run. */
+  private reverseProxyGateCache?: ReverseProxyGate
+  /** The declared port and identity the gate prepared after a passing resolution; the start request carries them ({@link ConfiguredBrowserRun.reverseProxyStartFacts}). */
+  private reverseProxyFacts?: ReverseProxyStartFacts
   private operation?: ConfiguredRuntimeView['operation']
   /** The version 3 configuration of this run; absent for versions 1 and 2, whose single action keeps its own path. */
   private readonly operationsConfiguration?: OperationsRepositoryConfiguration
@@ -1580,6 +1611,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private savedSessionSkipped?: 'package-root'
   /** Whether the readiness check found the entry redirected to a sign-in path, so a saved run loads it once in its browser before sealing ({@link warmEntryBehindSignIn}). */
   private entryBehindSignIn = false
+  /** Whether the saved session's warm load of the entry is under way ({@link warmEntryBehindSignIn}): a landing on a sign-in path then is the refusal of the entry, even for a run that declares no operation, not a sign-out flow's end. */
+  private warmingEntry = false
   /** The entry answer of a workspace with a Pages folder whose entry is behind sign-in: its route manifests are read only after the saved session's browser loaded the entry, which compiles the route ({@link resolvePagesCapableRoute}). */
   private entryAnswerBehindSignIn?: NextEntryResponse
   /** The declared sign-in path the page reached after the last operation was sent; it fails the run only when the run-level `after` does not hold. */
@@ -2597,7 +2630,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (!this.libraryRoute) return
     if (!this.origin) return
-    const owned = loopbackOriginsOf(this.origin, this.ownsIpv6Loopback)
+    const owned = this.ownedOrigins()
     this.libraryRoute.observeParsedScript({
       ...event,
       isOwnedOrigin: (origin) => owned.includes(origin),
@@ -2686,6 +2719,266 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Gives the run's gate for its declared `reverseProxy`, built on first use from the sealed declaration, the host's Chrome binary and the run's Node.
+   *
+   * Why it exists: the gate owns the declaration's whole runtime (resolve, proof, pin, state), so the run only calls it at the places the order of {@link prepareOwned} names. Called by every reverse-proxy method of the run.
+   * @returns The gate, or `undefined` for a run without `reverseProxy`.
+   * @example this.reverseProxyGate()?.view().state // => 'resolving'
+   */
+  private reverseProxyGate(): ReverseProxyGate | undefined {
+    const declaration = this.operationsConfiguration?.reverseProxy
+    if (declaration === undefined) return undefined
+    this.reverseProxyGateCache ??= new ReverseProxyGate({
+      chromeBinary: this.options.host.chrome.binary,
+      declaration,
+      nodeExecutable: this.options.node,
+      dependencies: {
+        ...this.options.reverseProxy,
+        readSystemCertificates: (input, signal) =>
+          this.readLoggedSystemCertificates(input, signal),
+      },
+    })
+    return this.reverseProxyGateCache
+  }
+
+  /**
+   * Reads the system certificates and writes the Output line the gate cannot write when the store is unreadable.
+   * Called by the gate as its `readSystemCertificates` dependency.
+   * @param input - The certificate read's input.
+   * @param signal - The run's signal.
+   * @returns The read's result, unchanged.
+   * @example await this.readLoggedSystemCertificates(input, signal) // Output: 'Run r1: reverse proxy: system trust store unreadable' when the read failed
+   */
+  private async readLoggedSystemCertificates(
+    input: Parameters<typeof readSystemCertificates>[0],
+    signal: AbortSignal,
+  ): ReturnType<typeof readSystemCertificates> {
+    const read =
+      this.options.reverseProxy?.readSystemCertificates ??
+      readSystemCertificates
+    const result = await read(input, signal)
+    if (!result.ok)
+      this.logRunStart('error', 'reverse proxy: system trust store unreadable')
+    return result
+  }
+
+  /**
+   * Names the declared reverse-proxy origin of this run.
+   * Called wherever an origin check or a readiness request needs it.
+   * @returns The normalized origin, or `undefined` for a run without `reverseProxy`.
+   * @example this.declaredOrigin() // => 'https://app.example.test'
+   */
+  private declaredOrigin(): string | undefined {
+    return this.operationsConfiguration?.reverseProxy?.origin
+  }
+
+  /**
+   * Lists the origins the run owns: the loopback names at the server's port and the declared origin.
+   * Called by every owned-origin list the run hands to the page, the operation port or the library observer.
+   * @returns The origins; only after the server's origin is known.
+   * @example this.ownedOrigins() // => ['http://localhost:4310', 'http://127.0.0.1:4310', 'https://app.example.test']
+   */
+  private ownedOrigins(): string[] {
+    return ownedOriginsOf(
+      this.origin!,
+      this.ownsIpv6Loopback,
+      this.declaredOrigin(),
+    )
+  }
+
+  /**
+   * Tells whether a page origin belongs to the run's own application.
+   * Called by every page-request predicate and by the owned-page channel.
+   * @param origin - A page's `location.origin`.
+   * @returns `true` for a loopback name at the server's port or for the declared origin.
+   * @example this.isOwned('https://app.example.test') // => true for a reverseProxy run
+   */
+  private isOwned(origin: unknown): boolean {
+    return (
+      this.origin !== undefined &&
+      isOwnedApplicationOrigin(
+        origin,
+        this.origin,
+        this.ownsIpv6Loopback,
+        this.declaredOrigin(),
+      )
+    )
+  }
+
+  /**
+   * Names the origin the run opens its entry page at: the declared origin once it is proved, else the loopback browser origin.
+   * Called by the entry navigation and the run view's `applicationOrigin`.
+   * @returns The origin, or `undefined` before the server's origin is known.
+   * @example this.entryOrigin() // => 'https://app.example.test'
+   */
+  private entryOrigin(): string | undefined {
+    if (this.origin === undefined) return undefined
+    const isProved = this.reverseProxyGateCache?.view().state === 'proved'
+    return entryOriginOf(
+      this.origin,
+      isProved ? this.declaredOrigin() : undefined,
+    )
+  }
+
+  /**
+   * Gives the start request of the development server the declared port and identity of a `reverseProxy` run.
+   * Called by {@link prepareOwned}; spread into the request.
+   * @returns `{ reverseProxy }` after a passing resolution, else an empty object.
+   * @example this.reverseProxyStartFacts() // => { reverseProxy: { upstreamPort: 4310, identity: { … } } }
+   */
+  private reverseProxyStartFacts(): Pick<
+    DevelopmentServerStart,
+    'reverseProxy'
+  > {
+    return this.reverseProxyFacts
+      ? { reverseProxy: this.reverseProxyFacts }
+      : {}
+  }
+
+  /**
+   * Gives the run view's `reverseProxy` block.
+   * Called by {@link view}; spread into it.
+   * @returns `{ reverseProxy }` for a declaring run, else an empty object.
+   * @example this.reverseProxyView() // => { reverseProxy: { origin: 'https://app.example.test', upstreamPort: 4310, state: 'proved' } }
+   */
+  private reverseProxyView(): Pick<ConfiguredRuntimeView, 'reverseProxy'> {
+    const gate = this.reverseProxyGate()
+    return gate ? { reverseProxy: gate.view() } : {}
+  }
+
+  /**
+   * Gives the saved-session origin check the declaration and whether this run's proof still admits it.
+   * Called by {@link proveServerReady}.
+   * @returns The declared origin with the gate's `admits`, or `undefined` for a run without `reverseProxy`.
+   * @example this.reverseProxyAdmission()?.admits() // => true while the proved server lives
+   */
+  private reverseProxyAdmission():
+    { origin: string; admits: () => boolean } | undefined {
+    const gate = this.reverseProxyGate()
+    const origin = this.declaredOrigin()
+    if (!gate || origin === undefined) return undefined
+    return { origin, admits: () => gate.admits(origin) }
+  }
+
+  /**
+   * Runs one stage of the declaration's check and turns a failure into the run's refusal; does nothing for a run without `reverseProxy`.
+   *
+   * `resolve` runs first in {@link prepareOwned} (host, loopback rule, same-socket rule, identity preload), `prove` after the server started and before any browser (listener, Node proof, browser address check, pin).
+   * @param stage - The stage to run.
+   * @throws The `REVERSE_PROXY_REFUSED` error of the failure, after the run released what it started; the run's cancellation.
+   * @example await this.reverseProxyStage('resolve')
+   */
+  private async reverseProxyStage(stage: 'resolve' | 'prove'): Promise<void> {
+    const gate = this.reverseProxyGate()
+    if (!gate) return
+    const failure =
+      stage === 'resolve'
+        ? await this.resolveReverseProxy(gate)
+        : await this.proveReverseProxy(gate)
+    this.alive()
+    if (failure) throw await this.reverseProxyRefusalOf(failure, stage)
+  }
+
+  /**
+   * The resolve stage: the host and the rules on it, then the identity preload the start request needs.
+   * Called by {@link reverseProxyStage} first in {@link prepareOwned}, before anything starts.
+   * @param gate - The run's gate.
+   * @returns `undefined` when the host is trusted and the preload is written, else the gate's failure.
+   * @example const failure = await this.resolveReverseProxy(gate) // => undefined
+   */
+  private async resolveReverseProxy(
+    gate: ReverseProxyGate,
+  ): Promise<ReverseProxyFailure | undefined> {
+    const failure = await gate.resolve(this.abort.signal)
+    if (failure) return failure
+    this.reverseProxyFacts = await gate.preparePreload()
+    return undefined
+  }
+
+  /**
+   * The prove stage: the proof and the browser check, then the pin the run's browser launches with.
+   * Called by {@link reverseProxyStage} after the owned server started and before any run browser opens.
+   * @param gate - The run's gate.
+   * @returns `undefined` when the proof and the browser check passed and the pin is given, else the gate's failure.
+   * @example const failure = await this.proveReverseProxy(gate) // => undefined
+   */
+  private async proveReverseProxy(
+    gate: ReverseProxyGate,
+  ): Promise<ReverseProxyFailure | undefined> {
+    this.nextSetupStep = NEXT_SETUP_STEPS.provingReverseProxy
+    const failure = await gate.prove(this.app!, this.abort.signal)
+    if (failure) return failure
+    // Every Chrome of the run resolves the declared host to the checked address only.
+    this.browser.pinHost(gate.hostResolverRules())
+    this.nextSetupStep = NEXT_SETUP_STEPS.waitingForServer
+    return undefined
+  }
+
+  /**
+   * Builds the refusal of a failed check: stops what the run started, confirms it, writes the start line and words the error.
+   * Called by {@link reverseProxyStage}.
+   * @param failure - What the gate returned.
+   * @param stage - The stage that failed; a `resolve` failure happened before anything started, so its Output line says nothing was started.
+   * @returns The `REVERSE_PROXY_REFUSED` error; `resourcesReleased` is the run's confirmed cleanup, never a constant.
+   * @example throw await this.reverseProxyRefusalOf({ reason: 'proof-timeout', facts }, 'prove')
+   */
+  private async reverseProxyRefusalOf(
+    failure: ReverseProxyFailure,
+    stage: 'resolve' | 'prove',
+  ): Promise<StudyError> {
+    const resourcesReleased = await this.releaseForReverseProxyRefusal()
+    const logId = `${this.options.control?.runId ?? this.id}#start`
+    this.logStartRefusal(
+      'REVERSE_PROXY_REFUSED',
+      `(${failure.reason}) before any run browser opened; ${
+        stage === 'resolve'
+          ? 'nothing was started'
+          : 'Codebook stops the development server it started'
+      }`,
+    )
+    return reverseProxyRefusal(failure.reason, {
+      ...failure.facts,
+      resourcesReleased: resourcesReleased && failure.facts.resourcesReleased,
+      ...(failure.reason === 'proof-unclassified' ? { logId } : {}),
+    })
+  }
+
+  /**
+   * Closes the server the run started and, when one opened, its browser, and confirms both.
+   * Called by {@link reverseProxyRefusalOf}; {@link cleanupOwned} later finds both closed (both closes are idempotent).
+   * @returns `true` when every close succeeded.
+   * @example if (!(await this.releaseForReverseProxyRefusal())) // the refusal says it could not confirm the stop
+   */
+  private async releaseForReverseProxyRefusal(): Promise<boolean> {
+    const failures = await settleCleanup([
+      {
+        description: 'owned application stop',
+        release: async (): Promise<void> => {
+          await this.app?.close()
+        },
+      },
+      ...(this.browserLaunched
+        ? [
+            {
+              description: 'owned browser close',
+              release: (): Promise<void> => this.browser.close(),
+            },
+          ]
+        : []),
+    ])
+    return failures.length === 0
+  }
+
+  /**
+   * Removes the gate's preload folder and invalidates its proof.
+   * Called by {@link cleanupOwned}; does nothing when no gate was built.
+   * @example await this.disposeReverseProxy()
+   */
+  private async disposeReverseProxy(): Promise<void> {
+    await this.reverseProxyGateCache?.dispose()
+  }
+
+  /**
    * Waits until the Next preload wrapped every compiler, counting the bound from the moment Next listens and failing with the process's own exit when it ends first.
    * Called by {@link prepareOwned} after the owned server started; does nothing for a run without a Next library route.
    * @throws The exit failure of the owned server, or the `library-redirect-not-applied` refusal.
@@ -2736,6 +3029,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     await this.evidence.initialize()
     this.alive()
+    // A run that declares reverseProxy resolves its host before anything starts or is leased (D20, D25).
+    await this.reverseProxyStage('resolve')
     // One shared resolver judges the selected package before any process starts: real path, Next installation, then stops outside the package.
     // It runs before the saved-session admission, which decides from the resolved package (a packageRoot that links to the root is the root run).
     if (this.definition.configuration.adapter === 'next-dev-webpack') {
@@ -2802,6 +3097,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : {}),
       ...(reactScriptsLibrary ? { reactScriptsLibrary } : {}),
       ...(nextLibrary ? { nextLibrary } : {}),
+      ...this.reverseProxyStartFacts(),
       ...(hasPagesFolder ? { outputMask: maskNextServerOutput } : {}),
       workspace: this.packageRoot,
       ...this.resolvedPackageFields(),
@@ -2841,6 +3137,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A Next library run is refused here when the preload did not wrap a compiler's configuration (decision D20): the readiness request would run the installed copy.
     await this.awaitNextLibraryRedirect()
     this.alive()
+    // The proof comes after the listener and before any browser or request that runs the app's code (D25).
+    await this.reverseProxyStage('prove')
     // A module-scope server stop runs when Next first evaluates its module, during Codebook's own request: its provisional breakpoints are in place before that request.
     await this.openPreparationWindow(adapter, hasPagesFolder)
     await this.attachNextLibraryServer()
@@ -2889,7 +3187,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const storage = this.definition.configuration.initialStorage ?? []
     if (storage.length) {
       await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
-        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin, this.ownsIpv6Loopback))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
+        source: `if(${JSON.stringify(this.ownedOrigins())}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
       })
       this.alive()
     }
@@ -2916,7 +3214,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await prepareRepositoryInputs(
       cdp,
       inputs,
-      loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
+      this.ownedOrigins(),
       () => this.alive(),
       {
         started: (selector) => {
@@ -3077,7 +3375,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       .acquire(
         runId,
         configuration.session === 'fresh' ? 'fresh' : 'saved-if-available',
-        this.options.host.chrome?.version ?? '',
+        this.options.host.chrome.version,
         this.abort.signal,
       )
       .catch((error: unknown) => {
@@ -3263,6 +3561,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           adapter.name === 'next-dev-webpack'
             ? this.readiness.observer
             : undefined,
+          this.declaredOrigin(),
         )
     } catch (error) {
       await this.classifyExpoEntryAnswer(adapter, error)
@@ -3271,7 +3570,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The saved session opens only on the loopback origin of the server Codebook started, and nothing is launched before this is judged.
     if (this.session === 'saved')
       try {
-        assertSavedSessionOrigin(ownedOrigin)
+        assertSavedSessionOrigin(ownedOrigin, this.reverseProxyAdmission())
       } catch (error) {
         if (error instanceof StudyError)
           this.logStartRefusal(
@@ -3372,6 +3671,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       entryPath,
       this.operationsConfiguration!.signInPaths,
       this.readiness.observer,
+      this.declaredOrigin(),
     )
     this.alive()
     if (entry.redirectsToSignIn !== undefined) {
@@ -3383,6 +3683,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       entryPath,
       entry,
       this.readiness.observer,
+      this.declaredOrigin(),
     )
     return origin
   }
@@ -4620,14 +4921,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!this.entryBehindSignIn) return
     await this.launchOwnedBrowser(adapter)
     const window = this.preparationWindow
-    // A module-evaluation pause holds the page's answer until the last continue: the navigation's own timer must not bound the wait, and the load waits for that answer, because until the server answers the page still shows the document before it, which would read as settled.
-    await this.navigateToEntry(
-      this.requireCdp(),
-      window ? { answerMayBeHeld: true, awaitHeldAnswer: true } : {},
-    )
-    await this.settleWarmedPage(window)
-    this.alive()
-    await this.refuseSignInPageNow()
+    // A landing on a sign-in path during this load refuses the run whatever its operation count (a run that declares none would otherwise read it as a sign-out flow's end).
+    this.warmingEntry = true
+    try {
+      // A module-evaluation pause holds the page's answer until the last continue: the navigation's own timer must not bound the wait, and the load waits for that answer, because until the server answers the page still shows the document before it, which would read as settled.
+      await this.navigateToEntry(
+        this.requireCdp(),
+        window ? { answerMayBeHeld: true, awaitHeldAnswer: true } : {},
+      )
+      await this.settleWarmedPage(window)
+      this.alive()
+      await this.refuseSignInPageNow()
+    } finally {
+      this.warmingEntry = false
+    }
     this.evidence.record('application.entry-warmed-with-saved-session')
     // The real entry load is the first navigation of the run again.
     this.navigationRequested = false
@@ -4688,7 +4995,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const navigation = cdp.request(
       'Page.navigate',
       {
-        url: `${this.origin}${this.definition.configuration.entryPath ?? '/'}`,
+        url: `${this.entryOrigin()}${this.definition.configuration.entryPath ?? '/'}`,
       },
       // A pause before the shell flush holds the answer until the last continue: the entry-load rules, not the request's own timer, bound the wait (X17).
       options.answerMayBeHeld ? REPOSITORY_RUN_TIMEOUT_MS : undefined,
@@ -6588,6 +6895,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.origin!,
       this.operationsConfiguration?.signInPaths,
       this.ownsIpv6Loopback,
+      this.declaredOrigin(),
     )
   }
 
@@ -6608,7 +6916,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const sent = this.operationsDispatched
     const total = declaredOperationsOf(this.operationsConfiguration!).length
     // The entry load is no sign-out flow: a run with no operation lands on sign-in before its entry page loaded, which is the refusal and releases the armed stops (X22).
-    if (sent >= total && !this.entryLoad) {
+    if (sent >= total && !this.entryLoad && !this.warmingEntry) {
       // A sign-out flow ends on its sign-in page: the run-level after decides (D13).
       this.signInLandingAfterLast = landedOn
       this.evidence.record('page.sign-in-after-last-operation')
@@ -6706,6 +7014,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       landedOn,
       operationIndex,
       declaredFresh,
+      declaredOrigin: this.declaredOrigin(),
     })
   }
 
@@ -6717,7 +7026,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private notifySignInRequired(reason: SignInRequiredReason): void {
     if (this.signInNoticeSent) return
     this.signInNoticeSent = true
-    this.options.onSignInRequired?.({ reason })
+    this.options.onSignInRequired?.({
+      reason,
+      ...(this.operationsConfiguration?.reverseProxy
+        ? { reverseProxy: this.operationsConfiguration.reverseProxy }
+        : {}),
+    })
   }
 
   /**
@@ -7275,6 +7589,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.entryPath ?? '/',
       this.operationsConfiguration?.signInPaths,
       this.readiness.observer,
+      this.declaredOrigin(),
     ).catch(async (error: unknown) => {
       throw await this.withLaunchFailureNotes(error, port)
     })
@@ -7327,6 +7642,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           entryPath,
           entry,
           this.readiness.observer,
+          this.declaredOrigin(),
         )
       return
     }
@@ -7541,9 +7857,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (found.length)
       this.routeHandlerRequests = new RouteHandlerRequests(
         [...new Set(found.map((entry) => entry.route))],
-        (origin) =>
-          this.origin !== undefined &&
-          isOwnedApplicationOrigin(origin, this.origin, this.ownsIpv6Loopback),
+        (origin) => this.isOwned(origin),
       )
   }
 
@@ -13881,7 +14195,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private operationPort(): OperationPort {
     return {
       pageCdp: () => this.ownedPageCdp(),
-      origins: () => loopbackOriginsOf(this.origin!, this.ownsIpv6Loopback),
+      origins: () => this.ownedOrigins(),
       assertCurrent: (): void => this.alive(),
       millisecondsSinceNavigation: () =>
         performance.now() - this.lastNavigationAtMs,
@@ -16813,14 +17127,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         returnByValue: true,
       })
     this.alive()
-    if (
-      identity.exceptionDetails ||
-      !isOwnedApplicationOrigin(
-        identity.result.value,
-        this.origin!,
-        this.ownsIpv6Loopback,
-      )
-    )
+    if (identity.exceptionDetails || !this.isOwned(identity.result.value))
       throw new Error('Selected page left its owned application origin')
     return cdp
   }
@@ -17504,7 +17811,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       preparedTextStates: [...this.preparedStates],
       ...this.nextPackageView(),
       manifest: this.currentManifest(),
-      applicationOrigin: this.origin,
+      applicationOrigin: this.entryOrigin(),
+      ...this.reverseProxyView(),
       applicationPortSource: this.portSource,
       viteVersion: this.viteVersion,
       expoVersion: this.expoVersion,
@@ -17907,6 +18215,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     // The private folder goes last, after the server that used it stopped; a failed stop keeps it for the retried Stop.
     await this.libraryRoute?.dispose({ serverStopped: didServerStop })
+    // A failing preload-folder removal is collected like every other step, so the record and the final persist still happen.
+    failures.push(
+      ...(await settleCleanup([
+        {
+          description: 'reverse proxy preload folder removal',
+          release: (): Promise<void> => this.disposeReverseProxy(),
+        },
+      ])),
+    )
     failures.push(...libraryFailures)
     this.failures.push(...failures)
     this.resourcesReleased = this.isCleanupComplete(failures)

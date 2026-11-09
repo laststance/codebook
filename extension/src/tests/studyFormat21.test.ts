@@ -341,8 +341,8 @@ test('a run that declares a press takes format 21 for every base shape; without 
   )
 })
 
-// Value: protects=D44 AC4 a replay with a press saves as .study.v21.json, is listed as v21 with its outcome, a lost sidecar is repaired by reconcile and a v22 file is listed as newer; fails_when=keepsCheckpoint or the catalog type omits v21, or the storage table lacks v21; no_claim=disk errors
-test('a replay with a press saves as .study.v21.json, lists as v21, repairs a lost sidecar and lists v22 as saved by a newer Codebook', async (context) => {
+// Value: protects=D44 AC4 a replay with a press saves as .study.v21.json, is listed as v21 with its outcome, a lost sidecar is repaired by reconcile and a v23 file is listed as newer; fails_when=keepsCheckpoint or the catalog type omits v21, or the storage table lacks v21; no_claim=disk errors
+test('a replay with a press saves as .study.v21.json, lists as v21, repairs a lost sidecar and lists v23 as saved by a newer Codebook', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-21-'))
   context.after(() => removeTestFolder(directory))
@@ -362,8 +362,8 @@ test('a replay with a press saves as .study.v21.json, lists as v21, repairs a lo
   await library.reconcile()
   const repaired = await library.readCheckpoint(study.id)
   await writeFile(
-    join(directory, `${newerId}.study.v22.json`),
-    '{"version":22}',
+    join(directory, `${newerId}.study.v23.json`),
+    '{"version":23}',
   )
   const withNewer = (await library.list()).map((entry) => entry.format).sort()
   // Assert
@@ -589,8 +589,8 @@ test('only format 21 holds a press: older formats, a format 21 study without one
   )
 })
 
-// Value: protects=D38 Codebook 0.2.102 (readable up to 20) lists .study.v21.json as saved by a newer Codebook, this one reads 21 and refuses 22; fails_when=the file name rule stops recognising v21, the readable limit stays 20, or format 21 is not an operations format; no_claim=the 0.2.102 binary
-test('Codebook 0.2.102 lists a .study.v21.json archive and its sidecar as saved by a newer Codebook; this one reads 21', async () => {
+// Value: protects=D38 Codebook 0.2.102 (readable up to 20) lists .study.v21.json as saved by a newer Codebook, this one reads 22 and refuses 23; fails_when=the file name rule stops recognising v21, the readable limit stays 20, or format 21 is not an operations format; no_claim=the 0.2.102 binary
+test('Codebook 0.2.102 lists a .study.v21.json archive and its sidecar as saved by a newer Codebook; this one reads 22', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 20 }
   const newerStudyArchive = await loadModule<typeof NewerStudyArchiveModule>(
@@ -603,12 +603,13 @@ test('Codebook 0.2.102 lists a .study.v21.json archive and its sidecar as saved 
   // Assert
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 21 })
   assert.equal(sidecar, undefined)
-  assert.equal(READABLE_STUDY_VERSION, 21)
+  assert.equal(READABLE_STUDY_VERSION, 22)
   assert.equal(isOperationsStudyFormat(21), true)
-  assert.equal(isOperationsStudyFormat(22), false)
+  assert.equal(isOperationsStudyFormat(22), true)
+  assert.equal(isOperationsStudyFormat(23), false)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 21 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 22 }),
-    /saved in format 22 by a newer Codebook; this Codebook reads formats up to 21/,
+    () => assertReadableStudyFormat({ version: 23 }),
+    /saved in format 23 by a newer Codebook; this Codebook reads formats up to 22/,
   )
 })

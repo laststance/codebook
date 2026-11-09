@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.40 is additive: a version 3 `next-dev-webpack` configuration may declare `reverseProxy: { origin, upstreamPort }`, for a Next app the learner opens through their own local reverse proxy (nginx, Caddy or Traefik) at a host name instead of directly at the dev server's localhost address. Codebook starts the dev server itself on `upstreamPort`, resolves the origin's host (every address must be a loopback address), proves with one keyed request that the origin reaches the server it started, checks with a throwaway browser that a browser reaches the same address, and opens the entry at the origin; certificates are never bypassed. A refusal answers `REVERSE_PROXY_REFUSED` with one of {@link REVERSE_PROXY_REFUSAL_REASONS} as its `details.reason`; a run saved with the declaration is saved as format 22 ({@link REVERSE_PROXY_STUDY_VERSION}).
  * 1.39 is additive: a version 3 configuration may declare an operation `{ kind: "press", title, key, selector?, after }`, one key press (optionally with Control, Alt, Shift or Meta, spelled `Control+k`) sent to the page in the browser run, for an app that opens a screen from a keyboard shortcut. The press is refused, nothing sent, when the key would go to a secret control (always, with or without a `selector`), to a frame, or to a text entry (only without a declared `selector`; naming a text input as the `selector` sends the key to it), when a declared `selector` is not a focusable target, and when its `after` condition already holds; a run saved with a press is saved as format 21 ({@link PRESS_STUDY_VERSION}). A failed press reports one of {@link OPERATION_PRESS_REASONS} as the `reason` of its `INPUT_NOT_ACCEPTED` error.
  * 1.38 is additive: a version 3 `vite-dev` configuration may declare the same `apiServer` (plus the optional `proxyPaths`, the request prefixes the dev server forwards to the API), for a Vite app whose page reaches the repository's own Node API; Codebook starts the API beside the dev server, a server stop in the API pauses during the request the page sends (directly or through the dev server's proxy), the attribution sentence names the route, and the run is saved as format 20 ({@link VITE_API_SERVER_STUDY_VERSION}). A failed operation reports the API's output tail as `apiOutputTail`, and the refusals gain `api-port-conflict` and `api-folder-nesting` (`VITE_UNSUPPORTED`) and `VITE_SEAL_FAILED` for the API's source. A root run may also sign in within the run with `session: "fresh"`.
  * 1.37 is additive: a version 3 `expo-web-dev` configuration may declare `apiServer: { packageRoot, entry, loader?, port }`, the app's own Node API server. Codebook starts it beside Metro (`node` with an inspector and the repository's tsx), attaches the run's server participant to it, and a server stop in the API pauses during the request a page operation sends; every other adapter and version refuses the key as unknown. Such a study is saved as format 19 ({@link EXPO_WEB_API_SERVER_STUDY_VERSION}), whose server observations carry the `apiRequest` fact.
@@ -41,10 +42,92 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.39'
+export const API_VERSION = '1.40'
 
 /** The API that first accepts a `press` operation in a version 3 configuration. */
 export const PRESS_MINIMUM_API = '1.39'
+
+/** The API that first accepts `reverseProxy: { origin, upstreamPort }` in a version 3 `next-dev-webpack` configuration. */
+export const REVERSE_PROXY_MINIMUM_API = '1.40'
+
+/**
+ * Why Codebook refuses a declared `reverseProxy` (`REVERSE_PROXY_REFUSED`, its `details.reason`), in the order the recovery text and the help table list them.
+ * The first three are decided before anything starts, the `proof-*` and `certificate-*` ones by the proof request, the two `browser-*` certificate ones and `browser-address-mismatch` by the throwaway browser's check.
+ */
+export const REVERSE_PROXY_REFUSAL_REASONS = [
+  'not-resolved',
+  'not-loopback',
+  'same-socket',
+  'proof-unreachable',
+  'proof-wrong-server',
+  'proof-redirected',
+  'proof-timeout',
+  'proof-unclassified',
+  'certificate-untrusted',
+  'certificate-expired',
+  'certificate-host-mismatch',
+  'certificate-invalid',
+  'browser-certificate-untrusted',
+  'browser-certificate-rejected',
+  'browser-address-mismatch',
+] as const
+/** One reason of {@link REVERSE_PROXY_REFUSAL_REASONS}. */
+export type ReverseProxyRefusalReason =
+  (typeof REVERSE_PROXY_REFUSAL_REASONS)[number]
+
+/** The states a run's `reverseProxy` block reports; `refused` is terminal. */
+export const REVERSE_PROXY_STATES = [
+  'resolving',
+  'proving',
+  'proved',
+  'refused',
+] as const
+
+/** The `applicationPortSource` of a run that declares `reverseProxy`: the port is the declared `upstreamPort`, not the dev script's. */
+export const REVERSE_PROXY_PORT_SOURCE = 'declared by reverseProxy.upstreamPort'
+
+/** The path prefix the identity preload answers in place of the app; the proof request is `GET <prefix><challenge>`. */
+export const REVERSE_PROXY_PROOF_PATH_PREFIX = '/__codebook_proof__/'
+
+/** The environment variable that carries one run's identity secret to the development server's process; without it the identity preload is inert. */
+export const REVERSE_PROXY_PROOF_SECRET_ENV = 'CODEBOOK_PROOF_SECRET'
+
+/** How long the resolution of the declared host may take before it is `not-resolved`. Measured on macOS 26 with Node 24: `dns.promises.lookup(host, { all: true, verbatim: true })` for a host only the hosts file maps took 5006 to 5010 ms (the AAAA query waits for its 5 s timeout), so the bound sits well above that; resolve, proof and probe bounds together stay below {@link REPOSITORY_SETUP_TIMEOUT_MS}. */
+export const REVERSE_PROXY_RESOLVE_TIMEOUT_MS = 15_000
+/** How long the proof request, handshake and body included, may take before it is `proof-timeout`. */
+export const REVERSE_PROXY_PROOF_TIMEOUT_MS = 10_000
+/** How long the throwaway browser's address check may take before it is `proof-timeout`. */
+export const REVERSE_PROXY_PROBE_TIMEOUT_MS = 10_000
+/** How long the read of the operating system's certificate store may take. */
+export const REVERSE_PROXY_SYSTEM_CERTIFICATES_TIMEOUT_MS = 5_000
+/** The most body bytes of the proof answer that are read (a 64-character hex digest needs 64). */
+export const REVERSE_PROXY_PROOF_BODY_LIMIT_BYTES = 128
+/** What kind of failure a `proof-unreachable` refusal names in its reason sentence: `connection refused`, `no route` or `connection reset`. */
+export const REVERSE_PROXY_UNREACHABLE_KINDS = [
+  'refused',
+  'no-route',
+  'reset',
+] as const
+/** One kind of {@link REVERSE_PROXY_UNREACHABLE_KINDS}. */
+export type ReverseProxyUnreachableKind =
+  (typeof REVERSE_PROXY_UNREACHABLE_KINDS)[number]
+/** How often the browser address check looks for Chrome's `DevToolsActivePort` file and for the first page target. */
+export const REVERSE_PROXY_PROBE_POLL_MS = 50
+/** How long the end of the throwaway Chrome's process group may take before the browser address check stops waiting for it. */
+export const REVERSE_PROXY_PROBE_CLEANUP_BOUND_MS = 5_000
+/** How long the WebSocket to the throwaway Chrome may take to open (also capped by what is left of {@link REVERSE_PROXY_PROBE_TIMEOUT_MS}). */
+export const REVERSE_PROXY_PROBE_CONNECT_BOUND_MS = 5_000
+/** How often the removal of the throwaway Chrome's profile folder is retried (Chrome may still write into it for a moment). */
+export const REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRIES = 20
+/** The pause between two retries of the profile folder removal. */
+export const REVERSE_PROXY_PROBE_PROFILE_REMOVE_RETRY_DELAY_MS = 100
+/** How long the `ps` query that binds the proof's answering process to the spawned process group may take. */
+export const REVERSE_PROXY_PROCESS_QUERY_TIMEOUT_MS = 5_000
+/** How many redirects the readiness request of a reverse proxy run follows by hand before it gives up. */
+export const REVERSE_PROXY_OWN_REDIRECT_HOP_LIMIT = 5
+/** The room the child that prints the operating system's trust store gets for its output (a few hundred certificates are well under it). */
+export const REVERSE_PROXY_SYSTEM_CERTIFICATES_MAX_BUFFER_BYTES =
+  16 * 1024 * 1024
 
 /** The kinds of operation a version 3 configuration may declare, the one list every union of operation kinds derives from. @example const kind: OperationKind = 'press' */
 export const OPERATION_KINDS = ['text', 'choose', 'click', 'press'] as const
@@ -311,7 +394,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.103'
+export const EXTENSION_VERSION = '0.2.104'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2105,6 +2188,8 @@ export const EXPO_WEB_API_SERVER_STUDY_VERSION = 19
 export const VITE_API_SERVER_STUDY_VERSION = 20
 /** The format of a study saved from a version 3 browser run that declares a `press` operation (API 1.39): the format of its configuration's other features, plus the `press` kind in its saved operations; the suffix `.study.v21.json` makes Codebook 0.2.102 and older list such a study as saved by a newer Codebook and keep it. */
 export const PRESS_STUDY_VERSION = 21
+/** The format of a study saved from a version 3 `next-dev-webpack` configuration that declares `reverseProxy` (API 1.40): a compatibility format that keeps every fact of the underlying run's format, because the sealed configuration holds a key an older strict reader rejects; the suffix `.study.v22.json` makes Codebook 0.2.103 and older list such a study as saved by a newer Codebook and keep it. */
+export const REVERSE_PROXY_STUDY_VERSION = 22
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
@@ -2124,7 +2209,7 @@ export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = PRESS_STUDY_VERSION
+export const READABLE_STUDY_VERSION = REVERSE_PROXY_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2136,6 +2221,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: REVERSE_PROXY_STUDY_VERSION,
+    format: 'v22',
+    archiveSuffix: '.study.v22.json',
+    metadataSuffix: '.study.meta.v22.json',
+  },
   {
     version: PRESS_STUDY_VERSION,
     format: 'v21',
@@ -3482,6 +3573,8 @@ export type ViteSetupStep =
 export const NEXT_SETUP_STEPS = {
   validatingProject: 'validating the project',
   startingNext: 'starting Next',
+  provingReverseProxy:
+    'proving that the reverse proxy reaches the started server',
   waitingForServer: 'waiting for the server to answer the entry page',
   readingManifests: 'reading the route manifests',
   sealingStops: 'sealing the declared stops',

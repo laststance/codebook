@@ -197,7 +197,7 @@ test('the MCP instructions and the API note name expo-web-dev, its selection rul
       .split('\n')
       .find((line) => line.startsWith(' * 1.30 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.39')
+  assert.equal(API_VERSION, '1.40')
   assert.ok(protocol.includes('${EXPO_WEB_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(

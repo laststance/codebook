@@ -36,11 +36,21 @@ import {
 } from './constants'
 import { bookIdSchema } from './identitySchemas'
 import { libraryDeclarationSchema } from './libraryDeclarationSchema'
+import {
+  REVERSE_PROXY_ADAPTER_MESSAGE,
+  REVERSE_PROXY_HTTP_SESSION_MESSAGE,
+  REVERSE_PROXY_LIBRARY_MESSAGE,
+  REVERSE_PROXY_ORIGIN_REFUSAL_MESSAGES,
+  reverseProxyDeclarationSchema,
+  type ReverseProxyDeclaration,
+} from './reverseProxyDeclarationSchema'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import { declaresPressOperation } from './utils/declaresPressOperation'
+import { declaresReverseProxy } from './utils/declaresReverseProxy'
 import { isRepositoryPathInFolder } from './utils/isRepositoryPathInFolder'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 import { normalizedSignInPathname } from './utils/normalizedSignInPathname'
+import { parseReverseProxyOrigin } from './utils/parseReverseProxyOrigin'
 import { parsePressKey } from './utils/pressKey'
 import { proxyPathIssueOf } from './utils/proxyPathIssueOf'
 
@@ -399,6 +409,8 @@ const operationsConfigurationShape = z.strictObject({
   library: libraryDeclarationSchema.optional(),
   // expo-web-dev (MCP API 1.37) and vite-dev (1.38): the app's own Node API server; other adapters refuse the key as unknown in validateOperations.
   apiServer: apiServerDeclarationSchema.optional(),
+  // next-dev-webpack (MCP API 1.40): the learner's own local reverse proxy; the adapter, library and origin rules are added by the version 3 refinements.
+  reverseProxy: reverseProxyDeclarationSchema.optional(),
 })
 
 /**
@@ -656,6 +668,51 @@ function validatePressOperations(
 }
 
 /**
+ * Refuses the `reverseProxy` rules a field schema cannot state: the adapter (D8 item 10), `library` beside it (D19 item 12) and each origin rule of {@link parseReverseProxyOrigin} (D8 items 1 to 6 and 11).
+ * Called by {@link validateOperations}; does nothing without `reverseProxy`. Each issue's message stands alone and never echoes the declared value.
+ * @param configuration - A parsed version 3 configuration.
+ * @param context - The refinement context that receives one issue per violation.
+ * @example validateReverseProxy({ adapter: 'vite-dev', reverseProxy: { … }, … }, context) // adds an issue at ['reverseProxy']
+ */
+function validateReverseProxy(
+  configuration: z.infer<typeof operationsConfigurationShape>,
+  context: z.RefinementCtx,
+): void {
+  const { reverseProxy } = configuration
+  if (reverseProxy === undefined) return
+  // Only a next-dev-webpack run declares it; the issue is custom (not an unknown key) so the message carries the way out.
+  if (configuration.adapter !== 'next-dev-webpack') {
+    context.addIssue({
+      code: 'custom',
+      path: ['reverseProxy'],
+      message: REVERSE_PROXY_ADAPTER_MESSAGE,
+    })
+    return
+  }
+  // The library route has its own preload and package root; no run needs both.
+  if (configuration.library !== undefined)
+    context.addIssue({
+      code: 'custom',
+      path: ['reverseProxy'],
+      message: REVERSE_PROXY_LIBRARY_MESSAGE,
+    })
+  const parsed = parseReverseProxyOrigin(reverseProxy.origin)
+  if (!parsed.ok)
+    context.addIssue({
+      code: 'custom',
+      path: ['reverseProxy', 'origin'],
+      message: REVERSE_PROXY_ORIGIN_REFUSAL_MESSAGES[parsed.item],
+    })
+  // A saved profile may hold HSTS for the host and upgrade http to an https address the run never proved.
+  else if (parsed.scheme === 'http' && configuration.session !== 'fresh')
+    context.addIssue({
+      code: 'custom',
+      path: ['reverseProxy', 'origin'],
+      message: REVERSE_PROXY_HTTP_SESSION_MESSAGE,
+    })
+}
+
+/**
  * Refuses the version 3 rules a field schema cannot state: distinct operation titles, distinct sign-in paths none of which is the entry path, and an `afterOperation` on every stop that names a declared operation and never decreases along the declared stop order.
  * Called by {@link operationsRepositoryConfigSchema}.
  * @param configuration - A parsed version 3 configuration.
@@ -690,6 +747,7 @@ function validateOperations(
       path: [],
     })
   else validateApiServer(configuration, context)
+  validateReverseProxy(configuration, context)
   const titles = new Set<string>()
   for (const [index, operation] of (configuration.operations ?? []).entries()) {
     // A repeated title makes two operations indistinguishable in the run resource and the replay.
@@ -938,6 +996,30 @@ export function canonicalizePressKeys<
   return didChange ? { ...configuration, operations: rewritten } : configuration
 }
 
+/**
+ * Rewrites a declared `reverseProxy.origin` to its canonical spelling, so `https://App.Example.test/` and `https://app.example.test` are one configuration for the idempotency key, the run and the saved study.
+ * Called by {@link StudyService.start} beside {@link canonicalizePressKeys}; an origin that does not parse is left as written (the schema already refused it).
+ * @param configuration - Any parsed repository configuration.
+ * @returns The same object when there is no declaration or the origin is already canonical, else a copy with the canonical origin.
+ * @example canonicalizeReverseProxy({ version: 3, reverseProxy: { origin: 'https://App.Example.test/', upstreamPort: 4310 }, … }) // => origin 'https://app.example.test'
+ */
+export function canonicalizeReverseProxy<
+  Configuration extends {
+    version: number
+    reverseProxy?: ReverseProxyDeclaration
+  },
+>(configuration: Configuration): Configuration {
+  const { reverseProxy } = configuration
+  if (reverseProxy === undefined) return configuration
+  const parsed = parseReverseProxyOrigin(reverseProxy.origin)
+  // An unparseable origin stays as written; an already canonical one is not copied.
+  if (!parsed.ok || parsed.origin === reverseProxy.origin) return configuration
+  return {
+    ...configuration,
+    reverseProxy: { ...reverseProxy, origin: parsed.origin },
+  }
+}
+
 /** Applies shared bounded fact requirements to both retained intent versions without changing their serialized fields. @example validateInspections(configuration, context) */
 function validateInspections(
   configuration:
@@ -1013,6 +1095,8 @@ export const liveRepositoryConfigSchema = z.union([
   crossRuntimeRepositoryConfigSchema,
   operationsRepositoryConfigSchema,
 ])
+/** Why every retained variant refuses `reverseProxy`: a run that declares it is saved as format 22 only. */
+const FORMAT_22_ONLY_MESSAGE = 'Only a study of format 22 keeps a reverseProxy.'
 /**
  * The configuration of a study of formats 3 to 8: versions 1 to 3 as before, and none of them may carry a `packageRoot` (the field exists only in format 9, see {@link packageRootRepositoryConfigSchema}).
  * The explicit refusal keeps formats 3 to 8 closed although the live version 3 shape ({@link liveRepositoryConfigSchema}) has an optional `packageRoot`.
@@ -1046,6 +1130,7 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
   )
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * Says whether a retained configuration declares no `apiServer` (an explicit `apiServer: undefined` declares nothing).
  * Called by the refinements of the retained variants that can hold a `vite-dev` run (formats 3 to 8, 10 and 16), which an older Codebook reads without the key.
@@ -1057,6 +1142,16 @@ function declaresNoApiServer(configuration: object): boolean {
   return (
     !('apiServer' in configuration) || configuration.apiServer === undefined
   )
+}
+/**
+ * Says whether a retained configuration declares no `reverseProxy` (an explicit `reverseProxy: undefined` declares nothing).
+ * Called by the refinements of every retained variant, which an older Codebook reads without the key.
+ * @param configuration - A parsed configuration of any version.
+ * @returns `true` when `reverseProxy` is absent or undefined.
+ * @example declaresNoReverseProxy({ reverseProxy: undefined }) // => true
+ */
+function declaresNoReverseProxy(configuration: object): boolean {
+  return !declaresReverseProxy(configuration)
 }
 /**
  * Says whether a retained configuration declares no `press` operation.
@@ -1125,14 +1220,12 @@ const packageRootRepositoryConfigSchema = operationsConfigurationShape
       'A format 9 study names a package folder other than ".".',
     ),
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   // A Next run that declares `library` is saved as format 18 only (API 1.36); the shape above would otherwise accept the key.
   .refine(declaresNoLibrary, 'Only a study of format 18 keeps a library.')
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 10 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."`.
  * Why it exists: 0.2.77.0 validates a format 9 configuration with {@link packageRootRepositoryConfigSchema}, which accepts `next-dev-webpack` only, so a nested Vite run needs its own format to be listed as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `vite-dev`).
@@ -1159,6 +1252,7 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
   )
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -1173,10 +1267,7 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
     ),
     library: libraryDeclarationSchema,
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   // A `vite-dev` run that declares `apiServer` is saved as format 20 only; `library` beside it is refused by validateOperations.
   .refine(
     declaresNoApiServer,
@@ -1184,6 +1275,7 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
   )
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 18 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.36).
  * Why it exists: an older Codebook refuses `library` under `next-dev-webpack` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations). A root app never reaches a save: the run is refused with `library-needs-package-root` before anything starts.
@@ -1198,12 +1290,10 @@ const nextLibraryRepositoryConfigSchema = operationsConfigurationShape
     ),
     library: libraryDeclarationSchema,
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 11 study retains: the version 3 `react-scripts-dev` shape, root (`packageRoot` absent or `"."`) or nested.
  * Why it exists: an older Codebook refuses the adapter value, so every `react-scripts-dev` run takes its own format and is listed there as saved by a newer Codebook (D5). Validated like the format 9 and 10 variants (inspections, operations; {@link validateInspections} also refuses a server participant under `react-scripts-dev`).
@@ -1216,6 +1306,7 @@ const reactScriptsRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoLibrary, 'Only a study of format 17 keeps a library.')
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 17 study retains: the version 3 `react-scripts-dev` shape with a required `library` declaration (API 1.35).
  * Why it exists: an older Codebook refuses `library` under `react-scripts-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 11 variant (inspections, operations).
@@ -1226,12 +1317,10 @@ const reactScriptsLibraryRepositoryConfigSchema = operationsConfigurationShape
     adapter: z.literal('react-scripts-dev'),
     library: libraryDeclarationSchema,
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 15 study retains: the version 3 `expo-web-dev` shape, root (`packageRoot` absent or `"."`) or nested.
  * Why it exists: an older Codebook refuses the adapter value, so every `expo-web-dev` run takes its own format and is listed there as saved by a newer Codebook (DX-16). Validated like the format 11 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `expo-web-dev`).
@@ -1239,10 +1328,7 @@ const reactScriptsLibraryRepositoryConfigSchema = operationsConfigurationShape
  */
 const expoWebRepositoryConfigSchema = operationsConfigurationShape
   .extend({ adapter: z.literal('expo-web-dev') })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   // A run that declares `apiServer` is saved as format 19 only.
   .refine(
     (configuration) => configuration.apiServer === undefined,
@@ -1250,6 +1336,7 @@ const expoWebRepositoryConfigSchema = operationsConfigurationShape
   )
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 19 study retains: the version 3 `expo-web-dev` shape with a required `apiServer` declaration (API 1.37).
  * Why it exists: an older Codebook refuses `apiServer` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 15 variant (inspections, operations, and the `apiServer` folder and stop rules).
@@ -1260,12 +1347,10 @@ const expoWebApiServerRepositoryConfigSchema = operationsConfigurationShape
     adapter: z.literal('expo-web-dev'),
     apiServer: apiServerDeclarationSchema,
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 20 study retains: the version 3 `vite-dev` shape with a required `apiServer` declaration (API 1.38), at the repository root or with a `packageRoot`.
  * Why it exists: an older Codebook refuses `apiServer` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 19 variant (inspections, operations, and the `apiServer` folder, `proxyPaths` and stop rules); `library` beside it is refused.
@@ -1276,13 +1361,11 @@ const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
     adapter: z.literal('vite-dev'),
     apiServer: apiServerDeclarationSchema,
   })
-  .superRefine((configuration, context) => {
-    validateInspections(configuration, context)
-    validateOperations(configuration, context)
-  })
+  .superRefine(validateRetainedStudyConfiguration)
   .refine(declaresNoLibrary, 'A format 20 study declares no library.')
   // A run that declares a press is saved as format 21 only.
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 21 study retains: a version 3 configuration that declares at least one press, every press key in canonical spelling.
  * Why it exists: an older Codebook refuses the `press` kind, so a run that declares one takes its own format and is listed there as saved by a newer Codebook.
@@ -1297,7 +1380,42 @@ const pressRepositoryConfigSchema = operationsRepositoryConfigSchema
     pressKeysAreCanonical,
     'A format 21 study keeps each press key in canonical spelling.',
   )
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) the format 20 variant (Vite with an apiServer) or the format 21 variant (a press). */
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
+/**
+ * Says whether a declared `reverseProxy.origin` is already in canonical spelling.
+ * Called by {@link reverseProxyRepositoryConfigSchema}: a saved format 22 study holds the spelling the start stored.
+ * @param configuration - A parsed version 3 configuration.
+ * @returns `true` when there is no declaration or the origin equals its canonical form.
+ * @example originIsCanonical({ reverseProxy: { origin: 'https://App.Example.test', upstreamPort: 4310 } }) // => false
+ */
+function originIsCanonical(configuration: {
+  reverseProxy?: ReverseProxyDeclaration
+}): boolean {
+  const parsed =
+    configuration.reverseProxy === undefined
+      ? undefined
+      : parseReverseProxyOrigin(configuration.reverseProxy.origin)
+  return (
+    parsed === undefined ||
+    (parsed.ok && parsed.origin === configuration.reverseProxy?.origin)
+  )
+}
+/**
+ * The configuration a format 22 study retains: a version 3 `next-dev-webpack` configuration that declares `reverseProxy`, its origin in canonical spelling.
+ * Why it exists: an older Codebook refuses the `reverseProxy` key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook.
+ * Read by {@link studyConfigurationSchema} as the twelfth member.
+ */
+const reverseProxyRepositoryConfigSchema = operationsRepositoryConfigSchema
+  .refine(declaresReverseProxy, 'A format 22 study declares a reverseProxy.')
+  .refine(
+    pressKeysAreCanonical,
+    'A format 22 study keeps each press key in canonical spelling.',
+  )
+  .refine(
+    originIsCanonical,
+    'A format 22 study keeps the reverseProxy origin in canonical spelling.',
+  )
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) the format 20 variant (Vite with an apiServer) the format 21 variant (a press) or the format 22 variant (a reverseProxy). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
@@ -1310,6 +1428,7 @@ export const studyConfigurationSchema = z.union([
   expoWebApiServerRepositoryConfigSchema,
   viteApiServerRepositoryConfigSchema,
   pressRepositoryConfigSchema,
+  reverseProxyRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

@@ -360,3 +360,96 @@ test('a session-only sign-in names the keep-me-signed-in setup as the only retry
     "The page landed on /login: shop keeps its sign-in only while the browser stays open, so a saved session cannot keep it. The run stopped before it sent anything. Only when the app's sign-in page offers to keep the learner signed in (such as Remember me), ask the learner to set up the saved session again with that choice; otherwise this flow cannot run with a saved session, so do not start another run for it.",
   )
 })
+
+// Value: protects=AC 7 a sign-in landing at the declared origin: a page on the declared origin on a declared path is on the sign-in path; fails_when=the declared origin is read as another origin, so the landing is missed; no_claim=the run's reaction to the landing
+test('a page at the declared origin on a declared sign-in path matches it', () => {
+  // Act
+  const matched = matchSignInPath(
+    'https://app.example.test/login?callbackUrl=%2Fdashboard',
+    'http://127.0.0.1:4310',
+    ['/login'],
+    true,
+    'https://app.example.test',
+  )
+
+  // Assert
+  assert.equal(matched, '/login')
+})
+
+// Value: protects=AC 7 the declared origin is exact: the declared host at another port or scheme, and the declared origin of a run without a declaration, are not on the sign-in path; fails_when=any origin of the declared host counts as the run's own; no_claim=an external sign-in page
+test('the declared host at another port or without a declaration is on no sign-in path', () => {
+  // Act / Assert
+  for (const page of [
+    'https://app.example.test:8443/login',
+    'http://app.example.test/login',
+  ])
+    assert.equal(
+      matchSignInPath(
+        page,
+        'http://127.0.0.1:4310',
+        ['/login'],
+        true,
+        'https://app.example.test',
+      ),
+      undefined,
+      page,
+    )
+  assert.equal(
+    matchSignInPath('https://app.example.test/login', 'http://127.0.0.1:4310', [
+      '/login',
+    ]),
+    undefined,
+  )
+})
+
+// Value: protects=AC 7 an absolute Location at the declared origin to a declared sign-in path is a same-origin sign-in redirect, with the query dropped; fails_when=it is read as another origin, so the run mis-routes before its browser opens; no_claim=a relative Location (above)
+test('an entry redirect with an absolute Location at the declared origin to a sign-in path is a same-origin sign-in redirect', () => {
+  // Act
+  const described = describeNextEntryResponse(
+    307,
+    'https://app.example.test/login?callbackUrl=SECRET',
+    'http://127.0.0.1:4310/dashboard',
+    'http://127.0.0.1:4310',
+    ['/login'],
+    'https://app.example.test',
+  )
+
+  // Assert
+  assert.deepEqual(described, {
+    status: 307,
+    location: { sameOrigin: true, path: '/login?callbackUrl=<redacted>' },
+    redirectsToSignIn: '/login',
+  })
+})
+
+// Value: protects=AC 7 a canonical-origin redirect is no loop: a redirect from the loopback request to the same path at the declared origin is not redirectsToItself, while the same path at the requested origin still is; fails_when=the Pages refusals read the canonical-origin redirect as a loop; no_claim=the Pages refusal wording
+test('a redirect to the same path at the declared origin is not a loop, and at the requested origin it is', () => {
+  // Act
+  const toDeclared = describeNextEntryResponse(
+    308,
+    'https://app.example.test/dashboard',
+    'http://127.0.0.1:4310/dashboard',
+    'http://127.0.0.1:4310',
+    undefined,
+    'https://app.example.test',
+  )
+  const toRequested = describeNextEntryResponse(
+    308,
+    'http://127.0.0.1:4310/dashboard',
+    'http://127.0.0.1:4310/dashboard',
+    'http://127.0.0.1:4310',
+    undefined,
+    'https://app.example.test',
+  )
+
+  // Assert
+  assert.deepEqual(toDeclared, {
+    status: 308,
+    location: { sameOrigin: true, path: '/dashboard' },
+  })
+  assert.deepEqual(toRequested, {
+    status: 308,
+    location: { sameOrigin: true, path: '/dashboard' },
+    redirectsToItself: true,
+  })
+})

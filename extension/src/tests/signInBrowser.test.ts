@@ -105,6 +105,38 @@ test('the setup browser starts headed on the saved folder with a debugging pipe,
   ])
 })
 
+// Value: protects=the setup browser of a declared reverseProxy host pins that host (API 1.40); fails_when=the rule is dropped or placed after the start URL; why_new=Step 7 gap 2; seam=none; no_claim=Chrome honoring the rule
+test('the setup browser carries the host pin before the sign-in page when a reverse proxy is declared', () => {
+  // Arrange
+  const rule = '--host-resolver-rules=MAP app.example.test 127.0.0.1'
+
+  // Act
+  const args = signInBrowserArguments('/p', URL, false, rule)
+
+  // Assert
+  assert.deepEqual(args, [
+    '--remote-debugging-pipe',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--user-data-dir=/p',
+    '--disk-cache-size=52428800',
+    rule,
+    'http://localhost:3165/login',
+  ])
+})
+
+// Value: protects=a setup browser without a declared reverseProxy carries no resolver rule; fails_when=a rule appears for a plain localhost sign-in; why_new=Step 7 gap 2; seam=none; no_claim=Chrome flag parsing
+test('the setup browser carries no host-resolver rule when no reverse proxy is declared', () => {
+  // Arrange / Act
+  const args = signInBrowserArguments('/p', URL, true)
+
+  // Assert
+  assert.equal(
+    args.some((argument) => argument.startsWith('--host-resolver-rules')),
+    false,
+  )
+})
+
 // protects=ENG-10 graceful close, Codex 4; fails_when=close returns before the process exited, kills it first, or reports forced; no_claim=Chrome flushing cookies (real-Chrome test and the native check)
 test('Done closes the setup browser with Browser.close and waits until it exited before anything is written', async (context) => {
   // Arrange

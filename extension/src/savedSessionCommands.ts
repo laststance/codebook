@@ -14,6 +14,7 @@ import {
   type SignInRequiredReason,
 } from './constants'
 import { signInPathSchema } from './repositoryConfigSchemas'
+import type { ReverseProxyDeclaration } from './reverseProxyDeclarationSchema'
 import type { StudyEnvironment } from './runtime'
 import type {
   SavedSessionEntry,
@@ -106,7 +107,10 @@ export interface SavedSessionCommandOptions {
 export interface InstalledSavedSessions {
   disposables: vscode.Disposable[]
   /** Shows the one notice (DES-3) of a run that needs a saved session and sets the status item's "needed" state, which lasts until the saved session changes after that run (a later run takes it, or a setup or removal changes it). */
-  showSignInRequired(reason: SignInRequiredReason): void
+  showSignInRequired(
+    reason: SignInRequiredReason,
+    reverseProxy?: ReverseProxyDeclaration,
+  ): void
   /** Redraws the status item; the extension calls it when the operations review state changes. */
   refresh(): void
   /** Closes an open setup as the window closes and releases what it holds. */
@@ -133,6 +137,8 @@ const ADAPTER_LABELS: Record<SavedSessionAdapterName, string> = {
 type NeededMark = {
   reason: SignInRequiredReason
   repositoryName: string
+  /** The declaration of a run that opens the app at a reverse-proxy origin (API 1.40), kept in memory only with the mark: the status item's Set Up entry sets up there while this mark lives. Dropped with the mark when a setup starts, when the saved session changes after the refused run, or when the window closes. */
+  reverseProxy?: ReverseProxyDeclaration
   /** The stored session as the first refresh after the refusal read it; a different one later means a setup or a removal changed it, in this window or another. */
   storedKey?: string
   /** Set once the refused run let go of the saved session, so the next store change is a later run, a setup or a removal, not that run's own cleanup. */
@@ -301,11 +307,16 @@ export function installSavedSessions(
   const setup = new SavedSessionSetup({
     store,
     ui,
-    startServer: async (adapter, signInPath, signal) => {
+    startServer: async (adapter, signInPath, signal, reverseProxy) => {
       const environment = await options.ensureEnvironment()
       if (!environment.startSavedSessionServer)
         throw new Error('this editor build cannot start the setup server')
-      return environment.startSavedSessionServer(adapter, signInPath, signal)
+      return environment.startSavedSessionServer(
+        adapter,
+        signInPath,
+        signal,
+        reverseProxy,
+      )
     },
     launchBrowser: (launchOptions) => launchSignInBrowser(launchOptions),
     clock: {
@@ -407,10 +418,43 @@ export function installSavedSessions(
     return setup.answer(generation, await ui.offerDoneOrClose(name))
   }
 
-  const setUpCommand = async (): Promise<void> => {
+  /**
+   * Picks the adapter of a setup at a declared reverse-proxy origin: only the Next webpack dev server declares `reverseProxy`, so there is no choice to offer.
+   * @returns `'next-dev-webpack'` when it is ready; otherwise `undefined` after saying what it misses.
+   */
+  const declaredAdapter = (
+    adapters: Parameters<typeof pickAdapter>[0],
+  ): SavedSessionAdapterName | undefined => {
+    if (adapters['next-dev-webpack'].ready) return 'next-dev-webpack'
+    void showNotice(
+      'error',
+      `Saved session setup cannot start: ${adapters['next-dev-webpack'].missing.join(' ')}`,
+    )
+    return undefined
+  }
+
+  /** The origin the setup started last opened (`undefined` for localhost); meaningful only while that setup is active. */
+  let activeSetupOrigin: string | undefined
+
+  /**
+   * Starts the setup, at localhost or, with a declaration, at the origin a refused run declared.
+   * Why it exists: the palette command and the notice's button share the whole start (adapter, sign-in path, Chrome) but differ in the origin; the declaration is a parameter and not registered-command input, so no other extension can pass one through `executeCommand`.
+   * @param declaration - The declaration the notice captured when it was shown, or `undefined` for localhost.
+   */
+  const startSetup = async (
+    declaration: ReverseProxyDeclaration | undefined,
+  ): Promise<void> => {
     const root = options.workspaceRoot()
     const name = basename(root)
-    if (setup.isActive) return reofferSetup(name)
+    if (setup.isActive) {
+      // A notice for another address must not silently re-offer the open setup of this one.
+      if (declaration?.origin !== activeSetupOrigin)
+        return void showNotice(
+          'information',
+          `A saved session setup at another address is open for ${name}. Finish it with Done or close it first, then set up again here.`,
+        )
+      return reofferSetup(name)
+    }
     const environment = await options.ensureEnvironment()
     const inputs = await environment.savedSessionSetupInputs?.()
     if (!inputs)
@@ -422,7 +466,9 @@ export function installSavedSessions(
       )
       return
     }
-    const adapter = await pickAdapter(inputs.adapters)
+    const adapter = declaration
+      ? declaredAdapter(inputs.adapters)
+      : await pickAdapter(inputs.adapters)
     if (!adapter) return
     const discovered = await discoverSignInPaths(
       root,
@@ -434,6 +480,8 @@ export function installSavedSessions(
     ]
     const signInPath = await pickSignInPath(name, candidates)
     if (!signInPath) return
+    // Remembered for the comparison above; read only while a setup is active.
+    activeSetupOrigin = declaration?.origin
     await setup.start({
       repositoryRoot: root,
       repositoryName: name,
@@ -441,8 +489,12 @@ export function installSavedSessions(
       signInPath,
       knownSignInPaths: candidates,
       chromeExecutable: inputs.chrome.binary,
+      ...(declaration ? { reverseProxy: declaration } : {}),
     })
   }
+
+  /** The palette command always opens localhost, whatever a refused run declared. */
+  const setUpCommand = (): Promise<void> => startSetup(undefined)
 
   /** Waits for the run's cleanup to release the folder, at most the stop bound. */
   const waitForRelease = async (hash: string): Promise<void> => {
@@ -534,8 +586,7 @@ export function installSavedSessions(
         REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
         awaiting.runId,
       )
-    else if (picked === SET_UP_BUTTON)
-      await editor.commands.executeCommand(SET_UP_SAVED_SESSION_COMMAND)
+    else if (picked === SET_UP_BUTTON) await startSetup(needed?.reverseProxy)
     else if (picked)
       await editor.commands.executeCommand(REMOVE_SAVED_SESSION_COMMAND)
   }
@@ -553,20 +604,26 @@ export function installSavedSessions(
   void refresh()
   return {
     disposables,
-    showSignInRequired: (reason): void => {
+    showSignInRequired: (reason, reverseProxy): void => {
       const root = safeRoot()
       const name = root ? basename(root) : 'this repository'
-      needed = { reason, repositoryName: name, isRunReleased: false }
+      // The declaration lives with the mark (memory only); a later refusal replaces both.
+      needed = {
+        reason,
+        repositoryName: name,
+        isRunReleased: false,
+        ...(reverseProxy ? { reverseProxy } : {}),
+      }
       output?.info(`Saved session needed: ${reason}.`)
       void refresh()
       void showNotice(
         'information',
-        signInRequiredNotice(reason, name),
+        signInRequiredNotice(reason, name, reverseProxy?.origin),
         SET_UP_BUTTON,
       )
         .then((pressed) => {
-          if (pressed === SET_UP_BUTTON)
-            return editor.commands.executeCommand(SET_UP_SAVED_SESSION_COMMAND)
+          // The button sets up for the declaration this notice captured, never one a later refusal handed over.
+          if (pressed === SET_UP_BUTTON) return startSetup(reverseProxy)
         })
         // A setup started from this notice has no editor surface that shows its failure, so it is shown here.
         .then(undefined, (error: unknown) => {

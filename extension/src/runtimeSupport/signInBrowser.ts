@@ -82,6 +82,8 @@ export interface SignInBrowserOptions {
   signal: AbortSignal
   /** Test seam: opens the browser headless so a CI machine without a display can run the real-Chrome case; the product never sets it. */
   headless?: boolean
+  /** The whole `--host-resolver-rules=…` switch pinning a declared `reverseProxy` host to its checked address (API 1.40), so the setup browser reaches the same server as the run; absent for a setup at localhost. */
+  hostResolverRules?: string
   /** Records the spawned browser so a later window can stop it if this one dies (the store's lease does the write). */
   recordBrowser(marker: {
     executable: string
@@ -95,6 +97,7 @@ export interface SignInBrowserOptions {
  * @param profile - The saved-session folder.
  * @param url - The sign-in page.
  * @param headless - Test seam only; the product opens a window the learner can see.
+ * @param hostResolverRules - The whole `--host-resolver-rules=…` switch of a declared `reverseProxy` host (API 1.40); absent at localhost.
  * @example
  * signInBrowserArguments('/p', 'http://localhost:3165/login') // => ['--remote-debugging-pipe', '--no-first-run', …, 'http://localhost:3165/login']
  */
@@ -102,6 +105,7 @@ export function signInBrowserArguments(
   profile: string,
   url: string,
   headless = false,
+  hostResolverRules?: string,
 ): string[] {
   return ownedChromeArguments({
     profile,
@@ -109,6 +113,7 @@ export function signInBrowserArguments(
     headless,
     startUrl: url,
     diskCacheBytes: SIGN_IN_PROFILE_DISK_CACHE_BYTES,
+    hostResolverRules,
   })
 }
 
@@ -257,7 +262,12 @@ export async function launchSignInBrowser(
   options.signal.throwIfAborted()
   const browser = dependencies.spawnBrowser(
     options.executable,
-    signInBrowserArguments(options.profile, options.url, options.headless),
+    signInBrowserArguments(
+      options.profile,
+      options.url,
+      options.headless,
+      options.hostResolverRules,
+    ),
   )
   const cdp = new WebSocketFlatCdp(browser.transport)
   const pages = new Set<string>()

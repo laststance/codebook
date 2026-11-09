@@ -487,8 +487,8 @@ test('formats 7, 10, 16 and 19 refuse a Vite apiServer; format 20 refuses a conf
   assert.notEqual(atTwenty, 'accepted')
 })
 
-// Value: protects=D38 this Codebook reads format 20 and lists 22 as newer, and Codebook 0.2.101 (readable up to 19) lists a .study.v20.json file as saved by a newer Codebook; fails_when=the row is missing, the readable limit stays 19, or the file name rule stops recognising v20; no_claim=the 0.2.101 binary
-test('Codebook 0.2.101 lists a .study.v20.json archive as saved by a newer Codebook; this one reads 20 and lists 22 as newer', async () => {
+// Value: protects=D38 this Codebook reads format 20 and lists 23 as newer, and Codebook 0.2.101 (readable up to 19) lists a .study.v20.json file as saved by a newer Codebook; fails_when=the row is missing, the readable limit stays 19, or the file name rule stops recognising v20; no_claim=the 0.2.101 binary
+test('Codebook 0.2.101 lists a .study.v20.json archive as saved by a newer Codebook; this one reads 20 and lists 23 as newer', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 19 }
   const newerStudyArchive = await loadModule<typeof NewerStudyArchiveModule>(
@@ -507,11 +507,11 @@ test('Codebook 0.2.101 lists a .study.v20.json archive as saved by a newer Codeb
     metadataSuffix: '.study.meta.v20.json',
   })
   assert.equal(VITE_API_SERVER_STUDY_VERSION, 20)
-  assert.equal(READABLE_STUDY_VERSION, 21)
+  assert.equal(READABLE_STUDY_VERSION, 22)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 20 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 22 }),
-    /saved in format 22 by a newer Codebook; this Codebook reads formats up to 21/,
+    () => assertReadableStudyFormat({ version: 23 }),
+    /saved in format 23 by a newer Codebook; this Codebook reads formats up to 22/,
   )
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 20 })
   assert.equal(sidecar, undefined)

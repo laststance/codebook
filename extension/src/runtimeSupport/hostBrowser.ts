@@ -213,6 +213,8 @@ export class HostBrowser {
   private managedProfile?: string
   /** The hold on the learner's saved-session folder when this run opens it ({@link useSavedProfile}); the folder is then never made, marked or removed here, and no journal record names its path. */
   private savedLease?: SavedSessionRunLease
+  /** The whole `--host-resolver-rules=…` switch of a declared `reverseProxy` host ({@link pinHost}); absent for every other run. */
+  private hostResolverRule?: string
   /** The spellings of the saved folder (the lease's path and its real path), by which journal records and errors hide it. */
   private savedFolders: string[] = []
   /** The processes {@link proveOwnedChrome} found, kept so the proof is made and journaled once. */
@@ -548,6 +550,19 @@ export class HostBrowser {
     if (this.secretFrameGate)
       this.viewport.setSecretFrameGate(this.secretFrameGate)
     await this.viewport.attach(cdp, signal)
+  }
+
+  /**
+   * Pins the declared `reverseProxy` host to the address Codebook checked, for every Chrome this browser launches (API 1.40): the managed arguments carry the rule next to the headless and pipe switches.
+   * Called by {@link ConfiguredBrowserRun} once the gate resolved the host, before {@link launch}; {@link managedRuntimeArgs} appends it next to the headless and pipe switches. Only the declared host is mapped, never `localhost`, so the learner's own `::1`-only API stays reachable.
+   * @param rule - The whole `--host-resolver-rules=MAP <host> <address>` switch from {@link hostResolverRuleOf}.
+   * @throws When the browser is not a managed one or already launched.
+   * @example browser.pinHost(hostResolverRuleOf('app.example.test', '127.0.0.1'))
+   */
+  pinHost(rule: string): void {
+    if (this.host.browserBackend !== 'managed' || this.managedProfile)
+      throw new Error('A host pin needs a managed browser before launch')
+    this.hostResolverRule = rule
   }
 
   /**
@@ -979,7 +994,7 @@ export class HostBrowser {
   }
 
   /**
-   * Names the switches of the managed Chrome launch: a headless browser on the debugging pipe, plus the disk-cache cap for the saved session's folder.
+   * Names the switches of the managed Chrome launch: a headless browser on the debugging pipe, plus the disk-cache cap for the saved session's folder and the declared host's pin.
    * Called by {@link launch}.
    * @returns The `runtimeArgs` of the debugger configuration.
    * @example this.managedRuntimeArgs() // => ['--headless=new', '--remote-debugging-pipe']
@@ -992,7 +1007,8 @@ export class HostBrowser {
       ...(this.savedLease
         ? [`--disk-cache-size=${SIGN_IN_PROFILE_DISK_CACHE_BYTES}`]
         : []),
-      // No host-resolver rule (D78): a rule would map every `localhost` port and hide the learner's own `::1`-only API; the `[::1]` forwarder keeps the app's own port owned.
+      // The pin maps only the declared host (never `localhost`, D19), so D78 stays true: no rule hides the learner's own `::1`-only API; the `[::1]` forwarder keeps the app's own port owned.
+      ...(this.hostResolverRule === undefined ? [] : [this.hostResolverRule]),
     ]
   }
 

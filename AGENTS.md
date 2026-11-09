@@ -139,7 +139,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Premise/final behavior → `/office-hours` or `/plan-ceo-review` (owner decision).
 - Lasting API, MCP or integration change → `/plan-devex-review` (capability, error, lifecycle contract).
 - Flow, layout, hierarchy, interaction → `/plan-design-review` (UX and state decisions).
-- Architecture, concurrency, storage, meaningful code → `/autoplan`'s engineering phase alone after UX/API amendments, no owner request needed (bounded implementation and test plan).
+- Architecture, concurrency, storage, meaningful code → `/spec`'s own review (interrogation, Codex quality gate) when `/autoplan` does not run; gstack has no standalone engineering review (its methodology runs only as `/autoplan`'s Eng phase, never alone).
 - Combined review on owner request → `/autoplan` (CEO → conditional Design → conditional DX → Eng).
 - Unexplained failure → bounded experiment recorded in cycle Issue (question, separating observation, budget).
 - Working browser/webview flow → `/qa` or `/qa-only` (observed behavior, fixes).
@@ -167,7 +167,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Retired G08/G09 never return via old prompt.
 - Give design skills `## Design target` and PNG.
 - Honor scope gates, passing no agent-chosen target off as user's; keep required reports; one approved recommendation authorizes no unrelated change.
-- Shared-skill and Wiki-generation scope → DX + engineering review; discovery, loaded identity, runtime connection, AI-owned results = separate checks; Wiki works without runtime/debug MCP.
+- Shared-skill and Wiki-generation scope → `/plan-devex-review` + `/spec`'s review; discovery, loaded identity, runtime connection, AI-owned results = separate checks; Wiki works without runtime/debug MCP.
 
 **CodeRabbit and OCR.**
 

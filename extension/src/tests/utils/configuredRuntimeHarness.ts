@@ -21,6 +21,7 @@ import type {
   RepositoryConfiguration,
   RepositoryOperation,
 } from '../../repositoryConfigSchemas'
+import type { ReverseProxyDependencies } from '../../reverseProxyGate'
 import type { Participant, RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
@@ -418,6 +419,13 @@ export async function configuredRuntimeHarness(
     /** The origin the stand-in server reports as its own (default `http://127.0.0.1:4321`). */
     serverOrigin?: string
     /**
+     * A version 3 `next-dev-webpack` run that declares `reverseProxy` (API 1.40; needs `operations`): the declaration retained in the configuration and the stand-ins of the gate's dependencies. By default the host resolves to `127.0.0.1`, the system certificates read, the proof and the browser check pass and the answering process is the stand-in server's; a test replaces any of them. The page then reports the declared origin as its own.
+     */
+    reverseProxy?: {
+      declaration: { origin: string; upstreamPort: number }
+      dependencies?: Partial<ReverseProxyDependencies>
+    }
+    /**
      * Moves the cited source `src/mode.ts` (the study's second anchor) to this repository-relative path and makes every additional stop declare that file, so one run can hold a stop in the first file and stops in a second one (such as a library browser stop beside a server stop in the app's own page). Only in a version 3 run with `operations`; by default every additional stop stays in the first file.
      */
     additionalStopFile?: string
@@ -640,9 +648,15 @@ export async function configuredRuntimeHarness(
   // The app's own API declaration is the schema's last key, so appending it keeps the parsed key order the intent hash reads.
   if (options.apiServer)
     Object.assign(configuration, { apiServer: options.apiServer.declaration })
+  // The reverse-proxy declaration is the schema's last key too (it never coexists with apiServer).
+  if (options.reverseProxy)
+    Object.assign(configuration, {
+      reverseProxy: options.reverseProxy.declaration,
+    })
   // Each of these changes makes the frozen intent hash stale.
   if (
     options.apiServer ||
+    options.reverseProxy ||
     packageFolder ||
     additionalStops.length ||
     options.before ||
@@ -899,6 +913,14 @@ export async function configuredRuntimeHarness(
   const savedSessionCalls: string[] = []
   const savedProfileFolders: string[] = []
   const signInNotices: SignInRequiredReason[] = []
+  // The declaration each notice handed the editor (API 1.40), in order; absent for a run without `reverseProxy`.
+  const signInDeclarations: unknown[] = []
+  // What the reverse-proxy check and the readiness requests did, in call order, so a test reads that the proof precedes every request.
+  const reverseProxyOrder: string[] = []
+  // The `declaredOrigin` argument of each readiness call (`ready`, `readyEntry`, `confirmAppEntry`), in order.
+  const declaredOriginsSeen: (string | undefined)[] = []
+  // The host pin rules the stand-in browser was given, in order.
+  const pinnedHostRules: string[] = []
   // The pathname the stand-in page reports; a landing replaces it.
   let pagePathname = options.entryPath ?? '/'
   // How many `document.readyState` reads the run started, whether the next one rejects, and the promise a held read waits on.
@@ -928,9 +950,11 @@ export async function configuredRuntimeHarness(
     options.serverOrigin ??
     'http://127.0.0.1:4321'
   // The loopback name the browser opens the owned server by; a Vite library stop's server listens on a free port.
-  const localhostOrigin = viteLibrary
-    ? `http://localhost:${new URL(serverOrigin).port}`
-    : 'http://localhost:4321'
+  const localhostOrigin = options.reverseProxy
+    ? options.reverseProxy.declaration.origin
+    : viteLibrary
+      ? `http://localhost:${new URL(serverOrigin).port}`
+      : 'http://localhost:4321'
   const savedLease: SavedSessionRunLease = {
     profile: '/stand-in/Application Support/sign-in-profiles/0123abcd',
     setupAt: '2026-11-02T00:00:00.000Z',
@@ -981,7 +1005,10 @@ export async function configuredRuntimeHarness(
     removedAck = true,
     bound = false,
     rejectBinding = false,
-    pageOrigin = viteLibrary?.server.origin ?? 'http://127.0.0.1:4321',
+    pageOrigin =
+      options.reverseProxy?.declaration.origin ??
+      viteLibrary?.server.origin ??
+      'http://127.0.0.1:4321',
     executedScriptSource: string | undefined,
     ready = true,
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
@@ -2171,8 +2198,13 @@ export async function configuredRuntimeHarness(
       readinessRequestHeld = false
     }
   }
+  let applicationRunning = true
   const fakeApplication = {
+    // The spawned CLI's process id and liveness, which the reverse-proxy gate binds its proof to.
+    pid: 5150,
+    isRunning: (): boolean => applicationRunning,
     listening: async (signal: AbortSignal): Promise<string> => {
+      reverseProxyOrder.push('listening')
       if (options.listeningAfterMs)
         await new Promise((resolveWait) =>
           setTimeout(resolveWait, options.listeningAfterMs),
@@ -2187,7 +2219,10 @@ export async function configuredRuntimeHarness(
       signal: AbortSignal,
       entryPath?: string,
       observer?: ReadinessObserver,
+      declaredOrigin?: string,
     ) => {
+      reverseProxyOrder.push('ready')
+      declaredOriginsSeen.push(declaredOrigin)
       readyEntryPaths.push(entryPath)
       if (options.launchFailure) throw new Error(options.launchFailure)
       releases.push('application acquired')
@@ -2209,7 +2244,10 @@ export async function configuredRuntimeHarness(
       entryPath: string,
       signInPaths?: readonly string[],
       observer?: ReadinessObserver,
+      declaredOrigin?: string,
     ) => {
+      reverseProxyOrder.push('readyEntry')
+      declaredOriginsSeen.push(declaredOrigin)
       entryChecks.push(entryPath)
       // A data function that hangs keeps the sent request unanswered until the run is cancelled.
       if (options.nextPages?.readinessUnanswered)
@@ -2234,6 +2272,7 @@ export async function configuredRuntimeHarness(
           `${origin}${entryPath}`,
           origin,
           signInPaths,
+          declaredOrigin,
         ),
       }
     },
@@ -2241,7 +2280,11 @@ export async function configuredRuntimeHarness(
       signal: AbortSignal,
       _entryPath: string,
       entry: NextEntryResponse,
+      _observer?: ReadinessObserver,
+      declaredOrigin?: string,
     ): Promise<void> => {
+      reverseProxyOrder.push('confirmAppEntry')
+      declaredOriginsSeen.push(declaredOrigin)
       appEntryConfirmations.push(entry)
       // A root request that does not answer settles only when the run is cancelled.
       if (options.appEntryConfirmationHangs)
@@ -2255,8 +2298,52 @@ export async function configuredRuntimeHarness(
       // A server whose stop failed once is still running, as the run must assume.
       if (options.applicationCloseFailsOnce && applicationCloseAttempts++ === 0)
         throw new Error('The owned server did not confirm its exit')
+      applicationRunning = false
       releases.push('application')
     },
+  }
+  // The gate's dependencies for a `reverseProxy` run: a test's own stand-in, else one that lets the check pass; each call is journaled in `reverseProxyOrder`.
+  const proxyDependencies = options.reverseProxy?.dependencies
+  const reverseProxyStandIns: Partial<ReverseProxyDependencies> = {
+    lookup: (hostname, lookupOptions) => {
+      reverseProxyOrder.push('lookup')
+      return (
+        proxyDependencies?.lookup?.(hostname, lookupOptions) ??
+        Promise.resolve([{ address: '127.0.0.1', family: 4 }])
+      )
+    },
+    readSystemCertificates: (input, signal) => {
+      reverseProxyOrder.push('certificates')
+      return (
+        proxyDependencies?.readSystemCertificates?.(input, signal) ??
+        Promise.resolve({ ok: true as const, certificates: ['stand-in'] })
+      )
+    },
+    prove: (input, signal) => {
+      reverseProxyOrder.push('prove')
+      return (
+        proxyDependencies?.prove?.(input, signal) ??
+        Promise.resolve({ ok: true as const, serverPid: 5151 })
+      )
+    },
+    probe: (input, signal) => {
+      reverseProxyOrder.push('probe')
+      return (
+        proxyDependencies?.probe?.(input, signal) ??
+        Promise.resolve({
+          ok: true as const,
+          address: input.expectedAddress,
+          port: input.expectedPort,
+          cleanupConfirmed: true,
+        })
+      )
+    },
+    // The answering process is a child of the stand-in server's group.
+    processGroupOf:
+      proxyDependencies?.processGroupOf ??
+      ((): Promise<number | undefined> => Promise.resolve(5150)),
+    isProcessAlive:
+      proxyDependencies?.isProcessAlive ?? ((): boolean => applicationRunning),
   }
   const breakpointModule = await loadModule<
     typeof OwnedRepositoryBreakpointModule
@@ -2273,6 +2360,10 @@ export async function configuredRuntimeHarness(
         HostBrowser: class {
           profileLeft?: ProfileLeft
           private lease?: SavedSessionRunLease
+          pinHost(rule: string): void {
+            reverseProxyOrder.push('pin')
+            pinnedHostRules.push(rule)
+          }
           useSavedProfile(lease: SavedSessionRunLease): void {
             this.lease = lease
             savedProfileFolders.push(lease.profile)
@@ -2283,6 +2374,7 @@ export async function configuredRuntimeHarness(
           async launch(
             configuration: DebugSession['configuration'],
           ): Promise<void> {
+            reverseProxyOrder.push('browser launch')
             // The real browser asks the lease to clear stale Chrome locks right before it launches.
             await this.lease?.prepareForLaunch()
             launchConfigurations.push(configuration)
@@ -2708,12 +2800,17 @@ export async function configuredRuntimeHarness(
       productVersion: 'test',
       apiVersion: 'test',
       commit: 'test',
+      chrome: { binary: '/stand-in/chrome', version: '' },
     },
     definition,
     control,
     assertWorkspace() {},
     savedSession: savedSessionPort,
-    onSignInRequired: ({ reason }) => signInNotices.push(reason),
+    onSignInRequired: ({ reason, reverseProxy }) => {
+      signInNotices.push(reason)
+      signInDeclarations.push(reverseProxy)
+    },
+    ...(options.reverseProxy ? { reverseProxy: reverseProxyStandIns } : {}),
     ...(options.libraryRoute
       ? { viteLibrary: options.libraryRoute.dependencies }
       : {}),
@@ -2946,6 +3043,14 @@ export async function configuredRuntimeHarness(
     savedProfileFolders,
     /** The reasons of the notices the run asked the editor to show. */
     signInNotices,
+    /** The declaration each notice handed the editor (API 1.40), in order; `undefined` for a run without `reverseProxy`. */
+    signInDeclarations,
+    /** What the reverse-proxy check and the readiness requests did, in call order: `lookup`, `listening`, `certificates`, `prove`, `probe`, `pin`, `ready`, `readyEntry`, `confirmAppEntry`, `browser launch`. */
+    reverseProxyOrder,
+    /** The `declaredOrigin` argument of each readiness call (`ready`, `readyEntry`, `confirmAppEntry`), in order. */
+    declaredOriginsSeen,
+    /** The host pin rules the stand-in browser was given, in order. */
+    pinnedHostRules,
     /** The stand-in lease's folder, which no journal record or error may name. */
     savedProfileFolder: savedLease.profile,
     /** Reports that the page reached this path of the run's origin, or this absolute URL on its own origin (an external sign-in page, Chrome's error page), as a redirect does: a full document load, or a client-side navigation inside the document. @example harness.landOn('/login', 'document') */

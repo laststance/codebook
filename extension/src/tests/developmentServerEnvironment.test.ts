@@ -57,3 +57,28 @@ test('sets the fixed development server settings whatever the host holds', () =>
   assert.equal(environment.NEXT_TELEMETRY_DISABLED, '1')
   assert.equal(environment.NEXT_EXIT_TIMEOUT_MS, '10000')
 })
+
+// Value: protects=the identity secret of a reverseProxy run reaching the server under CODEBOOK_PROOF_SECRET and nothing else changing; fails_when=the secret is dropped, renamed or a host value of the same name wins; why_new=the environment had no secret seam; seam=none; no_claim=the preload reading it
+test('adds the identity secret under CODEBOOK_PROOF_SECRET whatever the host holds', () => {
+  // Arrange
+  const host = { PATH: '/usr/bin', CODEBOOK_PROOF_SECRET: 'from-the-host' }
+
+  // Act
+  const environment = buildDevelopmentServerEnvironment(host, 'ab12cd34')
+
+  // Assert
+  assert.equal(environment.CODEBOOK_PROOF_SECRET, 'ab12cd34')
+  assert.equal(environment.PATH, '/usr/bin')
+})
+
+// Value: protects=a run without reverseProxy never carrying a proof secret, also when the host environment holds one; fails_when=the host variable is inherited; why_new=the environment had no secret seam; seam=none; no_claim=none
+test('leaves CODEBOOK_PROOF_SECRET out when no identity secret is given', () => {
+  // Arrange
+  const host = { PATH: '/usr/bin', CODEBOOK_PROOF_SECRET: 'from-the-host' }
+
+  // Act
+  const environment = buildDevelopmentServerEnvironment(host)
+
+  // Assert
+  assert.equal(environment.CODEBOOK_PROOF_SECRET, undefined)
+})

@@ -116,5 +116,9 @@ export type SavedSessionServer = {
   /** `http://localhost:<port>`. */
   origin: string
   port: number
+  /** The whole `--host-resolver-rules=…` switch of a setup at a declared `reverseProxy` origin (API 1.40): the setup browser is pinned to the address Codebook checked. Absent for a setup at localhost. */
+  hostResolverRules?: string
+  /** The host the setup reads the app's cookie kind for: `localhost`, or the declared origin's host. */
+  cookieHost: string
   close(): Promise<void>
 }

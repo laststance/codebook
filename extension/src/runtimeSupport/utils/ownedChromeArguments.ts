@@ -10,12 +10,14 @@ export type OwnedChromeArgumentOptions = {
   startUrl: string
   /** Caps `--disk-cache-size` when set, so a saved-session folder keeps cookies and storage but little cache. */
   diskCacheBytes?: number
+  /** The whole `--host-resolver-rules=MAP <host> <address>` switch of a run that declares `reverseProxy` (API 1.40), from {@link hostResolverRuleOf}: it pins the declared host to the address Codebook checked. Absent for every other browser. */
+  hostResolverRules?: string
 }
 
 /**
  * Lists the command-line switches of a Chrome that Codebook spawns for itself: one builder for the extension run's headless browser and the saved-session setup's headed one.
  * Called by the owned extension launch and by the setup browser ({@link signInBrowserArguments}). Never `--enable-unsafe-extension-debugging`, `--load-extension` or `--disable-extensions-except`.
- * @param options - The profile folder, the debugging form, headless or not, the first page and an optional cache cap.
+ * @param options - The profile folder, the debugging form, headless or not, the first page, an optional cache cap and an optional host pin.
  * @returns The arguments after the executable.
  * @example
  * ownedChromeArguments({ profile: '/p', debugging: 'port', headless: true, startUrl: 'about:blank' })
@@ -35,6 +37,10 @@ export function ownedChromeArguments(
     ...(options.diskCacheBytes === undefined
       ? []
       : [`--disk-cache-size=${options.diskCacheBytes}`]),
+    // The declared host stays pinned to the address Codebook checked (API 1.40); every other browser gets no rule.
+    ...(options.hostResolverRules === undefined
+      ? []
+      : [options.hostResolverRules]),
     options.startUrl,
   ]
 }

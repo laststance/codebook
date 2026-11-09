@@ -149,6 +149,10 @@ function setupServerStandIns(scenario: StandInScenario = {}) {
       if (scenario.forwarderRefusal) throw scenario.forwarderRefusal
       return forwarder
     },
+    // A setup at localhost never builds a reverse-proxy gate.
+    createGate: () => {
+      throw unusedBySetup('createGate')
+    },
   }
   return {
     steps,
