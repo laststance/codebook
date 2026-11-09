@@ -98,10 +98,11 @@ const directoryFor = (specifier, context) => {
   if (context === ANCHOR) return ''
   return isNamed(specifier, CONFIG.packageName) ? ANCHOR : ''
 }
-// Tapped on 'normal-resolve', the one step every bare request passes after enhanced-resolve (5.x) has parsed it (query and fragment are split off), applied the package's alias fields ('browser' on raw-resolve) and expanded the 'imports' field (which re-enters through internal-resolve or imports-resolve, depending on the version). A request the packed package's alias fields map to a relative path or false never reaches it; one mapped to another bare name or expanded from '#name' arrives here with the path of the packed folder and is redirected like a direct bare import.
+// Tapped on 'normal-resolve' (enhanced-resolve 5; a resolver without that hook is enhanced-resolve 4, webpack 4, which has no such step and is tapped on 'described-resolve': the step after the description file, the alias and the alias fields ran and before 'raw-module', where a request of kind module is split off), the one step every bare request passes after enhanced-resolve (5.x) has parsed it (query and fragment are split off), applied the package's alias fields ('browser' on raw-resolve) and expanded the 'imports' field (which re-enters through internal-resolve or imports-resolve, depending on the version). A request the packed package's alias fields map to a relative path or false never reaches it; one mapped to another bare name or expanded from '#name' arrives here with the path of the packed folder and is redirected like a direct bare import.
 const createResolverPlugin = () => ({
   apply(resolver) {
-    resolver.ensureHook('normal-resolve').tapAsync(PLUGIN_NAME, (request, resolveContext, callback) => {
+    const hookName = resolver.hooks && resolver.hooks.normalResolve ? 'normal-resolve' : 'described-resolve'
+    resolver.ensureHook(hookName).tapAsync(PLUGIN_NAME, (request, resolveContext, callback) => {
       const specifier = request.request
       const context = request.path
       if (typeof specifier !== 'string' || typeof context !== 'string' || !isBare(specifier)) return callback()
@@ -184,9 +185,11 @@ const resourcesOfModule = (module) => {
   if (source.modules) for (const inner of source.modules) if (typeof inner.resource === 'string') files.push(inner.resource)
   return files
 }
+// webpack 5 lists a chunk's modules through the chunk graph, webpack 4 on the chunk itself.
+const modulesOfChunk = (compilation, chunk) => (compilation.chunkGraph ? compilation.chunkGraph.getChunkModulesIterable(chunk) : chunk.modulesIterable)
 const resourcesOfChunk = (compilation, chunk) => {
   const found = new Set()
-  for (const module of compilation.chunkGraph.getChunkModulesIterable(chunk)) {
+  for (const module of modulesOfChunk(compilation, chunk)) {
     for (const file of resourcesOfModule(module)) {
       const real = realOf(file)
       if (isLibraryResource(real)) found.add(real)

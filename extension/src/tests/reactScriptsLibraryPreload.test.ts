@@ -636,3 +636,132 @@ test('the react-scripts preload text is byte-identical to the text written befor
   // Assert
   assert.equal(actual, expected)
 })
+
+/** Runs a script under the generated preload and returns its parsed stdout JSON line. */
+async function runScriptWithPreload(
+  fixture: Fixture,
+  scriptName: string,
+  source: string,
+): Promise<unknown> {
+  const script = join(fixture.root, scriptName)
+  writeAt(script, source)
+  const { stdout } = await run(
+    process.execPath,
+    ['--require', fixture.preloadPath, script],
+    { cwd: fixture.root },
+  )
+  return JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}') as unknown
+}
+
+/** A script applying the generated resolver plugin to a fake resolver that has the named hooks, then issuing one bare library request; it prints the hook tapped and the redirects made. */
+const fakeResolverScript = (
+  factoryPath: string,
+  appRoot: string,
+  hookNames: string[],
+) => `
+const config = require(${JSON.stringify(factoryPath)})('development')
+const plugin = config.resolve.plugins[0]
+const tapped = []
+let tappedCallback
+const resolveHook = { name: 'resolve-hook' }
+const redirects = []
+const resolver = {
+  hooks: Object.fromEntries(${JSON.stringify(hookNames)}.map((name) => [name, {}])),
+  ensureHook(name) {
+    if (name === 'resolve') return resolveHook
+    tapped.push(name)
+    return { tapAsync(pluginName, callback) { tappedCallback = callback } }
+  },
+  doResolve(hook, request, message, context, callback) { redirects.push({ hook: hook.name, request, message }); callback() },
+}
+plugin.apply(resolver)
+tappedCallback({ request: 'lib', path: ${JSON.stringify(join(appRoot, 'src'))}, context: { issuer: 'x' }, query: '?q', module: true }, {}, () => {})
+console.log(JSON.stringify({ tapped, redirects }))
+`
+
+// Value: protects=under an enhanced-resolve 4 resolver (webpack 4, no normalResolve hook) the plugin taps described-resolve and redirects the bare library request to the anchor folder; fails_when=the plugin taps normal-resolve, which enhanced-resolve 4 never calls, and the Example keeps its installed copy; no_claim=a real webpack 4 compile (not run here)
+test('under an enhanced-resolve 4 resolver the plugin taps described-resolve and redirects the library import to the packed anchor', async () => {
+  // Arrange
+  const fixture = createFixture()
+
+  // Act
+  const result = await runScriptWithPreload(
+    fixture,
+    'resolver4.js',
+    fakeResolverScript(fixture.factoryPath, fixture.appRoot, [
+      'describedResolve',
+      'rawModule',
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(result, {
+    tapped: ['described-resolve'],
+    redirects: [
+      {
+        hook: 'resolve-hook',
+        message: 'codebook library',
+        request: {
+          context: { issuer: 'x' },
+          path: join(fixture.privateFolder, 'anchor'),
+          request: 'lib?q',
+        },
+      },
+    ],
+  })
+})
+
+// Value: protects=under an enhanced-resolve 5 resolver the plugin still taps normal-resolve; fails_when=the hook choice sends a webpack 5 resolver to described-resolve; no_claim=the redirect itself (the compile tests above cover it)
+test('under an enhanced-resolve 5 resolver the plugin keeps tapping normal-resolve', async () => {
+  // Arrange
+  const fixture = createFixture()
+
+  // Act
+  const result = await runScriptWithPreload(
+    fixture,
+    'resolver5.js',
+    fakeResolverScript(fixture.factoryPath, fixture.appRoot, ['normalResolve']),
+  )
+
+  // Assert
+  assert.deepEqual((result as { tapped: string[] }).tapped, ['normal-resolve'])
+})
+
+// Value: protects=a webpack 4 shaped compilation (chunk.modulesIterable, no chunkGraph, assets without getAsset or buffer) yields a report line naming the packed library; fails_when=the reporter reads compilation.chunkGraph and writes a reportError line; no_claim=a real webpack 4 emit
+test('a webpack 4 shaped compilation is reported with the packed library among its resources', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const packedFile = join(fixture.packedRoot, 'index.js')
+
+  // Act
+  await runScriptWithPreload(
+    fixture,
+    'compilation4.js',
+    `const config = require(${JSON.stringify(fixture.factoryPath)})('development')
+const reporter = config.plugins[config.plugins.length - 1]
+const compilation = {
+  hash: 'h4',
+  outputOptions: { publicPath: '/' },
+  chunks: [{ files: ['bundle.js', 'bundle.js.map'], modulesIterable: [{ resource: ${JSON.stringify(packedFile)} }] }],
+  assets: { 'bundle.js': { source: () => 'console.log(1)' } },
+}
+reporter.apply({ hooks: { emit: { tap: (name, callback) => callback(compilation) } } })
+console.log('{}')`,
+  )
+
+  // Assert
+  assert.deepEqual(readReportLines(fixture.reportPath), [
+    { wrapped: true },
+    {
+      compilationHash: 'h4',
+      publicPath: '/',
+      assets: [
+        {
+          name: 'bundle.js',
+          sha256: createHash('sha256').update('console.log(1)').digest('hex'),
+          resources: [packedFile],
+        },
+      ],
+    },
+  ])
+})

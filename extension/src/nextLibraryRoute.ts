@@ -24,12 +24,10 @@ const NEXT_FLAVOR: WebpackLibraryFlavor = {
     const missing = NEXT_LIBRARY_COMPILERS.filter(
       (compiler) => !wrapped.has(compiler) || errored.has(compiler),
     )
-    if (missing.length > 0 || reader.errorCause !== undefined)
-      throw nextLibraryRedirectNotAppliedRefusal(
-        libraryName,
-        missing,
-        reader.errorCause,
-      )
+    // A `reportError` line means a compilation could not be described: the redirect cannot be shown applied.
+    const cause = reader.errorCause ?? reader.reportErrorCause
+    if (missing.length > 0 || cause !== undefined)
+      throw nextLibraryRedirectNotAppliedRefusal(libraryName, missing, cause)
   },
 }
 
@@ -81,26 +79,12 @@ export class NextLibraryRoute extends WebpackLibraryRoute {
     deadlineMs: number = NEXT_LIBRARY_WRAPPED_WAIT_MS,
     assertRunning: () => void = () => undefined,
   ): Promise<void> {
-    const endsAt = Date.now() + deadlineMs
-    for (;;) {
-      signal.throwIfAborted()
-      // A process that exited is the real failure; its wrapped lines will never come.
-      assertRunning()
-      try {
-        this.assertRedirectApplied()
-        return
-      } catch (error) {
-        // An `error` line is final: the patch failed, waiting changes nothing.
-        if (
-          this.attribution.reader.errorCause !== undefined ||
-          Date.now() >= endsAt
-        )
-          throw error
-      }
-      await new Promise((resolve) =>
-        setTimeout(resolve, NEXT_LIBRARY_WRAPPED_POLL_MS),
-      )
-    }
+    await this.awaitApplied(
+      signal,
+      deadlineMs,
+      NEXT_LIBRARY_WRAPPED_POLL_MS,
+      assertRunning,
+    )
   }
 
   /** Ignores scripts announced after finalization started (decision D12); the observation covers the scripts parsed until then. */

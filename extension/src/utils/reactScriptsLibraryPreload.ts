@@ -16,7 +16,12 @@ export type ReactScriptsLibraryPreloadConfiguration =
  */
 
 /** The react-scripts reporter: one line per compilation, without compiler name or output path. */
-const REACT_SCRIPTS_REPORTER = `const describeCompilation = (compilation) => {
+const REACT_SCRIPTS_REPORTER = `// webpack 5 has getAsset; webpack 4 keeps the sources in compilation.assets, and its older sources may lack buffer().
+const bytesOfAsset = (compilation, name) => {
+  const source = typeof compilation.getAsset === 'function' ? compilation.getAsset(name).source : compilation.assets[name]
+  return typeof source.buffer === 'function' ? source.buffer() : Buffer.from(source.source())
+}
+const describeCompilation = (compilation) => {
   const assets = []
   const seen = new Set()
   for (const chunk of compilation.chunks) {
@@ -24,8 +29,7 @@ const REACT_SCRIPTS_REPORTER = `const describeCompilation = (compilation) => {
     for (const name of chunk.files) {
       if (seen.has(name) || !name.endsWith('.js')) continue
       seen.add(name)
-      const asset = compilation.getAsset(name)
-      assets.push({ name, sha256: crypto.createHash('sha256').update(asset.source.buffer()).digest('hex'), resources })
+      assets.push({ name, sha256: crypto.createHash('sha256').update(bytesOfAsset(compilation, name)).digest('hex'), resources })
     }
   }
   return { compilationHash: String(compilation.hash), publicPath: publicPathOf(compilation), assets }

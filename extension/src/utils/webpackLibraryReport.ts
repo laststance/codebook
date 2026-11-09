@@ -300,6 +300,8 @@ export class WebpackLibraryReportReader {
   private serverOutputUnknownCompiler: string | undefined
   private readonly externalRequests = new Set<string>()
   private readonly edgeAssets: WebpackLibraryReportMatch[] = []
+  /** Every resource any described asset named (the preload lists only library resources); kept so a rebuild that replaces an index entry does not forget a resource. */
+  private readonly describedResources = new Set<string>()
 
   /**
    * @param wholeLimitBytes - The most bytes of the report that are read.
@@ -592,6 +594,8 @@ export class WebpackLibraryReportReader {
     line: WebpackLibraryCompilationLine,
     asset: WebpackLibraryReportAsset,
   ): void {
+    for (const resource of asset.resources)
+      this.describedResources.add(resource)
     const entries = this.index.get(asset.sha256) ?? []
     const kept = entries.filter(
       (entry) =>
@@ -710,6 +714,20 @@ export class WebpackLibraryReportReader {
       // Not there yet: do not cache a path that will change
       return resolve(outputPath)
     }
+  }
+
+  /**
+   * Tells whether any described asset names a resource inside a folder.
+   *
+   * Called by the react-scripts flavor of {@link WebpackLibraryRoute.assertRedirectApplied} with the packed folder: a `wrapped` line alone shows the factory was wrapped, not that the resolver served the packed copy; only a compiled module inside the packed folder shows that.
+   * @param root - The real folder (the packed package's folder).
+   * @returns `true` when some compilation line named a resource at or below `root`.
+   * @example reader.hasResourceInside('/tmp/run/node_modules/redux') // => true
+   */
+  hasResourceInside(root: string): boolean {
+    for (const resource of this.describedResources)
+      if (isInsideFolder(root, resource)) return true
+    return false
   }
 
   /** The compilers a `wrapped` line named; the Next preload writes one per compiler (`client`, `server`, `edge-server`) when it builds the compiler's configuration. */

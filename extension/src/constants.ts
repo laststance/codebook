@@ -300,6 +300,12 @@ export const NEXT_LIBRARY_WRAPPED_WAIT_MS = 5000
 /** How often that wait looks at the report again. */
 export const NEXT_LIBRARY_WRAPPED_POLL_MS = 50
 
+/** How long the react-scripts library route waits after the first compile for the preload's compilation line before it refuses (the line is written at `emit`, so it normally exists already). */
+export const REACT_SCRIPTS_LIBRARY_REDIRECT_WAIT_MS = 5000
+
+/** The pause between two reads of the report while waiting for that line. */
+export const REACT_SCRIPTS_LIBRARY_REDIRECT_POLL_MS = 50
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 

@@ -46,10 +46,12 @@ export type WebpackLibraryFlavor = {
    * Throws the bundler's refusal when the report does not show the redirect applied.
    * @param reader - The report reader, refreshed by the caller just before.
    * @param libraryName - The library's package name, for the sentence.
+   * @param hasPackedModule - Whether the report names a compiled module inside the packed copy's folder (`false` before the library was prepared).
    */
   assertRedirect: (
     reader: WebpackLibraryReportReader,
     libraryName: string,
+    hasPackedModule: boolean,
   ) => void
 }
 
@@ -221,7 +223,50 @@ export class WebpackLibraryRoute implements LibraryRunRoute {
     const reportPath = this.attribution.reportPath()
     const { reader } = this.attribution
     if (reportPath !== undefined) reader.refresh(reportPath)
-    this.flavor.assertRedirect(reader, this.core.displayName())
+    this.flavor.assertRedirect(
+      reader,
+      this.core.displayName(),
+      this.packed !== undefined &&
+        reader.hasResourceInside(this.packed.packedRoot),
+    )
+  }
+
+  /**
+   * Polls {@link assertRedirectApplied} until it passes, the report holds a final failure, the process ended or the bound ran out.
+   *
+   * Called by the flavors' `awaitRedirectApplied`: the preload writes its lines at `emit`, so a read right after the bundler's "compiled" output can come before them. An `error` or `reportError` line is final (waiting changes nothing).
+   * @param signal - The run's stop; an abort ends the wait with the stop's error.
+   * @param deadlineMs - How long to wait.
+   * @param pollMs - The pause between reads.
+   * @param assertRunning - Throws the owned process's own failure once it exited, so an early exit is not reported as a missing redirect.
+   * @throws The `assertRunning` failure, the flavor's refusal at the end of the bound or at a final line, or the stop's error.
+   * @example await this.awaitApplied(signal, 5000, 50, () => app.assertRunning())
+   */
+  protected async awaitApplied(
+    signal: AbortSignal,
+    deadlineMs: number,
+    pollMs: number,
+    assertRunning: () => void,
+  ): Promise<void> {
+    const endsAt = Date.now() + deadlineMs
+    for (;;) {
+      signal.throwIfAborted()
+      // A process that exited is the real failure; its lines will never come.
+      assertRunning()
+      try {
+        this.assertRedirectApplied()
+        return
+      } catch (error) {
+        const { reader } = this.attribution
+        if (
+          reader.errorCause !== undefined ||
+          reader.reportErrorCause !== undefined ||
+          Date.now() >= endsAt
+        )
+          throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
+    }
   }
 
   /**
