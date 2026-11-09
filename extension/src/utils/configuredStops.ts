@@ -14,6 +14,8 @@ export function configuredStops(
         source: configuration.source,
         inspections: configuration.inspections,
         afterOperation: configuration.afterOperation,
+        // Omitted when undeclared so a stop without `hold` keeps its old shape and configuration hash.
+        ...(configuration.hold ? { hold: configuration.hold } : {}),
       },
       ...(configuration.additionalStops ?? []),
     ]

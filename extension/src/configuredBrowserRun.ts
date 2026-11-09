@@ -359,6 +359,7 @@ import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
 import { isReactServerCopyUrl } from './utils/isReactServerCopyUrl'
+import { isRecordedStop } from './utils/isRecordedStop'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isRscScriptUrl } from './utils/isRscScriptUrl'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
@@ -1666,6 +1667,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
+  /** Declared stop indexes recorded without a hold (`hold: "record"`), in recording order; read by {@link view}. */
+  private readonly recordedStopIndexes: number[] = []
   private readonly failures: string[] = []
   private readonly captures: ConfiguredRuntimeView['captures'] = {}
   private readonly snapshotCaptures: NonNullable<
@@ -17060,11 +17063,57 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate(true)
       throw inspectionFailure
     }
-    // The paused state is published in one step with the observation (above) and the continuation it offers (the ready snapshot), so no read sees one without the others.
+    await this.publishCommittedStop(stop, phase, pause)
+  }
+
+  /**
+   * Ends {@link inspect} for a committed observation: a held stop publishes its paused state, a recorded stop (`hold: "record"`, API 1.43) never does and resumes at once ({@link recordAndContinue}).
+   * @param stop - The stop whose observation was just committed.
+   * @param phase - The `paused-<participant>` state a held stop publishes.
+   * @param pause - The identity of the pause the observation was captured at.
+   * @example
+   * ```ts
+   * await this.publishCommittedStop(stop, 'paused-server', pause)
+   * ```
+   */
+  private async publishCommittedStop(
+    stop: PreparedStop,
+    phase: 'paused-server' | 'paused-browser',
+    pause: PauseIdentity,
+  ): Promise<void> {
+    if (isRecordedStop(stop)) {
+      await this.recordAndContinue(stop, pause)
+      return
+    }
+    // The paused state is published in one step with the observation (before it) and the continuation it offers (the ready snapshot), so no read sees one without the others.
     this.status = phase
     this.markOperationPaused(stop)
     this.snapshotReady = true
     await this.persist()
+  }
+
+  /**
+   * Finishes a recorded stop (`hold: "record"`, API 1.43) after {@link inspect} committed its observation: lists it in `recordedStops`, saves the run evidence, then resumes through {@link continue}, the path `codebook_continue` takes.
+   * The run's status never becomes `paused-*` and the operation is never marked paused; the continuation offer (`snapshotReady`) is switched on only in the same synchronous step that calls {@link continue}, which reserves the pause before its first await, so no read can find an offer a chat could act on. A later `codebook_continue` with this stop's arguments finds the gate reserved or a later pause and is refused as a stale pause.
+   * Called only by {@link inspect}, so a rejection reaches the run's failure handling through {@link track}: {@link continue} has already ended the run with its documented reason, and anything else fails it with the error's text.
+   * @param stop - The recorded stop whose observation was just committed.
+   * @param pause - The identity of the pause the observation was captured at.
+   * @throws What {@link continue} throws; nothing is resumed when the evidence save fails.
+   * @example
+   * ```ts
+   * await this.recordAndContinue(stop, pause)
+   * ```
+   */
+  private async recordAndContinue(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+  ): Promise<void> {
+    this.recordedStopIndexes.push(stop.declaredIndex)
+    await this.persist()
+    this.alive()
+    // No await between the offer and the reservation inside continue().
+    this.snapshotReady = true
+    await this.continue(stop.participant, pause)
   }
 
   /**
@@ -18063,6 +18112,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
 
+  /**
+   * Gives the run resource's `recordedStops`: a version 3 run always lists the declared stop indexes it recorded without a hold, empty when none; versions 1 and 2 list nothing.
+   * Called by {@link view}.
+   * @example this.recordedStopsView() // { recordedStops: [0, 2] }
+   */
+  private recordedStopsView(): Pick<ConfiguredRuntimeView, 'recordedStops'> {
+    return this.operationsConfiguration
+      ? { recordedStops: [...this.recordedStopIndexes] }
+      : {}
+  }
+
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {
     const runtimeOutcome =
@@ -18127,6 +18187,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
       snapshots: [...this.snapshots],
       operation: this.operation,
+      ...this.recordedStopsView(),
       // Only a version 3 run lists its operations and, after a refusal or failure, the fields that decide a retry.
       ...(this.operationsConfiguration
         ? {

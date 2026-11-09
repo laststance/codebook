@@ -220,6 +220,8 @@ export async function apiServerRunHarness(
   context: TestContext,
   options: {
     stopOperations?: number[]
+    /** The `hold` each stop declares, the first stop first (API 1.43); a missing entry declares nothing. */
+    stopHolds?: Array<'explain' | 'record' | undefined>
     operations?: RepositoryOperation[]
     entry?: ApiEntryTiming
     entryCdpPause?: ApiEntryCdpPauseTiming
@@ -271,6 +273,7 @@ export async function apiServerRunHarness(
       operations: {
         operations: options.operations ?? [ADD],
         stopOperations,
+        ...(options.stopHolds ? { stopHolds: options.stopHolds } : {}),
         stopParticipants: stopOperations.map(() => 'server'),
       },
       // The entry pause of `--inspect-brk` reaches the run before the session is its participant.

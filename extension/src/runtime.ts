@@ -658,6 +658,8 @@ export type ConfiguredRuntimeView = {
   operation: ConfiguredStudy['operation']
   /** The progress of each declared operation of a version 3 run, in declared order; absent for versions 1 and 2. */
   operations?: OperationRecord[]
+  /** Zero-based declared stop indexes of a version 3 run that were recorded without a hold (`hold: "record"`), in recording order (the top-level stop is 0, `additionalStops[i]` is i + 1); empty when none, absent for versions 1 and 2. */
+  recordedStops?: number[]
   /** The first failure of an operation of a version 3 run; absent otherwise. */
   operationFailure?: OperationFailure
   /** Which profile a version 3 run used: the learner's saved session or a fresh one; absent for versions 1 and 2 and until the run planned it. */

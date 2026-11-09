@@ -354,6 +354,8 @@ const afterOperationSchema = z
   .int()
   .min(0)
   .max(REPOSITORY_OPERATION_LIMIT)
+/** How a version 3 stop treats the program once its observation is committed: `explain` (the default) holds it until `codebook_continue`; `record` resumes at once, for a request the app bounds with its own deadline (API 1.43). */
+const stopHoldSchema = z.enum(['explain', 'record'])
 
 /**
  * The version 3 configuration: version 2's fields without `initialInputs` and `action`, the run-level `before` and `after`, 1 to 8 ordered `operations`, and an `afterOperation` on every stop. Only version 3 may name the third adapter, `react-scripts-dev` (browser stops only).
@@ -366,6 +368,7 @@ const operationsConfigurationShape = z.strictObject({
   source: repositorySourceStopSchema,
   participant: z.enum(['browser', 'server']),
   afterOperation: afterOperationSchema,
+  hold: stopHoldSchema.optional(),
   before: conditionsSchema,
   after: conditionsSchema,
   // Omitted only when every stop is an entry-render stop (`afterOperation: 0`); an empty list is refused so the two spellings never mean the same.
@@ -386,6 +389,7 @@ const operationsConfigurationShape = z.strictObject({
         anchorIndex: repositoryBookSelectionSchema.shape.anchorIndex,
         inspections: stopInspectionsSchema,
         afterOperation: afterOperationSchema,
+        hold: stopHoldSchema.optional(),
       }),
     )
     .max(CONFIGURED_OBSERVATION_LIMIT - 1)
@@ -802,17 +806,26 @@ function validateStopAfterOperations(
       path: ['afterOperation'],
       value: configuration.afterOperation,
       participant: configuration.participant,
+      hold: configuration.hold,
     },
     ...(configuration.additionalStops ?? []).map((stop, index) => ({
       path: ['additionalStops', index, 'afterOperation'],
       value: stop.afterOperation,
       participant: stop.participant,
+      hold: stop.hold,
     })),
   ]
   const operationCount = configuration.operations?.length ?? 0
   let previous = 0
-  for (const { path, value, participant } of declared) {
+  for (const { path, value, participant, hold } of declared) {
     const field = `configuration.${path.join('.')}`
+    // An entry render has no request a page waits on, so there is nothing to record without holding.
+    if (value === 0 && hold === 'record')
+      context.addIssue({
+        code: 'custom',
+        path: [...path.slice(0, -1), 'hold'],
+        message: `hold "record" is declared at configuration.${[...path.slice(0, -1), 'hold'].join('.')}, but its stop has afterOperation 0 (the entry render); a recorded stop needs an operation whose request the page waits on: declare afterOperation 1 or more, or omit hold.`,
+      })
     // The entry render is a server render: a browser stop has no pause to wait for before the page loads.
     if (value === 0 && participant !== 'server')
       context.addIssue({

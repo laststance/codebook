@@ -4297,6 +4297,10 @@ export class StudyService {
         runtime?.operations ??
         [...record.actions.values()].map((action) => action.receipt),
       ...(operationStatus ? { operationStatus } : {}),
+      // A version 3 run lists the declared stop indexes it recorded without a hold (API 1.43).
+      ...(runtime?.recordedStops
+        ? { recordedStops: runtime.recordedStops }
+        : {}),
       // A server render in progress says what it waits for, and that its first execution was not observed.
       ...(runtime?.renderMessage ? { message: runtime.renderMessage } : {}),
       ...(runtime?.libraryPhase === 'building' && runtime.library

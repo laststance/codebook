@@ -62,7 +62,7 @@ test('the README states MCP API 1.42 and saves a static-page run as study format
   const readme = await readPackaged('README.md')
   // Act
   const missing = [
-    'with **MCP API 1.42** (`codebook_status` reports the installed build). API 1.42 is additive:',
+    'with **MCP API 1.43** (`codebook_status` reports the installed build). API 1.43 is additive:',
     'A static-page run is saved as study format 23; an older Codebook lists it as saved by a newer Codebook',
     'A run of the `static-page` adapter (MCP API 1.42) is saved as format 23 (`.study.v23.json`)',
     'updates to **1.0.85**',

@@ -146,7 +146,7 @@ test('API_VERSION is 1.25 and its note and the MCP instructions name the Vite pa
       .split('\n')
       .find((line) => line.startsWith(' * 1.20 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.42')
+  assert.equal(API_VERSION, '1.43')
   for (const phrase of [
     '`packageRoot`',
     '`rootIsApp`',
@@ -291,7 +291,7 @@ test('API_VERSION is 1.25 and its note names the Vite library stops, reasons and
       .split('\n')
       .find((line) => line.startsWith(' * 1.21 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.42')
+  assert.equal(API_VERSION, '1.43')
   for (const phrase of [
     '`vite-dev`',
     'nested `packageRoot`',
@@ -345,7 +345,7 @@ test('the README documents Vite library stops, their refusals and replay with AP
     "also after the library's build is removed",
   ])
     assert.ok(section.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.42**'))
+  assert.ok(readme.includes('with **MCP API 1.43**'))
   assert.ok(readme.includes('API 1.21 is additive: it adds browser stops'))
   assert.ok(readme.includes('(1.0.70).**'))
   assert.ok(readme.includes('updates to **1.0.85**'))
