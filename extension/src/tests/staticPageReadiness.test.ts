@@ -1,4 +1,14 @@
 import assert from 'node:assert/strict'
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rename,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { discoverStaticPages } from '../utils/discoverStaticPages'
@@ -9,6 +19,7 @@ import {
   staticPageEntryFile,
 } from '../utils/readStaticPageReadiness'
 
+import { removeTestFolder } from './utils/removeTestFolder'
 import { createStaticPageRepository } from './utils/staticPageFixture'
 
 // Value: protects=AC 1 a plain page whose scripts exist as written (and whose imports are URLs) is listed ready with its entry file; fails_when=a servable page is listed not ready or loses its entry; no_claim=that a browser runs the page (no browser here)
@@ -172,4 +183,53 @@ test('the discovery lists examples and apps pages with their readiness and skips
     },
   ])
   assert.equal(discovery.packagesTruncated, false)
+})
+
+// Value: protects=a discovery parent that links out of the repository lists no page, as a start would refuse it; fails_when=a page behind the outside link is listed; why_new=Cycle 0105 hosted review (parent real path); seam=discoverStaticPages; no_claim=links on Windows without symlink privilege (test skipped there)
+test('the discovery lists no page when examples is a link to a folder outside the repository', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  const repository = await createStaticPageRepository(context)
+  const outside = await realpath(await mkdtemp(join(tmpdir(), 'codebook-out-')))
+  context.after(() => removeTestFolder(outside))
+  await mkdir(join(outside, 'page'), { recursive: true })
+  await writeFile(join(outside, 'page', 'index.html'), '<html></html>')
+  await rename(
+    join(repository.root, 'examples'),
+    join(repository.root, 'moved'),
+  )
+  await symlink(outside, join(repository.root, 'examples'))
+  // Act
+  const discovery = await discoverStaticPages(repository.root)
+  // Assert
+  assert.deepEqual(discovery.packages, [])
+})
+
+// Value: protects=a discovery parent that links to a folder inside the repository lists its page ready under the declared folder name; fails_when=the page is reported no-entry-page or not listed; why_new=Cycle 0105 hosted review (parent real path); seam=discoverStaticPages; no_claim=links on Windows without symlink privilege (test skipped there)
+test('the discovery lists the page of examples when examples is a link to a folder inside the repository', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  const repository = await createStaticPageRepository(context)
+  await rename(
+    join(repository.root, 'examples'),
+    join(repository.root, 'demos'),
+  )
+  await symlink('demos', join(repository.root, 'examples'))
+  // Act
+  const discovery = await discoverStaticPages(repository.root)
+  // Assert
+  assert.deepEqual(discovery.packages, [
+    {
+      packageRoot: 'examples/page',
+      ready: true,
+      missing: [],
+      entry: 'index.html',
+    },
+  ])
 })

@@ -13,7 +13,7 @@ import {
   readStaticPageReadiness,
   type StaticPagePackageReadiness,
 } from './readStaticPageReadiness'
-import { readJsonInside } from './resolveNextPackage'
+import { isFolderOrInside, readJsonInside } from './resolveNextPackage'
 import type { NextPackageTruncationReason } from './scanNextPackages'
 
 /** What {@link discoverStaticPages} lists. */
@@ -41,6 +41,25 @@ async function isCandidateStaticPage(folder: string): Promise<boolean> {
 }
 
 /**
+ * Resolves a discovery parent folder to its real path when it lies in the repository.
+ * Called by {@link discoverStaticPages} for each of {@link STATIC_PAGE_DISCOVERY_FOLDERS}, so a parent that is a link out of the repository lists nothing and a link inside lists its pages as a start sees them.
+ * @param root - The repository's real root.
+ * @param parent - The repository-relative parent (`examples`).
+ * @returns The parent's real path; `undefined` when it cannot be resolved or lies outside the repository.
+ * @example await realInsideParent('/repo', 'examples') // => '/repo/examples'
+ */
+async function realInsideParent(
+  root: string,
+  parent: string,
+): Promise<string | undefined> {
+  const realParent = await realpath(join(root, parent)).catch(() => undefined)
+  // A parent that is missing or leaves the repository (the root itself is allowed) lists no page.
+  return realParent !== undefined && isFolderOrInside(root, realParent)
+    ? realParent
+    : undefined
+}
+
+/**
  * Lists the plain pages of a repository: its root and the children of `examples/` and `apps/`, each with the readiness a start with its `packageRoot` decides.
  *
  * Why it exists: `codebook_status` lists the pages the chat can choose from, as it lists the apps of the other adapters; a plain page has no `package.json` rule, so the discovery looks for the page itself. Called by the status readiness.
@@ -57,15 +76,18 @@ export async function discoverStaticPages(
   const packages: StaticPagePackageReadiness[] = []
   let isTruncated = false
   for (const parent of STATIC_PAGE_DISCOVERY_FOLDERS) {
-    const children = await readdir(join(root, parent), {
-      withFileTypes: true,
-    }).catch(() => [])
+    // Children are listed and judged from the parent's real path, as a start resolves them.
+    const realParent = await realInsideParent(root, parent)
+    if (realParent === undefined) continue
+    const children = await readdir(realParent, { withFileTypes: true }).catch(
+      () => [],
+    )
     // A link is not a folder here: a page behind a link could lie outside the repository.
     for (const child of children
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .sort((left, right) => left.name.localeCompare(right.name))) {
       if (child.name === 'node_modules') continue
-      const folder = join(root, parent, child.name)
+      const folder = join(realParent, child.name)
       if (!(await isCandidateStaticPage(folder))) continue
       if (packages.length >= STATIC_PAGE_DISCOVERY_PACKAGES_MAX) {
         isTruncated = true
