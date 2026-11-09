@@ -11,6 +11,7 @@ test('the public repository-browser catalog names the vite-dev adapter and its s
     'vite-dev',
     'react-scripts-dev',
     'expo-web-dev',
+    'static-page',
   ]
   // Act
   const { adapters, scope } = CONFIGURED_PROFILE
@@ -44,18 +45,19 @@ test('the public repository-browser catalog names the Next routers next-dev-webp
   )
 })
 
-// Value: protects=the public scope describes all four adapters, the react-scripts and Expo ones with their API; fails_when=the scope says three runtimes or omits react-scripts-dev or expo-web-dev; no_claim=the adapter readiness
-test('the public repository-browser scope describes four adapters including react-scripts-dev and expo-web-dev', () => {
+// Value: protects=the public scope describes all five adapters, the react-scripts and Expo ones with their API; fails_when=the scope says three runtimes or omits react-scripts-dev or expo-web-dev; no_claim=the adapter readiness
+test('the public repository-browser scope describes five adapters including react-scripts-dev, expo-web-dev and static-page', () => {
   // Arrange
   const { scope } = CONFIGURED_PROFILE
   // Act / Assert
-  assert.match(scope, /^Four development runtimes/)
+  assert.match(scope, /^Five development runtimes/)
   assert.match(scope, /expo-web-dev \(Expo SDK 57, since API 1\.30\)/)
   assert.match(
     scope,
     /react-scripts-dev \(react-scripts 4 or 5, since API 1\.25; react-scripts 4 since API 1\.41\)/,
   )
   assert.match(scope, /browser stops only \(no server participant\)/)
+  assert.match(scope, /static-page \(since API 1\.42\)/)
   assert.match(scope, /up to 32 MiB and its source map of up to 64 MiB/)
   assert.equal(scope.split('A fourth adapter').length, 1)
   assert.equal(scope.split('expo-web-dev (Expo SDK 57').length, 2)

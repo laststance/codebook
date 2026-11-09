@@ -604,7 +604,8 @@ export async function nativeParticipantsHarness(
     name: Participant,
     expression: string | undefined,
   ): string => {
-    if (expression?.startsWith('typeof ')) return 'function'
+    // A type inspection is evaluated through a call, so an undeclared name throws instead of answering 'undefined'.
+    if (expression?.startsWith('((value) => typeof value)(')) return 'function'
     return name === 'server' ? 'display' : 'dark'
   }
   const proxy = (name: Participant) => ({

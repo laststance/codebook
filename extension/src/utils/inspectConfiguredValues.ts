@@ -51,10 +51,11 @@ export async function inspectConfiguredValues(
       compiledImportOf(inspection.path),
     )
     assertCurrent()
+    // A type inspection passes the path through a function, so a name the frame does not define throws ReferenceError (unavailable, like a value inspection) instead of a bare `typeof` answering "undefined".
     // Tag actual undefined, objects and functions before serialization: an object's members are not bounded, so only a fresh marker crosses the transport and application lookalike tags never do.
     const expression =
       inspection.mode === 'type'
-        ? `typeof ${evaluatedPath}`
+        ? `((value) => typeof value)(${evaluatedPath})`
         : `((value) => typeof value === 'undefined' ? { type: 'undefined' } : value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : typeof value === 'object' || typeof value === 'function' ? { type: typeof value } : void 0)(${evaluatedPath})`
     const response = await evaluate({
       callFrameId,
@@ -99,7 +100,7 @@ export async function inspectConfiguredValues(
 /**
  * Chooses the path to evaluate for a declared inspection: the declared one, or the compiler's name for an import binding the pause does not hold under its source name.
  *
- * Why: a `typeof` of a name that is not in scope answers `undefined` instead of throwing, so the import's compiled name must be chosen before the inspection runs, and only when the source name is truly absent (a local of the same name wins). Called by {@link inspectConfiguredValues} for each inspection.
+ * Why: the import's compiled name must be chosen before the inspection runs, and only when the source name is truly absent (a local of the same name wins); the probe is what proves the absence, because the evaluation itself would only report a thrown error. Called by {@link inspectConfiguredValues} for each inspection.
  * @param evaluate - Evaluates on the paused call frame.
  * @param callFrameId - The paused call frame.
  * @param declaredPath - The inspection path as declared.

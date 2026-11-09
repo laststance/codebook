@@ -19,6 +19,7 @@ import {
   type DiscoverPackagesOptions,
   type NextPackageDiscovery,
 } from './discoverNextPackages'
+import { discoverStaticPages } from './discoverStaticPages'
 import { manifestDeclaresExpo } from './manifestDeclaresPackage'
 import { manifestNamesNext } from './nextManifest'
 import { manifestDeclaresReactScripts } from './reactScriptsManifest'
@@ -29,6 +30,7 @@ import {
   type NextAdapterReadiness,
   type ReactScriptsAdapterReadiness,
   type RepositoryAdapterReadiness,
+  type StaticPageAdapterReadiness,
   type ViteAdapterReadiness,
 } from './readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
@@ -221,7 +223,7 @@ export async function readStatusAdapterReadiness(
   const deadlineAt =
     now() + (options.discovery?.timeoutMs ?? REPOSITORY_GIT_TIMEOUT_MS)
   const placement = await readPlacement(workspace, signal, deadlineAt - now())
-  const [base, rootApps, discovery] = await Promise.all([
+  const [base, rootApps, discovery, pages] = await Promise.all([
     readRepositoryAdapterReadiness(workspace, node, signal),
     readRootApps(workspace, placement.kind === 'nested'),
     // One pass classifies each tracked package.json for both Next and Vite.
@@ -233,6 +235,8 @@ export async function readStatusAdapterReadiness(
           signal,
         })
       : undefined,
+    // Start the static-page walk with the other reads; a nested workspace never uses it.
+    placement.kind === 'nested' ? undefined : staticPageListing(workspace),
   ])
   if (placement.kind === 'nested') {
     const recovery = describeNestedWorkspaceRecovery(
@@ -271,6 +275,14 @@ export async function readStatusAdapterReadiness(
         packages: [],
         packagesTruncated: false,
       },
+      'static-page': {
+        ...base['static-page'],
+        ready: false,
+        missing: [recovery],
+        rootIsApp: false,
+        packages: [],
+        packagesTruncated: false,
+      },
     }
   }
   const next: NextAdapterReadiness = {
@@ -293,11 +305,43 @@ export async function readStatusAdapterReadiness(
     rootIsApp: rootApps.expoWeb,
     ...listedPackagesOf(discovery?.expoWeb),
   }
+  const staticPage: StaticPageAdapterReadiness = {
+    ...base['static-page'],
+    ...pages,
+  }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
     'vite-dev': vite,
     'react-scripts-dev': reactScripts,
     'expo-web-dev': expoWeb,
+    'static-page': staticPage,
+  }
+}
+
+/**
+ * Lists the plain pages of the repository for the `static-page` status report.
+ * Called by {@link readStatusAdapterReadiness}; the listing has its own scan (a plain page has no `package.json` to find), so it needs no Git and lists the opened folder even when Git cannot place it (a folder outside any repository).
+ * @param workspace - The opened folder.
+ * @returns `rootIsApp`, `packages`, `packagesTruncated` and, when truncated, `packagesTruncatedReason`.
+ * @example await staticPageListing('/repo') // => { rootIsApp: false, packages: [{ packageRoot: 'examples/page', … }], packagesTruncated: false }
+ */
+async function staticPageListing(
+  workspace: string,
+): Promise<
+  Pick<
+    StaticPageAdapterReadiness,
+    'rootIsApp' | 'packages' | 'packagesTruncated' | 'packagesTruncatedReason'
+  >
+> {
+  try {
+    return await discoverStaticPages(workspace)
+  } catch {
+    return {
+      rootIsApp: false,
+      packages: [],
+      packagesTruncated: true,
+      packagesTruncatedReason: 'git-failed',
+    }
   }
 }
 

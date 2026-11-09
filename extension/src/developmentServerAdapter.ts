@@ -22,6 +22,7 @@ import type {
 import type { ResolvedVitePackage } from './utils/resolveVitePackage'
 import type { ReactScriptsLibraryStopInput } from './utils/sealReactScriptsLibraryStop'
 import type { ViteLibraryModuleSource } from './utils/selectViteLibraryCandidate'
+import type { PackedLibraryFiles } from './utils/servePackedLibraryFile'
 import type { ViteLibraryModules } from './utils/viteLibraryModules'
 import type { ViteLauncherLibraryOptions } from './viteLauncherProtocol'
 import type { ViteLibraryPackedFacts } from './viteLibraryRefusals'
@@ -45,6 +46,8 @@ export type DevelopmentServerStart = {
   reactScriptsPackage?: ResolvedPackage
   /** The Expo app an `expo-web-dev` run resolved ({@link resolveExpoWebPackage}): the CLI runs with `workspace` (the app folder) as its working folder. Absent for every other run. */
   expoWebPackage?: ResolvedPackage
+  /** The page folder a `static-page` run resolved ({@link resolveStaticPagePackage}): the static server serves it. Absent for every other run. */
+  staticPagePackage?: ResolvedPackage
   /** The checked-out library a Vite run serves from its packed copy (the library route): the owned launcher redirects the app's imports of it, and the run's private Vite cache (`<privateFolder>/vite-cache`) passes the settings check. Absent for every other run. */
   viteLibrary?: ViteLauncherLibraryOptions
   /** A `react-scripts-dev` run that declares `library` (API 1.35): the generated preload the owned `start.js` runs with `node --require`, written into the run's private folder before the server starts. Absent for every other run. */
@@ -93,6 +96,18 @@ export type ReactScriptsLibraryStopSeal = ReactScriptsLibraryStopInput & {
   libraryRootRelative: string
 }
 
+/** What a `static-page` library stop is sealed through: the library, the Example's page folder, the packed copy and the files the redirect serves from it. */
+export type StaticPageLibraryStopSeal = {
+  packageName: string
+  examplePackageRoot: string
+  packedRoot: string
+  /** The checked-out library's real folder; the stop is read below it. */
+  libraryRoot: string
+  /** The library's repository-relative folder (`"."` for the repository root). */
+  libraryRootRelative: string
+  files: PackedLibraryFiles
+}
+
 /** What {@link DevelopmentServerAdapter.readBundle} needs to seal one declared stop. */
 export type DevelopmentBundleRequest = {
   /** The opened repository's root (stop files and recorded sources are relative to it). */
@@ -105,6 +120,10 @@ export type DevelopmentBundleRequest = {
   reactScriptsPackage?: ResolvedPackage
   /** The Expo app an `expo-web-dev` run resolved: the seal reads the stop in the app folder under the stop's package-relative path. Absent for every other run. */
   expoWebPackage?: ResolvedPackage
+  /** The page folder a `static-page` run resolved: the seal reads the stop in it under the stop's package-relative path. Absent for every other run. */
+  staticPagePackage?: ResolvedPackage
+  /** Set for a browser stop of a `static-page` library run whose file lies in the checked-out library: the stop is sealed against the packed build the redirect serves ({@link sealStaticPageLibraryStop}). Absent for every other stop. */
+  staticPageLibraryStop?: StaticPageLibraryStopSeal
   /** Set for a browser stop of a react-scripts library run whose file lies in the checked-out library outside the app: the stop is sealed through the packed build ({@link sealReactScriptsLibraryStop}) instead of being refused as outside the app. Absent for every other stop. */
   reactScriptsLibraryStop?: ReactScriptsLibraryStopSeal
   source: RepositoryConfiguration['source']
@@ -202,6 +221,8 @@ export interface DevelopmentServerAdapter {
     vitePackage?: ResolvedVitePackage,
     reactScriptsPackage?: ResolvedPackage,
     expoWebPackage?: ResolvedPackage,
+    staticPagePackage?: ResolvedPackage,
+    entryPath?: string,
   ): Promise<void>
   /** Starts the owned server on the project's own port and returns it with that port. */
   start(request: DevelopmentServerStart): Promise<{

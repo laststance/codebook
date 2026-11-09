@@ -175,7 +175,7 @@ async function writeScripts(
 }
 
 // protects=the real environment carries the adapter report inside the repository-browser profile without changing its own ready/missing; fails_when=adapters is absent from the profile; no_claim=the Node version of the stub environment
-test('the environment reports all four adapters under the repository-browser profile', async (context) => {
+test('the environment reports all five adapters under the repository-browser profile', async (context) => {
   // Arrange
   const { environment } = await createEnvironmentWith(context, { gaps: [] })
   // Act
@@ -188,6 +188,7 @@ test('the environment reports all four adapters under the repository-browser pro
     'vite-dev',
     'react-scripts-dev',
     'expo-web-dev',
+    'static-page',
   ])
   assert.equal(profile?.adapters?.['vite-dev'].installed, false)
 })

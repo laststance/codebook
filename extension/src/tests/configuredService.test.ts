@@ -121,6 +121,11 @@ test('a vite-dev start in a Vite app without Next waits on Vite readiness, not o
             installed: false,
             missing: ['not-an-expo-app'],
           },
+          'static-page': {
+            ready: false,
+            missing: ['no-entry-page'],
+            entry: 'index.html',
+          },
         },
       },
     },
@@ -131,6 +136,74 @@ test('a vite-dev start in a Vite app without Next waits on Vite readiness, not o
     profile: 'repository-browser',
     key: 'vite-without-next',
     configuration: { ...configuration, adapter: 'vite-dev' },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.notEqual(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(runtimes.length, 1)
+})
+
+test('a root static-page start with entryPath /demo.html is judged by demo.html, not the root index.html readiness', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes, directory } =
+    await configuredServiceHarness(context)
+  await writeFile(join(directory, 'demo.html'), '<h1>demo</h1>')
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: true,
+        missing: [],
+        adapters: {
+          'next-dev-webpack': { ready: true, missing: [] },
+          'vite-dev': {
+            ready: false,
+            installed: false,
+            supportedMajor: 8,
+            yarnPnp: false,
+            missing: ['vite does not resolve from the workspace root.'],
+          },
+          'react-scripts-dev': {
+            ready: false,
+            installed: false,
+            missing: ['not-a-react-scripts-app'],
+            startScript: { form: 'absent' },
+          },
+          'expo-web-dev': {
+            ready: false,
+            installed: false,
+            missing: ['not-an-expo-app'],
+          },
+          'static-page': {
+            ready: false,
+            missing: ['no-entry-page'],
+            entry: 'index.html',
+          },
+        },
+      },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'root',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
   })
   const record = service.record(receipt)
   await record.preparation
@@ -170,6 +243,11 @@ test('a vite-dev start is refused with the Vite gate sentence when Vite itself i
             ready: false,
             installed: false,
             missing: ['not-an-expo-app'],
+          },
+          'static-page': {
+            ready: false,
+            missing: ['no-entry-page'],
+            entry: 'index.html',
           },
         },
       },
@@ -2770,7 +2848,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.41, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.42, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -4858,7 +4936,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.41')
+  assert.equal(status.apiVersion, '1.42')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')

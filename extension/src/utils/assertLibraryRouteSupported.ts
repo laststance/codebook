@@ -22,9 +22,11 @@ const LIBRARY_PACKAGE_ROOT_FIELD = 'configuration.library.packageRoot'
 /**
  * How the Example must relate to the declared library (API 1.35, D4).
  * - `direct`: the Example's package.json lists the library in `dependencies`, `devDependencies` or `peerDependencies` (the `node-script` and `vite-dev` routes).
+ * - `none`: the Example declares no dependency on the library at all, because it loads the library from a CDN (a plain page, Cycle 0105); neither the dependency nor the peers are checked.
  * - `direct-or-installed`: the same, or one of the Example's listed dependencies, as installed for the Example, itself lists the library in its `dependencies`, `optionalDependencies` or `peerDependencies` (one level, no version-range comparison; the `react-scripts-dev` route).
  */
-export type LibraryDependencyRelation = 'direct' | 'direct-or-installed'
+export type LibraryDependencyRelation =
+  'direct' | 'direct-or-installed' | 'none'
 
 /** What {@link assertLibraryRouteSupported} checks. */
 export type LibraryRouteInputs = {
@@ -256,7 +258,10 @@ async function readSupportedManifest(
     ...(example?.peerDependencies ?? []),
   ]
   let relation: { reachedThrough?: string[]; reachedThroughCount?: number } = {}
-  if (!exampleNames.includes(library.name)) {
+  if (
+    !exampleNames.includes(library.name) &&
+    inputs.dependencyRelation !== 'none'
+  ) {
     const isTransitiveAllowed =
       inputs.dependencyRelation === 'direct-or-installed'
     const dependents = isTransitiveAllowed
@@ -308,9 +313,13 @@ async function assertInstalled(
         "The library's dependencies are not installed; install the repository with its package manager.",
         { package: dependency, installCommand, folder: inputs.repositoryRoot },
       )
-  const peers = library.peerDependencies.filter(
-    (peer) => !library.optionalPeers.includes(peer),
-  )
+  // A page that loads the library from a CDN supplies its peers the same way; none is resolved for it.
+  const peers =
+    inputs.dependencyRelation === 'none'
+      ? []
+      : library.peerDependencies.filter(
+          (peer) => !library.optionalPeers.includes(peer),
+        )
   for (const peer of peers)
     if (
       (await readInstalledPackageManifest(inputs.examplePackageRoot, peer)) ===

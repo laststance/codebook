@@ -588,6 +588,12 @@ export async function createEnvironment(
                 check,
                 managedRunState,
               ),
+              // A static-page start composes the same way: the shared prerequisites, the page's own gaps (readStaticPageReadiness) and no other managed run.
+              'static-page': composeAdapterReadiness(
+                adapters['static-page'],
+                check,
+                managedRunState,
+              ),
             },
           },
           'node-test': {

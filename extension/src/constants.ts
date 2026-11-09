@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.42 is additive: a plain HTML page is ready under the new `static-page` adapter of the `repository-browser` profile (a version 3 configuration only; `codebook_status` lists pages at the repository root, in `examples/*` and in `apps/*`, and a `packageRoot` declared elsewhere is judged when the run starts). Codebook serves the page's folder from its own loopback static server on a port the operating system picks, never runs the Example's scripts or installs anything, and treats the page as ready when the entry page answers HTML and every same-origin `<script src>` answers JavaScript. A page whose scripts or stylesheets name a file that does not exist in its folder, or whose inline or same-origin module script imports a bare specifier, needs a bundler and is listed not ready with the gap `needs-bundler`. `codebook_status` gains `profiles[].prerequisites.adapters["static-page"]` with `ready`, `missing` (`no-entry-page`, `needs-bundler`, `entry-unreadable`), `packages` (entries `{ packageRoot, ready, missing, entry }`), `packagesTruncated` and `packagesTruncatedReason`. The refusals gain `STATIC_PAGE_UNSUPPORTED` (`no-entry-page`, `needs-bundler`, `entry-unreadable`, `not-a-static-page`), `STATIC_PAGE_SERVER_FAILED` (`listen-failed`, `not-ready`), `STATIC_PAGE_SEAL_FAILED` (`outside-package`, `node-modules`, `not-in-page-script`, `ambiguous-source`, `unmapped-line`, `map-limit`, `map-unreadable`, `library-build-stale`, `library-not-in-build`, `library-build-unmapped`) and `REPOSITORY_BROWSER_LIBRARY_REFUSED` (`library-path-absent`), each with `details.reason` and `details.sideEffects`. A browser stop in the entry page's inline `<script>` or in a same-origin `.js` file the page loads is sealed against the served bytes. A `static-page` configuration may declare `library: { packageRoot }` (the pack route): Codebook builds and packs the checked-out library and, through the run's browser, serves the packed build in place of the page's import of that package from unpkg or jsDelivr (`https://unpkg.com/<name>@<version>/<path>`, `https://cdn.jsdelivr.net/npm/<name>@<version>/<path>`), with the build's source map inlined so a stop in the library's checked-out source is sealed; a path the packed build lacks ends the run with `REPOSITORY_BROWSER_LIBRARY_REFUSED`. A page that imports from a CDN without `library` runs on the published copy, and the run says so. A `static-page` run is saved as study format 23 (`.study.v23.json`, retained configuration), which an older Codebook lists as saved by a newer Codebook; a run that declares `library` keeps its library facts in that format. A client that finds an older API tells the learner to update Codebook and does not run a plain page by another route.
  * 1.41 is additive: a Create React App app on react-scripts 4 is ready under `react-scripts-dev` (a version 3 configuration declares the same adapter as for react-scripts 5; react-scripts 3 and older stay refused as `react-scripts-version`). On Node 17 or later Codebook adds `--openssl-legacy-provider` to the `NODE_OPTIONS` of the app's own process only, after the learner's own value (the start script's `NODE_OPTIONS=` assignment, else the editor's environment); when the Node that runs react-scripts 4 reports no readable version the start is refused as `REACT_SCRIPTS_UNSUPPORTED` with reason `node-version-unreadable`. The sealing reader now reads every same-origin script of the entry page (react-scripts 4 serves a runtime and chunks), and `REACT_SCRIPTS_SEAL_FAILED` gains three reasons: `script-off-origin`, `too-many-scripts` and `script-too-large`; a file named by two served scripts' maps is refused `ambiguous-source`. A `library` declaration (the pack route, API 1.35) works on react-scripts 4 as well: the redirect to the packed library counts as applied only when the compile report names the packed library among its modules, and otherwise the start stops with `library-redirect-not-applied` before the browser opens. A saved study gains no field: a react-scripts 4 run is saved as format 11, or format 17 with `library`, as a react-scripts 5 run is. A client that finds an older API tells the learner to update Codebook and does not run a react-scripts 4 app by another route.
  * 1.40 is additive: a version 3 `next-dev-webpack` configuration may declare `reverseProxy: { origin, upstreamPort }`, for a Next app the learner opens through their own local reverse proxy (nginx, Caddy or Traefik) at a host name instead of directly at the dev server's localhost address. Codebook starts the dev server itself on `upstreamPort`, resolves the origin's host (every address must be a loopback address), proves with one keyed request that the origin reaches the server it started, checks with a throwaway browser that a browser reaches the same address, and opens the entry at the origin; certificates are never bypassed. A refusal answers `REVERSE_PROXY_REFUSED` with one of {@link REVERSE_PROXY_REFUSAL_REASONS} as its `details.reason`; a run saved with the declaration is saved as format 22 ({@link REVERSE_PROXY_STUDY_VERSION}).
  * 1.39 is additive: a version 3 configuration may declare an operation `{ kind: "press", title, key, selector?, after }`, one key press (optionally with Control, Alt, Shift or Meta, spelled `Control+k`) sent to the page in the browser run, for an app that opens a screen from a keyboard shortcut. The press is refused, nothing sent, when the key would go to a secret control (always, with or without a `selector`), to a frame, or to a text entry (only without a declared `selector`; naming a text input as the `selector` sends the key to it), when a declared `selector` is not a focusable target, and when its `after` condition already holds; a run saved with a press is saved as format 21 ({@link PRESS_STUDY_VERSION}). A failed press reports one of {@link OPERATION_PRESS_REASONS} as the `reason` of its `INPUT_NOT_ACCEPTED` error.
@@ -43,7 +44,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.41'
+export const API_VERSION = '1.42'
 
 /** The API that first accepts a `press` operation in a version 3 configuration. */
 export const PRESS_MINIMUM_API = '1.39'
@@ -379,6 +380,9 @@ export const REACT_SCRIPTS_LIBRARY_MINIMUM_API = '1.35'
 /** The first API version whose `react-scripts-dev` adapter runs a react-scripts 4 app; an older Codebook refuses it as `react-scripts-version`, so a client tells the learner to update Codebook. */
 export const REACT_SCRIPTS_FOUR_MINIMUM_API = '1.41'
 
+/** The API that first accepts the `static-page` adapter in a version 3 configuration (skill 1.0.85), with or without `library`. */
+export const STATIC_PAGE_MINIMUM_API = '1.42'
+
 /** The API that first accepts `library.packageRoot` in a nested version 3 `next-dev-webpack` configuration. */
 export const NEXT_LIBRARY_MINIMUM_API = '1.36'
 
@@ -405,7 +409,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.106'
+export const EXTENSION_VERSION = '0.2.107'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1718,11 +1722,12 @@ export const REPOSITORY_BROWSER_ADAPTERS = [
   'next-dev-webpack',
   'vite-dev',
 ] as const
-/** The adapters a version 3 configuration may name: those of versions 1 and 2 plus `react-scripts-dev` (Cycle 0083, decision D7: version 3 only) and `expo-web-dev` (Cycle 0089, DX-1: version 3 only). The one list that the version 1/2 and version 3 schemas and the profile contract derive from. */
+/** The adapters a version 3 configuration may name: those of versions 1 and 2 plus `react-scripts-dev` (Cycle 0083, decision D7: version 3 only), `expo-web-dev` (Cycle 0089, DX-1: version 3 only) and `static-page` (Cycle 0105: version 3 only). The one list that the version 1/2 and version 3 schemas and the profile contract derive from. */
 export const OPERATIONS_REPOSITORY_BROWSER_ADAPTERS = [
   ...REPOSITORY_BROWSER_ADAPTERS,
   'react-scripts-dev',
   'expo-web-dev',
+  'static-page',
 ] as const
 export const NODE_TEST_PROFILE = 'node-test'
 /** The profile of a run of the repository's own Node HTTP server: one declared request, stopped in its handler source. */
@@ -2201,6 +2206,8 @@ export const VITE_API_SERVER_STUDY_VERSION = 20
 export const PRESS_STUDY_VERSION = 21
 /** The format of a study saved from a version 3 `next-dev-webpack` configuration that declares `reverseProxy` (API 1.40): a compatibility format that keeps every fact of the underlying run's format, because the sealed configuration holds a key an older strict reader rejects; the suffix `.study.v22.json` makes Codebook 0.2.103 and older list such a study as saved by a newer Codebook and keep it. */
 export const REVERSE_PROXY_STUDY_VERSION = 22
+/** The format of a study saved from a version 3 `static-page` configuration (API 1.42), whether its `packageRoot` is absent, `"."` or a nested folder: its evidence follows the same format 7 rules as the other browser-only formats, derived from the configuration by {@link evidenceFormatOfStudy}, and a configuration that declares `library` keeps the run's library facts in it. A `static-page` configuration is readable only as this format, whatever else it declares (a press included); the suffix `.study.v23.json` makes Codebook 0.2.106 and older list such a study as saved by a newer Codebook and keep it. */
+export const STATIC_PAGE_STUDY_VERSION = 23
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
@@ -2220,7 +2227,7 @@ export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = REVERSE_PROXY_STUDY_VERSION
+export const READABLE_STUDY_VERSION = STATIC_PAGE_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2232,6 +2239,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: STATIC_PAGE_STUDY_VERSION,
+    format: 'v23',
+    archiveSuffix: '.study.v23.json',
+    metadataSuffix: '.study.meta.v23.json',
+  },
   {
     version: REVERSE_PROXY_STUDY_VERSION,
     format: 'v22',
@@ -3454,6 +3467,48 @@ export const REACT_SCRIPTS_ENV_VALUE_MAX_CHARS = 1_048_576
 /** The most characters the `$NAME` substitutions of one app's `.env` files may copy in total (each substitution rebuilds its value); past it the start is refused, so repeated references to a long value cannot block the extension host. */
 export const REACT_SCRIPTS_ENV_EXPANSION_MAX_COPIED_CHARS = 16_777_216
 
+/** The longest the readiness wait of a `static-page` run pauses between two reads of the entry page and its same-origin scripts. */
+export const STATIC_PAGE_READINESS_POLL_MS = 100
+
+/** The most bytes of an HTML page or a same-origin script of a `static-page` run Codebook reads for readiness and sealing; a larger file is not a page the run can seal. */
+export const STATIC_PAGE_FILE_LIMIT_BYTES = 1_048_576
+
+/** The most `<script src>` and `<link href>` references of the entry page that readiness checks (the first ones, in document order); a page that names more is judged on these. */
+export const STATIC_PAGE_REFERENCES_MAX = 64
+
+/** The most characters of page-controlled text (a reference, a file or a library name) a static-page refusal or status line carries; longer text is cut. */
+export const STATIC_PAGE_REFUSAL_TEXT_MAX_CHARS = 200
+
+/** The most same-origin scripts of the entry page whose text readiness reads for a bare-specifier import (one level deep). */
+export const STATIC_PAGE_SCRIPT_READS_MAX = 16
+
+/** The folders under the repository root whose children a `static-page` discovery lists as candidate pages (besides the root itself). */
+export const STATIC_PAGE_DISCOVERY_FOLDERS = ['examples', 'apps'] as const
+
+/** The most candidate pages a `static-page` discovery lists in `codebook_status`; a longer list is cut and reported as truncated by `limit`. */
+export const STATIC_PAGE_DISCOVERY_PACKAGES_MAX = 40
+
+/** The `Cache-Control` value the static page server answers with, so the browser never serves a stale copy of a file the seal read. */
+export const STATIC_PAGE_CACHE_CONTROL = 'no-store'
+
+/** The hosts whose package URLs a declared `library` replaces with the packed build: `https://unpkg.com/<name>@<version>/<path>` and `https://cdn.jsdelivr.net/npm/<name>@<version>/<path>` (Cycle 0105, decision D5). */
+export const STATIC_PAGE_CDN_HOSTS = [
+  { host: 'unpkg.com', prefix: '/' },
+  { host: 'cdn.jsdelivr.net', prefix: '/npm/' },
+] as const
+
+/** The most bytes of one packed library file the CDN redirect serves (a larger file is answered as absent); also bounds the map it inlines. */
+export const STATIC_PAGE_CDN_FILE_LIMIT_BYTES = 33_554_432
+
+/** The most levels of relative imports below an entry file of the packed library that the library seal follows, so a stop in a code-split chunk is sealed (Cycle 0105, decision D-g). */
+export const STATIC_PAGE_CDN_CHAIN_DEPTH_MAX = 3
+
+/** The most packed library files (entry files included) the library seal reads while following relative imports. */
+export const STATIC_PAGE_CDN_CHAIN_FILES_MAX = 16
+
+/** The most characters read at a mapped generated position to find the minified identifier there ({@link minifiedPathOf}); a JavaScript identifier in a minified build is far shorter. */
+export const MINIFIED_IDENTIFIER_SCAN_CHARS = 256
+
 /** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
 export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500
 
@@ -3749,3 +3804,6 @@ export const API_PROXY_PATH_MAX_CHARS = 256
  */
 export const API_SERVER_PAGE_ROUTE_RULE =
   "A question that starts from the repository's own web app (what the server does when the learner signs in, opens a screen or presses something) uses a browser run of the app that declares `apiServer` when the app is a Vite or Expo app whose page reaches the repository's own Node API (`viteApiServer` for a Vite app from API 1.38, `expoWebQuickStart.apiServer` for an Expo app from API 1.37), so the server stop pauses during the request the page sends; a Next app's own server code (route handlers, server actions, API routes) pauses in its own browser run (see its help) and never declares `apiServer`; the `node-server` profile is for a server request asked on its own, with no screen, for an API that is not part of a Vite, Expo or Next app run, or when the app's adapter is not ready."
+
+/** The most characters of one script text that the bare-import scan of a `static-page` readiness reads; the scan is linear in it, and a longer text is judged on this prefix. */
+export const STATIC_PAGE_IMPORT_SCAN_MAX_CHARS = 1_048_576

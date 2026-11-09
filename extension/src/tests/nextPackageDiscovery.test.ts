@@ -638,6 +638,7 @@ test('codebook_status discovers packages and words their gaps without a private 
               startScript: { form: 'absent' as const },
             },
             'expo-web-dev': { ...ready, installed: false },
+            'static-page': { ...ready, entry: 'index.html' },
           },
         },
       },

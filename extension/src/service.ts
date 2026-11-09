@@ -255,6 +255,7 @@ import {
   isRootNextStart,
   repositoryBrowserStartPrerequisites,
   selectedNextPackageStartPrerequisites,
+  rootStaticPageEntryStartPrerequisites,
   selectedVitePackageStartPrerequisites,
 } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
@@ -1105,6 +1106,25 @@ export class StudyService {
                 missing: prerequisite.adapters['expo-web-dev'].missing.map(
                   (sentence) => this.sanitizedCause(sentence),
                 ),
+              },
+              // A `needs-bundler` gap quotes a reference the page wrote, so each listed page's gaps pass the same sanitizer.
+              'static-page': {
+                ...prerequisite.adapters['static-page'],
+                missing: prerequisite.adapters['static-page'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+                ...(prerequisite.adapters['static-page'].packages
+                  ? {
+                      packages: prerequisite.adapters[
+                        'static-page'
+                      ].packages.map((entry) => ({
+                        ...entry,
+                        missing: entry.missing.map((sentence) =>
+                          this.sanitizedCause(sentence),
+                        ),
+                      })),
+                    }
+                  : {}),
               },
             },
           }
@@ -5145,6 +5165,13 @@ export class StudyService {
                 )) ??
                 // A nested Vite app is judged by its own folder the same way.
                 (await selectedVitePackageStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                  this.environment.workspace,
+                )) ??
+                // A root static page that declares an entry is judged by that entry, not by `index.html`.
+                (await rootStaticPageEntryStartPrerequisites(
                   prerequisites,
                   record.profile,
                   record.configuration,

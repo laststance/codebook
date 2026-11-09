@@ -1359,6 +1359,7 @@ test('saved session setup refuses while a Codebook run is live and returns node,
     'vite-dev',
     'react-scripts-dev',
     'expo-web-dev',
+    'static-page',
   ])
 })
 

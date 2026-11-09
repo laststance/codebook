@@ -69,9 +69,13 @@ export function createBundleVerifier(
     throw new Error('Map original differs from native source path')
   const sourceMap = new SourceMap(payload)
   // Split once on first use: a scan asks the generated text at every mapping in its range, and a list of break locations asks it for every location.
+  // An inline page script is positioned in the page's coordinates: its text sits after the lines and columns that precede it in the page.
+  const pageCoordinateJavascript = bundle.scriptStart
+    ? `${'\n'.repeat(bundle.scriptStart.line)}${' '.repeat(bundle.scriptStart.column)}${bundle.javascript}`
+    : bundle.javascript
   let splitGeneratedLines: string[] | undefined
   const generatedLines = (): string[] =>
-    (splitGeneratedLines ??= bundle.javascript.split(/\r\n|\r|\n/))
+    (splitGeneratedLines ??= pageCoordinateJavascript.split(/\r\n|\r|\n/))
   /** Reads the sealed original position of a generated location for `originalLine` and `originalColumn`; unmapped generated code has none. */
   const originalPosition = (
     location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
@@ -221,7 +225,7 @@ export function createBundleVerifier(
         throw new Error('Paused script differs from selected module')
       if (
         !isSourcePosition(
-          bundle.javascript,
+          pageCoordinateJavascript,
           location.lineNumber,
           location.columnNumber ?? 0,
         )

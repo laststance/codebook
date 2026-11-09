@@ -117,8 +117,8 @@ test('format 22 keeps the format 8 rules of its underlying run: a study with a s
   assert.equal(study.version, 22)
 })
 
-// Value: protects=D28 AC 4 a reverse-proxy replay saves as .study.v22.json, lists as v22 with its outcome, a lost sidecar is repaired by reconcile and a v23 file lists as saved by a newer Codebook; fails_when=keepsCheckpoint or the catalog type omits v22, or the storage table lacks v22; no_claim=disk errors
-test('a reverse-proxy replay saves as .study.v22.json, lists as v22, repairs a lost sidecar and lists v23 as saved by a newer Codebook', async (context) => {
+// Value: protects=D28 AC 4 a reverse-proxy replay saves as .study.v22.json, lists as v22 with its outcome, a lost sidecar is repaired by reconcile and a v24 file lists as saved by a newer Codebook; fails_when=keepsCheckpoint or the catalog type omits v22, or the storage table lacks v22; no_claim=disk errors
+test('a reverse-proxy replay saves as .study.v22.json, lists as v22, repairs a lost sidecar and lists v24 as saved by a newer Codebook', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-22-'))
   context.after(() => removeTestFolder(directory))
@@ -138,8 +138,8 @@ test('a reverse-proxy replay saves as .study.v22.json, lists as v22, repairs a l
   await library.reconcile()
   const repaired = await library.readCheckpoint(study.id)
   await writeFile(
-    join(directory, `${newerId}.study.v23.json`),
-    '{"version":23}',
+    join(directory, `${newerId}.study.v24.json`),
+    '{"version":24}',
   )
   const withNewer = (await library.list()).map((entry) => entry.format).sort()
   // Assert
@@ -300,13 +300,13 @@ test('Codebook 0.2.103 lists a .study.v22.json archive and its sidecar as saved 
   // Assert
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 22 })
   assert.equal(sidecar, undefined)
-  assert.equal(READABLE_STUDY_VERSION, 22)
+  assert.equal(READABLE_STUDY_VERSION, 23)
   assert.equal(isOperationsStudyFormat(22), true)
-  assert.equal(isOperationsStudyFormat(23), false)
+  assert.equal(isOperationsStudyFormat(24), false)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 22 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 23 }),
-    /saved in format 23 by a newer Codebook; this Codebook reads formats up to 22/,
+    () => assertReadableStudyFormat({ version: 24 }),
+    /saved in format 24 by a newer Codebook; this Codebook reads formats up to 23/,
   )
 })
 

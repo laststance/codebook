@@ -17,7 +17,13 @@ export interface SourceMapSegment {
   generatedLine: number
   generatedColumn: number
   /** Absent for a segment that maps its generated code to no original. */
-  original?: { sourceIndex: number; line: number; column: number }
+  original?: {
+    sourceIndex: number
+    line: number
+    column: number
+    /** Index into the map's `names`, only for a segment that carries a fifth field. */
+    nameIndex?: number
+  }
 }
 
 /** Where a scan of a source map's `mappings` stands: what it has counted against its size limits, where the segment it is reading began, and the running sums the map's relative fields add up to. */
@@ -36,6 +42,8 @@ interface SourceMapScan {
   sourceIndex: number
   originalLine: number
   originalColumn: number
+  /** Running index into the map's `names`; moved only by segments with a fifth field. */
+  nameIndex: number
 }
 
 /**
@@ -96,11 +104,17 @@ function advanceOriginal(
   scan.originalColumn += fields[3]!
   if (!isOriginalPosition(scan))
     throw new Error('Invalid original map position')
-  return {
+  const position = {
     sourceIndex: scan.sourceIndex,
     line: scan.originalLine,
     column: scan.originalColumn,
   }
+  // A fifth field moves the running name index; a segment without one keeps no name.
+  if (fields.length !== SOURCE_MAP_NAMED_SEGMENT_FIELDS) return position
+  scan.nameIndex += fields[4]!
+  if (!Number.isSafeInteger(scan.nameIndex) || scan.nameIndex < 0)
+    throw new Error('Invalid source map name index')
+  return { ...position, nameIndex: scan.nameIndex }
 }
 
 /**
@@ -223,6 +237,7 @@ export function walkSourceMapSegments(
     sourceIndex: 0,
     originalLine: 0,
     originalColumn: 0,
+    nameIndex: 0,
   }
   for (let cursor = 0; cursor <= mappings.length; cursor++)
     if (!scanCharacterAt(mappings, cursor, scan, visit)) return false

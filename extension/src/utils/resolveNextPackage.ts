@@ -43,6 +43,9 @@ export type PackageRootRefusalReason =
 /** Which adapter's app a `packageRoot` must hold; decides the words of a refusal. */
 export type PackageAppKind = 'next' | 'vite' | 'reactScripts' | 'expoWeb'
 
+/** Whose folder a declared `packageRoot` must be: an app of {@link PackageAppKind}, or the plain page of the `static-page` adapter (which has no `package.json` rule and no package discovery). */
+export type PackageFolderKind = PackageAppKind | 'staticPage'
+
 /** How a module id Next printed relates to the package: inside it (with both relative paths) or outside it. */
 export type NextModuleIdClassification =
   | {
@@ -154,7 +157,7 @@ export async function invalidPackageRoot(
   declared: string,
   reason: PackageRootRefusalReason,
   options: ResolveNextPackageOptions,
-  appKind: PackageAppKind = 'next',
+  appKind: PackageFolderKind = 'next',
   errno?: string,
 ): Promise<StudyError> {
   const shown = sanitizeDeclaredPath(declared)
@@ -181,6 +184,7 @@ export async function invalidPackageRoot(
     vite: 'Vite',
     reactScripts: 'react-scripts',
     expoWeb: 'Expo',
+    staticPage: 'plain page',
   }[appKind]
   const message = `packageRoot "${shown}" ${words[reason]}. Declare packageRoot as the repository-relative folder of the ${appName} app (one of details.suggestions), or remove it for an app at the repository root; nothing was started.`
   return new StudyError(
@@ -385,7 +389,7 @@ export async function resolveDeclaredFolder(
   repositoryRoot: string,
   declared: string,
   options: ResolveNextPackageOptions,
-  appKind: PackageAppKind = 'next',
+  appKind: PackageFolderKind = 'next',
 ): Promise<{ repositoryRoot: string; packageRoot: string }> {
   const repositoryReal = await realPathOrCode(repositoryRoot)
   if ('code' in repositoryReal)

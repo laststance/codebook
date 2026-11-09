@@ -1,0 +1,437 @@
+import { realpath, stat } from 'node:fs/promises'
+import { join, posix } from 'node:path'
+
+import { z } from 'zod'
+
+import {
+  STATIC_PAGE_FILE_LIMIT_BYTES,
+  STATIC_PAGE_REFERENCES_MAX,
+  STATIC_PAGE_SCRIPT_READS_MAX,
+} from '../constants'
+
+import { boundStaticPageText } from './boundStaticPageText'
+import { isInsideFolder } from './isInsideFolder'
+import { leavesStaticPageFolder } from './leavesStaticPageFolder'
+import { listDynamicImportSpecifiers } from './listDynamicImportSpecifiers'
+import { listStaticImportSpecifiers } from './listStaticImportSpecifiers'
+import { manifestDeclaresPackage } from './manifestDeclaresPackage'
+import { readRepositoryBuildText } from './readRepositoryBuildText'
+import { readStaticPageHtml } from './readStaticPageHtml'
+import { readJsonInside } from './resolveNextPackage'
+import {
+  isRemoteStaticPageBase,
+  resolveStaticPageBaseFolder,
+} from './resolveStaticPageScriptPath'
+
+/** The facts a page shows before any server starts, as `codebook_status` lists them for one page. */
+export type StaticPageAppReadiness = {
+  /** What a start would decide on the page alone; the environment joins the shared prerequisites and a managed run. */
+  ready: boolean
+  /** The gaps: `no-entry-page`, `needs-bundler` (naming the first offending reference after a colon), `entry-unreadable` or `not-a-static-page`. */
+  missing: string[]
+  /** The entry file relative to the page folder (`index.html` for the default entry path). */
+  entry: string
+}
+
+/** One plain page below the repository root as `codebook_status` lists it (`packages[]`). */
+export type StaticPagePackageReadiness = StaticPageAppReadiness & {
+  /** The repository-relative folder: the exact value to declare as `packageRoot`. */
+  packageRoot: string
+}
+
+/** What judging a page found wrong, with what a refusal needs to word it. */
+export type StaticPageProblem =
+  | { gap: 'no-entry-page'; entry: string }
+  | {
+      gap: 'needs-bundler'
+      reference: string
+      kind: 'missing-file' | 'bare-import' | 'scripts-not-all-judged'
+    }
+  | { gap: 'entry-unreadable'; problem: string }
+  | { gap: 'not-a-static-page'; adapter: string }
+
+/** The adapters whose apps carry a dependency that makes a folder theirs, not a plain page's. */
+const OTHER_ADAPTER_PACKAGES: ReadonlyArray<readonly [string, string]> = [
+  ['react-scripts', 'react-scripts-dev'],
+  ['next', 'next-dev-webpack'],
+  ['vite', 'vite-dev'],
+  ['expo', 'expo-web-dev'],
+]
+
+/** A scheme-bearing reference (`https:`, `data:`, `blob:`, …): it names something other than a file of the folder. */
+const SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i
+
+/**
+ * Names the adapter whose app a folder is, from its `package.json`.
+ * Called by {@link judgeStaticPage} and the discovery to keep a Next, Vite, react-scripts or Expo app out of this adapter.
+ * @param manifest - The parsed `package.json`, or `undefined` for a folder without one.
+ * @returns The adapter name, or `undefined` for a folder no other adapter claims.
+ * @example otherAdapterOfManifest({ devDependencies: { vite: '^8' } }) // => 'vite-dev'
+ */
+export function otherAdapterOfManifest(manifest: unknown): string | undefined {
+  return OTHER_ADAPTER_PACKAGES.find(([packageName]) =>
+    manifestDeclaresPackage(manifest, packageName),
+  )?.[1]
+}
+
+/**
+ * Decodes a percent-encoded path.
+ * @param value - The path as written.
+ * @returns The decoded path; `undefined` for a malformed percent-encoding.
+ * @example decodePath('/a%20b.js') // => '/a b.js'
+ * @example decodePath('/a%zz.js') // => undefined
+ */
+function decodePath(value: string): string | undefined {
+  try {
+    return decodeURI(value)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Resolves the entry file of a page folder from the configured entry path.
+ * Called by {@link judgeStaticPage} and the run's workspace check.
+ * @param entryPath - The configured entry path (`/` when none).
+ * @returns The entry file relative to the folder, forward slashes; `undefined` for a path that names no `.html` file.
+ * @example staticPageEntryFile('/') // => 'index.html'
+ * @example staticPageEntryFile('/demo/page.html?x=1') // => 'demo/page.html'
+ * @example staticPageEntryFile('/demo/') // => 'demo/index.html'
+ */
+export function staticPageEntryFile(entryPath: string): string | undefined {
+  const pathname = decodePath(entryPath.split(/[?#]/)[0] ?? '/')
+  // A malformed percent-encoding names no file.
+  if (pathname === undefined) return undefined
+  if (pathname === '/' || pathname === '') return 'index.html'
+  const relative = posix.normalize(pathname.replace(/^\/+/, ''))
+  if (leavesStaticPageFolder(relative)) return undefined
+  // A trailing slash names the folder's index page, as the server answers it.
+  if (pathname.endsWith('/')) return posix.join(relative, 'index.html')
+  return relative.endsWith('.html') ? relative : undefined
+}
+
+/**
+ * Tells whether a file exists in the folder as a regular file reached without a link.
+ * @param folder - The page folder's real path.
+ * @param relativePath - The folder-relative path.
+ * @returns `true` for a readable regular file.
+ * @example await fileExistsInside('/p', 'main.js') // => true
+ */
+async function fileExistsInside(
+  folder: string,
+  relativePath: string,
+): Promise<boolean> {
+  try {
+    const real = await realpath(join(folder, relativePath))
+    return isInsideFolder(folder, real) && (await stat(real)).isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Finds the first bare-specifier import of a script text.
+ * @param text - The script text.
+ * @param importMapKeys - The specifier keys of the entry page's import maps, which resolve what they map.
+ * @returns The first specifier that only a bundler resolves, or `undefined`.
+ * @example firstBareImport("import { createStore } from 'redux'") // => 'redux'
+ * @example firstBareImport("import x from './x.js'") // => undefined
+ */
+export function firstBareImport(
+  text: string,
+  importMapKeys: readonly string[] = [],
+): string | undefined {
+  const isBare = (specifier: string): boolean =>
+    !specifier.startsWith('./') &&
+    !specifier.startsWith('../') &&
+    !specifier.startsWith('/') &&
+    !SCHEME_PATTERN.test(specifier) &&
+    // The page's import map resolves a specifier it maps, by key or by a key ending in a slash.
+    !importMapKeys.some(
+      (key) =>
+        specifier === key || (key.endsWith('/') && specifier.startsWith(key)),
+    )
+  const staticFound = listStaticImportSpecifiers(text).find(isBare)
+  if (staticFound !== undefined) return staticFound
+  return listDynamicImportSpecifiers(text).find(isBare)
+}
+
+/**
+ * Resolves a page reference to a folder-relative file path.
+ * @param reference - A `src` or `href` as written.
+ * @param entryFolder - The entry file's folder, folder-relative (`.` at the root).
+ * @param baseHref - The page's `<base href>`, which relative references resolve against.
+ * @returns The folder-relative path; `undefined` for a fragment-only reference or one under a remote base; `null` for a malformed percent-encoding or a base that names no folder of the page (no file).
+ * @example resolveReference('/main.js', 'demo', undefined) // => 'main.js'
+ * @example resolveReference('./a.css?v=1', 'demo', undefined) // => 'demo/a.css'
+ * @example resolveReference('a.css', 'demo', 'sub/') // => 'demo/sub/a.css'
+ */
+function resolveReference(
+  reference: string,
+  entryFolder: string,
+  baseHref: string | undefined,
+): string | null | undefined {
+  const bare = reference.split(/[?#]/)[0] ?? ''
+  if (bare === '') return undefined
+  // Under a remote base the reference names a remote address.
+  if (isRemoteStaticPageBase(baseHref)) return undefined
+  const decoded = decodePath(bare)
+  // A malformed percent-encoding names no file of the folder.
+  if (decoded === undefined) return null
+  if (decoded.startsWith('/')) return posix.normalize(decoded.slice(1))
+  const baseFolder = resolveStaticPageBaseFolder(baseHref, entryFolder)
+  return baseFolder === undefined
+    ? null
+    : posix.normalize(posix.join(baseFolder, decoded))
+}
+
+/** What {@link findMissingReference} found: the first reference that is no file of the folder, else the same-origin script files the page names. */
+type ReferenceJudgement = {
+  problem?: StaticPageProblem
+  scriptFiles: string[]
+  /** The first same-origin script named past the reference cap, which was never judged. */
+  pastCapScript?: string
+}
+
+/**
+ * Finds the first same-origin script the page names past the reference cap, which the scan never reads.
+ * Called by {@link findMissingReference} so a cap cannot hide a script from the readiness verdict.
+ * @param scriptSources - Every script `src` of the page, in document order.
+ * @param baseHref - The page's `<base href>`; a remote base makes every reference remote.
+ * @returns The first same-origin script reference past the cap, or `undefined`.
+ * @example firstPastCapScript(['https://cdn.example.test/a.js'], undefined) // => undefined
+ */
+function firstPastCapScript(
+  scriptSources: readonly string[],
+  baseHref: string | undefined,
+): string | undefined {
+  if (isRemoteStaticPageBase(baseHref)) return undefined
+  return scriptSources
+    .slice(STATIC_PAGE_REFERENCES_MAX)
+    .find(
+      (reference) =>
+        !reference.startsWith('//') &&
+        !SCHEME_PATTERN.test(reference) &&
+        (reference.split(/[?#]/)[0] ?? '') !== '',
+    )
+}
+
+/**
+ * Judges the `src` and `href` references of an entry page: each must be an absolute https (or data) URL or a file of the folder.
+ * Called by {@link findBundlerProblem}.
+ * @param folder - The page folder's real path.
+ * @param entryFolder - The entry file's folder, folder-relative.
+ * @param page - The parsed entry page.
+ * @returns The first reference that names no file of the folder, else the folder-relative paths of the page's script files.
+ * @example await findMissingReference('/p', '.', readStaticPageHtml('<script src="main.js"></script>')) // => { scriptFiles: ['main.js'] }
+ */
+async function findMissingReference(
+  folder: string,
+  entryFolder: string,
+  page: ReturnType<typeof readStaticPageHtml>,
+): Promise<ReferenceJudgement> {
+  const scriptFiles: string[] = []
+  for (const reference of [...page.scriptSources, ...page.linkHrefs].slice(
+    0,
+    STATIC_PAGE_REFERENCES_MAX,
+  )) {
+    // A protocol-relative or scheme-bearing reference is remote and never a file of the folder.
+    if (reference.startsWith('//') || SCHEME_PATTERN.test(reference)) continue
+    const resolved = resolveReference(reference, entryFolder, page.baseHref)
+    if (resolved === undefined) continue
+    if (
+      resolved === null ||
+      leavesStaticPageFolder(resolved) ||
+      !(await fileExistsInside(folder, resolved))
+    )
+      return {
+        problem: { gap: 'needs-bundler', reference, kind: 'missing-file' },
+        scriptFiles,
+      }
+    if (page.scriptSources.includes(reference)) scriptFiles.push(resolved)
+  }
+  return {
+    scriptFiles,
+    pastCapScript: firstPastCapScript(page.scriptSources, page.baseHref),
+  }
+}
+
+/**
+ * Judges the imports of the page's scripts: an inline script, or a same-origin script file (one level deep), must not import a bare specifier.
+ * Called by {@link findBundlerProblem}.
+ * @param folder - The page folder's real path.
+ * @param inlineTexts - The texts of the page's inline scripts.
+ * @param scriptFiles - The folder-relative paths of the page's script files.
+ * @param importMapKeys - The specifier keys of the page's import maps.
+ * @returns The first bare import, or `undefined`.
+ * @example await findBareImportProblem('/p', ["import 'redux'"], [], []) // => { gap: 'needs-bundler', reference: 'redux', kind: 'bare-import' }
+ */
+async function findBareImportProblem(
+  folder: string,
+  inlineTexts: readonly string[],
+  scriptFiles: readonly string[],
+  importMapKeys: readonly string[],
+  pastCapScript?: string,
+): Promise<StaticPageProblem | undefined> {
+  const fileTexts: string[] = []
+  const unreadable: string[] = []
+  for (const file of scriptFiles.slice(0, STATIC_PAGE_SCRIPT_READS_MAX)) {
+    const text = await readRepositoryBuildText(
+      folder,
+      file,
+      STATIC_PAGE_FILE_LIMIT_BYTES,
+    ).catch(() => undefined)
+    // A script that cannot be read within the size limit is not judged, so it cannot count as clean.
+    if (text === undefined) unreadable.push(file)
+    else fileTexts.push(text)
+  }
+  for (const text of [...inlineTexts, ...fileTexts]) {
+    const specifier = firstBareImport(text, importMapKeys)
+    if (specifier !== undefined)
+      return { gap: 'needs-bundler', reference: specifier, kind: 'bare-import' }
+  }
+  return unjudgedScriptProblem(unreadable[0], scriptFiles, pastCapScript)
+}
+
+/**
+ * Names the first same-origin script the readiness scan could not judge, so the page is never called ready while one of its scripts went unread.
+ * Called by {@link findBareImportProblem} after the readable scripts held no bare import.
+ * @param unreadable - The first listed script that could not be read within the size limit, if any.
+ * @param scriptFiles - Every same-origin script the page names within the reference cap, in document order.
+ * @param pastCapScript - The first same-origin script named past the reference cap, if any.
+ * @returns A `scripts-not-all-judged` problem naming the unread or unreadable script, or `undefined` when every script was judged.
+ * @example unjudgedScriptProblem('big.js', ['big.js']) // => { gap: 'needs-bundler', reference: 'big.js (a same-origin script could not be read within the size limit, so it was not judged)', kind: 'scripts-not-all-judged' }
+ */
+function unjudgedScriptProblem(
+  unreadable: string | undefined,
+  scriptFiles: readonly string[],
+  pastCapScript?: string,
+): StaticPageProblem | undefined {
+  if (unreadable !== undefined)
+    return {
+      gap: 'needs-bundler',
+      reference: `${unreadable} (a same-origin script could not be read within the size limit, so it was not judged)`,
+      kind: 'scripts-not-all-judged',
+    }
+  // Scripts past the read cap were not judged, so the page cannot be called ready.
+  const unread = scriptFiles[STATIC_PAGE_SCRIPT_READS_MAX]
+  if (unread !== undefined)
+    return {
+      gap: 'needs-bundler',
+      reference: `${unread} (more than ${STATIC_PAGE_SCRIPT_READS_MAX} same-origin scripts were not all judged)`,
+      kind: 'scripts-not-all-judged',
+    }
+  // Scripts named past the reference cap were never listed, so they were not judged either.
+  if (pastCapScript !== undefined)
+    return {
+      gap: 'needs-bundler',
+      reference: `${pastCapScript} (named past the first ${STATIC_PAGE_REFERENCES_MAX} references, so it was not judged)`,
+      kind: 'scripts-not-all-judged',
+    }
+  return undefined
+}
+
+/**
+ * Judges the problems of the references an entry page names: a script or stylesheet that is no file of the folder, or an import only a bundler resolves.
+ * Called by {@link judgeStaticPage}.
+ * @param folder - The page folder's real path.
+ * @param entry - The entry file, folder-relative.
+ * @param html - The entry page's text.
+ * @returns The first problem (missing files before imports, document order within each), or `undefined`.
+ * @example await findBundlerProblem('/p', 'index.html', '<script src="/src/main.tsx"></script>') // => { gap: 'needs-bundler', reference: '/src/main.tsx', kind: 'missing-file' }
+ */
+async function findBundlerProblem(
+  folder: string,
+  entry: string,
+  html: string,
+): Promise<StaticPageProblem | undefined> {
+  const page = readStaticPageHtml(html)
+  const { problem, scriptFiles, pastCapScript } = await findMissingReference(
+    folder,
+    posix.dirname(entry),
+    page,
+  )
+  if (problem) return problem
+  return findBareImportProblem(
+    folder,
+    page.inlineScripts.map((script) => script.text),
+    scriptFiles,
+    page.importMapKeys,
+    pastCapScript,
+  )
+}
+
+/**
+ * Judges whether a folder holds a plain page Codebook can serve as written.
+ *
+ * Why it exists: `codebook_status` and the adapter's start must use one judgement, so the chat never starts a page status called not ready. A page that is not ready is a typed problem, never a throw. Called by {@link readStaticPageReadiness} and the adapter's workspace check.
+ * @param folder - The page folder's real path.
+ * @param entryPath - The configured entry path (`/` when none).
+ * @returns The first problem found; `undefined` for a page that can be served.
+ * @example await judgeStaticPage('/repo/examples/page', '/') // => undefined
+ */
+export async function judgeStaticPage(
+  folder: string,
+  entryPath: string,
+): Promise<StaticPageProblem | undefined> {
+  const manifest = await readJsonInside(folder, 'package.json', z.unknown())
+  const adapter = otherAdapterOfManifest(manifest)
+  if (adapter !== undefined) return { gap: 'not-a-static-page', adapter }
+  const entry = staticPageEntryFile(entryPath)
+  if (entry === undefined)
+    return {
+      gap: 'entry-unreadable',
+      problem: 'the entry path names no .html file',
+    }
+  if (!(await fileExistsInside(folder, entry)))
+    return { gap: 'no-entry-page', entry }
+  let html: string
+  try {
+    html = await readRepositoryBuildText(
+      folder,
+      entry,
+      STATIC_PAGE_FILE_LIMIT_BYTES,
+    )
+  } catch {
+    return {
+      gap: 'entry-unreadable',
+      problem: 'the file is over the byte limit, linked or not a regular file',
+    }
+  }
+  return findBundlerProblem(folder, entry, html)
+}
+
+/**
+ * Words a problem as the `missing` entry `codebook_status` lists.
+ * @param problem - What {@link judgeStaticPage} found.
+ * @returns The gap name, with the first offending reference after a colon for `needs-bundler`.
+ * @example staticPageMissingOf({ gap: 'needs-bundler', reference: 'redux', kind: 'bare-import' }) // => 'needs-bundler: redux'
+ */
+function staticPageMissingOf(problem: StaticPageProblem): string {
+  return problem.gap === 'needs-bundler'
+    ? `needs-bundler: ${boundStaticPageText(problem.reference)}`
+    : problem.gap
+}
+
+/**
+ * Reads the readiness of one page folder for `codebook_status`.
+ * Called by the status readiness for the root and for each discovered page.
+ * @param folder - The page folder's real path.
+ * @param entryPath - The entry path to judge (`/` for the listing).
+ * @returns The page's readiness; a folder with no entry page reports `no-entry-page`.
+ * @example await readStaticPageReadiness('/repo/examples/page') // => { ready: true, missing: [], entry: 'index.html' }
+ */
+export async function readStaticPageReadiness(
+  folder: string,
+  entryPath = '/',
+): Promise<StaticPageAppReadiness> {
+  const entry = staticPageEntryFile(entryPath) ?? 'index.html'
+  try {
+    const problem = await judgeStaticPage(folder, entryPath)
+    return problem === undefined
+      ? { ready: true, missing: [], entry }
+      : { ready: false, missing: [staticPageMissingOf(problem)], entry }
+  } catch {
+    return { ready: false, missing: ['entry-unreadable'], entry }
+  }
+}

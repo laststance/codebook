@@ -723,12 +723,13 @@ function validateOperations(
   configuration: z.infer<typeof operationsConfigurationShape>,
   context: z.RefinementCtx,
 ): void {
-  // Only a vite-dev, react-scripts-dev or next-dev-webpack configuration declares `library`; every other adapter refuses it exactly as an unknown key of the strict shape.
+  // Only a vite-dev, react-scripts-dev, next-dev-webpack or static-page configuration declares `library`; every other adapter refuses it exactly as an unknown key of the strict shape.
   if (
     configuration.library !== undefined &&
     configuration.adapter !== 'vite-dev' &&
     configuration.adapter !== 'react-scripts-dev' &&
-    configuration.adapter !== 'next-dev-webpack'
+    configuration.adapter !== 'next-dev-webpack' &&
+    configuration.adapter !== 'static-page'
   )
     context.addIssue({
       code: 'unrecognized_keys',
@@ -844,6 +845,7 @@ const BROWSER_ONLY_ADAPTERS: ReadonlySet<string> = new Set([
   'vite-dev',
   'react-scripts-dev',
   'expo-web-dev',
+  'static-page',
 ])
 
 /** The file names of an Expo Router API route (`+api` with any extension Expo Router resolves: ts, tsx, js, jsx, mjs, cjs, mts, cts): server code, which `expo-web-dev` never observes. */
@@ -1095,6 +1097,9 @@ export const liveRepositoryConfigSchema = z.union([
   crossRuntimeRepositoryConfigSchema,
   operationsRepositoryConfigSchema,
 ])
+/** Why every older retained variant refuses a `static-page` configuration: a run that declares that adapter is saved as format 23 only. */
+const FORMAT_23_ONLY_MESSAGE =
+  'Only a study of format 23 keeps a static-page configuration.'
 /** Why every retained variant refuses `reverseProxy`: a run that declares it is saved as format 22 only. */
 const FORMAT_22_ONLY_MESSAGE = 'Only a study of format 22 keeps a reverseProxy.'
 /**
@@ -1115,6 +1120,11 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
   .refine(
     (configuration) => configuration.adapter !== 'expo-web-dev',
     'Only a study of format 15 keeps an expo-web-dev configuration.',
+  )
+  // A `static-page` run is saved as format 23 only (Cycle 0105), with or without a packageRoot or a library.
+  .refine(
+    (configuration) => configuration.adapter !== 'static-page',
+    FORMAT_23_ONLY_MESSAGE,
   )
   // A run that declares `library` is saved as format 16 (`vite-dev`), 17 (`react-scripts-dev`) or 18 (`next-dev-webpack`) only.
   .refine(
@@ -1367,6 +1377,19 @@ const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
+ * The configuration a format 23 study retains: the version 3 `static-page` shape, root (`packageRoot` absent or `"."`) or nested, with an optional `library` declaration (API 1.42).
+ * Why it exists: an older Codebook refuses the adapter value, so every `static-page` run takes its own format and is listed there as saved by a newer Codebook. Validated like the format 11 variant (inspections, operations; {@link validateInspections} also refuses a server participant).
+ * Read by {@link studyConfigurationSchema}; no earlier format accepts this adapter.
+ */
+const staticPageRepositoryConfigSchema = operationsConfigurationShape
+  .extend({ adapter: z.literal('static-page') })
+  .superRefine(validateRetainedStudyConfiguration)
+  .refine(
+    pressKeysAreCanonical,
+    'A format 23 study keeps each press key in canonical spelling.',
+  )
+  .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
+/**
  * The configuration a format 21 study retains: a version 3 configuration that declares at least one press, every press key in canonical spelling.
  * Why it exists: an older Codebook refuses the `press` kind, so a run that declares one takes its own format and is listed there as saved by a newer Codebook.
  * Read by {@link studyConfigurationSchema} as the eleventh member.
@@ -1375,6 +1398,10 @@ const pressRepositoryConfigSchema = operationsRepositoryConfigSchema
   .refine(
     declaresPressOperation,
     'A format 21 study declares a press operation.',
+  )
+  .refine(
+    (configuration) => configuration.adapter !== 'static-page',
+    FORMAT_23_ONLY_MESSAGE,
   )
   .refine(
     pressKeysAreCanonical,
@@ -1429,6 +1456,7 @@ export const studyConfigurationSchema = z.union([
   viteApiServerRepositoryConfigSchema,
   pressRepositoryConfigSchema,
   reverseProxyRepositoryConfigSchema,
+  staticPageRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

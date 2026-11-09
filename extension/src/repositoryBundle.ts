@@ -47,6 +47,13 @@ export function bundleSchemaOf(limits: SourceMapLimits) {
       ),
     chunkPath: z.string(),
     chunkHash: z.string().regex(/^[a-f\d]{64}$/),
+    // An inline page script: where its text starts in the page (zero-based), because the browser reports its positions in the whole page's coordinates while `javascript` holds the script text alone.
+    scriptStart: z
+      .strictObject({
+        line: z.number().int().min(0),
+        column: z.number().int().min(0),
+      })
+      .optional(),
   })
 }
 /** A sealed bundle: the shape every limit profile of {@link bundleSchemaOf} accepts. */
