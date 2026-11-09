@@ -87,6 +87,7 @@ test('a request for an absent library path fails the run with a restorable libra
   assert.equal(restored?.code, 'REPOSITORY_BROWSER_LIBRARY_REFUSED')
   assert.deepEqual(restored?.libraryDetails, {
     reason: 'library-path-absent',
+    cause: 'absent',
     path: 'dist/missing.mjs',
     library: 'lib',
     packageRoot: 'examples/page',

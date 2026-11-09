@@ -2150,10 +2150,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       packageName: packed.packageName,
       files,
       record: (type, detail) => this.evidence.record(type, detail),
-      onPathAbsent: (path) =>
+      onPathAbsent: (path, cause) =>
         this.fail(
           staticPageLibraryPathAbsentFailureText({
             path,
+            cause,
             library: packed.packageName,
             packageRoot: page.packageRootRelative,
           }),

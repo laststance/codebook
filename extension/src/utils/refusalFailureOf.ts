@@ -35,9 +35,10 @@ import {
   type ReactScriptsSetupDeadlineFailureDetails,
 } from '../reactScriptsRefusals'
 import {
-  STATIC_PAGE_LIBRARY_PATH_ABSENT_VARIANT,
+  STATIC_PAGE_LIBRARY_PATH_VARIANTS,
   STATIC_PAGE_REFUSAL_CODES,
   staticPageLibraryPathAbsentRefusal,
+  type StaticPageLibraryPathCause,
 } from '../staticPageRefusals'
 import {
   VITE_LIBRARY_BUILD_CHANGED_VARIANT,
@@ -109,6 +110,7 @@ export type RefusalFailure = {
 /** The fields a static-page library path failure text restores: the reason, the requested path, the library, the page's package root and the side effects. */
 type StaticPageLibraryPathAbsentDetails = {
   reason: 'library-path-absent'
+  cause: StaticPageLibraryPathCause
   path: string
   library: string
   packageRoot: string
@@ -240,15 +242,32 @@ function staticPageLibraryPathAbsentFailure(
   variant: string | undefined,
 ): RefusalFailure {
   const code = 'REPOSITORY_BROWSER_LIBRARY_REFUSED'
-  const identity = decodeViteLibraryVariant(
-    variant,
-    STATIC_PAGE_LIBRARY_PATH_ABSENT_VARIANT,
+  // The variant names the cause: the first cause whose variant decodes an identity is the one restored.
+  const causes: StaticPageLibraryPathCause[] = [
+    'absent',
+    'too-large',
+    'unreadable',
+  ]
+  const cause = causes.find(
+    (candidate) =>
+      decodeViteLibraryVariant(
+        variant,
+        STATIC_PAGE_LIBRARY_PATH_VARIANTS[candidate],
+      ) !== undefined,
   )
-  if (identity === undefined) return { code, message }
+  const identity =
+    cause === undefined
+      ? undefined
+      : decodeViteLibraryVariant(
+          variant,
+          STATIC_PAGE_LIBRARY_PATH_VARIANTS[cause],
+        )
+  if (cause === undefined || identity === undefined) return { code, message }
   const refusal = staticPageLibraryPathAbsentRefusal({
     path: identity.file,
     library: identity.library,
     packageRoot: identity.packageRoot,
+    cause,
   })
   return {
     code,
@@ -258,6 +277,7 @@ function staticPageLibraryPathAbsentFailure(
       : { recoveryOverride: refusal.recoveryOverride }),
     libraryDetails: {
       reason: 'library-path-absent',
+      cause,
       path: identity.file,
       library: identity.library,
       packageRoot: identity.packageRoot,

@@ -22,6 +22,7 @@ import {
   judgeStaticPage,
   staticPageEntryFile,
 } from './utils/readStaticPageReadiness'
+import { readStaticPageScriptTexts } from './utils/readStaticPageScriptTexts'
 import type { ResolvedPackage } from './utils/resolveNextPackage'
 import { sealStaticPageLibraryStop } from './utils/sealStaticPageLibraryStop'
 import { sealStaticPageScript } from './utils/sealStaticPageScript'
@@ -163,6 +164,13 @@ export const STATIC_PAGE_ADAPTER: DevelopmentServerAdapter = {
         join(await realpath(staticPagePackage.packageRoot), entry),
         'utf8',
       )
+      const pageHtml = pageText.slice(0, STATIC_PAGE_FILE_LIMIT_BYTES)
+      // The page's same-origin scripts may import the library from a CDN too.
+      const scriptTexts = await readStaticPageScriptTexts(
+        staticPagePackage.packageRoot,
+        entry,
+        pageHtml,
+      )
       return sealStaticPageLibraryStop(
         {
           appRoot: libraryStop.libraryRoot,
@@ -183,8 +191,9 @@ export const STATIC_PAGE_ADAPTER: DevelopmentServerAdapter = {
           packedRoot: libraryStop.packedRoot,
           files: libraryStop.files,
           imports: findCdnPackageImports(
-            pageText.slice(0, STATIC_PAGE_FILE_LIMIT_BYTES),
+            pageHtml,
             libraryStop.packageName,
+            scriptTexts,
           ),
         },
       )

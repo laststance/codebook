@@ -3497,6 +3497,12 @@ export const STATIC_PAGE_CDN_HOSTS = [
 /** The most bytes of one packed library file the CDN redirect serves (a larger file is answered as absent); also bounds the map it inlines. */
 export const STATIC_PAGE_CDN_FILE_LIMIT_BYTES = 33_554_432
 
+/** The most levels of relative imports below an entry file of the packed library that the library seal follows, so a stop in a code-split chunk is sealed (Cycle 0105, decision D-g). */
+export const STATIC_PAGE_CDN_CHAIN_DEPTH_MAX = 3
+
+/** The most packed library files (entry files included) the library seal reads while following relative imports. */
+export const STATIC_PAGE_CDN_CHAIN_FILES_MAX = 16
+
 /** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
 export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500
 

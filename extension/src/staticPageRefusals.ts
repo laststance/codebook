@@ -401,27 +401,53 @@ function staticPageSealRefusal(
   )
 }
 
+/** Why the packed build cannot serve a path the page asked for: it holds no such file (or the path leaves the folder), the file is over the size limit, or it is a directory or cannot be read. Carried as `details.cause`. */
+export type StaticPageLibraryPathCause = 'absent' | 'too-large' | 'unreadable'
+
+/** The variant each cause carries in a run's failure text (`REPOSITORY_BROWSER_LIBRARY_REFUSED(<variant>:<identity>): …`); the reason code stays `library-path-absent` for all three. */
+export const STATIC_PAGE_LIBRARY_PATH_VARIANTS: Readonly<
+  Record<StaticPageLibraryPathCause, string>
+> = {
+  absent: 'library-path-absent',
+  'too-large': 'library-path-too-large',
+  unreadable: 'library-path-unreadable',
+}
+
+/** What each cause says the packed build did, completing the sentence `The page asked for <path> of <library>, which …`. */
+const LIBRARY_PATH_CAUSE_WORDS: Readonly<
+  Record<StaticPageLibraryPathCause, string>
+> = {
+  absent: 'the packed build of the declared library does not hold',
+  'too-large':
+    'the packed build of the declared library holds as a file too large to serve',
+  unreadable:
+    'the packed build of the declared library holds as a directory or a file that could not be read',
+}
+
 /**
- * Builds the `REPOSITORY_BROWSER_LIBRARY_REFUSED` refusal of a page request for a file the packed build of the declared library does not hold.
+ * Builds the `REPOSITORY_BROWSER_LIBRARY_REFUSED` refusal of a page request for a file the packed build of the declared library cannot serve.
  *
- * Why it exists: the redirect serves the packed build in place of the page's CDN import, and a path the build lacks (or one that leaves the packed folder) would otherwise fall through to the published copy and run the wrong code. Called by the redirect when a matching request names an absent path, before any stop is sealed.
- * @param request - The requested path inside the package, the library's package name and the page's package root.
- * @returns The refusal: `details.reason: "library-path-absent"`, `path`, `library`, `packageRoot` and `sideEffects: "partial"` (the library was built and packed, the browser opened, no input was sent).
+ * Why it exists: the redirect serves the packed build in place of the page's CDN import, and a path the build cannot serve (missing, outside the folder, too large, a directory or unreadable) would otherwise fall through to the published copy and run the wrong code. Called by the redirect when a matching request names such a path, before any stop is sealed.
+ * @param request - The requested path inside the package, the library's package name, the page's package root and why the path cannot be served (`absent` when omitted).
+ * @returns The refusal: `details.reason: "library-path-absent"`, `cause` (`absent`, `too-large` or `unreadable`), `path`, `library`, `packageRoot` and `sideEffects: "partial"` (the library was built and packed, the browser opened, no input was sent).
  * @example
  * staticPageLibraryPathAbsentRefusal({ path: 'dist/x.mjs', library: 'lib', packageRoot: 'examples/page' }).details?.path // => 'dist/x.mjs'
+ * staticPageLibraryPathAbsentRefusal({ path: 'dist/x.mjs', library: 'lib', packageRoot: 'examples/page', cause: 'too-large' }).details?.cause // => 'too-large'
  */
 export function staticPageLibraryPathAbsentRefusal(request: {
   path: string
   library: string
   packageRoot: string
+  cause?: StaticPageLibraryPathCause
 }): StudyError {
-  const { path, library, packageRoot } = request
+  const { path, library, packageRoot, cause = 'absent' } = request
   return staticPageRefusal(
     'REPOSITORY_BROWSER_LIBRARY_REFUSED',
-    `The page asked for ${path} of ${library}, which the packed build of the declared library does not hold, so the run would not load the checked-out library; the run was ended before any stop was sealed.`,
-    `Tell the learner the page imports ${library} at a path (details.path) that the library's build output lacks, then either declare the library folder whose build produces that file or start again once without library, saying the page then runs its published copy; never run the build yourself. Codebook built and packed the library, the owned server and browser were stopped and no input was sent (details.sideEffects is partial). ${recoveryEnd('REPOSITORY_BROWSER_LIBRARY_REFUSED')}`,
+    `The page asked for ${path} of ${library}, which ${LIBRARY_PATH_CAUSE_WORDS[cause]}, so the run would not load the checked-out library; the run was ended before any stop was sealed.`,
+    `Tell the learner the page imports ${library} at a path (details.path) that the library's build output cannot serve (details.cause is ${cause}), then either declare the library folder whose build produces that file or start again once without library, saying the page then runs its published copy; never run the build yourself. Codebook built and packed the library, the owned server and browser were stopped, no stop was sealed and no input was sent (details.sideEffects is partial). ${recoveryEnd('REPOSITORY_BROWSER_LIBRARY_REFUSED')}`,
     {
       reason: 'library-path-absent',
+      cause,
       path,
       library,
       packageRoot,
@@ -430,25 +456,23 @@ export function staticPageLibraryPathAbsentRefusal(request: {
   )
 }
 
-/** The variant a static-page library path refusal carries in a run's failure text (`REPOSITORY_BROWSER_LIBRARY_REFUSED(library-path-absent:<identity>): …`). */
-export const STATIC_PAGE_LIBRARY_PATH_ABSENT_VARIANT = 'library-path-absent'
-
 /**
- * Writes the failure text a run records for a page request whose path the packed library lacks, the form {@link refusalFailureOf} restores.
+ * Writes the failure text a run records for a page request whose path the packed library cannot serve, the form {@link refusalFailureOf} restores.
  *
  * Why it exists: the refusal is raised by an event of the page's network layer, not by a thrown error, so only its text survives to the service. Called by the run's CDN redirect callback.
- * @param request - The requested path, the library's name and the page's package root.
- * @returns `REPOSITORY_BROWSER_LIBRARY_REFUSED(library-path-absent:<identity>): <message>`.
+ * @param request - The requested path, the library's name, the page's package root and the cause (`absent` when omitted).
+ * @returns `REPOSITORY_BROWSER_LIBRARY_REFUSED(<variant>:<identity>): <message>`, the variant naming the cause.
  * @example staticPageLibraryPathAbsentFailureText({ path: 'dist/x.mjs', library: 'lib', packageRoot: 'examples/page' }) // => 'REPOSITORY_BROWSER_LIBRARY_REFUSED(library-path-absent:%5B…%5D): The page asked for dist/x.mjs of lib, …'
  */
 export function staticPageLibraryPathAbsentFailureText(request: {
   path: string
   library: string
   packageRoot: string
+  cause?: StaticPageLibraryPathCause
 }): string {
   const refusal = staticPageLibraryPathAbsentRefusal(request)
   return `REPOSITORY_BROWSER_LIBRARY_REFUSED(${encodeViteLibraryVariant(
-    STATIC_PAGE_LIBRARY_PATH_ABSENT_VARIANT,
+    STATIC_PAGE_LIBRARY_PATH_VARIANTS[request.cause ?? 'absent'],
     {
       packageRoot: request.packageRoot,
       library: request.library,

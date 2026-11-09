@@ -4,7 +4,10 @@ import { STATIC_PAGE_CACHE_CONTROL, STATIC_PAGE_CDN_HOSTS } from '../constants'
 import type { Cdp } from '../runtimeSupport/cdp'
 
 import { matchCdnPackageUrl } from './matchCdnPackageUrl'
-import type { PackedLibraryFiles } from './servePackedLibraryFile'
+import type {
+  PackedFileAbsenceCause,
+  PackedLibraryFiles,
+} from './servePackedLibraryFile'
 
 /** What {@link CdnImportRedirect} needs from the run. */
 export type CdnImportRedirectOptions = Readonly<{
@@ -17,7 +20,7 @@ export type CdnImportRedirectOptions = Readonly<{
   /** Appends to the run's evidence journal. */
   record: (type: string, detail?: unknown) => unknown
   /** Called once per request whose path the packed build does not hold (or that leaves the packed folder); the run ends with the library refusal. */
-  onPathAbsent: (path: string) => void
+  onPathAbsent: (path: string, cause: PackedFileAbsenceCause) => void
 }>
 
 /**
@@ -98,10 +101,26 @@ export class CdnImportRedirect {
       await cdp.request('Fetch.continueRequest', { requestId })
       return
     }
-    const served = await files.read(match.path)
+    let served: Awaited<ReturnType<PackedLibraryFiles['read']>>
+    let cause: PackedFileAbsenceCause = 'absent'
+    try {
+      served = await files.read(match.path)
+      if (served === undefined) cause = await files.absenceCause(match.path)
+    } catch (error) {
+      // A serving failure must not leave the paused request hanging: the browser's request fails.
+      this.options.record('cdn-redirect.failed', { cause: String(error) })
+      await cdp.request('Fetch.failRequest', {
+        requestId,
+        errorReason: 'Failed',
+      })
+      return
+    }
     if (served === undefined) {
-      this.options.record('cdn-redirect.path-absent', { path: match.path })
-      onPathAbsent(match.path)
+      this.options.record('cdn-redirect.path-absent', {
+        path: match.path,
+        cause,
+      })
+      onPathAbsent(match.path, cause)
       await cdp.request('Fetch.failRequest', {
         requestId,
         errorReason: 'BlockedByClient',

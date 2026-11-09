@@ -3,6 +3,7 @@ import { staticPageLibrarySealRefusal } from '../staticPageRefusals'
 import { STATIC_PAGE_SINGLE_BUNDLE_PROFILE } from '../staticPageSingleBundleProfile'
 
 import type { CdnPackageImport } from './findCdnPackageImports'
+import { followPackedRelativeImports } from './followPackedRelativeImports'
 import type { SingleServedBundle } from './readSingleServedBundle'
 import {
   sealSingleBundleStop,
@@ -36,7 +37,13 @@ function packedBundlesReader(
 ): ServedBundlesReader {
   return async () => {
     const bundles: SingleServedBundle[] = []
-    for (const entry of library.imports) {
+    // The entry files and the chunks they import by relative specifier inside the packed folder.
+    const files = await followPackedRelativeImports(
+      library.files,
+      library.packageName,
+      library.imports,
+    )
+    for (const entry of files) {
       const served = await library.files.read(entry.path)
       if (served?.text === undefined || served.map === undefined) continue
       bundles.push({

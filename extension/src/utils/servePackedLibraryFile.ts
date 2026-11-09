@@ -1,5 +1,6 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { STATIC_PAGE_CDN_FILE_LIMIT_BYTES } from '../constants'
 
@@ -54,6 +55,12 @@ async function readInside(
   }
 }
 
+/** Why a path of the packed copy cannot be served: `absent` (no such file, or it leaves the folder), `too-large` (over {@link STATIC_PAGE_CDN_FILE_LIMIT_BYTES}) or `unreadable` (a directory or a read error). */
+export type PackedFileAbsenceCause = 'absent' | 'too-large' | 'unreadable'
+
+/** A source of a map that names a location by URL scheme (`webpack://…`, `file://…`); a one-letter scheme is a Windows drive. */
+const URL_SOURCE = /^[A-Za-z][A-Za-z0-9+.-]+:/
+
 /** The packed copy's files as the browser receives them, read once each. */
 export type PackedLibraryFiles = Readonly<{
   /**
@@ -63,6 +70,13 @@ export type PackedLibraryFiles = Readonly<{
    * @example await files.read('dist/lib.mjs') // => { path: 'dist/lib.mjs', contentType: 'text/javascript; charset=utf-8', … }
    */
   read: (path: string) => Promise<ServedPackedFile | undefined>
+  /**
+   * Tells why a path that `read` could not serve is absent.
+   * @param path - The path below the package folder.
+   * @returns `absent` for a missing file or a path outside the folder, `too-large` for a file over the size limit, `unreadable` for a directory or a read error.
+   * @example await files.absenceCause('dist/missing.mjs') // => 'absent'
+   */
+  absenceCause: (path: string) => Promise<PackedFileAbsenceCause>
 }>
 
 /**
@@ -91,6 +105,23 @@ async function checkedOutNameOf(
       return checkedOut.replaceAll('\\', '/')
   }
   return packedPath.replaceAll('\\', '/')
+}
+
+/**
+ * Names a map source that is a URL: a `file://` URL by its path, any other scheme as written.
+ * Called by {@link namedMap}.
+ * @param source - The `sources` entry, a URL.
+ * @returns The path for a valid `file://` URL, else the entry unchanged.
+ * @example fileUrlSourceName('file:///repo/src/a.ts') // => '/repo/src/a.ts'
+ * @example fileUrlSourceName('webpack://lib/src/a.ts') // => 'webpack://lib/src/a.ts'
+ */
+function fileUrlSourceName(source: string): string {
+  if (!source.toLowerCase().startsWith('file:')) return source
+  try {
+    return fileURLToPath(source).replaceAll('\\', '/')
+  } catch {
+    return source
+  }
 }
 
 /**
@@ -140,6 +171,11 @@ async function namedMap(
     : []
   const named: string[] = []
   for (const [index, source] of sources.entries()) {
+    // A source given as a URL is not resolved into a path of the packed copy: `file://` becomes its path, any other scheme stays as written.
+    if (URL_SOURCE.test(source)) {
+      named.push(fileUrlSourceName(source))
+      continue
+    }
     const packedPath = resolve(dirname(mapPath), sourceRoot, source)
     named.push(await checkedOutNameOf(roots, packedPath, contents[index]))
   }
@@ -195,7 +231,14 @@ export function createPackedLibraryFiles(
     // A script without a map, or with a map already inline, is served as it is.
     if (reference === undefined || reference.startsWith('data:'))
       return { ...plain, text }
-    const mapPath = join(dirname(absolute), decodeURI(reference))
+    let mapName: string
+    try {
+      mapName = decodeURI(reference)
+    } catch {
+      // A reference with a malformed percent-encoding names no map file: the script is served as it is.
+      return { ...plain, text }
+    }
+    const mapPath = join(dirname(absolute), mapName)
     const mapBytes = await readInside(root, mapPath)
     const map =
       mapBytes === undefined
@@ -208,7 +251,30 @@ export function createPackedLibraryFiles(
     )
     return { ...plain, body: Buffer.from(inlined, 'utf8'), text: inlined, map }
   }
+  const absenceCauseOf = async (
+    path: string,
+  ): Promise<PackedFileAbsenceCause> => {
+    realPackedRoot ??= realpath(packedRoot)
+    const root = await realPackedRoot.catch(() => undefined)
+    if (root === undefined || path.includes('\0')) return 'absent'
+    try {
+      const real = await realpath(resolve(root, path))
+      if (!isInsideFolder(root, real)) return 'absent'
+      const info = await stat(real)
+      if (!info.isFile()) return 'unreadable'
+      return info.size > STATIC_PAGE_CDN_FILE_LIMIT_BYTES
+        ? 'too-large'
+        : 'unreadable'
+    } catch (error) {
+      return error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+        ? 'absent'
+        : 'unreadable'
+    }
+  }
   return {
+    absenceCause: absenceCauseOf,
     read(path) {
       let served = cache.get(path)
       if (served === undefined) {
