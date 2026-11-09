@@ -57,23 +57,16 @@ test('a route-handler stop is armed only just before its own operation', async (
   )
 })
 
-// Value: protects=R2/native C86-1 a run that declares a route-handler stop attaches the server with pauseForSourceMap so the route's breakpoint binds before its first compile runs, and a run with an ordinary server stop does not pay for it; fails_when=the route run attaches without it or every server run attaches with it; no_claim=js-debug's own pause timing
-test('a run with a route-handler stop attaches the server debugger with pauseForSourceMap and an ordinary server stop does not', async (context) => {
+// Value: protects=R2/native C86-1 a run that declares a route-handler stop attaches the server with pauseForSourceMap so the route's breakpoint binds before its first compile runs; fails_when=the route run attaches without it; no_claim=js-debug's own pause timing
+test('a run with a route-handler stop attaches the server debugger with pauseForSourceMap', async (context) => {
   // Arrange
   const route = await routeHandlerRunHarness(context)
-  const ordinary = await routeHandlerRunHarness(context, {
-    extra: { sourcePath: 'app/lib/data.ts' },
-  })
   // Act
   await route.run.prepare()
-  await ordinary.run.prepare()
   // Assert
   assert.deepEqual(
-    [
-      route.serverLaunches.map((config) => config.pauseForSourceMap),
-      ordinary.serverLaunches.map((config) => config.pauseForSourceMap),
-    ],
-    [[true], [undefined]],
+    route.serverLaunches.map((config) => config.pauseForSourceMap),
+    [true],
   )
 })
 

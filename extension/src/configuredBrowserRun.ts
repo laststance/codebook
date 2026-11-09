@@ -3866,6 +3866,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells whether a Next run declares a server stop that runs after an operation, in a module the operation's own request may compile and evaluate for the first time.
+   * Why it exists: Next compiles an App Router or Pages module lazily, on the request that first needs it, so js-debug must bind the stop's provisional breakpoint before the script runs (a late bind loses the race when the request evaluates the module and calls the stopped line at once).
+   * Called by {@link selectServer} for the default of its `pauseForSourceMap`.
+   * @returns `true` for a `next-dev-webpack` run with a server stop declared `afterOperation` of 1 or more; `false` for any other run, including one whose stops are in the browser or happen before an operation.
+   * @example this.declaresLazilyCompiledServerStop() // true: server stop auth.ts:39, afterOperation 1
+   */
+  private declaresLazilyCompiledServerStop(): boolean {
+    return (
+      this.adapter?.name === 'next-dev-webpack' &&
+      configuredStops(this.definition.configuration).some(
+        (stop) =>
+          stop.participant === 'server' && (afterOperationOf(stop) ?? 0) >= 1,
+      )
+    )
+  }
+
+  /**
    * Reads a stop file's current text with the bounds of the run's source reads (size, regular file, no links).
    * Called by {@link readWindowSources} and {@link routeHandlerStopOf}, which judge the text themselves.
    * @param root - The real path of the Next app's folder.
@@ -13395,7 +13412,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Attaches only the launched worker, then verifies its OS ownership through the native proxy before granting control.
-   * @param options - `pauseForSourceMap` for a run with a preparation window: js-debug then pauses before each script with a source map runs, so a provisional breakpoint on a module's top-level line is bound before that module is evaluated (without it js-debug binds the pending breakpoint after the script was parsed, a race a module whose dependencies are already loaded loses: native C86-1).
+   * @param options - `pauseForSourceMap` for a run with a preparation window: js-debug then pauses before each script with a source map runs, so a provisional breakpoint on a module's top-level line is bound before that module is evaluated (without it js-debug binds the pending breakpoint after the script was parsed, a race a module whose dependencies are already loaded loses: native C86-1). Left unset, a run pauses for the source map when it declares a route-handler stop or a Next server stop after an operation ({@link declaresLazilyCompiledServerStop}: the operation's own request compiles that module, native Q3); the API-server attach passes `false`.
    * @example await this.selectServer()
    * @example await this.selectServer({ pauseForSourceMap: true }) // the preparation window
    */
@@ -13404,9 +13421,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     // The Next server unless the caller names another Node process (the app's own API, Cycle 0099).
     const target = options.target ?? this.nextServerTarget()
-    // A run that declares a route-handler stop binds its provisional breakpoint before the route's first compile runs: the route is compiled on the request of its operation.
+    // A run that declares a route-handler stop, or a Next server stop after an operation, binds its provisional breakpoint before the module's first compile runs: the request of the operation compiles it.
     const pauseForSourceMap =
-      options.pauseForSourceMap ?? this.routeHandlerStops.length > 0
+      options.pauseForSourceMap ??
+      (this.routeHandlerStops.length > 0 ||
+        this.declaresLazilyCompiledServerStop())
     const endpoint = await target.endpoint(this.abort.signal)
     this.alive()
     const launched = await this.acquire(
@@ -13424,7 +13443,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           autoAttachChildProcesses: false,
           continueOnAttach: false,
           sourceMaps: true,
-          // Only a run with a preparation window pays for the pause before each mapped script: its module-scope stops must be bound before their module runs.
+          // Only a run whose stops must be bound before their module runs pays for the pause before each mapped script (preparation window, route handler, or a Next stop after an operation).
           ...(pauseForSourceMap ? { pauseForSourceMap: true } : {}),
           ...(target.sourceMapPathOverrides
             ? { sourceMapPathOverrides: target.sourceMapPathOverrides() }
