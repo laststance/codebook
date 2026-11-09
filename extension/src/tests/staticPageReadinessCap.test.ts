@@ -126,3 +126,28 @@ test('a page whose same-origin script is too large to read is not ready', async 
     kind: 'scripts-not-all-judged',
   })
 })
+
+// Value: protects=a same-origin script named after 64 remote references is never skipped, so the page is not called ready; fails_when=the 65th-plus same-origin script is ignored and the page reads ready; why_new=Cycle 0105 hosted review (reference cap hid later scripts); seam=judgeStaticPage; no_claim=that scripts past the cap are read
+test('a page with a same-origin script after 64 remote scripts is not ready', async (context) => {
+  // Arrange
+  const remote = Array.from(
+    { length: 64 },
+    (_, index) =>
+      `<script src="https://cdn.example.test/r${index}.js"></script>`,
+  ).join('')
+  const repository = await createStaticPageRepository(context, {
+    'index.html': `<!doctype html><html><body>${remote}<script type="module" src="late.js"></script></body></html>`,
+    'late.js': "import 'lib'",
+  })
+  // Act
+  const readiness = await readStaticPageReadiness(repository.pageFolder)
+  const problem = await judgeStaticPage(repository.pageFolder, '/')
+  // Assert
+  assert.equal(readiness.ready, false)
+  assert.deepEqual(problem, {
+    gap: 'needs-bundler',
+    reference:
+      'late.js (named past the first 64 references, so it was not judged)',
+    kind: 'scripts-not-all-judged',
+  })
+})

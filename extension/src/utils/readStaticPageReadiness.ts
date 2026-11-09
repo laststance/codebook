@@ -178,6 +178,28 @@ function resolveReference(
 type ReferenceJudgement = {
   problem?: StaticPageProblem
   scriptFiles: string[]
+  /** The first same-origin script named past the reference cap, which was never judged. */
+  pastCapScript?: string
+}
+
+/**
+ * Finds the first same-origin script the page names past the reference cap, which the scan never reads.
+ * Called by {@link findMissingReference} so a cap cannot hide a script from the readiness verdict.
+ * @param scriptSources - Every script `src` of the page, in document order.
+ * @returns The first same-origin script reference past the cap, or `undefined`.
+ * @example firstPastCapScript(['https://cdn.example.test/a.js']) // => undefined
+ */
+function firstPastCapScript(
+  scriptSources: readonly string[],
+): string | undefined {
+  return scriptSources
+    .slice(STATIC_PAGE_REFERENCES_MAX)
+    .find(
+      (reference) =>
+        !reference.startsWith('//') &&
+        !SCHEME_PATTERN.test(reference) &&
+        (reference.split(/[?#]/)[0] ?? '') !== '',
+    )
 }
 
 /**
@@ -214,7 +236,7 @@ async function findMissingReference(
       }
     if (page.scriptSources.includes(reference)) scriptFiles.push(resolved)
   }
-  return { scriptFiles }
+  return { scriptFiles, pastCapScript: firstPastCapScript(page.scriptSources) }
 }
 
 /**
@@ -232,6 +254,7 @@ async function findBareImportProblem(
   inlineTexts: readonly string[],
   scriptFiles: readonly string[],
   importMapKeys: readonly string[],
+  pastCapScript?: string,
 ): Promise<StaticPageProblem | undefined> {
   const fileTexts: string[] = []
   const unreadable: string[] = []
@@ -250,20 +273,22 @@ async function findBareImportProblem(
     if (specifier !== undefined)
       return { gap: 'needs-bundler', reference: specifier, kind: 'bare-import' }
   }
-  return unjudgedScriptProblem(unreadable[0], scriptFiles)
+  return unjudgedScriptProblem(unreadable[0], scriptFiles, pastCapScript)
 }
 
 /**
  * Names the first same-origin script the readiness scan could not judge, so the page is never called ready while one of its scripts went unread.
  * Called by {@link findBareImportProblem} after the readable scripts held no bare import.
  * @param unreadable - The first listed script that could not be read within the size limit, if any.
- * @param scriptFiles - Every same-origin script the page names, in document order.
+ * @param scriptFiles - Every same-origin script the page names within the reference cap, in document order.
+ * @param pastCapScript - The first same-origin script named past the reference cap, if any.
  * @returns A `scripts-not-all-judged` problem naming the unread or unreadable script, or `undefined` when every script was judged.
  * @example unjudgedScriptProblem('big.js', ['big.js']) // => { gap: 'needs-bundler', reference: 'big.js (a same-origin script could not be read within the size limit, so it was not judged)', kind: 'scripts-not-all-judged' }
  */
 function unjudgedScriptProblem(
   unreadable: string | undefined,
   scriptFiles: readonly string[],
+  pastCapScript?: string,
 ): StaticPageProblem | undefined {
   if (unreadable !== undefined)
     return {
@@ -277,6 +302,13 @@ function unjudgedScriptProblem(
     return {
       gap: 'needs-bundler',
       reference: `${unread} (more than ${STATIC_PAGE_SCRIPT_READS_MAX} same-origin scripts were not all judged)`,
+      kind: 'scripts-not-all-judged',
+    }
+  // Scripts named past the reference cap were never listed, so they were not judged either.
+  if (pastCapScript !== undefined)
+    return {
+      gap: 'needs-bundler',
+      reference: `${pastCapScript} (named past the first ${STATIC_PAGE_REFERENCES_MAX} references, so it was not judged)`,
       kind: 'scripts-not-all-judged',
     }
   return undefined
@@ -297,7 +329,7 @@ async function findBundlerProblem(
   html: string,
 ): Promise<StaticPageProblem | undefined> {
   const page = readStaticPageHtml(html)
-  const { problem, scriptFiles } = await findMissingReference(
+  const { problem, scriptFiles, pastCapScript } = await findMissingReference(
     folder,
     posix.dirname(entry),
     page,
@@ -308,6 +340,7 @@ async function findBundlerProblem(
     page.inlineScripts.map((script) => script.text),
     scriptFiles,
     page.importMapKeys,
+    pastCapScript,
   )
 }
 
