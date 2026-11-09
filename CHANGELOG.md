@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.109.0] - 2026-11-10 (development candidate)
+
+Cycle 0107 ([Issue #276](https://github.com/laststance/codebook/issues/276)), a feature cycle. **When a declared stop in an app's own API is not reached in time, Codebook now says what it measured of the API process at that moment, so the chat can tell you whether the API was running or paused instead of guessing.** A request can wait inside the app, for example on a database that does not answer, and never reach the line; the failure used to list only possibilities. Codebook now asks the API's debugger whether it was paused, and where, before it ends the run.
+
+### Added
+- **`details.apiProcess` (MCP API 1.44):** when a declared API stop is not reached within its 20 s bound, `SERVER_STOP_NOT_REACHED` and the run resource carry `details.apiProcess`: `not-paused` (the API process was running, not paused at any breakpoint, so a request that reached the API may be waiting inside the app, or no request reached the line), `paused` (with `at: { path, line }` when Codebook can map the place to a file of the repository) or `unknown` (Codebook could not read it). The failure text starts with the same measured sentence.
+
+### Changed
+- **MCP API 1.44 and bundled skill 1.0.87:** the skill tells the chat to report that measured state, to check the API's output tail, and never to name a cause the run did not observe. Install the new VSIX and run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to 1.0.87.
+
 ## [0.2.108.0] - 2026-11-10 (development candidate)
 
 Cycle 0106 ([Issue #274](https://github.com/laststance/codebook/issues/274)), a feature cycle. **A question about what an app's server does for a request the app itself gives up on after a deadline now runs to the request's result.** While a stop holds the program, the app's own clocks keep running, so a request with a client or server deadline ended before the next stop or the result whenever the explanation at a stop took longer than that deadline. A stop can now be recorded instead of held: Codebook captures its values, scopes, call stack and image as for any stop, then continues at once, so the request finishes in time and the chat explains the recorded stops after the result.
