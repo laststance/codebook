@@ -23,11 +23,11 @@ const {
 /**
  * How an HTML select was pushed, kept by {@link HtmlPageReader}:
  * - `mode`: the insertion mode it came in; current rules give a select no mode of its own, so the mode stays while it is open and comes back when it closes;
- * - `index` and `below`: its place on the stack and the element below it, by which the reading by the select rules before 2025 knows that the stack below a closed select is the one it was pushed on.
+ * - `belowSlot` and `below`: the slot of the open element below it (`slotBelow`, which on an indexed stack can lie more than one slot under the select's own) and that element, by which the reading by the select rules before 2025 knows that the stack below a closed select is the one it was pushed on.
  */
 type SelectPush = {
   mode: number
-  index: number
+  belowSlot: number
   below: Parse5.DefaultTreeAdapterMap['parentNode'] | undefined
 }
 
@@ -452,7 +452,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     const push = this.selectPushPoppedByLastStackChange
     if (
       push === undefined ||
-      this.openElements.stackTop !== push.index - 1 ||
+      this.openElements.stackTop !== push.belowSlot ||
       this.openElements.current !== push.below
     )
       return false
@@ -638,11 +638,13 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   ): void {
     if (!this.treeAdapter.isElementNode(node) || !this.isHtmlSelect(node))
       return
-    const { items, stackTop } = this.openElements
+    const stack = this.openElements
+    // slotBelow, not stackTop - 1: an indexed stack can hold a free slot directly under the top.
+    const belowSlot = stack.slotBelow(stack.stackTop)
     this.selectPushes.set(node, {
       mode: this.insertionMode,
-      index: stackTop,
-      below: items[stackTop - 1],
+      belowSlot,
+      below: stack.items[belowSlot],
     })
   }
 
@@ -700,8 +702,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
         ? hasInScope(tagID, element)
         : this.isInScopeEndingAtSelect(
             (openTagID, openElement) =>
-              openTagID === tagID &&
-              (element === undefined || openElement === element),
+              openTagID === tagID && (!element || openElement === element),
             SCOPE_END_TAG_IDS,
           )
     stack.hasInListItemScope = (tagID): boolean =>

@@ -18,7 +18,7 @@ const PAGE_OPTIONS = {
   publication: undefined,
 } as const
 
-/** A page the reader takes far longer than any deadline of these tests for (about 28 s on the development host with parse5 8.1.1): an open select, then 10,000 open elements and 100,000 paragraph ends, each of which walks the open elements for the select's scope. Without the select the same elements and ends took the parser alone about 6 s with parse5 8.1.0 and take 50 ms with 8.1.1. */
+/** A page the reader takes far longer than any deadline of these tests for (about 28 s on the development host with parse5 8.1.1): an open select, then 10,000 open elements and 100,000 paragraph ends, each of which walks the open elements for the select's scope. Without the select the same elements and ends took the parser alone about 6 s with parse5 8.1.0 and take 50 ms with 8.1.1. At a parse5 upgrade recheck that the page still exceeds the deadlines: the tests that use it assert the 503 / stop within the 500 ms deadline, so a faster parser fails them (as 8.1.1 did the first fixture); the page needs to take well over 2 s to prepare. */
 const SLOW_PAGE = `<!doctype html><body><select>${'<x>'.repeat(10_000)}${'</p>'.repeat(100_000)}</body>`
 
 /**
