@@ -188,3 +188,42 @@ test('a script announced at localhost or /index.html is the sealed page script, 
   // Assert
   assert.deepEqual(results, [true, true, false, false, false, true, false])
 })
+
+// Value: protects=a stop file that starts with a UTF-8 byte order mark is sealed (the served bytes are compared with the file's bytes); fails_when=the BOM-stripped served text is compared with the file text and the run fails as SOURCE_CHANGED; no_claim=a BOM inside an inline script
+test('a stop in a script file that starts with a byte order mark is sealed', async (context) => {
+  // Arrange
+  const bomScript = `\uFEFF${STATIC_PAGE_SCRIPT}`
+  const repository = await createStaticPageRepository(context, {
+    'main.js': bomScript,
+  })
+  const request = await sealRequestOf(
+    context,
+    repository,
+    stopOf(repository.scriptPath, bomScript, 2),
+  )
+  // Act
+  const outcome = await refusalOf(sealStaticPageScript(request))
+  // Assert
+  assert.equal(outcome, 'sealed')
+})
+
+// Value: protects=a stop in an .htm page other than the entry page is refused as not in a page script; fails_when=the .htm file is sealed as JavaScript; no_claim=an .htm entry page (the entry must be .html)
+test('a stop in an .htm page is refused as not in a page script', async (context) => {
+  // Arrange
+  const htm = '<!doctype html>\n<script>\n  window.x = 1\n</script>\n'
+  const repository = await createStaticPageRepository(context, {
+    'other.htm': htm,
+  })
+  const request = await sealRequestOf(
+    context,
+    repository,
+    stopOf('examples/page/other.htm', htm, 3),
+  )
+  // Act
+  const outcome = await refusalOf(sealStaticPageScript(request))
+  // Assert
+  assert.deepEqual(outcome, {
+    code: 'STATIC_PAGE_SEAL_FAILED',
+    reason: 'not-in-page-script',
+  })
+})

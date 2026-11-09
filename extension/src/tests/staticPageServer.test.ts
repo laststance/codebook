@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -103,10 +104,12 @@ test('the static server refuses a page folder that does not exist', async () => 
   const outcome = await startStaticPageServer(missing).then(
     () => 'started',
     (error: unknown) =>
-      error instanceof Error && 'code' in error ? error.code : 'other',
+      error instanceof StudyError
+        ? `${error.code}/${String(error.details?.reason)}`
+        : 'other',
   )
   // Assert
-  assert.equal(outcome, 'ENOENT')
+  assert.equal(outcome, 'STATIC_PAGE_SERVER_FAILED/listen-failed')
 })
 
 // Value: protects=AC 1 readiness is the entry page answering HTML and every same-origin script answering JavaScript, and it waits for a script that appears later; fails_when=the wait returns before the script is served, or never returns after it is; no_claim=cross-origin scripts (the page's own business)
@@ -148,4 +151,57 @@ test('a listen failure is the STATIC_PAGE_SERVER_FAILED refusal with reason list
     refusal.recoveryOverride ?? '',
     /codebook:\/\/help\/repository-browser#STATIC_PAGE_SERVER_FAILED/,
   )
+})
+
+/** Reads `path` from the loopback server with an explicit `Host` header, which `fetch` cannot set. */
+function getWithHost(
+  port: number,
+  path: string,
+  host: string,
+): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      { host: '127.0.0.1', port, path, headers: { Host: host } },
+      (response) => {
+        response.resume()
+        resolve(response.statusCode)
+      },
+    )
+    request.on('error', reject)
+    request.end()
+  })
+}
+
+// Value: protects=D-f a page opened under another host name (DNS rebinding) cannot read the folder; fails_when=a request whose Host header is not 127.0.0.1:<port> or localhost:<port> is answered 200; no_claim=that a browser ever sends such a request
+test('the static server answers 403 to a request whose Host header is not the loopback server', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const server = await startStaticPageServer(repository.pageFolder)
+  context.after(() => server.close())
+  // Act
+  const statuses = [
+    await getWithHost(server.port, '/', 'attacker.example.test'),
+    await getWithHost(server.port, '/', `attacker.example.test:${server.port}`),
+    await getWithHost(server.port, '/', `127.0.0.1:${server.port}`),
+    await getWithHost(server.port, '/', `localhost:${server.port}`),
+  ]
+  // Assert
+  assert.deepEqual(statuses, [403, 403, 200, 200])
+})
+
+// Value: protects=D-f dotfiles and dot-folders (.env, .git) of the page folder are never served; fails_when=a path with a segment starting with a dot is answered 200; no_claim=files the folder keeps under other names
+test('the static server answers 403 for a dotfile and a file in a dot-folder', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context, {
+    '.env': 'SECRET=1',
+    '.git/config': '[core]',
+  })
+  const server = await startStaticPageServer(repository.pageFolder)
+  context.after(() => server.close())
+  // Act
+  const env = await get(server.origin, '/.env')
+  const git = await get(server.origin, '/.git/config')
+  const page = await get(server.origin, '/main.js')
+  // Assert
+  assert.deepEqual([env.status, git.status, page.status], [403, 403, 200])
 })

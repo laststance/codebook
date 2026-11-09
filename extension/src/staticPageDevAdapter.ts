@@ -135,12 +135,13 @@ export const STATIC_PAGE_ADAPTER: DevelopmentServerAdapter = {
     request.onStep(VITE_SETUP_STEPS.waitingForServer)
     const server = await startStaticPageServer(staticPagePackage.packageRoot)
     const app = staticPageAppOf(server, request.record)
+    entryUrlByApp.set(app, `${server.origin}${entryPath}`)
+    // Handed over before the journal write, so a failing record still leaves the run able to close the server.
+    request.onApp(app)
     request.record('application.acquired', {
       adapter: 'static-page',
       origin: server.origin,
     })
-    entryUrlByApp.set(app, `${server.origin}${entryPath}`)
-    request.onApp(app)
     return { app, port: server.port }
   },
   // A static page has no development lock.

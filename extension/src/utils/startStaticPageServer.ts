@@ -7,6 +7,7 @@ import {
   type ServerResponse,
 } from 'node:http'
 import { extname, join } from 'node:path'
+import { pipeline } from 'node:stream'
 
 import { STATIC_PAGE_CACHE_CONTROL } from '../constants'
 import { staticPageListenFailedRefusal } from '../staticPageRefusals'
@@ -50,15 +51,31 @@ export function contentTypeOfPath(path: string): string {
 }
 
 /**
+ * Tells whether a `Host` header names the loopback server itself.
+ * Called by {@link answerStaticPageRequest} to refuse a request a rebinding page sent under another name.
+ * @param host - The request's `Host` header.
+ * @param port - The port the server listens on.
+ * @returns `true` only for `127.0.0.1:<port>` or `localhost:<port>`.
+ * @example isLoopbackHost('localhost:4310', 4310) // => true
+ */
+function isLoopbackHost(host: string | undefined, port: number): boolean {
+  return (
+    host === `127.0.0.1:${port}` || host?.toLowerCase() === `localhost:${port}`
+  )
+}
+
+/**
  * Answers one request from the page folder: the file under the real-path containment rule, `index.html` for a folder path.
  * Called by the server {@link startStaticPageServer} creates for each request.
  * @param root - The page folder's real path.
+ * @param port - The port the server listens on.
  * @param request - The request.
  * @param response - The response to answer on.
- * @example await answerStaticPageRequest('/p', request, response) // 200 with the file, 403 outside the folder, 404 for an absent file
+ * @example await answerStaticPageRequest('/p', 4310, request, response) // 200 with the file, 403 outside the folder, 404 for an absent file
  */
 async function answerStaticPageRequest(
   root: string,
+  port: number,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -71,6 +88,8 @@ async function answerStaticPageRequest(
   }
   if (request.method !== 'GET' && request.method !== 'HEAD')
     return send(405, 'Method not allowed')
+  // A request carrying another Host header (DNS rebinding) is never answered.
+  if (!isLoopbackHost(request.headers.host, port)) return send(403, 'Forbidden')
   let pathname: string
   try {
     pathname = decodeURIComponent(
@@ -80,6 +99,9 @@ async function answerStaticPageRequest(
     return send(400, 'Bad request')
   }
   if (pathname.includes('\0')) return send(400, 'Bad request')
+  // Dotfiles and dot-folders (`.git`, `.env`) are never served, whatever the folder holds.
+  if (pathname.split('/').some((segment) => segment.startsWith('.')))
+    return send(403, 'Forbidden')
   const wanted = pathname.endsWith('/') ? `${pathname}index.html` : pathname
   let real: string
   try {
@@ -97,9 +119,8 @@ async function answerStaticPageRequest(
     'Cache-Control': STATIC_PAGE_CACHE_CONTROL,
   })
   if (request.method === 'HEAD') return void response.end()
-  createReadStream(real)
-    .on('error', () => response.destroy())
-    .pipe(response)
+  // pipeline closes the file when the request is aborted and ends the response on a read error.
+  pipeline(createReadStream(real), response, () => undefined)
 }
 
 /** The handle of a started static page server: the part of the development-server handle a `static-page` run uses. */
@@ -126,12 +147,20 @@ export type StaticPageServer = {
 export async function startStaticPageServer(
   root: string,
 ): Promise<StaticPageServer> {
-  const realRoot = await realpath(root)
+  // A folder that cannot be resolved is the coded refusal, never a raw file-system error.
+  const realRoot = await realpath(root).catch((error: unknown) => {
+    throw staticPageListenFailedRefusal(
+      error instanceof Error && 'code' in error ? String(error.code) : 'error',
+    )
+  })
+  let listeningPort = 0
   const server: Server = createServer((request, response) => {
-    answerStaticPageRequest(realRoot, request, response).catch(() => {
-      if (!response.headersSent) response.writeHead(500)
-      response.end()
-    })
+    answerStaticPageRequest(realRoot, listeningPort, request, response).catch(
+      () => {
+        if (!response.headersSent) response.writeHead(500)
+        response.end()
+      },
+    )
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -148,6 +177,7 @@ export async function startStaticPageServer(
   if (address === null || typeof address === 'string')
     throw staticPageListenFailedRefusal('no-address')
   const { port } = address
+  listeningPort = port
   let isClosed = false
   let closing: Promise<void> | undefined
   return {

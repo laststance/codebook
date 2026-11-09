@@ -39,24 +39,29 @@ export type StaticPageSealRequest = Readonly<{
 }>
 
 /**
- * Reads what the static server serves at an address, as text.
+ * Reads what the static server serves at an address, as bytes.
  * Called by {@link sealStaticPageScript} to compare the served bytes with the checked-out file.
  * @param url - The address on the owned origin.
+ * @param expectedText - The checked-out file's text the served bytes must equal.
  * @param signal - Ends the request when the run is cancelled.
- * @returns The body text of a 200 answer; `undefined` for any other answer or a failed request.
- * @example await readServedText('http://127.0.0.1:4310/', signal) // => '<!doctype html>…'
+ * @returns The body bytes of a 200 answer equal to the expected text; `undefined` for any other answer or a failed request.
+ * @example await readServedBytes('http://127.0.0.1:4310/', html, signal) // => Buffer of '<!doctype html>…'
  */
-async function readServedText(
+async function readServedBytes(
   url: string,
+  expectedText: string,
   signal: AbortSignal,
-): Promise<string | undefined> {
+): Promise<Buffer | undefined> {
   try {
     const response = await fetch(url, { redirect: 'manual', signal })
     if (response.status !== 200) {
       await response.body?.cancel()
       return undefined
     }
-    return await response.text()
+    // Bytes, not text: `text()` drops a byte order mark the file keeps.
+    const bytes = Buffer.from(await response.arrayBuffer())
+    // Compared as bytes with the file's own bytes, so a byte order mark counts.
+    return bytes.equals(Buffer.from(expectedText, 'utf8')) ? bytes : undefined
   } catch {
     return undefined
   }
@@ -109,18 +114,20 @@ export async function sealStaticPageScript(
   if (sha256(fileText) !== source.hash)
     throw staticPageSourceChangedRefusal(source.path)
   const isEntryPage = relativePath === staticPageEntryFile(request.entryPath)
-  const isHtml = relativePath.endsWith('.html')
+  const isHtml = /\.html?$/i.test(relativePath)
   // A page other than the entry page is never loaded by the run.
   if (isHtml && !isEntryPage)
     throw staticPageNotInScriptRefusal(source.path, source.line)
   const servedPath = isHtml
     ? request.entryPath
     : `/${relativePath.split('/').map(encodeURIComponent).join('/')}`
-  const servedText = await readServedText(
+  const servedBytes = await readServedBytes(
     `${request.ownedOrigin}${servedPath}`,
+    fileText,
     request.signal,
   )
-  if (servedText !== fileText) throw staticPageSourceChangedRefusal(source.path)
+  if (servedBytes === undefined)
+    throw staticPageSourceChangedRefusal(source.path)
   const script = isHtml
     ? readStaticPageHtml(fileText).inlineScripts.find(
         (candidate) =>
@@ -175,10 +182,10 @@ export async function sealStaticPageScript(
   return {
     bundle,
     discovery: {
-      readBytes: Buffer.byteLength(servedText),
+      readBytes: servedBytes.length,
       durationMs: performance.now() - started,
       candidates: [bundle.scriptUrl],
-      manifestHash: sha256(servedText),
+      manifestHash: sha256(fileText),
     },
   }
 }

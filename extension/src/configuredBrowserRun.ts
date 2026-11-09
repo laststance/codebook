@@ -10961,7 +10961,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param stop - A declared stop.
    * @param name - The participant whose runtime announced the script.
    * @param event - The announced script; its URL is read only for a stop of that participant, and is empty for a script without one.
-   * @returns `true` for a stop of that participant whose sealed module has the script's URL.
+   * @returns `true` for a stop of that participant whose sealed module has the script's URL (and, for an inline page script, the start position of the sealed block).
    * @example
    * ```ts
    * this.isModuleOfStop(stop, 'server', event) // false for a script without a URL: it is no stop's module
@@ -10973,6 +10973,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): boolean {
     if (stop.participant !== name || !event.url) return false
+    // An inline page script is announced under the page's URL: only the block that starts where the sealed one does is the stop's module.
+    const start = stop.bundle.scriptStart
+    if (
+      start !== undefined &&
+      (event.startLine !== start.line || event.startColumn !== start.column)
+    )
+      return false
     return this.adapter
       ? this.adapter.isScriptOfModule(stop.bundle.scriptUrl, event.url)
       : sameScriptUrl(stop.bundle.scriptUrl, event.url)

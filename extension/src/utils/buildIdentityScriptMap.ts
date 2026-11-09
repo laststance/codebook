@@ -66,7 +66,13 @@ export function buildIdentityScriptMap(input: IdentityScriptMapInput): string {
     const firstColumn = lineOffset === 0 ? input.startColumn : 0
     let previousGeneratedColumn = 0
     const segments: string[] = []
-    for (const [characterIndex, character] of [...text].entries()) {
+    // Columns are UTF-16 code units, as the browser and source maps count them; an astral character takes two.
+    for (
+      let characterIndex = 0;
+      characterIndex < text.length;
+      characterIndex++
+    ) {
+      const character = text[characterIndex]
       // Blank characters carry no position a pause can report.
       if (character === ' ' || character === '\t') continue
       const fileColumn = firstColumn + characterIndex

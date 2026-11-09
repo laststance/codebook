@@ -61,6 +61,31 @@ async function startAdapter(
   return { ...prepared, started }
 }
 
+// Value: protects=a journal write that throws after the server started still leaves the run holding the server so it can close it; fails_when=onApp is called after the failing record and the started server is never handed over (it leaks); no_claim=what the journal does with the failure
+test('the adapter hands the started server to the run before it journals the acquisition', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const prepared = await startRequestOf(repository)
+  context.after(async () => {
+    await prepared.handle.app?.close()
+  })
+  // Only the acquisition write fails; the later close journal write must not.
+  let isFirstWrite = true
+  prepared.request.record = (): void => {
+    if (!isFirstWrite) return
+    isFirstWrite = false
+    throw new Error('journal write failed')
+  }
+  // Act
+  const outcome = await STATIC_PAGE_ADAPTER.start(prepared.request).then(
+    () => 'started',
+    () => 'failed',
+  )
+  // Assert
+  assert.equal(outcome, 'failed')
+  assert.equal(prepared.handle.app?.isRunning(), true)
+})
+
 // Value: protects=AC 2 the adapter starts Codebook's own loopback server on a port the OS picked, reports that port, hands the run a handle that answers the entry page, waits for the page and its scripts, and closes with the run; fails_when=another host or a fixed port is used, the handle does not answer or is not handed over, or the server outlives close; no_claim=a real editor run (native check)
 test('the adapter starts a loopback server, reports its port and closes it with the run', async (context) => {
   // Arrange
