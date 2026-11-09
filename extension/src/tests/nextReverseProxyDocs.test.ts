@@ -243,6 +243,11 @@ test('the skill and the README carry the reverse proxy paragraph and the format 
     ),
   )
   assert.ok(readme.includes('with **MCP API 1.40** (`codebook_status`'))
+  assert.ok(
+    readme.includes(
+      'The bundled skill declares `reverseProxy` only when `codebook_status` reports API 1.40 or later; with an older Codebook the chat asks you to update it and never drops the field to run at `localhost`. The chat asks you one question unless you stated both the origin and the port yourself, never guesses the port, and never asks you to turn certificate checks off.',
+    ),
+  )
 })
 
 // Value: protects=no trial host, port or project name reaches the help section, the skill paragraph or the README item; fails_when=any trial value or company name appears in those texts; no_claim=other parts of the README, which describe earlier cycles

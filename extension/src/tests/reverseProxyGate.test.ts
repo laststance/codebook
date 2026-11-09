@@ -396,6 +396,8 @@ test('the preload file lives in a private folder with a 64 character secret and 
   const facts = await gate.preparePreload()
   const again = await gate.preparePreload()
   const fileMode = (await stat(facts.identity.preloadPath)).mode & 0o777
+  const folderMode =
+    (await stat(dirname(facts.identity.preloadPath))).mode & 0o777
   const content = await readFile(facts.identity.preloadPath, 'utf8')
   await gate.dispose()
   await gate.dispose()
@@ -404,6 +406,7 @@ test('the preload file lives in a private folder with a 64 character secret and 
   assert.match(facts.identity.secret, /^[0-9a-f]{64}$/)
   assert.equal(again, facts)
   assert.equal(fileMode, 0o600)
+  assert.equal(folderMode, 0o700)
   assert.equal(content.includes(facts.identity.secret), false)
   await assert.rejects(stat(facts.identity.preloadPath), { code: 'ENOENT' })
 })
