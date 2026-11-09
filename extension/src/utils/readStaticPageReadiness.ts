@@ -18,6 +18,10 @@ import { manifestDeclaresPackage } from './manifestDeclaresPackage'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { readStaticPageHtml } from './readStaticPageHtml'
 import { readJsonInside } from './resolveNextPackage'
+import {
+  isRemoteStaticPageBase,
+  resolveStaticPageBaseFolder,
+} from './resolveStaticPageScriptPath'
 
 /** The facts a page shows before any server starts, as `codebook_status` lists them for one page. */
 export type StaticPageAppReadiness = {
@@ -156,22 +160,29 @@ export function firstBareImport(
  * Resolves a page reference to a folder-relative file path.
  * @param reference - A `src` or `href` as written.
  * @param entryFolder - The entry file's folder, folder-relative (`.` at the root).
- * @returns The folder-relative path; `undefined` for a fragment-only reference; `null` for a malformed percent-encoding (no file).
- * @example resolveReference('/main.js', 'demo') // => 'main.js'
- * @example resolveReference('./a.css?v=1', 'demo') // => 'demo/a.css'
+ * @param baseHref - The page's `<base href>`, which relative references resolve against.
+ * @returns The folder-relative path; `undefined` for a fragment-only reference or one under a remote base; `null` for a malformed percent-encoding or a base that names no folder of the page (no file).
+ * @example resolveReference('/main.js', 'demo', undefined) // => 'main.js'
+ * @example resolveReference('./a.css?v=1', 'demo', undefined) // => 'demo/a.css'
+ * @example resolveReference('a.css', 'demo', 'sub/') // => 'demo/sub/a.css'
  */
 function resolveReference(
   reference: string,
   entryFolder: string,
+  baseHref: string | undefined,
 ): string | null | undefined {
   const bare = reference.split(/[?#]/)[0] ?? ''
   if (bare === '') return undefined
+  // Under a remote base the reference names a remote address.
+  if (isRemoteStaticPageBase(baseHref)) return undefined
   const decoded = decodePath(bare)
   // A malformed percent-encoding names no file of the folder.
   if (decoded === undefined) return null
-  return decoded.startsWith('/')
-    ? posix.normalize(decoded.slice(1))
-    : posix.normalize(posix.join(entryFolder, decoded))
+  if (decoded.startsWith('/')) return posix.normalize(decoded.slice(1))
+  const baseFolder = resolveStaticPageBaseFolder(baseHref, entryFolder)
+  return baseFolder === undefined
+    ? null
+    : posix.normalize(posix.join(baseFolder, decoded))
 }
 
 /** What {@link findMissingReference} found: the first reference that is no file of the folder, else the same-origin script files the page names. */
@@ -186,12 +197,15 @@ type ReferenceJudgement = {
  * Finds the first same-origin script the page names past the reference cap, which the scan never reads.
  * Called by {@link findMissingReference} so a cap cannot hide a script from the readiness verdict.
  * @param scriptSources - Every script `src` of the page, in document order.
+ * @param baseHref - The page's `<base href>`; a remote base makes every reference remote.
  * @returns The first same-origin script reference past the cap, or `undefined`.
- * @example firstPastCapScript(['https://cdn.example.test/a.js']) // => undefined
+ * @example firstPastCapScript(['https://cdn.example.test/a.js'], undefined) // => undefined
  */
 function firstPastCapScript(
   scriptSources: readonly string[],
+  baseHref: string | undefined,
 ): string | undefined {
+  if (isRemoteStaticPageBase(baseHref)) return undefined
   return scriptSources
     .slice(STATIC_PAGE_REFERENCES_MAX)
     .find(
@@ -223,7 +237,7 @@ async function findMissingReference(
   )) {
     // A protocol-relative or scheme-bearing reference is remote and never a file of the folder.
     if (reference.startsWith('//') || SCHEME_PATTERN.test(reference)) continue
-    const resolved = resolveReference(reference, entryFolder)
+    const resolved = resolveReference(reference, entryFolder, page.baseHref)
     if (resolved === undefined) continue
     if (
       resolved === null ||
@@ -236,7 +250,10 @@ async function findMissingReference(
       }
     if (page.scriptSources.includes(reference)) scriptFiles.push(resolved)
   }
-  return { scriptFiles, pastCapScript: firstPastCapScript(page.scriptSources) }
+  return {
+    scriptFiles,
+    pastCapScript: firstPastCapScript(page.scriptSources, page.baseHref),
+  }
 }
 
 /**

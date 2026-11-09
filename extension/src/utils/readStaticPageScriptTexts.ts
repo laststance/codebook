@@ -28,10 +28,10 @@ export async function readStaticPageScriptTexts(
   const root = await realpath(folder)
   const entryFolder = posix.dirname(entry)
   const texts: string[] = []
-  const { scriptSources } = readStaticPageHtml(html)
+  const { scriptSources, baseHref } = readStaticPageHtml(html)
   // Resolve first so remote references do not spend the read budget meant for page-folder files.
   const relatives = scriptSources
-    .map((source) => resolveStaticPageScriptPath(source, entryFolder))
+    .map((source) => resolveStaticPageScriptPath(source, entryFolder, baseHref))
     .filter((relative) => relative !== undefined)
     .slice(0, STATIC_PAGE_SCRIPT_READS_MAX)
   for (const relative of relatives) {

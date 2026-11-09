@@ -19,6 +19,8 @@ export type StaticPageInlineScript = Readonly<{
 
 /** What a page names, in document order. */
 export type StaticPageHtml = Readonly<{
+  /** The `href` of the first `<base>` that has one, as written; relative references resolve against it. `undefined` for a page without one. */
+  baseHref: string | undefined
   inlineScripts: readonly StaticPageInlineScript[]
   /** The `src` of each external script, as written. */
   scriptSources: readonly string[]
@@ -177,6 +179,7 @@ export function readStaticPageHtml(html: string): StaticPageHtml {
   const linkHrefs: string[] = []
   const importMapKeys: string[] = []
   const importMapTargets: string[] = []
+  let baseHref: string | undefined
   const visit = (node: PageNode): void => {
     if ('tagName' in node && node.tagName === 'script') {
       const source = attributeOf(node, 'src')
@@ -187,6 +190,9 @@ export function readStaticPageHtml(html: string): StaticPageHtml {
       importMapKeys.push(...importMap.keys)
       importMapTargets.push(...importMap.targets)
     }
+    // HTML takes the first `<base>` that has an `href`.
+    if ('tagName' in node && node.tagName === 'base')
+      baseHref ??= attributeOf(node, 'href')
     if ('tagName' in node && node.tagName === 'link') {
       const href = judgedLinkHref(node)
       if (href !== undefined) linkHrefs.push(href)
@@ -195,6 +201,7 @@ export function readStaticPageHtml(html: string): StaticPageHtml {
   }
   visit(parse(html, { sourceCodeLocationInfo: true }))
   return {
+    baseHref,
     inlineScripts,
     scriptSources,
     linkHrefs,

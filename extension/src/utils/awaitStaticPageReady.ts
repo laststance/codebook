@@ -24,10 +24,13 @@ async function isStaticPageServed(
       await page.body?.cancel()
       return false
     }
-    const { scriptSources } = readStaticPageHtml(await page.text())
+    const { scriptSources, baseHref } = readStaticPageHtml(await page.text())
     const origin = new URL(entryUrl).origin
+    // A browser resolves each `src` against the page's `<base href>`.
+    const baseUrl =
+      baseHref === undefined ? entryUrl : new URL(baseHref.trim(), entryUrl)
     for (const source of scriptSources) {
-      const url = new URL(source, entryUrl)
+      const url = new URL(source, baseUrl)
       // A script on another origin is the page's own business, not the server's.
       if (url.origin !== origin) continue
       const script = await fetch(url, { redirect: 'manual', signal })
