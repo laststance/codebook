@@ -5033,7 +5033,7 @@ test('a version 3 run resource lists an empty recordedStops while its runtime re
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'recorded-stops-view',
+    key: 'record',
     configuration: {
       version: 3,
       adapter: 'static-page',
@@ -5060,4 +5060,83 @@ test('a version 3 run resource lists an empty recordedStops while its runtime re
     [],
   )
   await service.stop(receipt)
+})
+
+// Value: protects=a version 3 run resource lists recordedStops while its preparation is still pending; fails_when=the field depends on a finished preparation; no_claim=recording of a stop
+test('a version 3 run resource read while its preparation is pending lists an empty recordedStops', async (context) => {
+  // Arrange
+  const { service, configuration } = await configuredServiceHarness(context)
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'one',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  assert.deepEqual(
+    z
+      .object({ recordedStops: z.array(z.number()) })
+      .parse(JSON.parse(resource.text)).recordedStops,
+    [],
+  )
+  await service.record(receipt).preparation
+  await service.stop(receipt)
+})
+
+// Value: protects=a version 3 run resource lists recordedStops after its preparation failed; fails_when=the field depends on a finished preparation; no_claim=recording of a stop
+test('a version 3 run whose preparation failed lists an empty recordedStops', async (context) => {
+  // Arrange
+  const { service, configuration, environment } =
+    await configuredServiceHarness(context)
+  // The workspace check fails inside the preparation, before the definition is read.
+  let isWorkspaceChecked = false
+  environment.assertWorkspace = (): void => {
+    if (isWorkspaceChecked) return
+    isWorkspaceChecked = true
+    throw new Error('The workspace changed.')
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'valid',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  await service.record(receipt).preparation
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  assert.deepEqual(
+    z
+      .object({ recordedStops: z.array(z.number()) })
+      .parse(JSON.parse(resource.text)).recordedStops,
+    [],
+  )
 })

@@ -17099,7 +17099,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Called only by {@link inspect}, so a rejection reaches the run's failure handling through {@link track}: {@link continue} has already ended the run with its documented reason, and anything else fails it with the error's text.
    * @param stop - The recorded stop whose observation was just committed.
    * @param pause - The identity of the pause the observation was captured at.
-   * @throws What {@link continue} throws; nothing is resumed when the evidence save fails.
+   * @throws What {@link continue} throws, after the continuation offer (`snapshotReady`) is switched off again; nothing is resumed when the evidence save fails.
    * @example
    * ```ts
    * await this.recordAndContinue(stop, pause)
@@ -17115,12 +17115,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.awaitRecordedStopRefresh(stop, pause)
     // No await between the offer and the reservation inside continue().
     this.snapshotReady = true
-    await this.continue(stop.participant, pause)
+    try {
+      await this.continue(stop.participant, pause)
+    } catch (error) {
+      // A pause nobody can continue must not keep offering the recorded stop's snapshot on the failed run.
+      this.snapshotReady = false
+      throw error
+    }
   }
 
   /**
-   * Waits, for {@link recordAndContinue}, until a pending js-debug stack refresh of the recorded stop's own pause is verified, because {@link continue} refuses control while `participant.refresh` is set.
-   * The refresh keeps the pause's generation ({@link verifyStackRefresh}), so the same pause identity then continues the same stop. The wait ends the run with a named reason, and nothing is resumed, when the gate no longer holds that pause or the stop is no longer the run's current stop; it is bounded by the refresh's own progress deadline (`ACTIVE_TIMEOUT_MS`), which fails the run when the refresh never confirms, and by a failed verification, which fails the run.
+   * Waits, for {@link recordAndContinue}, until a pending js-debug stack refresh of the recorded stop's own pause is verified (`participant.refresh`, which {@link continue} refuses control during) or, for a refresh deferred while the stop's own pause was awaited, until its re-announced `stopped` is consumed (`participant.deferredRefresh`, cleared by {@link onEvent}); resuming earlier would let that late `stopped` fail the run as an unexpected stop.
+   * Both routes keep the pause's generation ({@link verifyStackRefresh}, the deferred consumption), so the same pause identity then continues the same stop. The wait ends the run with a named reason, and nothing is resumed, when the gate no longer holds that pause or the stop is no longer the run's current stop; the `refresh` route is bounded by its own progress deadline (`ACTIVE_TIMEOUT_MS`), a deferred refresh that is pending when the wait starts gets the same bound armed here ("Native stack refresh did not re-announce the recorded stop"), and a failed verification fails the run.
    * @param stop - The recorded stop being finished.
    * @param pause - The identity of the pause the observation was captured at.
    * @throws When the run ended during the wait, or the pause was replaced by another one (the run is failed with "Recorded stop's pause changed during a stack refresh and no resume was sent").
@@ -17134,8 +17140,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     pause: PauseIdentity,
   ): Promise<void> {
     const participant = this.participants[stop.participant]
-    // Each turn re-reads the gate: a refresh may start again after the previous one was verified.
-    while (participant.refresh) {
+    // A deferred refresh arms no deadline when it arrives; its re-announced stop can still be pending when a recorded stop resumes within milliseconds, so the wait is bounded here.
+    if (participant.deferredRefresh && !participant.refresh)
+      this.progressDeadline(
+        ACTIVE_TIMEOUT_MS,
+        'Native stack refresh did not re-announce the recorded stop',
+      )
+    // Each turn re-reads the gate: a refresh may start again after the previous one was verified, and a deferred one ends when its re-announced stop is consumed.
+    while (participant.refresh || participant.deferredRefresh) {
       await sleep(RECORDED_STOP_REFRESH_POLL_MS, undefined, {
         signal: this.abort.signal,
       })

@@ -433,6 +433,33 @@ test('a recorded stop whose evidence save fails ends the run with the save error
   await harness.run.stop()
 })
 
+// Value: protects=a failed recorded stop leaves no continuation snapshot in the run view; fails_when=snapshotReady stays true after continue rejects; no_claim=real js-debug (fake session)
+test('a recorded stop whose continue is refused leaves no continuation snapshot on the failed run', async (context) => {
+  // Arrange
+  const harness = await openRun(context, ['record'])
+  const resumes = watchBrowserResumes(harness)
+  // The learner edits the cited file between the commit and the resume, so continue() refuses after the offer was switched on.
+  const persist = harness.run['persist'].bind(harness.run)
+  harness.run['persist'] = async (): Promise<void> => {
+    await persist()
+    if (ownView(harness.run).recordedStops?.length) {
+      harness.documents[0]!.text = 'const nextTheme = "light";\n'
+      harness.documents[0]!.isDirty = true
+    }
+  }
+  // Act
+  harness.run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the refused continuation',
+  )
+  // Assert
+  assert.deepEqual(resumes, [])
+  assert.equal(harness.run.view().participants.browser.snapshot, undefined)
+  assert.equal(harness.run.view().snapshots.length, 1)
+  await harness.run.stop()
+})
+
 // Value: protects=a recorded stop declared on a source the learner had already changed in the editor ends the run before any resume; fails_when=the stop is recorded and the program resumed over a source that differs from the article; no_claim=which sentence the run reports first (the not-confirmed sentence is the test above)
 test('a recorded stop on a source changed before the stop sends no resume', async (context) => {
   // Arrange

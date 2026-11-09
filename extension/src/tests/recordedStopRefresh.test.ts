@@ -166,3 +166,78 @@ test('a recorded stop that is no longer current after its refresh ends the run w
   )
   await harness.run.stop()
 })
+
+/**
+ * Opens a prepared version 3 browser run with one recorded stop whose pause js-debug refreshes through the deferred route: the refresh's `continued` arrives while the stop's own pause is still awaited (the accepted stop was adopted), after the observation is committed and before the resume. The re-announced `stopped` is held until `announceStop()`.
+ * @param context - The test.
+ * @example const { harness, announceStop } = await openRunWithDeferredRefresh(context)
+ */
+async function openRunWithDeferredRefresh(context: TestContext) {
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    operations: {
+      operations: [SUBMIT],
+      stopOperations: [1],
+      stopHolds: ['record'],
+    },
+  })
+  await harness.run.prepare()
+  const { run } = harness
+  const participant = run['participants'].browser
+  const session = participant.selected!
+  const persist = run['persist'].bind(run)
+  let didRefresh = false
+  run['persist'] = async (): Promise<void> => {
+    if (!didRefresh && run.view().recordedStops?.length === 1) {
+      didRefresh = true
+      // The accepted stop took a pause held elsewhere in its module, so its own pause is still awaited.
+      participant.stopped!.adopted = true
+      run.onEvent(session, {
+        type: 'event',
+        seq: 9001,
+        event: 'continued',
+        body: { threadId: 1 },
+      })
+    }
+    await persist()
+  }
+  /** Delivers the refresh's re-announced `stopped`. @example announceStop() */
+  const announceStop = (): void =>
+    run.onEvent(session, {
+      type: 'event',
+      seq: 9002,
+      event: 'stopped',
+      body: { threadId: 1, reason: 'breakpoint' },
+    })
+  return { harness, participant, announceStop }
+}
+
+// Value: protects=a recorded stop whose pause js-debug refreshed through the deferred route resumes only after the re-announced stop is consumed, and the run completes; fails_when=the recorded stop resumes while the deferred refresh is pending and the delayed stopped fails the run; no_claim=a real js-debug refresh (the fake session stands in)
+test('a recorded stop with a deferred stack refresh resumes only after the re-announced stop arrives and the run completes', async (context) => {
+  // Arrange
+  const { harness, participant, announceStop } =
+    await openRunWithDeferredRefresh(context)
+  // Act
+  harness.run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => participant.deferredRefresh !== undefined,
+    'the deferred stack refresh',
+  )
+  await waitUntil(
+    () => harness.run.view().recordedStops?.length === 1,
+    'the recorded stop',
+  )
+  // Assert: nothing is resumed and the run has not failed while the re-announced stop is held.
+  assert.equal(continueCount(harness), 0)
+  assert.notEqual(harness.run.view().status, 'failed')
+  // Act
+  announceStop()
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'the result after the deferred refresh',
+  )
+  // Assert
+  assert.equal(continueCount(harness), 1)
+  assert.deepEqual(plain(harness.run.view().recordedStops), [0])
+  assert.deepEqual(plain(harness.run.view().failures), [])
+  assert.equal(harness.run.view().operation?.afterVerified, true)
+})
