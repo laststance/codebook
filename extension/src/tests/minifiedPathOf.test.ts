@@ -228,6 +228,78 @@ test('a mapped property access is not counted as a variable of the frame', () =>
   assert.deepEqual(rewritten, { name: 'currentState', compiledPath: 'l' })
 })
 
+// Value: protects=a wrong value is never saved as observed: an inner function that reuses the generated identifier for another name makes the evaluation read the inner variable; fails_when=the outer `a` is chosen although the paused inner scope binds `a` as `other`; no_claim=block scopes
+test('a generated identifier an inner scope reuses for another source name stays unresolved', () => {
+  // Arrange
+  const script = 'function o(){var a=0;function i(a){return a}return a}'
+  const innerText = 'function i(a){return a}'
+  const map = mapOf(
+    ['currentState', 'other'],
+    [
+      { at: 'a=0', inside: script, name: 'currentState' },
+      { at: 'a)', inside: innerText, name: 'other' },
+    ],
+    script,
+  )
+
+  // Act
+  const rewritten = minifiedPathOf('currentState', map, script, [
+    scopeOf(script, innerText, 'local'),
+    scopeOf(script, script, 'closure'),
+  ])
+
+  // Assert
+  assert.equal(rewritten, undefined)
+})
+
+// Value: protects=the plain closure case still resolves when the inner scope has no binding of the identifier; fails_when=any inner scope blocks the rewrite; no_claim=other minifiers
+test('a closure identifier no inner scope reuses is still resolved', () => {
+  // Arrange
+  const script = 'function o(){var l=0;function i(a){return a+l}return l}'
+  const innerText = 'function i(a){return a+l}'
+  const map = mapOf(
+    ['currentState', 'other'],
+    [
+      { at: 'l=0', inside: script, name: 'currentState' },
+      { at: 'a)', inside: innerText, name: 'other' },
+    ],
+    script,
+  )
+
+  // Act
+  const rewritten = minifiedPathOf('currentState', map, script, [
+    scopeOf(script, innerText, 'local'),
+    scopeOf(script, script, 'closure'),
+  ])
+
+  // Assert
+  assert.deepEqual(rewritten, { name: 'currentState', compiledPath: 'l' })
+})
+
+// Value: protects=an inner scope that uses the identifier only as the same source name does not block; fails_when=the same name inside an inner scope counts as a conflicting binding; no_claim=different bindings of one name
+test('an inner scope that uses the identifier as the same source name still resolves', () => {
+  // Arrange
+  const script = 'function o(){var a=0;function i(){return a}return a}'
+  const innerText = 'function i(){return a}'
+  const map = mapOf(
+    ['currentState'],
+    [
+      { at: 'a=0', inside: script, name: 'currentState' },
+      { at: 'a}', inside: innerText, name: 'currentState' },
+    ],
+    script,
+  )
+
+  // Act
+  const rewritten = minifiedPathOf('currentState', map, script, [
+    scopeOf(script, innerText, 'local'),
+    scopeOf(script, script, 'closure'),
+  ])
+
+  // Assert
+  assert.deepEqual(rewritten, { name: 'currentState', compiledPath: 'a' })
+})
+
 /** Evaluates on a scripted frame as V8 does: an unknown name throws its ReferenceError. */
 function pausedFrame(frame: Record<string, unknown>) {
   return async (
