@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.105.0] - 2026-11-09 (development candidate)
+
+Cycle 0103 ([Issue #267](https://github.com/laststance/codebook/issues/267)), a bug-fix cycle. **A question about how sign-in works now pauses inside the sign-in code the request runs, such as an auth library's `authorize` callback.** In a Next app that signs in through a Server Action, a server stop in a module that the sign-in request loads for the first time bound only after its line had already run, so the run ended with a refusal after 20 s. Codebook now binds such a stop before the module runs, and the bundled skill runs the sign-in itself when the question is about it.
+
+### Fixed
+- **Server stops in modules the operation loads:** a `next-dev-webpack` run (App Router or Pages Router) that declares a `participant: "server"` stop with `afterOperation` of 1 or more now pauses at it when the operation's own request loads that module for the first time, for example a credentials `authorize` callback behind a Server Action. Before, the stop bound only after the line ran and the run ended with "was not hit within 20 s". Route handlers and API routes keep their own rules.
+- **Questions about the sign-in itself (bundled skill 1.0.83):** the chat runs the sign-in from the app's sign-in page with `session: "fresh"`: it types the account's non-secret fields, you type the password into Codebook's masked box, and it clicks the sign-in control. Before, the skill's saved-session rule led the chat to answer such a question from source only. The `savedSession` help says the same.
+
+### Changed
+- **Development dependencies:** parse5 8.1.1; the LLM Wiki reader's HTML reading follows its new internals and reads pages as before.
+
 ## [0.2.104.0] - 2026-11-09 (development candidate)
 
 Cycle 0102 ([Issue #265](https://github.com/laststance/codebook/issues/265)), a feature cycle. **A Next app you open through your own local HTTPS reverse proxy at a custom host name now runs end to end at that address.** Some apps only work at the host name your proxy serves (sign-in settings, cookies, callbacks name it), but a live run used to open the app only at the dev server's `localhost` address, so a question about such an app stopped before the code the learner asked about. A run can now declare the proxy's origin and the port it forwards to: Codebook starts the dev server on that port, checks that the address reaches that server on this machine only, over a certificate your system trusts, and opens the app there; stops, sign-in and replay work as in any other Next run.

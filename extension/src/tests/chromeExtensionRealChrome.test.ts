@@ -40,6 +40,16 @@ import { removeTestFolder } from './utils/removeTestFolder'
 const TEST_TIMEOUT_MS = 60_000
 /** How long a started worker may take to be listed; the coverage run of the whole suite once needed more than a second. */
 const WORKER_LISTED_WAIT_MS = 15_000
+/** How long a test waits for Chrome to activate the fixture's worker version before it times a start: a start of a registration without an activated version does nothing, and on a loaded CI runner activation came late (Cycle 0103 CI1). */
+const WORKER_ACTIVATED_WAIT_MS = 20_000
+/** How often the activation wait reads the version states again. */
+const WORKER_ACTIVATED_POLL_MS = 250
+/** The longest one read of the version states waits for Chrome's report after the ServiceWorker domain is on again; the read ends earlier as soon as the extension's versions arrived. */
+const WORKER_STATES_REPORT_MAX_MS = 2_000
+/**
+ * Timeout of the two start tests. Budget: launch up to 20 s + activation wait 20 s (WORKER_ACTIVATED_WAIT_MS) + one state read 2 s (WORKER_STATES_REPORT_MAX_MS) + start wait 15 s (WORKER_LISTED_WAIT_MS) + failure diagnostics 2 s + stopWorkers 10 s = 69 s, so a late activation ends in the diagnostic message and not in the generic timeout.
+ */
+const START_TEST_TIMEOUT_MS = 90_000
 const FIXTURE = join(__dirname, '../../src/tests/fixtures/chrome-extension')
 const BROKEN_FIXTURE = join(FIXTURE, 'broken-worker')
 
@@ -193,6 +203,131 @@ async function targetsOf(browser: OwnedExtensionBrowser) {
   )
 }
 
+/**
+ * Reads the states of the extension's worker versions as Chrome reports them, `status/runningStatus` each (`activated/stopped`, `installing/starting`, …).
+ * Why: a start of a registration whose version is not activated yet does nothing, and the targets alone cannot tell that from a lost start; the start tests wait for an activated version first and name the states in their failure messages.
+ * Called by {@link waitForActivatedWorker} and {@link describeWorkerNotListed}. Turning the ServiceWorker domain off and on again makes Chrome report every current version once more and changes no worker state (the product only sends commands on that session and enables the domain once at launch).
+ * The read ends as soon as a report for the extension arrived, else after {@link WORKER_STATES_REPORT_MAX_MS}, so an empty result means no version was reported within that bound.
+ * @param browser - The launched browser.
+ * @returns The states of the extension's versions, empty when Chrome reported none in time; a failed domain command adds an `error: …` entry after the states collected so far.
+ * @example await workerVersionStates(browser) // => ['activated/stopped']
+ */
+async function workerVersionStates(
+  browser: OwnedExtensionBrowser,
+): Promise<string[]> {
+  const states: string[] = []
+  const scriptPrefix = `chrome-extension://${browser.extensionId}/`
+  let reportArrived: () => void = () => {}
+  const reportPromise = new Promise<void>((resolve) => {
+    reportArrived = resolve
+  })
+  const stopListening = browser.cdp.on(
+    'ServiceWorker.workerVersionUpdated',
+    (params) => {
+      const versions = Array.isArray(params.versions) ? params.versions : []
+      for (const version of versions) {
+        // Only the fixture's versions count; another extension's worker is not the one started.
+        if (
+          typeof version === 'object' &&
+          version !== null &&
+          String(Reflect.get(version, 'scriptURL')).startsWith(scriptPrefix)
+        ) {
+          states.push(
+            `${String(Reflect.get(version, 'status'))}/${String(Reflect.get(version, 'runningStatus'))}`,
+          )
+          reportArrived()
+        }
+      }
+    },
+  )
+  try {
+    await browser.cdp.request(
+      'ServiceWorker.disable',
+      {},
+      browser.controlSessionId,
+    )
+    await browser.cdp.request(
+      'ServiceWorker.enable',
+      {},
+      browser.controlSessionId,
+    )
+    // Chrome reports the current versions right after the domain is turned on again; wait for that report, bounded.
+    await Promise.race([reportPromise, delay(WORKER_STATES_REPORT_MAX_MS)])
+  } catch (error) {
+    // The domain error stays visible next to the states collected so far.
+    states.push(`error: ${String(error)}`)
+  } finally {
+    stopListening()
+  }
+  return states
+}
+
+/**
+ * Waits until Chrome reports an activated version of the extension's worker, the precondition of a start that can list it.
+ * Called by the real-Chrome start tests before they time {@link OwnedExtensionBrowser.startWorker}.
+ * @param browser - The launched browser.
+ * @param deadlineAt - The `performance.now()` reading at which the wait ends.
+ * @returns The last version states read; they hold an `activated/…` entry unless the deadline passed first.
+ * @example await waitForActivatedWorker(browser, performance.now() + WORKER_ACTIVATED_WAIT_MS) // => ['activated/stopped']
+ */
+async function waitForActivatedWorker(
+  browser: OwnedExtensionBrowser,
+  deadlineAt: number,
+): Promise<string[]> {
+  for (;;) {
+    const states = await workerVersionStates(browser)
+    // An activated version is the precondition; the deadline ends the wait with what was seen.
+    if (
+      states.some((state) => state.startsWith('activated/')) ||
+      performance.now() >= deadlineAt
+    )
+      return states
+    await delay(WORKER_ACTIVATED_POLL_MS)
+  }
+}
+
+/**
+ * Fails the test unless Chrome activates a version of the extension's worker within {@link WORKER_ACTIVATED_WAIT_MS}.
+ * Called by the real-Chrome start tests before they time the start: a start of a version Chrome has not activated yet does nothing.
+ * @param browser - The launched browser.
+ * @returns Resolves once an `activated/…` version was reported.
+ * @throws AssertionError naming the version states seen when none was activated in time.
+ * @example await assertWorkerActivated(browser)
+ */
+async function assertWorkerActivated(
+  browser: OwnedExtensionBrowser,
+): Promise<void> {
+  const versions = await waitForActivatedWorker(
+    browser,
+    performance.now() + WORKER_ACTIVATED_WAIT_MS,
+  )
+  assert.ok(
+    versions.some((state) => state.startsWith('activated/')),
+    `Chrome activated no version of the worker in ${WORKER_ACTIVATED_WAIT_MS} ms; versions: ${JSON.stringify(versions)}`,
+  )
+}
+
+/**
+ * Builds the failure message of a start that did not list the worker, with the targets and version states seen.
+ * Called by the real-Chrome start tests; a failing read is reported inside the message and never replaces it.
+ * @param browser - The launched browser.
+ * @param sends - How many starts were sent.
+ * @returns The message text.
+ * @example await describeWorkerNotListed(browser, 3) // => 'the worker was not listed after 3 sends in 15000 ms; targets: []; versions: ["installing/stopped"]'
+ */
+async function describeWorkerNotListed(
+  browser: OwnedExtensionBrowser,
+  sends: number,
+): Promise<string> {
+  const targets = await targetsOf(browser).catch((error) => [
+    `unreadable: ${String(error)}`,
+  ])
+  const versions = await workerVersionStates(browser).catch((error) => [
+    `unreadable: ${String(error)}`,
+  ])
+  return `the worker was not listed after ${sends} sends in ${WORKER_LISTED_WAIT_MS} ms; targets: ${JSON.stringify(targets)}; versions: ${JSON.stringify(versions)}`
+}
+
 /** Reads the extension's local storage on a storage host page. */
 function readStorage(browser: OwnedExtensionBrowser): Promise<unknown> {
   return evaluateOnPage(
@@ -313,7 +448,7 @@ test(
 // Value: protects=TZ3 and the page surface: a page surface opens by createTarget, startWorker brings the worker back as a target of this extension only, and stopWorkers waits until it is gone; fails_when=the surface URL, the target filter by id or the stop-and-wait breaks; no_claim=the worker attaching to a debugger
 test(
   'real Chrome: a page surface opens, startWorker starts only this extension’s worker and stopWorkers removes it again',
-  { timeout: TEST_TIMEOUT_MS },
+  { timeout: START_TEST_TIMEOUT_MS },
   async (context) => {
     const chrome = await requireChrome(context)
     if (!chrome) return
@@ -324,7 +459,11 @@ test(
       surfaceUrl: `chrome-extension://${idOfPath(await realpath(FIXTURE))}/page.html`,
     })
     const { browser } = await launch(context, chrome, run)
-    // The precondition holds before the start: no worker is listed, so a later listing is the start's doing.
+    // A start of a version Chrome has not activated yet does nothing, so the start is timed only from an activated version.
+    await assertWorkerActivated(browser)
+    // Chrome may start a newly installed extension's worker by itself while it activates, so the worker is stopped again after the wait.
+    await browser.stopWorkers(EXTENSION_STOP_WORKERS_BOUND_MS)
+    // The precondition holds right before the start: no worker is listed, so a later listing is the start's doing.
     const before = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
     )
@@ -338,11 +477,8 @@ test(
       ({ type }) => type === 'service_worker',
     )
     // A timeout names what was seen, so a rare failure can be told apart afterwards.
-    assert.equal(
-      start.listed,
-      true,
-      `the worker was not listed after ${start.sends} sends in ${WORKER_LISTED_WAIT_MS} ms; targets: ${JSON.stringify(await targetsOf(browser))}`,
-    )
+    if (!start.listed)
+      assert.fail(await describeWorkerNotListed(browser, start.sends))
     await browser.stopWorkers(EXTENSION_STOP_WORKERS_BOUND_MS)
     const after = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
@@ -359,7 +495,7 @@ test(
 // Value: protects=the re-send of ServiceWorker.startWorker is safe: Codebook sends it again to a worker that may already run; fails_when=Chrome answers a start of a running worker by replacing the worker (a new target id) or stopping it; no_claim=a worker with a js-debug session attached
 test(
   'real Chrome: a start sent again to a listed worker leaves the same running worker target',
-  { timeout: TEST_TIMEOUT_MS },
+  { timeout: START_TEST_TIMEOUT_MS },
   async (context) => {
     const chrome = await requireChrome(context)
     if (!chrome) return
@@ -370,10 +506,14 @@ test(
       surfaceUrl: `chrome-extension://${idOfPath(await realpath(FIXTURE))}/page.html`,
     })
     const { browser } = await launch(context, chrome, run)
+    // A start of a version Chrome has not activated yet does nothing, so the start is timed only from an activated version.
+    await assertWorkerActivated(browser)
     const start = await browser.startWorker(
       performance.now() + WORKER_LISTED_WAIT_MS,
     )
-    assert.equal(start.listed, true)
+    // A timeout names what was seen, so a rare failure can be told apart afterwards.
+    if (!start.listed)
+      assert.fail(await describeWorkerNotListed(browser, start.sends))
     const workerOf = async () =>
       (await targetsOf(browser)).filter(({ type }) => type === 'service_worker')
     const first = await workerOf()

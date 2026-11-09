@@ -394,7 +394,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.104'
+export const EXTENSION_VERSION = '0.2.105'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2917,7 +2917,7 @@ export const PANE_RETURN_PRESS_WINDOW_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
 
-/** Insertion mode identifiers of pinned parse5 8.1.0; used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
+/** Insertion mode identifiers of pinned parse5 8.1.1 (unchanged from 8.1.0); used by {@link readHtmlStartTags} for current select rules and proven absent-end handling. */
 export const HTML_PARSER_IN_BODY_MODE = 6
 export const HTML_PARSER_IN_TABLE_MODE = 8
 export const HTML_PARSER_IN_CAPTION_MODE = 10
@@ -2952,7 +2952,7 @@ export const HTML_PARSER_ABSENT_END_MODE_TABLE_NAMES = new Map<
 ])
 /** Ends the body rules act on although no element of their name is open, so {@link readHtmlStartTags} never skips them: `</p>` inserts an empty p and `</br>` a br, and in foreign content each first leaves it. */
 export const HTML_PARSER_ABSENT_END_BODY_NAMES = new Set(['br', 'p'])
-/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.1.0's table (36) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
+/** The names of the HTML standard's svg case table (37 names, as Chrome 151 adjusts them) that pinned parse5 8.1.1's table (36, unchanged from 8.1.0) lacks, each with its svg case; {@link readHtmlStartTags} writes a start or end tag of one in svg case in svg content, as parse5 does for the others. */
 export const HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS = new Map([
   ['fedropshadow', 'feDropShadow'],
 ])

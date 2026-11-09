@@ -270,7 +270,7 @@ test('the README documents the Expo web adapter, its limits, format 15 and the A
       'A study of an Expo run (`expo-web-dev`) is saved as format 15 (`.study.v15.json`) with its `expoVersion`; Codebook 0.2.88 and older list it as saved by a newer Codebook, so update Codebook to open it.',
     ),
   )
-  assert.ok(readme.includes("so Cursor's managed skill updates to **1.0.82**"))
+  assert.ok(readme.includes("so Cursor's managed skill updates to **1.0.83**"))
 })
 
 // Value: protects=skill 1.0.82 routes an Expo app to expo-web-dev behind the API 1.30 gate, paraphrases the selection rule, forbids starting Metro or expo start and repeats the handler-body line rule; fails_when=the routing, the gate, the never-start rule or the line rule is dropped; why_new=the skill's Expo paragraph is new; seam=none; no_claim=how a chat follows the skill
@@ -281,7 +281,7 @@ test('the bundled skill 1.0.82 routes an Expo web app to expo-web-dev behind the
   const start = skill.indexOf('**An Expo web app (API 1.30).**')
   const paragraph = skill.slice(start, skill.indexOf('\n\n', start))
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.82"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.83"\n'))
   assert.ok(start > 0)
   for (const phrase of [
     'goes to the `expo-web-dev` adapter of the `repository-browser` profile',
