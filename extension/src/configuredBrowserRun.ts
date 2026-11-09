@@ -1497,6 +1497,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private isApiProcessReadWanted = false
   /** What the run read of the API process when an API stop's not-reached deadline expired (API 1.44); read once, before the failure is worded. */
   private apiProcessAtExpiry?: ApiProcessState
+  /** Counts the deadlines armed so far; an API process read that began under an older count is stale, because the run moved on (a late request reached a stop, a pause was admitted) while it waited. */
+  private deadlineGeneration = 0
+  /** Cancels the API process read still running, so a stale or bounded probe sends no further request. */
+  private apiProcessProbe?: AbortController
   private cleaning = false
   private cleaned = false
   private resourcesReleased = false
@@ -14229,14 +14233,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           .map((other) => this.declaredAt(other)),
         notReachedStops: [place],
         ...this.notReachedHandlerFacts(entry, isApi, resumedHits, sent),
-        ...(this.apiProcessAtExpiry
+        ...(entry.kind === 'node-api' && this.apiProcessAtExpiry
           ? { apiProcess: this.apiProcessAtExpiry }
           : {}),
       },
     }
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
-      `Declared stop ${place} (${this.handlerKindWords(entry)} ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${this.apiProcessWords()}${this.notReachedPossibilities(entry)} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
+      `Declared stop ${place} (${this.handlerKindWords(entry)} ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${entry.kind === 'node-api' ? this.apiProcessWords() : ''}${this.notReachedPossibilities(entry)} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
     )
   }
 
@@ -18502,6 +18506,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate()
     this.browser.resumeViewport()
     clearTimeout(this.progressTimer)
+    // An API process read still running sends nothing more once the run ends.
+    this.apiProcessProbe?.abort()
     // A run that ends inside the preparation window leaves no readiness bound counting behind it.
     this.preparationWindow?.timeout.dispose()
     // A cancelled deadline leaves no bound for {@link restoreActiveBound} to re-arm.
@@ -18716,6 +18722,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     reason: string | (() => string),
   ): void {
     clearTimeout(this.progressTimer)
+    // A new deadline makes any API process read of the old one stale and stops it.
+    this.deadlineGeneration += 1
+    this.apiProcessProbe?.abort()
     this.holdingPause = false
     if (milliseconds !== REPOSITORY_PAUSE_HOLD_TIMEOUT_MS)
       this.activeBound = { endsAtMs: performance.now() + milliseconds, reason }
@@ -18743,7 +18752,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     this.isApiProcessReadWanted = false
+    const generation = this.deadlineGeneration
     void this.readApiProcessAtExpiry().then((state) => {
+      // The run moved on during the read (a deadline was armed since): the failure is stale and is dropped.
+      if (generation !== this.deadlineGeneration) {
+        this.evidence.record('api.process-probe-dropped', {
+          reason: 'deadline-rearmed',
+          state: state.state,
+        })
+        return
+      }
       this.apiProcessAtExpiry = state
       // The text is composed again with the state, which an API stop's failure then carries.
       this.fail(this.expiredDeadlineText(reason, milliseconds))
@@ -18758,22 +18776,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const session = this.participants.server.selected
     if (!session) return { state: 'unknown' }
     let timer: ReturnType<typeof setTimeout> | undefined
+    const probe = new AbortController()
+    this.apiProcessProbe = probe
     const bound = new Promise<ApiProcessState>((resolve) => {
-      timer = setTimeout(
-        () => resolve({ state: 'unknown' }),
-        API_PROCESS_PROBE_MS,
-      )
+      timer = setTimeout(() => {
+        // The bound passed: the probe sends nothing more.
+        probe.abort()
+        resolve({ state: 'unknown' })
+      }, API_PROCESS_PROBE_MS)
     })
     try {
       return await Promise.race([
         readApiProcessState(
           (command, args) => session.customRequest(command, args),
           this.options.workspace,
+          probe.signal,
         ),
         bound,
       ])
     } finally {
       clearTimeout(timer)
+      probe.abort()
+      if (this.apiProcessProbe === probe) this.apiProcessProbe = undefined
     }
   }
   /**

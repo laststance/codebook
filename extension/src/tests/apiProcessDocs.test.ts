@@ -44,8 +44,9 @@ test('the apiServer help explains details.apiProcess and forbids naming an unobs
   // Act
   const missing = [
     'details.apiProcess is what Codebook measured of the API process when the deadline ran out',
-    'state not-paused means the API was running and the request is still waiting inside the app',
-    'paused (with at: { path, line } when the place maps to a repository file)',
+    'state not-paused means the API process was running, not paused at any breakpoint, when the deadline ran out',
+    'may be waiting inside the app (its database or another service it calls, for example) or no request reached the line',
+    'paused (with at: { path, line } when the place maps to a repository file) means the API process was paused at that place',
     'unknown means Codebook could not read it',
     'read details.apiOutputTail for what the API printed',
     'never name a cause the run did not observe',
@@ -63,15 +64,16 @@ test('the skill and the README describe details.apiProcess of an unreached API s
   const missingFromSkill = [
     'metadata:\n  version: "1.0.87"\n',
     '`details.apiProcess.state` is `not-paused`',
-    'the API was running and the request is still waiting inside the app rather than at a stop',
-    'it may depend on a service the app calls',
+    'the API process was running, not stopped at a breakpoint, when the deadline ran out',
+    'the request may be waiting inside the app (it may depend on a service the app calls) or may never have arrived',
     "check the API's output tail",
     'never name a cause the run did not observe',
   ].filter((phrase) => !skill.includes(phrase))
   const missingFromReadme = [
     'with **MCP API 1.44** (`codebook_status` reports the installed build). API 1.44 is additive:',
     '`SERVER_STOP_NOT_REACHED` also states what Codebook measured of the API process at that moment in `details.apiProcess` (MCP API 1.44)',
-    '`not-paused` means the API was running and the request was still waiting inside the app',
+    '`not-paused` means the API process was running, not paused at any breakpoint, so a request that reached the API may be waiting inside the app',
+    'or no request reached the line, `paused` names the repository place where it was paused',
     '`unknown` means Codebook could not read it',
     'updates to **1.0.87**',
   ].filter((phrase) => !readme.includes(phrase))

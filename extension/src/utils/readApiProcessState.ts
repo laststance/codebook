@@ -20,16 +20,18 @@ type TopFrameAnswer =
   { kind: 'frame'; frame: unknown } | { kind: 'running' } | { kind: 'other' }
 
 /**
- * Asks the API's debug session whether its thread is paused, and where, for the failure of an API stop that no request reached.
+ * Asks the API's debug session whether its threads are paused, and where, for the failure of an API stop that no request reached.
  *
- * Why it exists: the not-reached failure used to list possibilities and state no measured fact; a request that waits inside the app (its database pool, another service) leaves the API running, which js-debug answers to `stackTrace` with `Thread is not paused`. Called by the run when an API stop's not-reached deadline expires, before the run ends the API; the caller bounds the wait.
+ * Why it exists: the not-reached failure used to list possibilities and state no measured fact; a request that waits inside the app (its database pool, another service) leaves the API running, which js-debug answers to `stackTrace` with `Thread is not paused`. Called by the run when an API stop's not-reached deadline expires, before the run ends the API; the caller bounds the wait and may cancel it.
+ * Every thread is asked, so the result does not depend on thread order: one paused thread decides, whatever the others answered.
  *
  * @param customRequest - The server session's `customRequest`.
  * @param repositoryRoot - The opened repository's folder, to give a frame's path relative to it.
+ * @param signal - Cancels the probe: once aborted, no further request is sent and the result is `unknown`.
  * @returns
- * - `paused` with `at` when a frame came back whose file lies inside the repository; without `at` when it does not
+ * - `paused` with `at` when the first paused thread's frame lies inside the repository; without `at` when it does not
  * - `not-paused` when every thread answered `Thread is not paused`
- * - `unknown` for no thread, no frame, a failed request or any other error, so a failure to probe is never `not-paused`
+ * - `unknown` for no thread, no paused thread with some thread unread, a failed request, a cancelled probe or any other error, so a failure to probe is never `not-paused`
  * @example
  * ```ts
  * await readApiProcessState((command, args) => session.customRequest(command, args), '/repo')
@@ -39,6 +41,7 @@ type TopFrameAnswer =
 export async function readApiProcessState(
   customRequest: CustomRequest,
   repositoryRoot: string,
+  signal?: AbortSignal,
 ): Promise<ApiProcessState> {
   try {
     const answer: unknown = await customRequest('threads')
@@ -48,21 +51,30 @@ export async function readApiProcessState(
         : undefined
     if (!Array.isArray(threads) || threads.length === 0)
       return { state: 'unknown' }
+    const answers: TopFrameAnswer[] = []
     for (const thread of threads) {
+      // A cancelled probe sends nothing more.
+      if (signal?.aborted) return { state: 'unknown' }
       const threadId: unknown = Reflect.get(Object(thread), 'id')
-      if (typeof threadId !== 'number') return { state: 'unknown' }
-      const top = await readTopFrame(customRequest, threadId)
-      // One paused thread decides: the API stands paused.
-      if (top.kind === 'frame')
-        return {
-          state: 'paused',
-          ...(await locationOf(top.frame, repositoryRoot)),
-        }
-      // A thread that neither runs nor pauses leaves the state unread.
-      if (top.kind === 'other') return { state: 'unknown' }
+      answers.push(
+        typeof threadId === 'number'
+          ? await readTopFrame(customRequest, threadId)
+          : { kind: 'other' },
+      )
     }
+    if (signal?.aborted) return { state: 'unknown' }
+    // The first paused thread, in thread order, decides, whatever the others answered.
+    const paused = answers.find((top) => top.kind === 'frame')
+    if (paused)
+      return {
+        state: 'paused',
+        ...(await locationOf(paused.frame, repositoryRoot)),
+      }
     // Every thread answered that it runs.
-    return { state: 'not-paused' }
+    if (answers.every((top) => top.kind === 'running'))
+      return { state: 'not-paused' }
+    // A thread that neither runs nor pauses leaves the state unread.
+    return { state: 'unknown' }
   } catch {
     return { state: 'unknown' }
   }
