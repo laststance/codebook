@@ -487,7 +487,7 @@ export function reactScriptsSealedOutsidePackageRefusal(
 }
 
 /**
- * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file that the served source map lists more than once.
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file that the served source maps name more than once (one map lists it twice, or two served scripts' maps both name it).
  * @param file - The repository-relative stop file.
  * @returns The refusal: `details.reason: "ambiguous-source"`, `file` and `sideEffects: "partial"`.
  * @example
@@ -496,8 +496,8 @@ export function reactScriptsSealedOutsidePackageRefusal(
 export function reactScriptsAmbiguousSourceRefusal(file: string): StudyError {
   return reactScriptsRefusal(
     'REACT_SCRIPTS_SEAL_FAILED',
-    `The served source map lists ${file} more than once, so Codebook cannot tell which copy the bundle runs and the stop cannot be sealed. The owned server was stopped and no click was sent.`,
-    `Tell the learner the app's bundle names the stop file more than once (details.file), so this version cannot seal a stop in it; never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    `The served source maps name ${file} more than once (one map lists it twice, or two served scripts' maps both name it), so Codebook cannot tell which copy the bundle runs and the stop cannot be sealed. The owned server was stopped and no click was sent.`,
+    `Tell the learner the app's served maps name the stop file more than once, in one map or in two scripts' maps (details.file), so this version cannot seal a stop in it; never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
     { reason: 'ambiguous-source', file, sideEffects: 'partial' },
   )
 }

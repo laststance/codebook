@@ -329,6 +329,20 @@ test('an ambiguous-source refusal names the file the served map lists twice', ()
   assert.match(recovery, /#REACT_SCRIPTS_SEAL_FAILED\.$/)
 })
 
+// Value: protects=the ambiguous-source message and recovery cover a file named by two served scripts' maps; fails_when=they describe only one map; no_claim=the seal's detection
+test('an ambiguous-source refusal covers a file named by two served maps', () => {
+  // Arrange
+  const error = reactScriptsAmbiguousSourceRefusal('src/App.js')
+  // Act
+  const recovery = recoveryOf(error)
+  // Assert
+  assert.match(
+    error.message,
+    /one map lists it twice, or two served scripts' maps both name it/,
+  )
+  assert.match(recovery, /in one map or in two scripts' maps/)
+})
+
 // Value: protects=an unreadable installed version gets its own sentence and no installedVersion field; fails_when=the message reads "react-scripts undefined is installed"; no_claim=how the manifest is read
 test('a react-scripts version refusal without a readable version says so and omits the field', () => {
   // Arrange

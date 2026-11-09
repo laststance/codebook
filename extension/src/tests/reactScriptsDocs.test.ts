@@ -145,8 +145,8 @@ test('the MCP instructions name react-scripts-dev, its selection rule and the AP
     assert.ok(note.includes(phrase), phrase)
 })
 
-// Value: protects=skill 1.0.74 routes a Create React App app to react-scripts-dev, points at reactScriptsQuickStart, gates it on API 1.25 and names no repository; fails_when=the routing or gate sentence or the version leaves the skill, or a repository name enters it; no_claim=how a chat follows it
-test('the bundled skill 1.0.74 routes a Create React App app to react-scripts-dev behind the API 1.25 gate', async () => {
+// Value: protects=the bundled skill routes a Create React App app to react-scripts-dev, points at reactScriptsQuickStart, gates it on API 1.25 and names no repository; fails_when=the routing or gate sentence or the version leaves the skill, or a repository name enters it; no_claim=how a chat follows it
+test('the bundled skill routes a Create React App app to react-scripts-dev behind the API 1.25 gate', async () => {
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
@@ -351,6 +351,9 @@ test('the API note, skill and README state the react-scripts 4 support of API 1.
     '`script-off-origin`, `too-many-scripts` and `script-too-large`',
     'works on react-scripts 4 as well',
     'A saved study gains no field',
+    "a file named by two served scripts' maps is refused `ambiguous-source`",
+    'otherwise the start stops with `library-redirect-not-applied` before the browser opens',
+    "the start script's `NODE_OPTIONS=` assignment, else the editor's environment",
   ])
     assert.ok(note.includes(phrase), phrase)
   for (const phrase of [
@@ -369,7 +372,76 @@ test('the API note, skill and README state the react-scripts 4 support of API 1.
     '`script-too-large`',
     '`node-version-unreadable`',
     'works on react-scripts 4 too',
+    "extends `ambiguous-source` to a file named by two served scripts' maps",
     'API 1.41 is additive:',
   ])
     assert.ok(readme.includes(phrase), phrase)
+})
+
+// Value: protects=the README and the help tell the learner which scripts the reader counts, where the learner's NODE_OPTIONS comes from, that an unapplied redirect stops before the browser opens, and that a new run without library uses the installed copy; fails_when=any of these sentences leaves the README or the help, or the README says the installed copy ran; no_claim=that the reader or the run behaves so
+test('the README and help state the script scope, the NODE_OPTIONS source and the stop on an unapplied redirect', async (context) => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const help = await readHelp(context)
+  const section = help.reactScriptsQuickStart as ReactScriptsQuickStart & {
+    library: { limits: string[] }
+  }
+  // Act
+  const limitText = section.limits.join('\n')
+  const libraryLimitText = section.library.limits.join('\n')
+  // Assert
+  for (const phrase of [
+    "under the page's webpack output folder (`static/js/`)",
+    'an `env-config.js` in `public/`, are ignored',
+    'counts only those same-origin scripts',
+    "that value is the start script's `NODE_OPTIONS=` assignment, else the editor's environment",
+    'a react-scripts 5 run keeps its environment as before',
+    'the start stops with `library-redirect-not-applied` before the browser opens',
+    'nothing ran on the installed copy',
+    'a new run without `library` uses the installed copy',
+    'A file named by the source maps of two different served scripts is refused `ambiguous-source`',
+  ])
+    assert.ok(readme.includes(phrase), phrase)
+  assert.equal(
+    readme.includes('says the Example ran its installed copy'),
+    false,
+  )
+  for (const phrase of [
+    "under the page's webpack output folder (static/js/)",
+    'ignores other scripts such as an env-config.js in public/',
+    "the NODE_OPTIONS= assignment of the start script, else the editor's environment",
+  ])
+    assert.ok(limitText.includes(phrase), phrase)
+  assert.ok(libraryLimitText.includes('nothing ran on the installed copy'))
+})
+
+// Value: protects=the ambiguous-source help and the react-scripts-version help name both maps case and the requiredMajor / supportedMajors meaning, and the start guide names API 1.41 for react-scripts 4; fails_when=a sentence leaves the help; no_claim=that the reader raises the reason
+test('the help words ambiguous-source for two maps, requiredMajor as the newest major and API 1.41 in the start guide', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  const section = help.reactScriptsQuickStart
+  // Act
+  const ambiguous =
+    section.refusals.REACT_SCRIPTS_SEAL_FAILED?.reasons['ambiguous-source'] ??
+    ''
+  const versionReason =
+    section.refusals.REACT_SCRIPTS_UNSUPPORTED?.reasons[
+      'react-scripts-version'
+    ] ?? ''
+  // Assert
+  assert.ok(ambiguous.includes('one map lists it twice'))
+  assert.ok(
+    ambiguous.includes("two different served scripts' maps both name it"),
+  )
+  assert.ok(
+    versionReason.includes('details.requiredMajor names the newest one'),
+  )
+  assert.ok(
+    versionReason.includes(
+      'details.supportedMajors lists the supported majors',
+    ),
+  )
+  assert.ok(
+    String(help.startHere).includes('react-scripts 4 needs API 1.41 or later'),
+  )
 })
