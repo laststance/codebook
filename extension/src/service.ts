@@ -4300,7 +4300,11 @@ export class StudyService {
       // A version 3 run lists the declared stop indexes it recorded without a hold (API 1.43).
       ...(runtime?.recordedStops
         ? { recordedStops: runtime.recordedStops }
-        : {}),
+        : // A version 3 run lists none before its runtime exists, as it lists its operations.
+          record.definition?.configuration?.version ===
+            OPERATIONS_CONFIG_VERSION
+          ? { recordedStops: [] as number[] }
+          : {}),
       // A server render in progress says what it waits for, and that its first execution was not observed.
       ...(runtime?.renderMessage ? { message: runtime.renderMessage } : {}),
       ...(runtime?.libraryPhase === 'building' && runtime.library

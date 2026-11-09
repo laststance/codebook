@@ -3816,3 +3816,6 @@ export const API_SERVER_PAGE_ROUTE_RULE =
 
 /** The most characters of one script text that the bare-import scan of a `static-page` readiness reads; the scan is linear in it, and a longer text is judged on this prefix. */
 export const STATIC_PAGE_IMPORT_SCAN_MAX_CHARS = 1_048_576
+
+/** How often a recorded stop (`hold: "record"`) checks whether the stack refresh js-debug started on its pause was verified, before the run resumes that stop. */
+export const RECORDED_STOP_REFRESH_POLL_MS = 10

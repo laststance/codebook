@@ -46,6 +46,7 @@ import {
   ACTIVE_TIMEOUT_MS,
   NEXT_LIBRARY_WRAPPED_WAIT_MS,
   NEXT_ROUTER_POLL_INTERVAL_MS,
+  RECORDED_STOP_REFRESH_POLL_MS,
   NEXT_SETUP_STEPS,
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
   MAX_EVENTS,
@@ -1667,7 +1668,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
-  /** Declared stop indexes recorded without a hold (`hold: "record"`), in recording order; read by {@link view}. */
+  /** Declared stop indexes recorded without a hold (`hold: "record"`), in recording order; read by {@link view}. A stop is listed once its observation is committed ({@link inspect} pushed the snapshot, as for a held stop) and before its evidence save, so "recorded" means "observation committed", not "saved": the persisted view that save writes already names it, and a run that fails there keeps both the snapshot and this index. */
   private readonly recordedStopIndexes: number[] = []
   private readonly failures: string[] = []
   private readonly captures: ConfiguredRuntimeView['captures'] = {}
@@ -17067,7 +17068,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Ends {@link inspect} for a committed observation: a held stop publishes its paused state, a recorded stop (`hold: "record"`, API 1.43) never does and resumes at once ({@link recordAndContinue}).
+   * Ends {@link inspect} for a committed observation: a held stop publishes its `paused-<participant>` state, a recorded stop (`hold: "record"`, API 1.43) never does and hands off to {@link recordAndContinue}, which resumes it at once.
    * @param stop - The stop whose observation was just committed.
    * @param phase - The `paused-<participant>` state a held stop publishes.
    * @param pause - The identity of the pause the observation was captured at.
@@ -17111,9 +17112,45 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.recordedStopIndexes.push(stop.declaredIndex)
     await this.persist()
     this.alive()
+    await this.awaitRecordedStopRefresh(stop, pause)
     // No await between the offer and the reservation inside continue().
     this.snapshotReady = true
     await this.continue(stop.participant, pause)
+  }
+
+  /**
+   * Waits, for {@link recordAndContinue}, until a pending js-debug stack refresh of the recorded stop's own pause is verified, because {@link continue} refuses control while `participant.refresh` is set.
+   * The refresh keeps the pause's generation ({@link verifyStackRefresh}), so the same pause identity then continues the same stop. The wait ends the run with a named reason, and nothing is resumed, when the gate no longer holds that pause or the stop is no longer the run's current stop; it is bounded by the refresh's own progress deadline (`ACTIVE_TIMEOUT_MS`), which fails the run when the refresh never confirms, and by a failed verification, which fails the run.
+   * @param stop - The recorded stop being finished.
+   * @param pause - The identity of the pause the observation was captured at.
+   * @throws When the run ended during the wait, or the pause was replaced by another one (the run is failed with "Recorded stop's pause changed during a stack refresh and no resume was sent").
+   * @example
+   * ```ts
+   * await this.awaitRecordedStopRefresh(stop, pause)
+   * ```
+   */
+  private async awaitRecordedStopRefresh(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+  ): Promise<void> {
+    const participant = this.participants[stop.participant]
+    // Each turn re-reads the gate: a refresh may start again after the previous one was verified.
+    while (participant.refresh) {
+      await sleep(RECORDED_STOP_REFRESH_POLL_MS, undefined, {
+        signal: this.abort.signal,
+      })
+      this.alive()
+    }
+    if (
+      this.stops[this.stopIndex] !== stop ||
+      !participant.gate.matches(pause) ||
+      this.continuation
+    ) {
+      const reason =
+        "Recorded stop's pause changed during a stack refresh and no resume was sent"
+      this.fail(reason)
+      throw new Error(reason)
+    }
   }
 
   /**

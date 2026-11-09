@@ -5025,3 +5025,39 @@ test('configured help tells an agent that a start the library refused can be rep
     "codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run. A start on a revision or a node id the book does not have is refused in its own answer with BOOK_UNAVAILABLE, which names the revision's node ids; every other preparation failure is read from the run resource.",
   )
 })
+
+// Value: protects=a version 3 run lists recordedStops as an empty array in its run resource while its runtime reports none, as it lists its operations; fails_when=the field is absent until the runtime exists, so an agent reading the run cannot tell version 3 from version 2; no_claim=recording of a stop (the runtime's own tests)
+test('a version 3 run resource lists an empty recordedStops while its runtime reports none', async (context) => {
+  // Arrange
+  const { service, configuration } = await configuredServiceHarness(context)
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'recorded-stops-view',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  // Act
+  await service.record(receipt).preparation
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  assert.deepEqual(
+    z
+      .object({ recordedStops: z.array(z.number()) })
+      .parse(JSON.parse(resource.text)).recordedStops,
+    [],
+  )
+  await service.stop(receipt)
+})
