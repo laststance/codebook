@@ -80,11 +80,14 @@ const readPackedMap = (resourcePath, text) => {
   if (!Array.isArray(map.sources)) return undefined
   const base = path.resolve(path.dirname(mapPath), typeof sourceRoot === 'string' ? sourceRoot : '')
   const sources = map.sources.map((source) => (typeof source === 'string' && !hasScheme(source) ? path.resolve(base, source) : source))
-  // A source without text in the map is read from the packed copy, as source-map-loader does.
+  // A source without text in the map is read from the packed copy, as source-map-loader does; one whose real path lies outside the packed copy gets no text, so no other local file reaches the served map.
   const sourcesContent = sources.map((source, index) => {
     const given = Array.isArray(map.sourcesContent) ? map.sourcesContent[index] : undefined
     if (typeof given === 'string') return given
-    try { return fs.readFileSync(source, 'utf8') } catch { return null }
+    if (typeof source !== 'string') return null
+    const real = realOf(source)
+    if (!isInside(CONFIG.packedRoot, real)) return null
+    try { return fs.readFileSync(real, 'utf8') } catch { return null }
   })
   return { mapPath, map: { ...map, sources, sourcesContent } }
 }

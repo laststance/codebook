@@ -9,6 +9,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -954,4 +955,40 @@ Promise.all([runLoader(${JSON.stringify(builtPath)}), runLoader(${JSON.stringify
     },
     outside: { map: 'input-map', dependencies: [] },
   })
+})
+
+// Value: protects=a packed map that names a source outside the packed copy, without its text, gets no text for it, so no other local file reaches the served map, while a source inside the packed copy is still read; fails_when=the loader reads any path a packed map names (a file elsewhere on disk, or a link inside the packed copy that points out of it); no_claim=what webpack later does with a null source text
+test('the packed-map loader reads missing source text only from inside the packed copy', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const outsideFile = join(fixture.root, 'outside-secret.txt')
+  writeAt(outsideFile, 'not for the served map\n')
+  writeAt(
+    join(fixture.packedRoot, 'lib-src/inside.ts'),
+    'export const inside = 1\n',
+  )
+  symlinkSync(outsideFile, join(fixture.packedRoot, 'lib-src/linked.ts'))
+  const builtPath = join(fixture.packedRoot, 'dist/mixed.js')
+  writeAt(builtPath, 'exports.c = 3\n//# sourceMappingURL=mixed.js.map\n')
+  writeAt(
+    join(fixture.packedRoot, 'dist/mixed.js.map'),
+    JSON.stringify({
+      version: 3,
+      sources: ['../lib-src/inside.ts', outsideFile, '../lib-src/linked.ts'],
+      names: [],
+      mappings: 'AAAA',
+    }),
+  )
+
+  // Act
+  const result = await runScriptWithPreload(
+    fixture,
+    'loaderOutside.js',
+    `const loader = require(${JSON.stringify(fixture.preloadPath)})
+const fs = require('fs')
+loader.call({ resourcePath: ${JSON.stringify(builtPath)}, addDependency: () => {}, async: () => (error, source, map) => console.log(JSON.stringify(map.sourcesContent)) }, fs.readFileSync(${JSON.stringify(builtPath)}, 'utf8'), undefined)`,
+  )
+
+  // Assert
+  assert.deepEqual(result, ['export const inside = 1\n', null, null])
 })
