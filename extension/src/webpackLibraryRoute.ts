@@ -227,7 +227,8 @@ export class WebpackLibraryRoute implements LibraryRunRoute {
       reader,
       this.core.displayName(),
       this.packed !== undefined &&
-        reader.hasResourceInside(this.packed.packedRoot),
+        (reader.hasResourceInside(this.packed.packedRoot) ||
+          reader.packedFlagged()),
     )
   }
 

@@ -463,6 +463,37 @@ test('refuses library-redirect-not-applied for the report of the webpack 4 run, 
   )
 })
 
+// Value: protects=a compilation line cut at the line bound that carries the packed flag counts as an applied redirect; fails_when=readiness needs the resource list the cut dropped, so a working redirect is refused; no_claim=that the page runs the packed copy (the script match judges that)
+test('accepts a truncated compilation line that carries the packed flag', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(
+    run.reportPath,
+    '{"wrapped":true}\n{"compilationHash":"c1","packed":true,"publicPath":"/","truncated":true}\n',
+  )
+  // Act and Assert
+  assert.doesNotThrow(() => run.route.assertRedirectApplied())
+})
+
+// Value: protects=a truncated compilation line without the packed flag is refused as unconfirmed, with a message saying the report was incomplete; fails_when=the refusal calls it a plain failure or a truncated line is accepted; no_claim=that the redirect failed
+test('refuses a truncated compilation line without the packed flag as an unconfirmed redirect', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(
+    run.reportPath,
+    '{"wrapped":true}\n{"compilationHash":"c1","publicPath":"/","truncated":true}\n',
+  )
+  // Act
+  const refusal = refusalOf(() => run.route.assertRedirectApplied())
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.details?.reason, 'library-redirect-not-applied')
+  assert.equal(
+    refusal.details?.cause,
+    'the compilation report was incomplete, so the redirect could not be confirmed',
+  )
+})
+
 // Value: protects=readiness waits for the compilation line the preload writes at emit instead of reading too early; fails_when=awaitRedirectApplied reads once and refuses a line that arrives within the bound; no_claim=the length of the default bound
 test('waits for a compilation line that arrives after the wrapped line within the bound', async (context) => {
   // Arrange

@@ -32,14 +32,16 @@ const describeCompilation = (compilation) => {
       assets.push({ name, sha256: crypto.createHash('sha256').update(bytesOfAsset(compilation, name)).digest('hex'), resources })
     }
   }
-  return { compilationHash: String(compilation.hash), publicPath: publicPathOf(compilation), assets }
+  // Written before the assets so it survives a line cut at the bound.
+  const packed = assets.some((asset) => asset.resources.some((file) => isInside(CONFIG.packedRoot, file)))
+  return { compilationHash: String(compilation.hash), ...(packed ? { packed: true } : {}), publicPath: publicPathOf(compilation), assets }
 }
 const reportCompilation = (compilation) => {
   try {
     const line = describeCompilation(compilation)
     const text = JSON.stringify(line)
     if (Buffer.byteLength(text) + 1 > CONFIG.lineLimitBytes) {
-      writeLine({ compilationHash: line.compilationHash, publicPath: line.publicPath, truncated: true })
+      writeLine({ compilationHash: line.compilationHash, ...(line.packed ? { packed: true } : {}), publicPath: line.publicPath, truncated: true })
     } else writeLine(line)
   } catch (error) { writeLine({ reportError: String(error && error.message || error) }) }
 }

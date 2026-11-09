@@ -754,6 +754,7 @@ console.log('{}')`,
     { wrapped: true },
     {
       compilationHash: 'h4',
+      packed: true,
       publicPath: '/',
       assets: [
         {
@@ -763,5 +764,38 @@ console.log('{}')`,
         },
       ],
     },
+  ])
+})
+
+// Value: protects=a compilation line cut at the line bound still tells the reader a compiled module lies in the packed folder; fails_when=the truncated line drops the packed flag or the flag is computed after the cut; no_claim=that the redirect serves the packed copy to the page
+test('a compilation line cut at the line bound keeps the packed flag', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const packedFile = join(fixture.packedRoot, 'index.js')
+  const hugeFile = join(
+    fixture.packedRoot,
+    'a'.repeat(REACT_SCRIPTS_LIBRARY_REPORT_LINE_LIMIT_BYTES),
+  )
+
+  // Act
+  await runScriptWithPreload(
+    fixture,
+    'compilationHuge.js',
+    `const config = require(${JSON.stringify(fixture.factoryPath)})('development')
+const reporter = config.plugins[config.plugins.length - 1]
+const compilation = {
+  hash: 'hh',
+  outputOptions: { publicPath: '/' },
+  chunks: [{ files: ['bundle.js'], modulesIterable: [{ resource: ${JSON.stringify(packedFile)} }, { resource: ${JSON.stringify(hugeFile)} }] }],
+  assets: { 'bundle.js': { source: () => 'console.log(1)' } },
+}
+reporter.apply({ hooks: { emit: { tap: (name, callback) => callback(compilation) } } })
+console.log('{}')`,
+  )
+
+  // Assert
+  assert.deepEqual(readReportLines(fixture.reportPath), [
+    { wrapped: true },
+    { compilationHash: 'hh', packed: true, publicPath: '/', truncated: true },
   ])
 })

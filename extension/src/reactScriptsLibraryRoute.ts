@@ -22,6 +22,11 @@ const REACT_SCRIPTS_FLAVOR: WebpackLibraryFlavor = {
     if (cause !== undefined)
       throw reactScriptsLibraryRedirectNotAppliedRefusal(cause)
     if (!reader.wrapped) throw reactScriptsLibraryRedirectNotAppliedRefusal()
+    // A compilation line cut at the line bound lost its resource list: the redirect is unconfirmed, not failed.
+    if (!hasPackedModule && reader.truncatedCompilations > 0)
+      throw reactScriptsLibraryRedirectNotAppliedRefusal(
+        'the compilation report was incomplete, so the redirect could not be confirmed',
+      )
     if (!hasPackedModule)
       throw reactScriptsLibraryRedirectNotAppliedRefusal(
         'the compilation names no module of the packed library',
