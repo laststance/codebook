@@ -26,6 +26,8 @@ export type StaticPageHtml = Readonly<{
   linkHrefs: readonly string[]
   /** The specifier keys of the page's import maps (`imports` and every `scopes` entry); a malformed map adds none. */
   importMapKeys: readonly string[]
+  /** The string addresses the page's import maps map to (`imports` and every `scopes` entry), as written; a malformed map adds none. */
+  importMapTargets: readonly string[]
 }>
 
 /** The `type` values of a script element that holds JavaScript a browser runs. */
@@ -64,35 +66,45 @@ function judgedLinkHref(element: PageElement): string | undefined {
   return isJudgedLink(element) ? attributeOf(element, 'href') : undefined
 }
 
+/** The specifier keys and target addresses of one import map script. */
+type ImportMapEntries = Readonly<{ keys: string[]; targets: string[] }>
+
 /**
- * Reads the specifier keys of an import map script.
+ * Reads the specifier keys and the target addresses of an import map script.
+ * Called by {@link readStaticPageHtml} for each `<script>`.
  * @param element - A `<script>` element.
- * @returns The keys of `imports` and of every `scopes` entry; empty for a malformed map or a script that is no import map.
- * @example importMapKeysOf(element) // => ['lib', 'lib/']
+ * @returns The keys of `imports` and of every `scopes` entry with their string values; empty for a malformed map or a script that is no import map.
+ * @example importMapEntriesOf(element) // => { keys: ['lib'], targets: ['https://unpkg.com/lib@1/a.js'] }
  */
-function importMapKeysOf(element: PageElement): string[] {
+function importMapEntriesOf(element: PageElement): ImportMapEntries {
+  const none: ImportMapEntries = { keys: [], targets: [] }
   if ((attributeOf(element, 'type') ?? '').trim().toLowerCase() !== 'importmap')
-    return []
+    return none
   const text = element.childNodes.find((child) => child.nodeName === '#text')
-  if (text === undefined || !('value' in text)) return []
+  if (text === undefined || !('value' in text)) return none
   let parsed: unknown
   try {
     parsed = JSON.parse(text.value)
   } catch {
-    return []
+    return none
   }
-  const keysOf = (value: unknown): string[] =>
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? Object.keys(value)
-      : []
-  if (typeof parsed !== 'object' || parsed === null) return []
-  const imports = 'imports' in parsed ? parsed.imports : undefined
-  const scopes = 'scopes' in parsed ? parsed.scopes : undefined
-  const scopeValues =
-    typeof scopes === 'object' && scopes !== null && !Array.isArray(scopes)
-      ? Object.values(scopes)
-      : []
-  return [...keysOf(imports), ...scopeValues.flatMap(keysOf)]
+  if (!isRecord(parsed)) return none
+  // The top-level `imports` map and each `scopes` entry are specifier maps.
+  const maps = [
+    parsed.imports,
+    ...(isRecord(parsed.scopes) ? Object.values(parsed.scopes) : []),
+  ].filter(isRecord)
+  return {
+    keys: maps.flatMap((map) => Object.keys(map)),
+    // A target that is not a string (null blocks a specifier) names no address.
+    targets: maps.flatMap((map) =>
+      Object.values(map).filter(
+        (value): value is string => typeof value === 'string',
+      ),
+    ),
+  }
 }
 
 /** A node of the parsed page. */
@@ -155,7 +167,7 @@ function childrenOf(node: PageNode): PageNode[] {
  *
  * Why it exists: readiness (does the page need a bundler) and the page-script seal (which lines are JavaScript) both need the same reading, with the position of each inline script's text. Called by {@link readStaticPageReadiness} and {@link sealStaticPageScript}.
  * @param html - The page text.
- * @returns The inline scripts with their positions, the external script sources, the judged link hrefs and the import map keys, in document order.
+ * @returns The inline scripts with their positions, the external script sources, the judged link hrefs, the import map keys and the import map targets, in document order.
  * @example
  * readStaticPageHtml('<script type="module">\nlet a\n</script>').inlineScripts[0]?.startLine // => 0
  */
@@ -164,13 +176,16 @@ export function readStaticPageHtml(html: string): StaticPageHtml {
   const scriptSources: string[] = []
   const linkHrefs: string[] = []
   const importMapKeys: string[] = []
+  const importMapTargets: string[] = []
   const visit = (node: PageNode): void => {
     if ('tagName' in node && node.tagName === 'script') {
       const source = attributeOf(node, 'src')
       const inline = source === undefined ? inlineScriptOf(node) : undefined
       if (source !== undefined) scriptSources.push(source)
       if (inline) inlineScripts.push(inline)
-      importMapKeys.push(...importMapKeysOf(node))
+      const importMap = importMapEntriesOf(node)
+      importMapKeys.push(...importMap.keys)
+      importMapTargets.push(...importMap.targets)
     }
     if ('tagName' in node && node.tagName === 'link') {
       const href = judgedLinkHref(node)
@@ -179,5 +194,11 @@ export function readStaticPageHtml(html: string): StaticPageHtml {
     for (const child of childrenOf(node)) visit(child)
   }
   visit(parse(html, { sourceCodeLocationInfo: true }))
-  return { inlineScripts, scriptSources, linkHrefs, importMapKeys }
+  return {
+    inlineScripts,
+    scriptSources,
+    linkHrefs,
+    importMapKeys,
+    importMapTargets,
+  }
 }

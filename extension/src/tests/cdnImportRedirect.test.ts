@@ -433,3 +433,25 @@ test('a map source that differs from the checked-out file keeps the packed path'
     true,
   )
 })
+
+// Value: protects=a library stop is sealed when the page reaches the library only through an import map target (its module script says import 'lib'); fails_when=the CDN address is read from scripts only and the stop is refused library-not-in-build; why_new=Cycle 0105 hosted review (import map targets); seam=sealStaticPageLibraryStop with findCdnPackageImports; no_claim=that js-debug binds the stop
+test('a stop in the library is sealed when the page imports it only through an import map', async (context) => {
+  // Arrange
+  const library = await createPackedLibrary(context)
+  const { request } = libraryStopRequest(library)
+  const html = [
+    '<script type="importmap">{"imports":{"lib":"https://unpkg.com/lib@latest/dist/lib.mjs"}}</script>',
+    '<script type="module">import { a } from "lib"</script>',
+  ].join('\n')
+  // Act
+  const { bundle } = await sealStaticPageLibraryStop(request, {
+    packageName: 'lib',
+    examplePackageRoot: 'examples/page',
+    packedRoot: library.packedRoot,
+    files: library.files,
+    imports: findCdnPackageImports(html, 'lib'),
+  })
+  // Assert
+  assert.equal(bundle.scriptUrl, 'https://unpkg.com/lib@latest/dist/lib.mjs')
+  assert.equal(bundle.sourcePath, join(library.libraryRoot, 'src', 'a.ts'))
+})

@@ -308,6 +308,44 @@ test('the published-copy note names the CDN address found in a same-origin scrip
   )
 })
 
+// Value: protects=the published-copy note names a CDN address that only the page's import map holds (in imports or a scopes entry); fails_when=import map targets are not scanned and the chat is not told the page loaded a published copy; why_new=Cycle 0105 hosted review (import map targets); seam=noteCdnImports with a served page; no_claim=the wording of the note
+test('the published-copy note names the CDN address found only in the import map', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html')
+    response.end(
+      '<script type="importmap">{"imports":{"lib":"./local.js"},"scopes":{"/a/":{"lib":"https://unpkg.com/lib@1/dist/scoped.js"}}}</script><script type="module">import "lib"</script>',
+    )
+  })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  context.after(() => server.close())
+  const { port } = server.address() as AddressInfo
+  const recorded: Array<{ type: string; detail: unknown }> = []
+  const run = await bareRun(
+    {
+      staticPageLibraryFolder: () => undefined,
+      staticPagePackage: await repository.resolvePage(),
+      definition: { configuration: { entryPath: '/' } },
+      abort: new AbortController(),
+      evidence: {
+        record: (type: string, detail: unknown) =>
+          recorded.push({ type, detail }),
+      },
+    },
+    { fetch },
+  )
+  // Act
+  await run.noteCdnImports!(`http://127.0.0.1:${port}`)
+  // Assert
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(recorded)).map(
+      (entry: { detail: { url: string } }) => entry.detail.url,
+    ),
+    ['https://unpkg.com/lib@1/dist/scoped.js'],
+  )
+})
+
 // Value: protects=the published-copy note never holds more than the page limit of a served answer; fails_when=an oversized served page is read whole and still yields a note; no_claim=the limit value
 test('an oversized served page gives no published-copy note', async (context) => {
   // Arrange

@@ -8,7 +8,7 @@ export type CdnPackageImport = Readonly<{ url: string; path: string }>
 const CDN_ADDRESS = /https:\/\/(?:unpkg\.com|cdn\.jsdelivr\.net)\/[^\s'"`)<>]+/g
 
 /**
- * Lists every CDN address a page names, in document order: its `<script src>` values and the unpkg and jsDelivr addresses inside its inline scripts.
+ * Lists every CDN address a page names, in document order: its `<script src>` values, its import map targets and the unpkg and jsDelivr addresses inside its inline scripts.
  * Called by {@link findCdnPackageImports} and by the run, which tells the learner that a page without `library` loads a published copy.
  * @param html - The entry page's text.
  * @param scriptTexts - The texts of the same-origin script files the page loads (one level), scanned after the page.
@@ -24,6 +24,10 @@ export function findCdnAddresses(
   const addresses = [
     ...page.scriptSources.filter((source) =>
       new RegExp(CDN_ADDRESS.source).test(source),
+    ),
+    // An import map may point a bare specifier straight at the CDN copy.
+    ...page.importMapTargets.filter((target) =>
+      new RegExp(CDN_ADDRESS.source).test(target),
     ),
     ...page.inlineScripts.flatMap((script) =>
       [...script.text.matchAll(CDN_ADDRESS)].map((match) => match[0]),

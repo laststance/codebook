@@ -154,7 +154,7 @@ test('reads inline script positions, external sources, judged links and import m
     '<link rel="stylesheet" href="style.css">',
     '<link rel="icon" href="favicon.ico">',
     '<link rel="preload" as="script" href="pre.js">',
-    '<script type="importmap">{"imports":{"lib":"./lib.js"},"scopes":{"/a/":{"lib/":"./b/"}}}</script>',
+    '<script type="importmap">{"imports":{"lib":"./lib.js"},"scopes":{"/a/":{"lib/":"./b/","cdn":"https://unpkg.com/x@1/a.js"}}}</script>',
     '<script type="importmap">{not json</script>',
     '<script type="application/json">{"a":1}</script>',
     '<script src="app.js"></script>',
@@ -169,7 +169,12 @@ test('reads inline script positions, external sources, judged links and import m
   // Assert
   assert.deepEqual(page.scriptSources, ['app.js'])
   assert.deepEqual(page.linkHrefs, ['style.css', 'pre.js'])
-  assert.deepEqual(page.importMapKeys, ['lib', 'lib/'])
+  assert.deepEqual(page.importMapKeys, ['lib', 'lib/', 'cdn'])
+  assert.deepEqual(page.importMapTargets, [
+    './lib.js',
+    './b/',
+    'https://unpkg.com/x@1/a.js',
+  ])
   assert.equal(page.inlineScripts.length, 1)
   assert.equal(page.inlineScripts[0]?.isModule, true)
   assert.equal(page.inlineScripts[0]?.startLine, 8)
