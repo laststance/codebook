@@ -60,6 +60,32 @@ test('a CDN import of the library written in a same-origin script file is found'
   assert.deepEqual(findCdnPackageImports(html, 'lib'), [])
 })
 
+// Value: protects=a same-origin app.js that imports the library from a CDN is still read when many remote script references precede it; fails_when=the script read budget is spent on remote references before they are filtered out; why_new=Cycle 0105 hosted review (budget counted remote scripts); seam=none; no_claim=more same-origin scripts than the budget
+test('a same-origin script after many remote script references is still read', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  await writeFile(
+    join(repository.pageFolder, 'app.js'),
+    'import { double } from "https://unpkg.com/lib@latest/dist/lib.mjs"\n',
+  )
+  const remoteScripts = Array.from(
+    { length: 16 },
+    (_, index) =>
+      `<script src="https://cdn.example.test/s${index}.js"></script>`,
+  ).join('')
+  const html = `${remoteScripts}<script src="app.js"></script>`
+  // Act
+  const texts = await readStaticPageScriptTexts(
+    repository.pageFolder,
+    'index.html',
+    html,
+  )
+  // Assert
+  assert.deepEqual(texts, [
+    'import { double } from "https://unpkg.com/lib@latest/dist/lib.mjs"\n',
+  ])
+})
+
 /** Writes a two-file packed build: `dist/lib.mjs` imports `./chunk.mjs`, whose map names `src/b.ts`; the checked-out library holds the same `src/b.ts`. */
 async function twoFileLibrary(
   context: Parameters<typeof createPackedLibrary>[0],
