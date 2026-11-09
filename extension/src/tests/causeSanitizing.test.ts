@@ -141,6 +141,13 @@ test('codebook_status words the missing sentences of each repository adapter wit
                 `EACCES: permission denied, open '${harness.directory}/app.json'`,
               ],
             },
+            'static-page': {
+              ready: false,
+              missing: [
+                `EACCES: permission denied, open '${harness.directory}/index.html'`,
+              ],
+              entry: 'index.html',
+            },
           },
         },
       },
@@ -162,12 +169,14 @@ test('codebook_status words the missing sentences of each repository adapter wit
         adapters?.['vite-dev'].missing,
         adapters?.['react-scripts-dev'].missing,
         adapters?.['expo-web-dev'].missing,
+        adapters?.['static-page'].missing,
       ],
       [
         ['Next is not installed.'],
         ["EACCES: permission denied, open '<storage>/vite.config.ts'"],
         ["EACCES: permission denied, open '<storage>/package.json'"],
         ["EACCES: permission denied, open '<storage>/app.json'"],
+        ["EACCES: permission denied, open '<storage>/index.html'"],
       ],
     )
   } finally {

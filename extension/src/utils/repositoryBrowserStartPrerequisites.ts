@@ -7,6 +7,7 @@ import { managedRunStateOf } from './managedRunStateMessages'
 import { resolveExpoWebPackage } from './resolveExpoWebPackage'
 import { resolveNextPackage } from './resolveNextPackage'
 import { resolveReactScriptsPackage } from './resolveReactScriptsPackage'
+import { resolveStaticPagePackage } from './resolveStaticPagePackage'
 import { resolveVitePackage } from './resolveVitePackage'
 import {
   suggestNextPackageRoots,
@@ -169,7 +170,8 @@ export async function selectedVitePackageStartPrerequisites(
     !('adapter' in configuration) ||
     (configuration.adapter !== 'vite-dev' &&
       configuration.adapter !== 'react-scripts-dev' &&
-      configuration.adapter !== 'expo-web-dev') ||
+      configuration.adapter !== 'expo-web-dev' &&
+      configuration.adapter !== 'static-page') ||
     !('packageRoot' in configuration) ||
     typeof configuration.packageRoot !== 'string' ||
     configuration.packageRoot === '.'
@@ -180,6 +182,8 @@ export async function selectedVitePackageStartPrerequisites(
     await resolveReactScriptsPackage(workspace, configuration.packageRoot)
   else if (configuration.adapter === 'expo-web-dev')
     await resolveExpoWebPackage(workspace, configuration.packageRoot)
+  else if (configuration.adapter === 'static-page')
+    await resolveStaticPagePackage(workspace, configuration.packageRoot)
   else
     await resolveVitePackage(workspace, configuration.packageRoot, {
       // A refusal names up to five discovered apps.

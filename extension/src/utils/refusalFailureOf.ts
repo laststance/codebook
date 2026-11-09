@@ -35,6 +35,11 @@ import {
   type ReactScriptsSetupDeadlineFailureDetails,
 } from '../reactScriptsRefusals'
 import {
+  STATIC_PAGE_LIBRARY_PATH_ABSENT_VARIANT,
+  STATIC_PAGE_REFUSAL_CODES,
+  staticPageLibraryPathAbsentRefusal,
+} from '../staticPageRefusals'
+import {
   VITE_LIBRARY_BUILD_CHANGED_VARIANT,
   VITE_LIBRARY_LAZY_IMPORT_VARIANT,
   type ViteLibraryStopIdentity,
@@ -50,6 +55,8 @@ const CODED_FAILURE_CODES = [
   ...REACT_SCRIPTS_REFUSAL_CODES,
   // The expo-web-dev refusals a timer raises (a setup deadline) reach the service as text too.
   ...EXPO_WEB_REFUSAL_CODES,
+  // The static-page refusals an event raises (a library path the packed build lacks) reach the service as text too.
+  ...STATIC_PAGE_REFUSAL_CODES,
   'SOURCE_CHANGED',
   // The failures of one operation of a version 3 run, raised by timers and events after the action's receipt.
   'OPTION_NOT_AVAILABLE',
@@ -96,6 +103,16 @@ export type RefusalFailure = {
     | ExpoWebSetupDeadlineFailureDetails
     | ApiServerExitedFailureDetails
     | ApiSealFailureDetails
+    | StaticPageLibraryPathAbsentDetails
+}
+
+/** The fields a static-page library path failure text restores: the reason, the requested path, the library, the page's package root and the side effects. */
+type StaticPageLibraryPathAbsentDetails = {
+  reason: 'library-path-absent'
+  path: string
+  library: string
+  packageRoot: string
+  sideEffects: 'partial'
 }
 
 /** The fields an API exit failure text restores: the participant and the side effects (the API was started and stopped); the exit code, signal and output tail live in the message. */
@@ -179,6 +196,9 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
     }
   if (code === 'SIGN_IN_REQUIRED')
     return signInRequiredFailure(message, variant)
+  // A page request for a path the packed library lacks carries the path, library and page as its variant.
+  if (code === 'REPOSITORY_BROWSER_LIBRARY_REFUSED')
+    return staticPageLibraryPathAbsentFailure(message, variant)
   // A Pages entry redirect carries the Pages fields as its variant; any other variant restores the code alone.
   if (code === 'NEXT_ENTRY_REDIRECTED')
     return variant === NEXT_PAGES_FAILURE_VARIANT
@@ -205,6 +225,45 @@ export function refusalFailureOf(text: string): RefusalFailure | undefined {
   return recoveryOverride === undefined
     ? { code, message }
     : { code, message, recoveryOverride }
+}
+
+/**
+ * Restores a static-page library path refusal: the refusal's own recovery and details, read from the identity its variant carries.
+ * Called by {@link refusalFailureOf}.
+ * @param message - The text after the lead.
+ * @param variant - The lead's variant, `library-path-absent:<identity>` when known.
+ * @returns The refusal with its details; the code and message alone for an unknown variant.
+ * @example staticPageLibraryPathAbsentFailure('The page asked for …', undefined) // => { code: 'REPOSITORY_BROWSER_LIBRARY_REFUSED', message: 'The page asked for …' }
+ */
+function staticPageLibraryPathAbsentFailure(
+  message: string,
+  variant: string | undefined,
+): RefusalFailure {
+  const code = 'REPOSITORY_BROWSER_LIBRARY_REFUSED'
+  const identity = decodeViteLibraryVariant(
+    variant,
+    STATIC_PAGE_LIBRARY_PATH_ABSENT_VARIANT,
+  )
+  if (identity === undefined) return { code, message }
+  const refusal = staticPageLibraryPathAbsentRefusal({
+    path: identity.file,
+    library: identity.library,
+    packageRoot: identity.packageRoot,
+  })
+  return {
+    code,
+    message,
+    ...(refusal.recoveryOverride === undefined
+      ? {}
+      : { recoveryOverride: refusal.recoveryOverride }),
+    libraryDetails: {
+      reason: 'library-path-absent',
+      path: identity.file,
+      library: identity.library,
+      packageRoot: identity.packageRoot,
+      sideEffects: 'partial',
+    },
+  }
 }
 
 /**

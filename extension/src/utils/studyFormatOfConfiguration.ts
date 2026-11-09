@@ -13,6 +13,7 @@ import {
   REACT_SCRIPTS_STUDY_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
   REVERSE_PROXY_STUDY_VERSION,
+  STATIC_PAGE_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
   SERVER_RENDER_STUDY_VERSION,
   VITE_API_SERVER_STUDY_VERSION,
@@ -140,6 +141,8 @@ function studyFormatWithoutPress(
 ): ConfiguredStudy['version'] {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
     return RECORDED_LOCATION_STUDY_VERSION
+  // Every static-page run takes format 23, root or nested, with or without `library`: an older Codebook refuses the adapter value, so it must list the study as saved by a newer Codebook.
+  if (configuration.adapter === 'static-page') return STATIC_PAGE_STUDY_VERSION
   // A next-dev-webpack run that declares `library` takes format 18: an older Codebook refuses the key, so it must list the study as saved by a newer Codebook (an explicit `library: undefined` declares nothing). Format 18 never moves to 12 to 14: it holds those fields itself.
   if (
     configuration.adapter === 'next-dev-webpack' &&
@@ -207,6 +210,12 @@ function keyOnlyFormatOf(
 export function studyFormatOfConfiguration(
   configuration: ConfiguredStudy['configuration'],
 ): ConfiguredStudy['version'] {
+  // A static-page run is format 23 whatever else it declares (a press included): no older Codebook reads the adapter, and format 23 keeps every fact of the run.
+  if (
+    configuration.version === OPERATIONS_CONFIG_VERSION &&
+    configuration.adapter === 'static-page'
+  )
+    return STATIC_PAGE_STUDY_VERSION
   // A press or a reverse proxy makes an older Codebook list the study as saved by a newer one; the facts of the underlying run stay those of studyFormatWithoutPress.
   return (
     keyOnlyFormatOf(configuration) ?? studyFormatWithoutPress(configuration)
@@ -368,7 +377,9 @@ export function evidenceFormatOfStudy(study: StudyFormatSubject): number {
       // Format 18 (`next-dev-webpack` with `library`) follows the format 7 or 8 rules derived from its configuration, like format 9.
       version !== NEXT_LIBRARY_STUDY_VERSION &&
       // Format 15 (`expo-web-dev`) follows the format 7 rules derived from its configuration, like format 11.
-      version !== EXPO_WEB_STUDY_VERSION) ||
+      version !== EXPO_WEB_STUDY_VERSION &&
+      // Format 23 (`static-page`) follows the format 7 rules derived from its configuration, like format 11.
+      version !== STATIC_PAGE_STUDY_VERSION) ||
     study.configuration.version !== OPERATIONS_CONFIG_VERSION
   )
     return version
@@ -387,7 +398,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 22), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 23), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
@@ -395,8 +406,7 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
  */
 export function isOperationsStudyFormat(version: number): boolean {
   return (
-    version >= OPERATIONS_STUDY_VERSION &&
-    version <= REVERSE_PROXY_STUDY_VERSION
+    version >= OPERATIONS_STUDY_VERSION && version <= STATIC_PAGE_STUDY_VERSION
   )
 }
 
@@ -435,12 +445,16 @@ export function isReadableStudyFormatOfConfiguration(
 ): boolean {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
     return version === studyFormatWithoutPress(configuration)
+  // A static-page configuration is readable as format 23 only, and format 23 holds no other configuration.
+  if (configuration.adapter === 'static-page')
+    return version === STATIC_PAGE_STUDY_VERSION
   // A configuration that declares `reverseProxy` is readable as format 22 only and one that declares a press as format 21 only; each format holds only such a configuration.
   const keyOnlyFormat = keyOnlyFormatOf(configuration)
   if (keyOnlyFormat !== undefined) return version === keyOnlyFormat
   if (
     version === PRESS_STUDY_VERSION ||
-    version === REVERSE_PROXY_STUDY_VERSION
+    version === REVERSE_PROXY_STUDY_VERSION ||
+    version === STATIC_PAGE_STUDY_VERSION
   )
     return false
   if (version === studyFormatWithoutPress(configuration)) return true

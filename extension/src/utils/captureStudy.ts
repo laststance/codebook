@@ -2,9 +2,6 @@ import { configuredObservationSchema } from '../configuredStudySchemas'
 import {
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_BROWSER_PROFILE,
-  NEXT_LIBRARY_STUDY_VERSION,
-  REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
-  VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { EvidenceIntegrityError, StudyError } from '../errors'
 import type { LibraryRunFacts } from '../libraryRunFactsSchema'
@@ -25,6 +22,7 @@ import {
   studyRulesVersionOf,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
+import { studyHoldsLibraryFacts } from './studyHoldsLibraryFacts'
 
 /**
  * The facts of a declared library that no run ever prepared: `package` holds the declared folder until a name is known.
@@ -266,9 +264,7 @@ export async function captureStudy(
             : {}),
           // A Vite, react-scripts or Next library study (format 16, 17 or 18) keeps the library facts as they stand at this checkpoint; no other study carries them.
           // A run that ended before the library route existed (a refusal in package resolution, admission, source preparation or workspace checks) has no facts yet: it saves the pending facts of the declared folder, so the preparation failure stays representable.
-          ...(rulesVersion === VITE_LIBRARY_STUDY_VERSION ||
-          rulesVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
-          rulesVersion === NEXT_LIBRARY_STUDY_VERSION
+          ...(studyHoldsLibraryFacts(rulesVersion, canonicalConfiguration)
             ? {
                 library:
                   (runtime?.profile === REPOSITORY_BROWSER_PROFILE

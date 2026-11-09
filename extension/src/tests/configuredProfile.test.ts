@@ -11,6 +11,7 @@ test('the public repository-browser catalog names the vite-dev adapter and its s
     'vite-dev',
     'react-scripts-dev',
     'expo-web-dev',
+    'static-page',
   ]
   // Act
   const { adapters, scope } = CONFIGURED_PROFILE
@@ -44,12 +45,12 @@ test('the public repository-browser catalog names the Next routers next-dev-webp
   )
 })
 
-// Value: protects=the public scope describes all four adapters, the react-scripts and Expo ones with their API; fails_when=the scope says three runtimes or omits react-scripts-dev or expo-web-dev; no_claim=the adapter readiness
-test('the public repository-browser scope describes four adapters including react-scripts-dev and expo-web-dev', () => {
+// Value: protects=the public scope describes all five adapters, the react-scripts and Expo ones with their API; fails_when=the scope says three runtimes or omits react-scripts-dev or expo-web-dev; no_claim=the adapter readiness
+test('the public repository-browser scope describes five adapters including react-scripts-dev, expo-web-dev and static-page', () => {
   // Arrange
   const { scope } = CONFIGURED_PROFILE
   // Act / Assert
-  assert.match(scope, /^Four development runtimes/)
+  assert.match(scope, /^Five development runtimes/)
   assert.match(scope, /expo-web-dev \(Expo SDK 57, since API 1\.30\)/)
   assert.match(
     scope,

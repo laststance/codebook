@@ -121,6 +121,11 @@ test('a vite-dev start in a Vite app without Next waits on Vite readiness, not o
             installed: false,
             missing: ['not-an-expo-app'],
           },
+          'static-page': {
+            ready: false,
+            missing: ['no-entry-page'],
+            entry: 'index.html',
+          },
         },
       },
     },
@@ -170,6 +175,11 @@ test('a vite-dev start is refused with the Vite gate sentence when Vite itself i
             ready: false,
             installed: false,
             missing: ['not-an-expo-app'],
+          },
+          'static-page': {
+            ready: false,
+            missing: ['no-entry-page'],
+            entry: 'index.html',
           },
         },
       },
@@ -2770,7 +2780,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.41, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.42, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -4858,7 +4868,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.41')
+  assert.equal(status.apiVersion, '1.42')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')

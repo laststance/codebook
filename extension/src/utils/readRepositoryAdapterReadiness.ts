@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { z } from 'zod'
@@ -28,6 +28,11 @@ import {
   type ReactScriptsAppReadiness,
   type ReactScriptsPackageReadiness,
 } from './readReactScriptsPackageReadiness'
+import {
+  readStaticPageReadiness,
+  type StaticPageAppReadiness,
+  type StaticPagePackageReadiness,
+} from './readStaticPageReadiness'
 import {
   readViteWorkspaceGaps,
   type ViteDevScriptReadiness,
@@ -133,12 +138,25 @@ export type ExpoWebAdapterReadiness = ExpoWebAppReadiness & {
   packagesTruncatedReason?: NextPackageTruncationReason
 }
 
+/** The plain-page prerequisite of one workspace: the root page's facts, and in the status answer the pages below the root. */
+export type StaticPageAdapterReadiness = StaticPageAppReadiness & {
+  /** Status only: whether the root is itself a candidate page (an `index.html` and no other adapter's dependency). */
+  rootIsApp?: boolean
+  /** Status only: the plain pages below the root (`examples/*`, `apps/*`), each with the readiness a start with its `packageRoot` decides. Empty below the Git root. */
+  packages?: StaticPagePackageReadiness[]
+  /** Status only: whether `packages` is incomplete. */
+  packagesTruncated?: boolean
+  /** Status only: why `packages` is incomplete. */
+  packagesTruncatedReason?: NextPackageTruncationReason
+}
+
 /** What `codebook_status` reports per repository-browser adapter for the current workspace. */
 export type RepositoryAdapterReadiness = {
   'next-dev-webpack': NextAdapterReadiness
   'vite-dev': ViteAdapterReadiness
   'react-scripts-dev': ReactScriptsAdapterReadiness
   'expo-web-dev': ExpoWebAdapterReadiness
+  'static-page': StaticPageAdapterReadiness
 }
 
 const nextPackageSchema = z.object({ version: z.string() })
@@ -300,7 +318,7 @@ export async function readRepositoryAdapterReadiness(
   node: string | undefined,
   signal: AbortSignal,
 ): Promise<RepositoryAdapterReadiness> {
-  const [next, vite, reactScripts, expoWeb] = await Promise.all([
+  const [next, vite, reactScripts, expoWeb, staticPage] = await Promise.all([
     readNextReadiness(workspace),
     readViteReadiness(workspace, node, signal).catch(
       (error: unknown): ViteAdapterReadiness => ({
@@ -315,12 +333,35 @@ export async function readRepositoryAdapterReadiness(
     ),
     readReactScriptsReadiness(workspace),
     readExpoWebReadiness(workspace),
+    readStaticPageRootReadiness(workspace),
   ])
   return {
     'next-dev-webpack': next,
     'vite-dev': vite,
     'react-scripts-dev': reactScripts,
     'expo-web-dev': expoWeb,
+    'static-page': staticPage,
+  }
+}
+
+/**
+ * Reads the root workspace's `static-page` readiness from the shared judgement ({@link readStaticPageReadiness}).
+ * Called by {@link readRepositoryAdapterReadiness}; a read that throws is a not-ready report, never a rejection.
+ * @param workspace - The workspace root, which is the page folder.
+ * @returns The root page's facts; a root with no `index.html` reports `no-entry-page`.
+ * @example await readStaticPageRootReadiness('/repo') // => { ready: false, missing: ['no-entry-page'], entry: 'index.html' }
+ */
+async function readStaticPageRootReadiness(
+  workspace: string,
+): Promise<StaticPageAdapterReadiness> {
+  try {
+    return await readStaticPageReadiness(await realpath(workspace))
+  } catch {
+    return {
+      ready: false,
+      missing: ['The workspace root could not be checked.'],
+      entry: 'index.html',
+    }
   }
 }
 

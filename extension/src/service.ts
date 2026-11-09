@@ -1106,6 +1106,25 @@ export class StudyService {
                   (sentence) => this.sanitizedCause(sentence),
                 ),
               },
+              // A `needs-bundler` gap quotes a reference the page wrote, so each listed page's gaps pass the same sanitizer.
+              'static-page': {
+                ...prerequisite.adapters['static-page'],
+                missing: prerequisite.adapters['static-page'].missing.map(
+                  (sentence) => this.sanitizedCause(sentence),
+                ),
+                ...(prerequisite.adapters['static-page'].packages
+                  ? {
+                      packages: prerequisite.adapters[
+                        'static-page'
+                      ].packages.map((entry) => ({
+                        ...entry,
+                        missing: entry.missing.map((sentence) =>
+                          this.sanitizedCause(sentence),
+                        ),
+                      })),
+                    }
+                  : {}),
+              },
             },
           }
         : {}),

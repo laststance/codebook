@@ -114,6 +114,7 @@ import type {
   DevelopmentServerStart,
   LibraryStopSealInput,
   ReactScriptsLibraryStopSeal,
+  StaticPageLibraryStopSeal,
 } from './developmentServerAdapter'
 import {
   SAVED_SESSION_INITIAL_STORAGE_RECOVERY,
@@ -235,6 +236,14 @@ import {
   DEFAULT_SOURCE_MAP_LIMITS,
   type SourceMapLimits,
 } from './sourceMapLimits'
+import { STATIC_PAGE_ADAPTER } from './staticPageDevAdapter'
+import { StaticPageLibraryRoute } from './staticPageLibraryRoute'
+import {
+  staticPageLibraryPathAbsentFailureText,
+  staticPageNodeModulesRefusal,
+  staticPageNotReadyRefusal,
+  staticPageOutsidePackageRefusal,
+} from './staticPageRefusals'
 import { afterOperationOf } from './utils/afterOperationOf'
 import { ApiEntryGate } from './utils/apiEntryGate'
 import {
@@ -274,6 +283,7 @@ import {
 } from './utils/canonicalDefinition'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { causeRootsFor } from './utils/causeRootsFor'
+import { CdnImportRedirect } from './utils/cdnImportRedirect'
 import { collectApiEnvFileValues } from './utils/collectApiEnvFileValues'
 import {
   completeBindingPlace,
@@ -320,6 +330,7 @@ import { detectPackedLibraryStop } from './utils/detectPackedLibraryStop'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { entryRoutePatternOf } from './utils/entryRoutePatternOf'
 import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
+import { findCdnAddresses } from './utils/findCdnPackageImports'
 import { findNextRouteFolder } from './utils/findNextRouteFolder'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { formatRefusalFailure } from './utils/formatRefusalFailure'
@@ -428,6 +439,7 @@ import { readPagesApiRequest } from './utils/readPagesApiRequest'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
+import { staticPageEntryFile } from './utils/readStaticPageReadiness'
 import { readSystemCertificates } from './utils/readSystemCertificates'
 import {
   readWithinVerdictBudget,
@@ -453,6 +465,7 @@ import {
   type NextPagesEntry,
 } from './utils/resolveNextPagesEntry'
 import { resolveReactScriptsPackage } from './utils/resolveReactScriptsPackage'
+import { resolveStaticPagePackage } from './utils/resolveStaticPagePackage'
 import {
   resolveVitePackage,
   rootVitePackage,
@@ -494,6 +507,10 @@ import { sealAppLibraryStop } from './utils/sealAppLibraryStop'
 import { sealLibraryStop, type LibraryStopLayer } from './utils/sealLibraryStop'
 import { sealPagesServerStop } from './utils/sealPagesServerStop'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
+import {
+  createPackedLibraryFiles,
+  type PackedLibraryFiles,
+} from './utils/servePackedLibraryFile'
 import { serverExecutionOfScriptUrl } from './utils/serverExecutionOfScriptUrl'
 import { serverRenderAttributionOf } from './utils/serverRenderAttributionOf'
 import {
@@ -733,6 +750,7 @@ const FIRST_BUNDLE_SETUP_STEPS: Partial<
 > = {
   'react-scripts-dev': VITE_SETUP_STEPS.waitingForFirstCompile,
   'expo-web-dev': VITE_SETUP_STEPS.bundlingExpo,
+  'static-page': VITE_SETUP_STEPS.waitingForServer,
 }
 
 const DEVELOPMENT_SERVER_ADAPTERS: Record<
@@ -743,6 +761,7 @@ const DEVELOPMENT_SERVER_ADAPTERS: Record<
   'vite-dev': VITE_DEV_ADAPTER,
   'react-scripts-dev': REACT_SCRIPTS_DEV_ADAPTER,
   'expo-web-dev': EXPO_WEB_DEV_ADAPTER,
+  'static-page': STATIC_PAGE_ADAPTER,
 }
 
 interface ConfiguredBrowserOptions {
@@ -1277,6 +1296,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private reactScriptsPackage?: ResolvedPackage
   /** The Expo app this run uses, resolved once at the start of preparation (an `expo-web-dev` run only). */
   private expoWebPackage?: ResolvedPackage
+  /** The page folder this run serves, resolved once at the start of preparation (a `static-page` run only). */
+  private staticPagePackage?: ResolvedPackage
+  /** The route, packed files and CDN redirect of a `static-page` run that declares `library`. */
+  private staticPageLibraryRoute?: StaticPageLibraryRoute
+  private staticPagePackedFiles?: PackedLibraryFiles
+  private cdnImportRedirect?: CdnImportRedirect
   /** The frozen library builds of the run's library stops, by `path:line:column`, taken before any process starts. */
   private readonly libraryFreezes = new Map<string, LibraryFreeze>()
   /** The discovery cache of the run's App Router library seals. */
@@ -1755,6 +1780,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (adapter === 'vite-dev') return this.vitePackage
     if (adapter === 'react-scripts-dev') return this.reactScriptsPackage
     if (adapter === 'expo-web-dev') return this.expoWebPackage
+    if (adapter === 'static-page') return this.staticPagePackage
     return undefined
   }
 
@@ -1959,6 +1985,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       case 'expo-web-dev':
         this.expoWebPackage = await this.resolveExpoWebPackageOfRun()
         return
+      case 'static-page':
+        this.staticPagePackage = await this.resolveStaticPagePackageOfRun()
+        return
       case 'next-dev-webpack':
         // Next resolves its own package before this runs.
         return
@@ -1977,7 +2006,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private resolvedPackageFields(): Pick<
     DevelopmentServerStart,
-    'nextPackage' | 'vitePackage' | 'reactScriptsPackage' | 'expoWebPackage'
+    | 'nextPackage'
+    | 'vitePackage'
+    | 'reactScriptsPackage'
+    | 'expoWebPackage'
+    | 'staticPagePackage'
   > {
     return {
       ...(this.nextPackage ? { nextPackage: this.nextPackage } : {}),
@@ -1986,6 +2019,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? { reactScriptsPackage: this.reactScriptsPackage }
         : {}),
       ...(this.expoWebPackage ? { expoWebPackage: this.expoWebPackage } : {}),
+      ...(this.staticPagePackage
+        ? { staticPagePackage: this.staticPagePackage }
+        : {}),
     }
   }
 
@@ -2006,6 +2042,148 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // With `apiServer` a server stop lies in the API's folder, outside the app by design; the schema keeps it inside `apiServer.packageRoot`.
       async (stop) => this.isApiServerStop(stop),
     )
+  }
+
+  /**
+   * Resolves the page folder of a `static-page` run once, then refuses stop files outside it and stops in its node_modules, all before any process starts.
+   * Called at the start of preparation for a `static-page` run; the refusal order is the real path, then stops outside the page, then published packages. Whether the folder holds a servable page is judged next by the adapter's workspace check.
+   * @returns The resolved package; the root package for an absent or `"."` packageRoot.
+   * @throws `INVALID_CONFIGURATION` from {@link resolveStaticPagePackage}; `STATIC_PAGE_SEAL_FAILED` (reason `outside-package`) for stops outside the page, and (reason `node-modules`) for stops in its node_modules.
+   * @example this.staticPagePackage = await this.resolveStaticPagePackageOfRun()
+   */
+  private resolveStaticPagePackageOfRun(): Promise<ResolvedPackage> {
+    return this.resolveAppPackageOfRun(
+      (workspace, declared) => resolveStaticPagePackage(workspace, declared),
+      {
+        outside: staticPageOutsidePackageRefusal,
+        nodeModules: (files) => staticPageNodeModulesRefusal(files, 'none'),
+      },
+      // A browser stop in the declared library of a library run is sealed against the packed build, not refused as outside the page; a path written inside the page that leaves it through a link is not a library stop.
+      async (stop) =>
+        stop.participant === 'browser' &&
+        !this.isWrittenInsideDeclaredApp(stop.source.path) &&
+        this.isStaticPageLibraryStopPath(stop.source.path),
+    )
+  }
+
+  /**
+   * The declared library folder of a version 3 `static-page` run that declares `library`.
+   * @returns The repository-relative folder (`"."` for the repository root); `undefined` for every other run.
+   * @example this.staticPageLibraryFolder() // => 'packages/lib'
+   */
+  private staticPageLibraryFolder(): string | undefined {
+    const { configuration } = this.definition
+    return configuration.version === OPERATIONS_CONFIG_VERSION &&
+      configuration.adapter === 'static-page'
+      ? configuration.library?.packageRoot
+      : undefined
+  }
+
+  /**
+   * Tells whether a declared stop file lies in the declared library folder of a static-page library run.
+   * Called before the start (a library stop is not refused as outside the page) and when a stop is sealed.
+   * @param repositoryPath - The stop's repository-relative path.
+   * @returns `true` inside the declared library folder; `false` for every other path and every run without a static-page library.
+   * @example this.isStaticPageLibraryStopPath('src/createStore.ts') // => true for library "."
+   */
+  private isStaticPageLibraryStopPath(repositoryPath: string): boolean {
+    const folder = this.staticPageLibraryFolder()
+    if (folder === undefined) return false
+    return isAtOrInsideFolder(
+      join(this.options.workspace, folder),
+      join(this.options.workspace, repositoryPath),
+    )
+  }
+
+  /**
+   * Gives the library seal input of a browser stop that lies in the checked-out library outside the page of a static-page library run.
+   * Called by {@link sealDeclaredStop}: the stop takes the packed-build seal.
+   * @param stop - The declared stop.
+   * @returns `{ staticPageLibraryStop }` for such a stop once the library was prepared; an empty object for every other stop.
+   * @example this.staticPageLibraryStopRequest(stop) // => { staticPageLibraryStop: { packageName: 'lib', … } }
+   */
+  private staticPageLibraryStopRequest(stop: {
+    participant: string
+    source: { path: string }
+  }): { staticPageLibraryStop?: StaticPageLibraryStopSeal } {
+    const packed = this.staticPageLibraryRoute?.packedLibrary()
+    const page = this.staticPagePackage
+    const folder = this.staticPageLibraryFolder()
+    const files = this.staticPagePackedFiles
+    if (
+      !packed ||
+      !page ||
+      !files ||
+      folder === undefined ||
+      stop.participant !== 'browser'
+    )
+      return {}
+    // A stop inside the page keeps the page seal, even when the page lies inside the library folder.
+    if (page.toPackageRelative(stop.source.path) !== undefined) return {}
+    if (!this.isStaticPageLibraryStopPath(stop.source.path)) return {}
+    return {
+      staticPageLibraryStop: {
+        packageName: packed.packageName,
+        libraryRoot: packed.libraryRoot,
+        libraryRootRelative: folder,
+        packedRoot: packed.packedRoot,
+        examplePackageRoot: page.packageRootRelative,
+        files,
+      },
+    }
+  }
+
+  /**
+   * Starts the CDN import redirect on the run's page session when the run declares `library`; does nothing otherwise.
+   * Called by {@link prepareOwned} after the browser opened and before the entry page loads, so the page's first load already asks the packed build.
+   * @param cdp - The page's channel (js-debug's `requestCDPProxy`).
+   * @throws When the page session refuses the subscription or `Fetch.enable`.
+   * @example await this.enableCdnImportRedirect(cdp)
+   */
+  private async enableCdnImportRedirect(cdp: Cdp): Promise<void> {
+    const packed = this.staticPageLibraryRoute?.packedLibrary()
+    const files = this.staticPagePackedFiles
+    const page = this.staticPagePackage
+    if (!packed || !files || !page) return
+    this.cdnImportRedirect = new CdnImportRedirect({
+      cdp,
+      packageName: packed.packageName,
+      files,
+      record: (type, detail) => this.evidence.record(type, detail),
+      onPathAbsent: (path) =>
+        this.fail(
+          staticPageLibraryPathAbsentFailureText({
+            path,
+            library: packed.packageName,
+            packageRoot: page.packageRootRelative,
+          }),
+        ),
+    })
+    await this.cdnImportRedirect.enable()
+  }
+
+  /**
+   * Journals that a static-page run without `library` loads a published copy from a CDN, naming the first address.
+   * Called by {@link prepareOwned} once the entry page is served; the learner reads it in the run's notes.
+   * @example await this.noteCdnImports()
+   */
+  private async noteCdnImports(): Promise<void> {
+    if (this.staticPageLibraryFolder() !== undefined || !this.staticPagePackage)
+      return
+    const entry = staticPageEntryFile(
+      this.definition.configuration.entryPath ?? '/',
+    )
+    if (entry === undefined) return
+    const html = await readFile(
+      join(this.staticPagePackage.packageRoot, entry),
+      'utf8',
+    ).catch(() => undefined)
+    const [first] = html === undefined ? [] : findCdnAddresses(html)
+    if (first !== undefined)
+      this.evidence.record('static-page.published-copy', {
+        note: `The page loaded a published copy from a CDN, not the checked-out library: ${first}`,
+        url: first,
+      })
   }
 
   /**
@@ -2414,7 +2592,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private libraryTarget():
     | {
-        kind: 'next-dev-webpack' | 'react-scripts-dev' | 'vite-dev'
+        kind:
+          'next-dev-webpack' | 'react-scripts-dev' | 'vite-dev' | 'static-page'
         declared: string
         appPackage: ResolvedPackage | undefined
       }
@@ -2425,7 +2604,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (
       adapter !== 'next-dev-webpack' &&
       adapter !== 'react-scripts-dev' &&
-      adapter !== 'vite-dev'
+      adapter !== 'vite-dev' &&
+      adapter !== 'static-page'
     )
       return undefined
     const declared = configuration.library?.packageRoot
@@ -2476,8 +2656,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (target === undefined) return {}
     const { declared, kind, appPackage } = target
     const dependencies = this.options.viteLibrary
-    // A packageRoot that resolves to the repository root is a configuration error, not a missing editor feature.
-    if (appPackage?.isRoot) this.refuseRootLibraryApp(kind)
+    // A packageRoot that resolves to the repository root is a configuration error, not a missing editor feature; a plain page may sit at the root (the route's own checks refuse a library inside it).
+    if (appPackage?.isRoot && kind !== 'static-page')
+      this.refuseRootLibraryApp(kind)
     if (!dependencies || !appPackage)
       throw new StudyError(
         'PREREQUISITE_MISSING',
@@ -2499,6 +2680,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (kind === 'next-dev-webpack') return this.planNextLibrary(input)
     if (kind === 'react-scripts-dev') return this.planReactScriptsLibrary(input)
+    if (kind === 'static-page') return this.planStaticPageLibrary(input)
     const route = new ViteLibraryRoute(input)
     this.libraryRoute = route
     const options = await this.withSetupBudgetPaused(() =>
@@ -2541,6 +2723,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.withSetupBudgetPaused(() => route.plan(this.abort.signal))
     await this.withSetupBudgetPaused(() => route.prepare(this.abort.signal))
     return { reactScriptsLibrary: { preloadPath: route.preloadPath() } }
+  }
+
+  /**
+   * Plans, builds and packs the static-page library route; the packed files are then served in place of the page's CDN imports by {@link enableCdnImportRedirect}.
+   * Called by {@link planLibrary}; neither the confirmation nor the build counts against the setup budget, and no port is involved, so nothing is checked before the learner's confirmation.
+   * @param input - What the route is built from.
+   * @returns An empty object: the static server needs no launcher option.
+   * @throws The route's refusals (`LIBRARY_BUILD_UNSUPPORTED`, `SCRIPT_NOT_CONFIRMED`, `LIBRARY_BUILD_FAILED`).
+   * @example await this.planStaticPageLibrary(input)
+   */
+  private async planStaticPageLibrary(
+    input: ConstructorParameters<typeof StaticPageLibraryRoute>[0],
+  ): Promise<Record<string, never>> {
+    const route = new StaticPageLibraryRoute(input)
+    this.libraryRoute = route
+    this.staticPageLibraryRoute = route
+    const planned = await this.withSetupBudgetPaused(() =>
+      route.plan(this.abort.signal),
+    )
+    await this.withSetupBudgetPaused(() => route.prepare(this.abort.signal))
+    this.staticPagePackedFiles = createPackedLibraryFiles(
+      planned.packedRoot,
+      planned.libraryRoot,
+    )
+    return {}
   }
 
   /**
@@ -2647,6 +2854,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example const failures = await this.finalizeLibrary()
    */
   private async finalizeLibrary(): Promise<string[]> {
+    // The interception ends before the page closes, so no request of the closing page waits for an answer.
+    await this.cdnImportRedirect?.disable()
     const route = this.libraryRoute
     if (!route) return []
     const pageCdp = this.participants.browser.cdp
@@ -3067,6 +3276,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.vitePackage,
       this.reactScriptsPackage,
       this.expoWebPackage,
+      this.staticPagePackage,
+      this.definition.configuration.entryPath ?? '/',
     )
     this.alive()
     // Cycle 0099: the checks of a run that declares `apiServer` come before any process starts.
@@ -3161,6 +3372,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         () => this.app?.assertRunning(),
       )
     }
+    await this.noteCdnImports()
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
@@ -3188,6 +3400,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     cdp.aggregateScreencastTelemetry(() => this.evidence.elapsedMs())
     await this.browser.attachViewport(cdp, this.abort.signal)
     this.viewportAttached = true
+    this.alive()
+    // A static-page run that declares `library` serves the packed build in place of the page's CDN import from the page's first request on.
+    await this.enableCdnImportRedirect(cdp)
     this.alive()
     const storage = this.definition.configuration.initialStorage ?? []
     if (storage.length) {
@@ -7102,6 +7317,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...this.resolvedPackageFields(),
       ...this.viteLibraryRequest(stop, adapter, ownedOrigin, generation),
       ...this.reactScriptsLibraryStopRequest(stop),
+      ...this.staticPageLibraryStopRequest(stop),
       ...(freeze && this.nextPackage
         ? { library: this.librarySealInput(freeze, this.nextPackage) }
         : {}),
@@ -7480,13 +7696,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? reactScriptsSetupDeadlineRefusal(this.setupStep, 'partial')
         : adapter.name === 'expo-web-dev'
           ? expoWebSetupDeadlineRefusal(this.setupStep, 'partial')
-          : viteRefusal(
-              'VITE_SETUP_DEADLINE',
-              viteSetupDeadlineSentence(
-                this.setupStep,
-                this.preparationBudgetMs,
-              ),
-            )
+          : adapter.name === 'static-page'
+            ? staticPageNotReadyRefusal(this.setupStep)
+            : viteRefusal(
+                'VITE_SETUP_DEADLINE',
+                viteSetupDeadlineSentence(
+                  this.setupStep,
+                  this.preparationBudgetMs,
+                ),
+              )
     // No floor: a spent budget is a deadline, not a one-second grace wait.
     if (remainingMs <= 0) throw deadlineRefusal()
     try {

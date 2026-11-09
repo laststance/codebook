@@ -3,10 +3,7 @@ import {
   ENTRY_LOAD_OPERATION_KEY,
   OPERATIONS_CONFIG_VERSION,
   RECORDED_LOCATION_STUDY_VERSION,
-  NEXT_LIBRARY_STUDY_VERSION,
   REPOSITORY_CAPTURED_TYPES,
-  REACT_SCRIPTS_LIBRARY_STUDY_VERSION,
-  VITE_LIBRARY_STUDY_VERSION,
 } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
@@ -27,6 +24,7 @@ import {
   studyRulesVersionOf,
   usesServerRenderEvidence,
 } from './studyFormatOfConfiguration'
+import { studyHoldsLibraryFacts } from './studyHoldsLibraryFacts'
 import { validateOperationRecords } from './validateOperationRecords'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
@@ -48,9 +46,7 @@ export function validateConfiguredStudyEvidence(
   // Format 21 (a press) keeps the library facts exactly when the format of its configuration without the press does.
   const rulesVersion = studyRulesVersionOf(study)
   if (
-    (rulesVersion === VITE_LIBRARY_STUDY_VERSION ||
-      rulesVersion === REACT_SCRIPTS_LIBRARY_STUDY_VERSION ||
-      rulesVersion === NEXT_LIBRARY_STUDY_VERSION) !==
+    studyHoldsLibraryFacts(rulesVersion, configuration) !==
     (study.library !== undefined)
   )
     throw new Error('Configured library facts and study format disagree.')

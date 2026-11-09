@@ -19,6 +19,7 @@ import {
   type DiscoverPackagesOptions,
   type NextPackageDiscovery,
 } from './discoverNextPackages'
+import { discoverStaticPages } from './discoverStaticPages'
 import { manifestDeclaresExpo } from './manifestDeclaresPackage'
 import { manifestNamesNext } from './nextManifest'
 import { manifestDeclaresReactScripts } from './reactScriptsManifest'
@@ -29,6 +30,7 @@ import {
   type NextAdapterReadiness,
   type ReactScriptsAdapterReadiness,
   type RepositoryAdapterReadiness,
+  type StaticPageAdapterReadiness,
   type ViteAdapterReadiness,
 } from './readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
@@ -271,6 +273,14 @@ export async function readStatusAdapterReadiness(
         packages: [],
         packagesTruncated: false,
       },
+      'static-page': {
+        ...base['static-page'],
+        ready: false,
+        missing: [recovery],
+        rootIsApp: false,
+        packages: [],
+        packagesTruncated: false,
+      },
     }
   }
   const next: NextAdapterReadiness = {
@@ -293,11 +303,52 @@ export async function readStatusAdapterReadiness(
     rootIsApp: rootApps.expoWeb,
     ...listedPackagesOf(discovery?.expoWeb),
   }
+  const staticPage: StaticPageAdapterReadiness = {
+    ...base['static-page'],
+    ...(await staticPageListing(workspace, placement.kind === 'root')),
+  }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
     'vite-dev': vite,
     'react-scripts-dev': reactScripts,
     'expo-web-dev': expoWeb,
+    'static-page': staticPage,
+  }
+}
+
+/**
+ * Lists the plain pages of the repository for the `static-page` status report.
+ * Called by {@link readStatusAdapterReadiness}; the listing has its own scan (a plain page has no `package.json` to find), so it needs no Git.
+ * @param workspace - The opened repository's root.
+ * @param isAtGitRoot - Whether the opened folder is the repository root; below it, no adapter lists anything.
+ * @returns `rootIsApp`, `packages`, `packagesTruncated` and, when truncated, `packagesTruncatedReason`.
+ * @example await staticPageListing('/repo', true) // => { rootIsApp: false, packages: [{ packageRoot: 'examples/page', … }], packagesTruncated: false }
+ */
+async function staticPageListing(
+  workspace: string,
+  isAtGitRoot: boolean,
+): Promise<
+  Pick<
+    StaticPageAdapterReadiness,
+    'rootIsApp' | 'packages' | 'packagesTruncated' | 'packagesTruncatedReason'
+  >
+> {
+  if (!isAtGitRoot)
+    return {
+      rootIsApp: false,
+      packages: [],
+      packagesTruncated: true,
+      packagesTruncatedReason: 'git-failed',
+    }
+  try {
+    return await discoverStaticPages(workspace)
+  } catch {
+    return {
+      rootIsApp: false,
+      packages: [],
+      packagesTruncated: true,
+      packagesTruncatedReason: 'git-failed',
+    }
   }
 }
 
