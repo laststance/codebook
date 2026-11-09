@@ -97,6 +97,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Hosted CodeRabbit off from Cycle 0057: `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads PR branch's file); never post `@coderabbitai review`, no `@coderabbitai ignore` in PR bodies. Merge waits for no hosted review or approval; hosted review still appearing → report in PR, findings follow cycle rule like local review's; run local CodeRabbit CLI on PR's final range before merge.
 - Outside review early: `/ship` Step 9 pass 1 also runs Step 11's Codex structured review (`codex review --base main`) on whole diff, findings part of pass 1; plan changing process signalling, process identity or stop/kill path also gets Codex review before implementation. Fix-range pass (pass 2 on) under 300 changed lines dispatches red team and specialists whose area range changes.
 - Step 11 FIXABLE promotion only for findings marked `Blocks: yes` or High and above. FIXABLE Low/Medium with `Blocks: no` follow defect rule (fixed when cheap in same fixing cycle, else named once in PR); never reopen loop after pass 1.
+- Before first push, fix every cheap Low/Medium finding (note included) touching file reads, paths or secrets: hosted review escalates them, and a post-push repair loop costs another exact-HEAD gate and CI run.
 - Targeted reader runs once: on release head after release commit, with classes `gstack-review-plan` prints at that head; not on each pass's tree.
 - Large-diff reader (targeted reader, review subagent): first message gives per-file chunk files and their list; reader answers `COVERED n of m`; collect only at m of m, else redispatch uncovered chunks. Fast `NO FINDINGS` on big diff = partial read.
 - Outside-voice size: before Codex outside voice, measure rendered brief in bytes (`wc -c`).
@@ -355,6 +356,8 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 
 - Native checks part of `/ship`, not own phase: VS Code and Cursor checks cycle owes run as `/ship` Step 9.2.1's required plan checks (QA step), beside smoke probes.
 - Build and evidence: build VSIX with `qa-build.mjs` from clean commit `/ship` reviews, install in each host; build gets no own review. Critical/Major finding of check fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting exit line.
+- After every VSIX install: reload each host window, then confirm loaded build (run's `header.json` `sourceBuild.revision`, installed `dist/build.json` or Output header) before counting a run.
+- Host updated before native check → run live step once on baseline build first; judge candidate against that same-day baseline, never earlier cycles' runs. Failure of unknown origin → scan Space's run journals for its signature's first build and date before blaming candidate.
 - Native candidate frozen once cycle's defects fixed; `/ship` reviews that tree. Fix after freeze reruns only native steps whose path it changed (frozen expectations name them).
 - Candidate or `/ship` review P2/Low/Medium finding on path native check already verified: Skip by default, named once in PR, unless it blocks that check's frozen expectation.
 - Cycle Issue's timeline records, per candidate review, count of P2/Low/Medium findings per natively verified file; two consecutive reviews each ≥ 3 on same file → structural task for that file on later-candidate list (not current cycle).
@@ -483,6 +486,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 - Before TypeScript work read `/Users/ryotamurakami/.claude/rules/ts-rules.md`; for React also `/Users/ryotamurakami/.claude/rules/react-rules.md`.
 - Check for existing utilities, hooks, components, types before adding one. Reusable functions and classes: short purpose, trigger and caller docs with example; workspace symbols as JSDoc links; brief notes on non-obvious branches and loops.
 - DAMP behavior tests, hard-coded expectations, Arrange/Act/Assert, `test`; `toBeVisible` for displayed UI.
+- Test waits poll against a time budget and fail when condition never holds (shared `waitUntil`); no loop bounded by event-loop turns that returns silently.
 - New fixtures: no secret-named field (`key`, `token`, `secret`, `password`, `auth`) with high-entropy literal value; unavoidable saved-format `key` field uses fixed low-entropy product name already allowlisted in `.gstack/pregate.json` (e.g. `entry-load`).
 
 ## Agent skills
