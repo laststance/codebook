@@ -6,7 +6,7 @@ import {
   REACT_SCRIPTS_APP_SELECTION_RULE,
   REACT_SCRIPTS_LIBRARY_MINIMUM_API,
   REACT_SCRIPTS_MINIMUM_API,
-  REACT_SCRIPTS_SUPPORTED_MAJOR,
+  REACT_SCRIPTS_SUPPORTED_MAJORS,
   REPOSITORY_OPERATION_ACTION,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
@@ -192,7 +192,9 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
   REACT_SCRIPTS_UNSUPPORTED: {
     'not-installed':
       "react-scripts is not installed inside the repository for the app folder. Ask the learner to run the app's own install command (details.installCommand); never run it yourself. Nothing started.",
-    'react-scripts-version': `The installed react-scripts is not major ${REACT_SCRIPTS_SUPPORTED_MAJOR} (details.installedVersion, details.requiredMajor); react-scripts 4 is listed by codebook_status but refused. Tell the learner; never change the app's dependencies. Nothing started.`,
+    'react-scripts-version': `The installed react-scripts is not major ${REACT_SCRIPTS_SUPPORTED_MAJORS.join(' or ')} (details.installedVersion, details.supportedMajors); it is listed by codebook_status but refused. Tell the learner; never change the app's dependencies. Nothing started.`,
+    'node-version-unreadable':
+      'The Node that runs react-scripts 4 reported no readable version, and react-scripts 4 needs a different Node option on Node 17 or later than on older Node. Ask the learner to point codebook.nodeExecutable at a working Node; never edit the project. Nothing started.',
     'start-script-not-react-scripts':
       'The start script is not exactly react-scripts start, optionally after NAME=value assignments (details.script describes the structure of the script: command words and assignment names, never values). Tell the learner; never edit the scripts. Nothing started.',
     'prestart-script':
@@ -250,7 +252,7 @@ export function reactScriptsHelp() {
     reactScriptsQuickStart: {
       anchor: packageRootAnchor('react-scripts-quick-start'),
       minimumApi: REACT_SCRIPTS_MINIMUM_API,
-      summary: `For a Create React App app (react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR}) at the repository root or below it: configure adapter "react-scripts-dev" in a version 3 configuration and use the same tools in the same order as for a Vite app. Use it only when profiles[].prerequisites.adapters["react-scripts-dev"].ready is true in codebook_status. Codebook starts the app's own react-scripts on a loopback port, the app is ready after its first compile, and a browser stop in the app's own source pauses in the native debugger. It is never a server participant.`,
+      summary: `For a Create React App app (react-scripts 5) at the repository root or below it: configure adapter "react-scripts-dev" in a version 3 configuration and use the same tools in the same order as for a Vite app. Use it only when profiles[].prerequisites.adapters["react-scripts-dev"].ready is true in codebook_status. Codebook starts the app's own react-scripts on a loopback port, the app is ready after its first compile, and a browser stop in the app's own source pauses in the native debugger. It is never a server participant.`,
       selectionRule: REACT_SCRIPTS_APP_SELECTION_RULE,
       versionCheck: `react-scripts-dev exists only in configuration version 3 and only when codebook_status reports API ${REACT_SCRIPTS_MINIMUM_API} or later (compare the number after the dot as a whole number). On an older API, or when a start refuses the adapter name, tell the learner to update Codebook and do not run the app by another route.`,
       status: {
@@ -281,7 +283,7 @@ export function reactScriptsHelp() {
       ),
       library: reactScriptsLibraryHelp(),
       limits: [
-        `Only react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR} is supported; react-scripts 4 is refused (REACT_SCRIPTS_UNSUPPORTED, react-scripts-version).`,
+        `Only react-scripts 5 is supported; react-scripts 4 is refused (REACT_SCRIPTS_UNSUPPORTED, react-scripts-version).`,
         "A stop in node_modules is refused (REACT_SCRIPTS_SEAL_FAILED, node-modules) because a published package is not the checked-out library: stop in the Example's own source, or, for an Example in a library repository, declare library (see the library section). Stops must lie inside the app's own folder, or in the library's checked-out source when library is declared.",
         'The start script must be exactly react-scripts start, optionally after NAME=value assignments; any other form (cross-env, extra arguments, a wrapper) is refused. A prestart script is refused. Codebook runs no project script.',
         "Codebook sets CI=true, HOST, PORT and BROWSER for a react-scripts start, overriding the start script's assignments of the same names (PORT is set to the value the script declares, else 3000); a CI, HOST or BROWSER assignment of the script has no effect.",

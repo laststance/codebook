@@ -381,3 +381,15 @@ test('a react-scripts library refusal for a root app tells the chat to declare p
   )
   assert.ok(!described.recovery.includes('node-script'))
 })
+
+// Value: protects=the version refusal names both supported majors in its message and details while keeping requiredMajor; fails_when=the message says only major 5 or supportedMajors is lost; no_claim=the help wording
+test('the react-scripts version refusal names both supported majors', () => {
+  // Arrange
+  const error = reactScriptsVersionRefusal('3.4.4')
+  // Act
+  const { message } = error
+  // Assert
+  assert.match(message, /supports react-scripts 4 and 5\./)
+  assert.deepEqual(error.details?.supportedMajors, [4, 5])
+  assert.equal(error.details?.requiredMajor, 5)
+})

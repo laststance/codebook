@@ -3,7 +3,9 @@ import { chmod } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { StudyError } from '../errors'
 import { assessReactScriptsWorkspace } from '../utils/assessReactScriptsWorkspace'
+import { buildReactScriptsEnvironment } from '../utils/reactScriptsChildEnvironment'
 import { resolveReactScriptsPackage } from '../utils/resolveReactScriptsPackage'
 
 import { createReactScriptsRepository } from './utils/reactScriptsFixture'
@@ -20,6 +22,8 @@ async function settledEnvironmentOf(
     await repository.write(name, text)
   const workspace = await assessReactScriptsWorkspace(
     await resolveReactScriptsPackage(repository.root, undefined),
+    process.execPath,
+    new AbortController().signal,
   )
   return { environment: workspace.environment, port: repository.port }
 }
@@ -197,8 +201,112 @@ test('an unreadable .env file is ignored like react-scripts ignores it', async (
   // Act
   const { environment } = await assessReactScriptsWorkspace(
     await resolveReactScriptsPackage(repository.root, undefined),
+    process.execPath,
+    new AbortController().signal,
   )
   // Assert
   assert.equal(environment.REACT_APP_HIDDEN, undefined)
   assert.equal(environment.REACT_APP_SHOWN, 'read')
+})
+
+// Value: protects=react-scripts 4 on Node 17 or later gets the OpenSSL legacy provider after the learner's own NODE_OPTIONS, once; fails_when=webpack 4 starts without the flag (ERR_OSSL_EVP_UNSUPPORTED), the learner's options are replaced, or the flag is doubled; no_claim=that the flag reaches a real child (native check)
+test('react-scripts 4 on Node 24 gets the OpenSSL legacy provider after the learner NODE_OPTIONS and never twice', () => {
+  // Arrange
+  const runtime = { reactScriptsMajor: 4, nodeMajor: 24 }
+  // Act
+  const none = buildReactScriptsEnvironment({}, 3000, runtime, {})
+  const withOwn = buildReactScriptsEnvironment(
+    { NODE_OPTIONS: '--max-old-space-size=4096' },
+    3000,
+    runtime,
+    {},
+  )
+  const alreadyThere = buildReactScriptsEnvironment(
+    { NODE_OPTIONS: '--openssl-legacy-provider --max-old-space-size=4096' },
+    3000,
+    runtime,
+    {},
+  )
+  // Assert
+  assert.equal(none.NODE_OPTIONS, '--openssl-legacy-provider')
+  assert.equal(
+    withOwn.NODE_OPTIONS,
+    '--max-old-space-size=4096 --openssl-legacy-provider',
+  )
+  assert.equal(
+    alreadyThere.NODE_OPTIONS,
+    '--openssl-legacy-provider --max-old-space-size=4096',
+  )
+})
+
+// Value: protects=Node 16 or older (which refuses the option) and react-scripts 5 (which needs none) get no flag; fails_when=either child starts with --openssl-legacy-provider; no_claim=other Node options
+test('react-scripts 4 on Node 16 and react-scripts 5 on Node 24 get no OpenSSL option', () => {
+  // Arrange
+  const host = { NODE_OPTIONS: '--max-old-space-size=2048' }
+  // Act
+  const oldNode = buildReactScriptsEnvironment(
+    {},
+    3000,
+    { reactScriptsMajor: 4, nodeMajor: 16 },
+    host,
+  )
+  const newMajor = buildReactScriptsEnvironment(
+    {},
+    3000,
+    { reactScriptsMajor: 5, nodeMajor: 24 },
+    host,
+  )
+  // Assert
+  assert.equal(oldNode.NODE_OPTIONS, undefined)
+  assert.equal(newMajor.NODE_OPTIONS, undefined)
+})
+
+// Value: protects=the learner's value is the start script's NODE_OPTIONS when it has one, else the editor's; fails_when=the editor's options are added over the script's or are lost when the script has none; no_claim=other variables
+test('the start script NODE_OPTIONS takes precedence over the editor NODE_OPTIONS for react-scripts 4', () => {
+  // Arrange
+  const runtime = { reactScriptsMajor: 4, nodeMajor: 24 }
+  const host = { NODE_OPTIONS: '--editor-option' }
+  // Act
+  const fromScript = buildReactScriptsEnvironment(
+    { NODE_OPTIONS: '--script-option' },
+    3000,
+    runtime,
+    host,
+  )
+  const fromEditor = buildReactScriptsEnvironment({}, 3000, runtime, host)
+  // Assert
+  assert.equal(
+    fromScript.NODE_OPTIONS,
+    '--script-option --openssl-legacy-provider',
+  )
+  assert.equal(
+    fromEditor.NODE_OPTIONS,
+    '--editor-option --openssl-legacy-provider',
+  )
+})
+
+// Value: protects=react-scripts 4 with a Node whose version cannot be read is refused node-version-unreadable before anything starts; fails_when=the run starts and guesses the flag; no_claim=the Node gate of other adapters
+test('a react-scripts 4 app with an unreadable Node version is refused node-version-unreadable', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context, {
+    appFolder: '.',
+    version: '4.0.3',
+  })
+  const resolved = await resolveReactScriptsPackage(repository.root, undefined)
+  // Act
+  const refusal = await assessReactScriptsWorkspace(
+    resolved,
+    join(repository.root, 'no-such-node'),
+    new AbortController().signal,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal(refusal instanceof StudyError, true)
+  assert.equal((refusal as StudyError).code, 'REACT_SCRIPTS_UNSUPPORTED')
+  assert.equal(
+    (refusal as StudyError).details?.reason,
+    'node-version-unreadable',
+  )
 })

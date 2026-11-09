@@ -90,7 +90,11 @@ test('status and the start refusal of a script with a secret assignment hold no 
     process.execPath,
     SIGNAL,
   )
-  const refusal = await assessReactScriptsWorkspace(resolved).then(
+  const refusal = await assessReactScriptsWorkspace(
+    resolved,
+    process.execPath,
+    SIGNAL,
+  ).then(
     () => undefined,
     (error: unknown) => error,
   )
@@ -170,7 +174,11 @@ test('an unreadable react-scripts version is refused without a phrase as install
   })
   const resolved = await resolveReactScriptsPackage(repository.root, undefined)
   // Act
-  const refusal = await assessReactScriptsWorkspace(resolved).then(
+  const refusal = await assessReactScriptsWorkspace(
+    resolved,
+    process.execPath,
+    SIGNAL,
+  ).then(
     () => undefined,
     (error: unknown) => error,
   )

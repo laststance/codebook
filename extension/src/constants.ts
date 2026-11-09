@@ -3395,8 +3395,14 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
 /** The one Vite major the `vite-dev` adapter supports, the major verified natively (Cycle 0063); widening needs a native run on that major. */
 export const VITE_SUPPORTED_MAJOR = 8
 
-/** The one react-scripts major the `react-scripts-dev` adapter supports (Cycle 0083, decision D3); react-scripts 4 is listed but refused. */
-export const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
+/** The react-scripts majors the `react-scripts-dev` adapter supports: 5 (Cycle 0083, decision D3) and 4 (Cycle 0104, which adds the OpenSSL legacy provider on Node 17 or later); any other major is listed but refused. */
+export const REACT_SCRIPTS_SUPPORTED_MAJORS = [4, 5] as const
+
+/** The Node option webpack 4 needs on Node 17 or later (it hashes with MD4, which OpenSSL 3 refuses); older Node does not know it and refuses it. */
+export const REACT_SCRIPTS_OPENSSL_LEGACY_OPTION = '--openssl-legacy-provider'
+
+/** The first Node major that ships OpenSSL 3, so the one that needs {@link REACT_SCRIPTS_OPENSSL_LEGACY_OPTION} for react-scripts 4. */
+export const REACT_SCRIPTS_OPENSSL_MIN_NODE_MAJOR = 17
 
 /** The longest a `react-scripts/package.json` version may be to be published in `codebook_status`: the studied repository chose that text, so a longer one reads as a version that could not be read. */
 export const REACT_SCRIPTS_VERSION_MAX_CHARS = 64

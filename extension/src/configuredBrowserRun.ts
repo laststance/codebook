@@ -2527,6 +2527,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.reactScriptsPackage)
       await assertReactScriptsLibraryPortFree(
         this.reactScriptsPackage,
+        this.options.node,
+        this.abort.signal,
         (declared, refuse) =>
           assertDevelopmentPortFree(declared, {
             signal: this.abort.signal,
