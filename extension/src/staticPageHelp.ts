@@ -122,7 +122,7 @@ function staticPageLibraryHelp() {
 }
 
 /**
- * Builds the `staticPageQuickStart` key of `codebook://help/repository-browser`: how to run a plain HTML page at or below the repository root (API 1.42).
+ * Builds the `staticPageQuickStart` key of `codebook://help/repository-browser`: how to run a plain HTML page at the repository root or in a folder of it (API 1.42).
  *
  * Why it exists: a chat that meets a plain page (an `examples/` folder of a library, a documentation page) needs the configuration shape, the limits and the refusal fixes before it reads the long sections. Called by the resource reader for the repository-browser help, which spreads the result among its keys.
  * @returns The key `staticPageQuickStart`: when to use it, one complete version 3 example, the call order, one anchor per refusal code with its reasons, the limits and the library route.
@@ -134,10 +134,10 @@ export function staticPageHelp() {
     staticPageQuickStart: {
       anchor: packageRootAnchor('static-page-quick-start'),
       minimumApi: STATIC_PAGE_MINIMUM_API,
-      summary: `For a plain HTML page at the repository root or below it, which Codebook serves as written from its own loopback static server (no build step): configure adapter "static-page" in a version 3 configuration and use the same tools in the same order as for a Vite app. Use it only when profiles[].prerequisites.adapters["static-page"].ready is true in codebook_status; it needs API ${STATIC_PAGE_MINIMUM_API} or later (compare the number after the dot as a whole number), and on an older Codebook you tell the learner to update it and do not run the page by another route. The configuration is version 3 with adapter "static-page"; packageRoot is the folder of a page below the root (the packageRoot of the packages entry; omit it or use "." for a page at the root); entryPath is "/" for the folder's index.html, or the path of another .html file in that folder. A browser stop pauses in the page's inline scripts and in same-origin .js files the page loads.`,
+      summary: `For a plain HTML page at the repository root or in a folder of it (status lists pages at the root, in examples/* and in apps/*; a packageRoot declared elsewhere is judged when the run starts), which Codebook serves as written from its own loopback static server (no build step): configure adapter "static-page" in a version 3 configuration and use the same tools in the same order as for a Vite app. Use it only when profiles[].prerequisites.adapters["static-page"].ready is true in codebook_status; it needs API ${STATIC_PAGE_MINIMUM_API} or later (compare the number after the dot as a whole number), and on an older Codebook you tell the learner to update it and do not run the page by another route. The configuration is version 3 with adapter "static-page"; packageRoot is the folder of a page below the root (the packageRoot of the packages entry; omit it or use "." for a page at the root); entryPath is "/" for the folder's index.html, or the path of another .html file in that folder. A browser stop pauses in the page's inline scripts and in same-origin .js files the page loads.`,
       status: {
         packages:
-          'profiles[].prerequisites.adapters["static-page"].packages: { packageRoot, ready, missing[], entry }; missing lists no-entry-page, needs-bundler or entry-unreadable. packagesTruncated is true when the list is incomplete; packagesTruncatedReason says why.',
+          'profiles[].prerequisites.adapters["static-page"].packages (pages at the root, in examples/* and in apps/*): { packageRoot, ready, missing[], entry }; missing lists no-entry-page, needs-bundler or entry-unreadable. packagesTruncated is true when the list is incomplete; packagesTruncatedReason says why.',
       },
       configurationNested: STATIC_PAGE_NESTED_CONFIGURATION,
       example:
@@ -165,6 +165,11 @@ export function staticPageHelp() {
         'The page loads other remote URLs (fonts, images, scripts that are not the declared library) as they are.',
         'Without library, a CDN import loads the published copy, which is not the checked-out library, and the run says so.',
         'A page that reaches the library only through a nested import of the CDN module can end with library-not-in-build (STATIC_PAGE_SEAL_FAILED) for a stop in a library file the page never loaded directly.',
+        'A reference that starts with // or with a scheme (https:, data:, blob: and any other) is remote and is never judged as a file of the page folder.',
+        'Only a <link> whose rel contains stylesheet or modulepreload, or preload with as="script" or as="style", is judged; icon, manifest, canonical and preconnect links are ignored.',
+        'A bare specifier that equals a key of the entry page\'s <script type="importmap"> (imports or any scopes entry), or starts with a key that ends in /, is not judged; a malformed import map is ignored. A malformed percent-encoding in a reference counts as a missing file.',
+        'The static server answers 403 to a request whose Host is not its own 127.0.0.1:<port> or localhost:<port>, and never serves a file or folder whose name starts with a dot (.git, .env).',
+        'With library, the CDN imports to redirect are found in the entry page (inline scripts and <script src> values) and in the same-origin .js files the run reads one level deep; from each packed file the run follows relative imports inside the packed folder, at most 3 levels and 16 files, so code-split chunks are covered.',
         'Browser stops only: participant "server" is refused with static-page.',
       ],
       studies:

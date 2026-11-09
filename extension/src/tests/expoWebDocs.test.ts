@@ -255,7 +255,7 @@ test('the README documents the Expo web adapter, its limits, format 15 and the A
       'saves its run as study format 15 (`.study.v15.json`), which Codebook 0.2.88 and older list as saved by a newer Codebook. API 1.29 is additive:',
     ),
   )
-  assert.ok(readme.includes('has four adapters'))
+  assert.ok(readme.includes('has five adapters'))
   assert.ok(
     readme.includes('below), `react-scripts-dev` for a Create React App'),
   )

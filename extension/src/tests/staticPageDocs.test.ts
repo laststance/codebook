@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { staticPageHelp } from '../staticPageHelp'
+
 /**
  * Reads a file the extension package ships; tests run from `dist/tests`.
  * @param segments - The path below the package root.
@@ -27,8 +29,8 @@ test('the README describes the static-page adapter, the needs-bundler gap and it
     "imports a bare specifier such as `import 'lib'`",
     '`examples/page`',
     '`STATIC_PAGE_UNSUPPORTED` (reasons `no-entry-page`, `needs-bundler`, `entry-unreadable` and `not-a-static-page`)',
-    '`STATIC_PAGE_SERVER_FAILED` (reason `listen-failed`',
-    '`STATIC_PAGE_SEAL_FAILED` (reasons `outside-package`, `node-modules`, `not-in-page-script`, `ambiguous-source` and `map-unreadable`',
+    '`STATIC_PAGE_SERVER_FAILED` (reasons `listen-failed`',
+    '`STATIC_PAGE_SEAL_FAILED` (reasons `outside-package`, `node-modules`, `not-in-page-script`, `ambiguous-source`, `unmapped-line`, `map-limit`, `map-unreadable`',
     'The `staticPageQuickStart` section of the repository-browser help',
   ].filter((phrase) => !readme.includes(phrase))
   // Assert
@@ -87,4 +89,73 @@ test('the bundled skill routes a plain HTML page to static-page behind API 1.42 
   // Assert
   assert.ok(skill.includes('metadata:\n  version: "1.0.85"\n'))
   assert.deepEqual(missing, [])
+})
+
+// Value: protects=the README's refusal sentence names every reason the help lists under each static-page refusal code, so a reason added to the code without the README fails; fails_when=a reason key of staticPageQuickStart.refusals is missing from the README paragraph; no_claim=that the adapter raises the reason
+test('the README names every refusal reason the static-page help lists', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const paragraph =
+    readme.split('\n').find((line) => line.startsWith('**Plain HTML pages')) ??
+    ''
+  const refusals = staticPageHelp().staticPageQuickStart.refusals
+  // Act
+  const missing = Object.entries(refusals).flatMap(([code, entry]) =>
+    [code, ...Object.keys(entry.reasons)]
+      .filter((name) => !paragraph.includes(`\`${name}\``))
+      .map((name) => `${code}: ${name}`),
+  )
+  // Assert
+  assert.deepEqual(missing, [])
+  assert.equal(
+    Object.keys(refusals.STATIC_PAGE_SEAL_FAILED?.reasons ?? {}).length,
+    10,
+  )
+})
+
+// Value: protects=the README names static-page as the fifth repository-browser adapter and points at the Plain HTML pages section; fails_when=the adapter count says four or static-page is missing from the adapter list; no_claim=that codebook_status lists five adapters
+test('the README lists static-page among the five repository-browser adapters', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  // Act
+  const missing = [
+    'has five adapters',
+    '`static-page` for a plain HTML page (see **Plain HTML pages (MCP API 1.42)** above); `codebook_status` names all five',
+  ].filter((phrase) => !readme.includes(phrase))
+  // Assert
+  assert.deepEqual(missing, [])
+  assert.equal(readme.includes('has four adapters'), false)
+})
+
+// Value: protects=README, skill and help tell a chat which page folders status lists and what a page may contain (remote references, judged links, import maps, loopback-only server without dot files, CDN import discovery); fails_when=any of these sentences is dropped from one of the three; no_claim=that the code enforces them
+test('README, skill and help state page discovery and the contents rules of a static page', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  const help = JSON.stringify(staticPageHelp())
+  // Act
+  const missingFromReadme = [
+    'in `examples/*` and in `apps/*`; a `packageRoot` you declare elsewhere is judged with the same rules when the run starts',
+    'A reference that starts with `//` or with a scheme (`https:`, `data:`, `blob:` and any other) is remote',
+    'Only a `<link>` whose `rel` contains `stylesheet` or `modulepreload`, or `preload` with `as="script"` or `as="style"`, is judged',
+    'a malformed import map is ignored',
+    'malformed percent-encoding counts as a missing file',
+    'answers only requests for its own loopback host (`127.0.0.1:<port>` or `localhost:<port>`) and never serves a file or folder whose name starts with `.`',
+    'at most 3 levels and 16 files, so a code-split chunk is covered',
+  ].filter((phrase) => !readme.includes(phrase))
+  const missingFromSkill = [
+    'in `examples/*` and in `apps/*`, and a declared `packageRoot` elsewhere is judged when the run starts',
+  ].filter((phrase) => !skill.includes(phrase))
+  const missingFromHelp = [
+    'examples/* and in apps/*',
+    'starts with // or with a scheme',
+    'rel contains stylesheet or modulepreload',
+    'malformed import map is ignored',
+    'answers 403 to a request whose Host is not its own',
+    'at most 3 levels and 16 files',
+  ].filter((phrase) => !help.includes(phrase))
+  // Assert
+  assert.deepEqual(missingFromReadme, [])
+  assert.deepEqual(missingFromSkill, [])
+  assert.deepEqual(missingFromHelp, [])
 })
