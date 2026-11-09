@@ -356,7 +356,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 
 - Native checks part of `/ship`, not own phase: VS Code and Cursor checks cycle owes run as `/ship` Step 9.2.1's required plan checks (QA step), beside smoke probes.
 - Build and evidence: build VSIX with `qa-build.mjs` from clean commit `/ship` reviews, install in each host; build gets no own review. Critical/Major finding of check fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting exit line.
-- After every VSIX install: reload each host window, then confirm loaded build (run's `header.json` `sourceBuild.revision`, installed `dist/build.json` or Output header) before counting a run.
+- After every VSIX install: reload each host window, then confirm loaded build (run's `header.json` `sourceBuild.revision` or that window's Output header; installed `dist/build.json` proves installation only) before counting a run.
 - Host updated before native check → run live step once on baseline build first; judge candidate against that same-day baseline, never earlier cycles' runs. Failure of unknown origin → scan Space's run journals for its signature's first build and date before blaming candidate.
 - Native candidate frozen once cycle's defects fixed; `/ship` reviews that tree. Fix after freeze reruns only native steps whose path it changed (frozen expectations name them).
 - Candidate or `/ship` review P2/Low/Medium finding on path native check already verified: Skip by default, named once in PR, unless it blocks that check's frozen expectation.
