@@ -85,6 +85,7 @@ import type {
   PagesResumedHitCount,
 } from './utils/pagesHitLedger'
 import type { NodeTestExecutionPlan } from './utils/planNodeTestExecution'
+import type { ApiProcessState } from './utils/readApiProcessState'
 import type { ReadinessEntryRequest } from './utils/readinessEntryRecord'
 import type { RepositoryAdapterReadiness } from './utils/readRepositoryAdapterReadiness'
 import type { PreparedTextState } from './utils/redactPreparedTexts'
@@ -504,6 +505,8 @@ export type ServerRenderFailure = {
     route: string
     resumedHits: { reason: string; count: number }[]
   }
+  /** Set only for an API server stop (API 1.44): what the run measured of the API process when the deadline ran out (`details.apiProcess`). */
+  apiProcess?: ApiProcessState
   /** Set only for a Pages run: what the failure adds there (`details.router`, `resumedHits`, `attributionMode`, `nextVersion`). */
   pages?: PagesNotReachedFacts
 }

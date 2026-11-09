@@ -91,7 +91,7 @@ test('the packaged skill and README state the wxt-build route, its API gate and 
       .find((line) => line.startsWith('- **WXT projects (MCP API 1.32).**')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.86"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.87"\n'))
   assert.ok(
     skill.includes(
       'declare `adapter: "wxt-build"` with `extensionRoot` set to that folder and stops in source files under `extensionRoot`, never in `node_modules` (for example in `src/`), only when `codebook_status` reports API 1.32 or later',
@@ -109,11 +109,11 @@ test('the packaged skill and README state the wxt-build route, its API gate and 
     'Content scripts are not included.',
   ])
     assert.ok(bullet.includes(phrase), phrase)
-  assert.ok(readme.includes('with **MCP API 1.43**'))
+  assert.ok(readme.includes('with **MCP API 1.44**'))
   assert.ok(
     readme.includes('API 1.32 is additive: it adds the `wxt-build` adapter'),
   )
-  assert.ok(readme.includes('updates to **1.0.86**'))
+  assert.ok(readme.includes('updates to **1.0.87**'))
 })
 
 // protects=the help, README, STOP_FILE_NOT_LOADED recovery and skill give contextSources the base extensionRoot (the form a stop path takes), say the build runs the project's own code, name both adapters, document the discovery skips and the tracked-files-unverified reason; fails_when=contextSources is called repository-relative again or any of those sentences is dropped; no_claim=the behavior itself, which the build, discovery and resolver tests cover

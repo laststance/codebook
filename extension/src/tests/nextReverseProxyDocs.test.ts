@@ -242,7 +242,7 @@ test('the skill and the README carry the reverse proxy paragraph and the format 
       'A run that declares `reverseProxy` is saved as format 22; Codebook 0.2.103 and older list it as saved by a newer Codebook, so update Codebook to open it.',
     ),
   )
-  assert.ok(readme.includes('with **MCP API 1.43** (`codebook_status`'))
+  assert.ok(readme.includes('with **MCP API 1.44** (`codebook_status`'))
   assert.ok(
     readme.includes(
       'The bundled skill declares `reverseProxy` only when `codebook_status` reports API 1.40 or later; with an older Codebook the chat asks you to update it and never drops the field to run at `localhost`. The chat asks you one question unless you stated both the origin and the port yourself, never guesses the port, and never asks you to turn certificate checks off.',

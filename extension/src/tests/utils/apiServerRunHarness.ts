@@ -316,6 +316,93 @@ export async function apiServerRunHarness(
   }
 }
 
+/** How the stand-in debug session answers one API thread's `stackTrace` when an API stop's deadline expires: a stack frame (`paused`, its `path` omitted for a frame with no source path), js-debug's `Thread is not paused` error (`running`), no answer at all (`silent`), or any other error. */
+export type ScriptedApiThread =
+  | { kind: 'paused'; path?: string; line: number }
+  | { kind: 'running' }
+  | { kind: 'silent' }
+  | { kind: 'error'; message: string }
+
+/** How the stand-in answers `threads` itself: with the scripted threads (default), with an error, or with an empty list. */
+export type ScriptedThreadsAnswer = 'listed' | 'error' | 'empty'
+
+/** What {@link scriptApiThread} gives back: the commands the probe sent and the way to let held (`silent`) answers end. */
+export type ScriptedApiSession = {
+  /** The `threads` and `stackTrace` commands the run sent after the script was set, in order. */
+  asked: string[]
+  /** Ends every held `silent` answer as js-debug's `Thread is not paused` error, as a thread that answers after the probe's bound does; teardown does the same. */
+  releaseSilent(): void
+}
+
+/**
+ * Scripts how the API's debug session answers `threads` and `stackTrace` (the probe of an unreached API stop), and records the commands the run sent.
+ * Why it exists: the not-reached tests need the states js-debug can answer, for one thread or several; every other command keeps the stand-in's own answer. Called by the not-reached tests before they send the operation.
+ * @param context - The test; its teardown settles every `silent` answer, so no promise stays pending after the test.
+ * @param harness - The run's harness.
+ * @param threads - What each API thread answers, as one value for one thread or a list in thread order (thread ids 1, 2, ...).
+ * @param threadsAnswer - How `threads` itself is answered.
+ * @param probeOnly - Scripts only the probe's one `stackTrace` per thread: when true, the run's own later stack requests (the inspection of a pause it admits) keep the stand-in's answer.
+ * @returns The commands the run sent after this call, in order, and the release of held answers.
+ * @example const { asked } = scriptApiThread(context, harness, { kind: 'running' })
+ */
+export function scriptApiThread(
+  context: TestContext,
+  harness: ApiServerRunHarness,
+  threads: ScriptedApiThread | readonly ScriptedApiThread[],
+  threadsAnswer: ScriptedThreadsAnswer = 'listed',
+  probeOnly = false,
+): ScriptedApiSession {
+  const scripted = Array.isArray(threads) ? threads : [threads]
+  const session = harness.server!.session
+  const original = session.customRequest.bind(session)
+  const asked: string[] = []
+  const settleSilent: ((error: Error) => void)[] = []
+  const releaseSilent = (): void => {
+    for (const settle of settleSilent.splice(0))
+      settle(new Error('Thread is not paused'))
+  }
+  // A silent answer never settles during the test; teardown settles it so nothing stays pending.
+  context.after(releaseSilent)
+  session.customRequest = async (command, arguments_) => {
+    if (command !== 'threads' && command !== 'stackTrace')
+      return original(command, arguments_)
+    // After the probe's own requests, the run's inspection of a pause it admitted is answered by the stand-in.
+    if (probeOnly && asked.length >= scripted.length + 1)
+      return original(command, arguments_)
+    asked.push(command)
+    if (command === 'threads') {
+      if (threadsAnswer === 'error') throw new Error('threads failed')
+      if (threadsAnswer === 'empty') return { threads: [] }
+      return {
+        threads: scripted.map((_, index) => ({
+          id: index + 1,
+          name: `thread ${index + 1}`,
+        })),
+      }
+    }
+    const threadId = (arguments_ as { threadId: number }).threadId
+    const thread = scripted[threadId - 1]!
+    if (thread.kind === 'silent')
+      return new Promise<never>((_resolve, reject) => settleSilent.push(reject))
+    if (thread.kind === 'running') throw new Error('Thread is not paused')
+    if (thread.kind === 'error') throw new Error(thread.message)
+    return {
+      stackFrames: [
+        {
+          id: 1,
+          name: 'waitingStep',
+          ...(thread.path === undefined
+            ? {}
+            : { source: { path: thread.path } }),
+          line: thread.line,
+          column: 1,
+        },
+      ],
+    }
+  }
+  return { asked, releaseSilent }
+}
+
 /** The inspector's report of the API's entry: js-debug names the reason `Break on start`, which the protocol's list does not. */
 const ENTRY_CDP_PAUSE = {
   reason: 'Break on start',

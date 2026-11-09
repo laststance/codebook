@@ -1,3 +1,5 @@
+import type { ApiProcessState } from './readApiProcessState'
+
 /**
  * The reasons of a route-handler-style `NEXT_STOP_NOT_SEALED` refusal: the values of `details.reason` for a stop in an App Router `route.ts` (Cycle 0087) and, since Cycle 0088, for a stop in a Pages API route.
  */
@@ -52,3 +54,24 @@ export const API_ROUTE_NOT_REACHED_POSSIBILITIES = `For an API-route stop (detai
  */
 export const API_SERVER_NOT_REACHED_POSSIBILITIES =
   "For a stop in the app's own API these are possibilities, never the established cause: after the operation the page sent no request that reached the line (client-side validation, a cached answer, a request to another handler); the line sits in a branch that did not run; or a request that reached it ended before the line: an authentication or validation check answered it, or the app's own request deadline ran out while an earlier stop held the request (the API's output after the continue may say so)."
+
+/**
+ * Words what the run measured of the API process when an API stop's not-reached deadline ran out (API 1.44), for the failure text that leads its possibilities with it.
+ * Called by the run when it words `SERVER_STOP_NOT_REACHED` for a stop in the app's own API; the sentence states the measured state and names no cause the run did not observe.
+ *
+ * @param apiProcess - The state {@link readApiProcessState} read.
+ * @returns One sentence: running (not paused at any breakpoint), paused with its place or at a place that maps to no repository file, or that the state could not be read.
+ * @example
+ * ```ts
+ * apiProcessSentence({ state: 'paused', at: { path: 'apps/api/src/a.ts', line: 12 } })
+ * // => 'When the deadline ran out, the API process was paused at apps/api/src/a.ts:12.'
+ * ```
+ */
+export function apiProcessSentence(apiProcess: ApiProcessState): string {
+  // Each state says only what was measured.
+  if (apiProcess.state === 'not-paused')
+    return 'When the deadline ran out, the API process was running, not paused at any breakpoint. If the request reached the API, it may be waiting inside the app, for example on its database or another service it calls; or no request reached the line.'
+  if (apiProcess.state === 'paused')
+    return `When the deadline ran out, the API process was paused ${apiProcess.at ? `at ${apiProcess.at.path}:${apiProcess.at.line}` : 'at a place Codebook could not map to a file of the repository'}.`
+  return 'Codebook could not read whether the API process was paused when the deadline ran out.'
+}
