@@ -168,3 +168,29 @@ test('a missing name that is no import stays unavailable without a probe', async
   })
   assert.equal(requests.length, 1)
 })
+
+// Value: protects=a `type:` inspection of a name the paused frame does not define is unavailable like the `value:` one; fails_when=`typeof missingName` answers "undefined" and the run saves it as an observed type; why_new=Cycle 0105 hosted review (typeof of an undeclared name); seam=inspectConfiguredValues with no compiled rewrite; no_claim=a declared binding that holds undefined, which is still the type "undefined"
+test('a type inspection of a name the paused frame lacks is unavailable, not the type undefined', async () => {
+  // Arrange
+  const requests: string[] = []
+  const frame = { other: 1 }
+
+  // Act
+  const facts = await inspectConfiguredValues(
+    pausedFrame(frame, requests),
+    'module-frame',
+    [{ path: 'missingName', mode: 'type', required: false }],
+    () => {},
+  )
+
+  // Assert
+  assert.deepEqual(facts, {
+    values: {},
+    unavailableValues: [
+      {
+        path: 'type:missingName',
+        reason: 'Evaluation unavailable or rejected for possible side effects.',
+      },
+    ],
+  })
+})

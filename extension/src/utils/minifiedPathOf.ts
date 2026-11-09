@@ -15,7 +15,7 @@ const FIRST_NAME = /^[A-Za-z_$][\w$]*/
 /**
  * Rewrites a declared inspection path whose first name a minifier renamed into the name the minified build uses for it in the paused frame's scopes.
  *
- * Why: a library stop in a minified build (the checked-out library's own `.min` or browser build) pauses where `currentState` is the closure binding `l`, so evaluating the source name throws `ReferenceError`. The build's source map `names` say which generated identifier stands for a source name. Called by {@link ConfiguredBrowserRun}'s inspection beside {@link webpackImportPathOf}, and used only after the source name proved absent at the pause (a binding of that name always wins).
+ * Why: a library stop in a minified build (the checked-out library's own `.min` or browser build) pauses where `currentState` is the closure binding `l`, so evaluating the source name throws `ReferenceError`. The build's source map `names` say which generated identifier stands for a source name. Called by {@link ConfiguredBrowserRun}'s inspection beside {@link webpackImportPathOf}; the caller asks for the rewrite before each inspection, and {@link inspectConfiguredValues} uses it only after the source name proved absent at the pause (a binding of that name always wins).
  * Scopes are read from the innermost outward; the first scope whose range holds mappings of the name decides, and only when all of them read one generated identifier. Two identifiers in one scope are ambiguous and give no rewrite, because a guess could read another variable. The same holds when a scope inner to the deciding one maps that identifier to another source name: evaluation would read the inner variable, so the result is unavailable.
  * @param path - The declared inspection path.
  * @param sourceMapText - The map of the executed script, as the build served it.
@@ -23,7 +23,7 @@ const FIRST_NAME = /^[A-Za-z_$][\w$]*/
  * @param scopeChain - The paused call frame's scopes, innermost first; a scope without locations (the global one) is skipped.
  * @returns
  * - `{ name, compiledPath }` with the declared first name and the generated identifier plus the rest of the path
- * - `undefined` when the name is not in the map's `names`, no scope holds a mapping of it, the deciding scope is ambiguous, or an inner scope reuses the identifier for another name
+ * - `undefined` when the name is not in the map's `names`, no scope holds a mapping of it, the deciding scope is ambiguous, an inner scope reuses the identifier for another name, or the map is too large to be read whole (a walk cut short by a size limit proves nothing)
  * @example
  * minifiedPathOf('currentState.length', mapText, 'function h(){return l}', scopeChain)
  * // => { name: 'currentState', compiledPath: 'l.length' }
@@ -76,7 +76,7 @@ export function minifiedPathOf(
  * @param sourceMapText - The map's JSON text.
  * @param scriptSource - The executed script text.
  * @param name - The source name; the map is read only when its `names` hold it.
- * @returns Each named mapping whose generated text starts an identifier that is not a property access; empty for a map that is not readable.
+ * @returns Each named mapping whose generated text starts an identifier that is not a property access; empty for a map that is not readable or whose walk stopped at a size limit (a partial list would hide the ambiguity or shadowing the unread rest may hold).
  * @example mappedGeneratedNames(mapText, 'function h(){return l}', 'currentState') // => [{ position: { lineNumber: 0, columnNumber: 20 }, identifier: 'l', sourceName: 'currentState' }]
  */
 function mappedGeneratedNames(
@@ -107,8 +107,9 @@ function mappedGeneratedNames(
     identifier: string
     sourceName: string
   }[] = []
+  let isComplete: boolean
   try {
-    walkSourceMapSegments(
+    isComplete = walkSourceMapSegments(
       mappings,
       ({ generatedLine, generatedColumn, original }) => {
         if (original?.nameIndex === undefined) return
@@ -136,7 +137,8 @@ function mappedGeneratedNames(
   } catch {
     return []
   }
-  return found
+  // A walk a size limit cut short cannot prove a name unambiguous or unshadowed by an inner scope, so nothing is resolved.
+  return isComplete ? found : []
 }
 
 /**

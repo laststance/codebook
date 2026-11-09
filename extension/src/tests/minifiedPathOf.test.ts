@@ -384,3 +384,35 @@ test('a source name the paused frame holds is read as declared although the map 
     unavailableValues: [],
   })
 })
+
+// Value: protects=a map whose walk a size limit cuts short never resolves a name from the partial list read so far; fails_when=`currentState` is rewritten to `l` although the unread rest of the map may bind the name to another variable or shadow `l`; why_new=Cycle 0105 hosted review (partial scan ignored); seam=minifiedPathOf over a map with more generated lines than DEFAULT_SOURCE_MAP_LIMITS allows; no_claim=which limit stops the walk
+test('a source map larger than the scan limits leaves the name unresolved instead of using the part read', () => {
+  // Arrange
+  const readable = JSON.parse(READ_MAP) as { mappings: string }
+  // 150,000 empty generated lines exceed the 100,000-line limit after the one mapping that resolves.
+  const oversized = JSON.stringify({
+    ...JSON.parse(READ_MAP),
+    mappings: `${readable.mappings}${';'.repeat(150_000)}`,
+  })
+
+  // Act
+  const rewritten = minifiedPathOf(
+    'currentState',
+    oversized,
+    SCRIPT,
+    READ_SCOPES,
+  )
+  const rewrittenWithinLimits = minifiedPathOf(
+    'currentState',
+    READ_MAP,
+    SCRIPT,
+    READ_SCOPES,
+  )
+
+  // Assert
+  assert.equal(rewritten, undefined)
+  assert.deepEqual(rewrittenWithinLimits, {
+    name: 'currentState',
+    compiledPath: 'l',
+  })
+})
