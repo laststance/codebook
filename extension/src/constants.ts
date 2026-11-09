@@ -3503,6 +3503,9 @@ export const STATIC_PAGE_CDN_CHAIN_DEPTH_MAX = 3
 /** The most packed library files (entry files included) the library seal reads while following relative imports. */
 export const STATIC_PAGE_CDN_CHAIN_FILES_MAX = 16
 
+/** The most characters read at a mapped generated position to find the minified identifier there ({@link minifiedPathOf}); a JavaScript identifier in a minified build is far shorter. */
+export const MINIFIED_IDENTIFIER_SCAN_CHARS = 256
+
 /** How long the start of a `react-scripts-dev` run waits for the output of an ended process to arrive before it words the ending. */
 export const REACT_SCRIPTS_OUTPUT_DRAIN_MS = 500
 

@@ -1,5 +1,6 @@
 import type { Protocol } from 'devtools-protocol'
 
+import { MINIFIED_IDENTIFIER_SCAN_CHARS } from '../constants'
 import { DEFAULT_SOURCE_MAP_LIMITS } from '../sourceMapLimits'
 
 import {
@@ -95,8 +96,8 @@ function mappedGeneratedNames(
         if (original?.nameIndex === undefined) return
         if (names[original.nameIndex] !== name) return
         const offset = (lineStarts[generatedLine] ?? Infinity) + generatedColumn
-        const identifier = /^[A-Za-z_$][\w$]*/.exec(
-          scriptSource.slice(offset, offset + 256),
+        const identifier = FIRST_NAME.exec(
+          scriptSource.slice(offset, offset + MINIFIED_IDENTIFIER_SCAN_CHARS),
         )?.[0]
         // A property access (`a.currentState`) is not a variable of the frame; a spread's dots are.
         const before = scriptSource.slice(Math.max(0, offset - 3), offset)
