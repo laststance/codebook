@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod } from 'node:fs/promises'
+import { chmod, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -309,4 +309,104 @@ test('a react-scripts 4 app with an unreadable Node version is refused node-vers
     (refusal as StudyError).details?.reason,
     'node-version-unreadable',
   )
+})
+
+/** Writes an executable that prints the given Node version and returns its unique path. */
+async function fakeNodePrinting(
+  directory: string,
+  name: string,
+  version: string,
+): Promise<string> {
+  const path = join(directory, name)
+  await writeFile(path, `#!/bin/sh\necho ${version}\n`)
+  await chmod(path, 0o755)
+  return path
+}
+
+// Value: protects=the Node major read from the executable reaches workspace.runtime and Node 16 gets no OpenSSL flag; fails_when=nodeMajor is lost or misparsed, or the flag is added for Node 16; no_claim=the flag reaching a real child
+test('a react-scripts 4 app on a Node 16 executable gets nodeMajor 16 and no OpenSSL option', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context, {
+    appFolder: '.',
+    version: '4.0.3',
+  })
+  const node = await fakeNodePrinting(
+    repository.root,
+    'fake-node-16',
+    'v16.20.0',
+  )
+  // Act
+  const { runtime } = await assessReactScriptsWorkspace(
+    await resolveReactScriptsPackage(repository.root, undefined),
+    node,
+    new AbortController().signal,
+  )
+  const child = buildReactScriptsEnvironment({}, 3000, runtime, {})
+  // Assert
+  assert.deepEqual(runtime, { reactScriptsMajor: 4, nodeMajor: 16 })
+  assert.equal(child.NODE_OPTIONS, undefined)
+})
+
+// Value: protects=Node 17 is the first major that gets the OpenSSL legacy provider for react-scripts 4; fails_when=Node 17 gets no flag; no_claim=Node 18 or later
+test('a react-scripts 4 app on a Node 17 executable gets nodeMajor 17 and the OpenSSL option', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context, {
+    appFolder: '.',
+    version: '4.0.3',
+  })
+  const node = await fakeNodePrinting(
+    repository.root,
+    'fake-node-17',
+    'v17.0.0',
+  )
+  // Act
+  const { runtime } = await assessReactScriptsWorkspace(
+    await resolveReactScriptsPackage(repository.root, undefined),
+    node,
+    new AbortController().signal,
+  )
+  const child = buildReactScriptsEnvironment({}, 3000, runtime, {})
+  // Assert
+  assert.deepEqual(runtime, { reactScriptsMajor: 4, nodeMajor: 17 })
+  assert.equal(child.NODE_OPTIONS, '--openssl-legacy-provider')
+})
+
+// Value: protects=react-scripts 5 never reads the Node version, so an unusable Node path does not refuse it; fails_when=a react-scripts 5 app is refused node-version-unreadable; no_claim=react-scripts 4
+test('a react-scripts 5 app still assesses when the Node executable does not exist', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context, {
+    appFolder: '.',
+  })
+  // Act
+  const { runtime } = await assessReactScriptsWorkspace(
+    await resolveReactScriptsPackage(repository.root, undefined),
+    join(repository.root, 'no-such-node'),
+    new AbortController().signal,
+  )
+  // Assert
+  assert.deepEqual(runtime, { reactScriptsMajor: 5 })
+})
+
+// Value: protects=a cancelled run is reported as the cancellation; fails_when=an aborted signal during the Node version read is reported as node-version-unreadable; no_claim=cancellation of other steps
+test('a cancelled react-scripts 4 assessment is not reported as node-version-unreadable', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context, {
+    appFolder: '.',
+    version: '4.0.3',
+  })
+  const resolved = await resolveReactScriptsPackage(repository.root, undefined)
+  const controller = new AbortController()
+  controller.abort()
+  // Act
+  const failure = await assessReactScriptsWorkspace(
+    resolved,
+    join(repository.root, 'never-run-node'),
+    controller.signal,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // Assert
+  assert.equal(failure instanceof StudyError, false)
+  assert.equal((failure as Error).name, 'AbortError')
 })

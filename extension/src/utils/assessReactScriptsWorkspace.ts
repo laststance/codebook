@@ -78,7 +78,7 @@ async function refusalOfGaps(
  * @param node - The Node executable of the run.
  * @param signal - Ends the version read when the run is cancelled.
  * @returns The runtime facts.
- * @throws `REACT_SCRIPTS_UNSUPPORTED` (`node-version-unreadable`) for react-scripts 4 when the Node version cannot be read.
+ * @throws `REACT_SCRIPTS_UNSUPPORTED` (`node-version-unreadable`) for react-scripts 4 when the Node version cannot be read; the abort reason when the run was cancelled.
  * @example await readReactScriptsRuntime('5.0.1', '/usr/bin/node', signal) // => { reactScriptsMajor: 5 }
  */
 async function readReactScriptsRuntime(
@@ -89,7 +89,11 @@ async function readReactScriptsRuntime(
   const reactScriptsMajor = Number.parseInt(version ?? '', 10)
   // Only webpack 4 needs the Node major, so a react-scripts 5 run starts no extra process.
   if (reactScriptsMajor !== 4) return { reactScriptsMajor }
-  const text = await readNodeVersion(node, signal).catch(() => undefined)
+  const text = await readNodeVersion(node, signal).catch(() => {
+    // A cancelled run is a cancellation, not an unreadable Node version.
+    signal.throwIfAborted()
+    return undefined
+  })
   const nodeMajor = /^v(\d+)\./.exec(text ?? '')?.[1]
   if (nodeMajor === undefined) throw reactScriptsNodeVersionRefusal()
   return { reactScriptsMajor, nodeMajor: Number(nodeMajor) }
