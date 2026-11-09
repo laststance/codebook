@@ -23,7 +23,7 @@ type TopFrameAnswer =
  * Asks the API's debug session whether its threads are paused, and where, for the failure of an API stop that no request reached.
  *
  * Why it exists: the not-reached failure used to list possibilities and state no measured fact; a request that waits inside the app (its database pool, another service) leaves the API running, which js-debug answers to `stackTrace` with `Thread is not paused`. Called by the run when an API stop's not-reached deadline expires, before the run ends the API; the caller bounds the wait and may cancel it.
- * Every thread is asked, so the result does not depend on thread order: one paused thread decides, whatever the others answered.
+ * Threads are asked in order until one is paused: that thread decides at once, whatever the earlier ones answered, so neither an earlier error nor a later thread that never answers hides it.
  *
  * @param customRequest - The server session's `customRequest`.
  * @param repositoryRoot - The opened repository's folder, to give a frame's path relative to it.
@@ -56,20 +56,16 @@ export async function readApiProcessState(
       // A cancelled probe sends nothing more.
       if (signal?.aborted) return { state: 'unknown' }
       const threadId: unknown = Reflect.get(Object(thread), 'id')
-      answers.push(
+      const top: TopFrameAnswer =
         typeof threadId === 'number'
           ? await readTopFrame(customRequest, threadId)
-          : { kind: 'other' },
-      )
+          : { kind: 'other' }
+      // The first paused thread, in thread order, decides at once: a later thread that never answers cannot hide it.
+      if (top.kind === 'frame')
+        return pausedAt(top.frame, repositoryRoot, signal)
+      answers.push(top)
     }
     if (signal?.aborted) return { state: 'unknown' }
-    // The first paused thread, in thread order, decides, whatever the others answered.
-    const paused = answers.find((top) => top.kind === 'frame')
-    if (paused)
-      return {
-        state: 'paused',
-        ...(await locationOf(paused.frame, repositoryRoot)),
-      }
     // Every thread answered that it runs.
     if (answers.every((top) => top.kind === 'running'))
       return { state: 'not-paused' }
@@ -78,6 +74,23 @@ export async function readApiProcessState(
   } catch {
     return { state: 'unknown' }
   }
+}
+
+/**
+ * Gives the `paused` state of the first paused thread's top frame, for {@link readApiProcessState}.
+ * @param frame - The paused thread's top DAP stack frame.
+ * @param repositoryRoot - The opened repository's folder.
+ * @param signal - The probe's cancellation; a cancelled probe reads `unknown`.
+ * @returns `paused` with `at` when the frame maps to a repository file, without `at` when it does not; `unknown` once cancelled.
+ * @example await pausedAt({ source: { path: '/repo/a.ts' }, line: 3 }, '/repo') // => { state: 'paused', at: { path: 'a.ts', line: 3 } }
+ */
+async function pausedAt(
+  frame: unknown,
+  repositoryRoot: string,
+  signal?: AbortSignal,
+): Promise<ApiProcessState> {
+  if (signal?.aborted) return { state: 'unknown' }
+  return { state: 'paused', ...(await locationOf(frame, repositoryRoot)) }
 }
 
 /**
@@ -113,7 +126,7 @@ async function readTopFrame(
 }
 
 /**
- * Maps a stack frame to a repository-relative path and one-based line, or to nothing when its file lies outside the repository or has no path.
+ * Maps a stack frame to a repository-relative path and one-based line, or to nothing when its file lies outside the repository, has no path or has a virtual (non-absolute) one.
  * @param frame - A DAP stack frame.
  * @param repositoryRoot - The opened repository's folder.
  * @returns `{ at }` for a frame inside the repository; an empty object otherwise.
@@ -129,6 +142,8 @@ async function locationOf(
   )
   const line: unknown = Reflect.get(Object(frame), 'line')
   if (typeof framePath !== 'string' || typeof line !== 'number') return {}
+  // js-debug names a source with no file on disk by a virtual path (`<node_internals>/…`): only an absolute path can be a repository file, never one resolved against the extension host's working folder.
+  if (!isAbsolute(framePath)) return {}
   // Real paths on both sides, so a symlinked folder does not read as outside the repository.
   const [root, file] = await Promise.all([
     realpath(repositoryRoot).catch(() => resolve(repositoryRoot)),

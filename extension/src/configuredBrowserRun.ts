@@ -18506,7 +18506,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate()
     this.browser.resumeViewport()
     clearTimeout(this.progressTimer)
-    // An API process read still running sends nothing more once the run ends.
+    // An API process read still running sends nothing more once the run ends, and its result is stale.
+    this.deadlineGeneration += 1
     this.apiProcessProbe?.abort()
     // A run that ends inside the preparation window leaves no readiness bound counting behind it.
     this.preparationWindow?.timeout.dispose()
@@ -18754,6 +18755,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.isApiProcessReadWanted = false
     const generation = this.deadlineGeneration
     void this.readApiProcessAtExpiry().then((state) => {
+      // The run ended during the read (a Stop, its cleanup or another failure): composing the text would still set its operation failure, so nothing is composed or journaled.
+      if (
+        this.cleaning ||
+        this.status === 'failed' ||
+        this.status === 'completed'
+      )
+        return
       // The run moved on during the read (a deadline was armed since): the failure is stale and is dropped.
       if (generation !== this.deadlineGeneration) {
         this.evidence.record('api.process-probe-dropped', {

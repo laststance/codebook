@@ -33,7 +33,7 @@ const NOTHING_HAPPENS_WATCH_MS = 300
 /**
  * Opens an API run whose threads answer as scripted, without expiring the deadline.
  * @param context - The test.
- * @param threads - What the API thread (or each thread, in order) answers; a `paused` frame's relative `path` is read inside the harness's real repository folder, an absolute one as given.
+ * @param threads - What the API thread (or each thread, in order) answers; a `paused` frame's relative `path` is read inside the harness's real repository folder, an absolute one and a js-debug virtual one (`<node_internals>/…`) as given.
  * @param threadsAnswer - How `threads` itself is answered.
  * @param probeOnly - Whether only the probe's requests are scripted (see {@link scriptApiThread}).
  * @returns The harness with operation 1 sent, and the scripted session.
@@ -52,7 +52,8 @@ async function openScriptedApiRun(
     (thread): ScriptedApiThread =>
       thread.kind === 'paused' &&
       thread.path !== undefined &&
-      !thread.path.startsWith('/')
+      !thread.path.startsWith('/') &&
+      !thread.path.startsWith('<')
         ? { ...thread, path: join(root, thread.path) }
         : thread,
   )
@@ -215,7 +216,7 @@ test('an API stop no request reaches reports unknown when the error only contain
   assert.deepEqual(asked, ['threads', 'stackTrace'])
 })
 
-// Value: protects=AC 1' a paused thread whose frame lies in a dependency, outside the repository or has no source path is still paused, and the failure names no place; fails_when=such a frame reads as running or unknown, or a node_modules, outside or sourceless path is named as a repository place; no_claim=real js-debug frames of library code
+// Value: protects=AC 1' a paused thread whose frame lies in a dependency, outside the repository or has no source path is still paused, and the failure names no place and claims no location it did not map; fails_when=such a frame reads as running or unknown, a node_modules, outside or sourceless path is named as a repository place, or the sentence claims where an unmapped place lies; no_claim=real js-debug frames of library code
 for (const { name, frame } of [
   {
     name: 'in node_modules',
@@ -240,13 +241,39 @@ for (const { name, frame } of [
       harness.run
         .view()
         .failures[0]!.includes(
-          "the API process was paused at a place outside the repository's own files. For a stop in the app's own API",
+          "the API process was paused at a place Codebook could not map to a file of the repository. For a stop in the app's own API",
         ),
       true,
     )
     assert.deepEqual(asked, ['threads', 'stackTrace'])
   })
 }
+
+// Value: protects=AC 1' a paused frame that js-debug names by a virtual path (`<node_internals>/…`) names no repository place, even while the extension host's working folder is the repository; fails_when=the virtual path is resolved against the working folder and named as a repository file; no_claim=which virtual paths a real js-debug sends (the stand-in answers one)
+test('an API stop no request reaches names no place for a frame js-debug gives a virtual path', async (context) => {
+  // Arrange
+  const { harness, session } = await openScriptedApiRun(context, {
+    kind: 'paused',
+    path: '<node_internals>/internal/process/task_queues',
+    line: 95,
+  })
+  const previousFolder = process.cwd()
+  process.chdir(await realpath(harness.directory))
+  // Act
+  try {
+    harness.advance(ACTIVE_TIMEOUT_MS)
+    await waitUntil(
+      () => harness.run.view().failures.length > 0,
+      'the not-reached failure',
+    )
+  } finally {
+    // The working folder goes back before the harness removes the repository.
+    process.chdir(previousFolder)
+  }
+  // Assert
+  assert.deepEqual(apiProcessOf(harness), { state: 'paused' })
+  assert.deepEqual(session.asked, ['threads', 'stackTrace'])
+})
 
 // Value: protects=AC 1' a debug session whose threads request fails or lists no thread reads as unknown, never running; fails_when=an error or an empty list reads as not-paused, which would tell the learner the request waits inside the app; no_claim=real js-debug thread lists
 for (const threadsAnswer of ['error', 'empty'] as const) {
@@ -291,6 +318,21 @@ for (const { name, threads } of [
     assert.deepEqual(asked, ['threads', 'stackTrace', 'stackTrace'])
   })
 }
+
+// Value: protects=AC 1' a paused thread decides at once: a later thread that never answers neither hides it nor holds the failure until the bound; fails_when=the probe waits on the later thread and the run reads unknown at the bound; no_claim=how many threads a real API has
+test('an API stop no request reaches reports paused when a later thread never answers', async (context) => {
+  // Arrange and Act
+  const { harness, asked } = await failApiStop(context, [
+    { kind: 'paused', path: WAITING_FILE, line: 41 },
+    { kind: 'silent' },
+  ])
+  // Assert
+  assert.deepEqual(apiProcessOf(harness), {
+    state: 'paused',
+    at: { path: 'apps/api/src/lib/pool.ts', line: 41 },
+  })
+  assert.deepEqual(asked, ['threads', 'stackTrace'])
+})
 
 // Value: protects=AC 1' with several threads, the API is not-paused only when every thread answered that it runs; fails_when=one running thread beside a thread whose request failed reads as not-paused; no_claim=how many threads a real API has
 test('an API stop no request reaches reports unknown when one thread runs and another thread fails', async (context) => {
@@ -398,6 +440,36 @@ test('an API stop reached while the probe waits keeps the run going and drops th
       apiProcess: harness.run.view().operationFailure?.serverRender?.apiProcess,
     },
     { failures: [], status: 'paused-server', apiProcess: undefined },
+  )
+})
+
+// Value: protects=AC 1' a learner's Stop while the probe still waits leaves a stopped run: the probe's late answer or its bound adds no not-reached failure and no operation failure after the Stop; fails_when=the probe's result composes SERVER_STOP_NOT_REACHED and sets the operation failure of the stopped run; no_claim=a real API's timing (the manual clock moves the deadline and the bound)
+test('a run stopped while the probe waits gains no not-reached failure afterwards', async (context) => {
+  // Arrange
+  const { harness, session } = await openScriptedApiRun(context, {
+    kind: 'silent',
+  })
+  harness.advance(ACTIVE_TIMEOUT_MS)
+  await waitUntil(
+    () => session.asked.includes('stackTrace'),
+    'the probe was waiting on the API thread',
+  )
+  // Act
+  await harness.run.stop()
+  session.releaseSilent()
+  harness.advance(API_PROCESS_PROBE_MS)
+  await staysFalse(
+    () => harness.run.view().operationFailure !== undefined,
+    'an operation failure after the Stop',
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      failures: [...harness.run.view().failures],
+      status: harness.run.view().status,
+      operationFailure: harness.run.view().operationFailure,
+    },
+    { failures: [], status: 'cancelled', operationFailure: undefined },
   )
 })
 

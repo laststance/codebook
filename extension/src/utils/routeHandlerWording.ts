@@ -60,7 +60,7 @@ export const API_SERVER_NOT_REACHED_POSSIBILITIES =
  * Called by the run when it words `SERVER_STOP_NOT_REACHED` for a stop in the app's own API; the sentence states the measured state and names no cause the run did not observe.
  *
  * @param apiProcess - The state {@link readApiProcessState} read.
- * @returns One sentence: running (not paused at any breakpoint), paused with its place or outside the repository's own files, or that the state could not be read.
+ * @returns One sentence: running (not paused at any breakpoint), paused with its place or at a place that maps to no repository file, or that the state could not be read.
  * @example
  * ```ts
  * apiProcessSentence({ state: 'paused', at: { path: 'apps/api/src/a.ts', line: 12 } })
@@ -72,6 +72,6 @@ export function apiProcessSentence(apiProcess: ApiProcessState): string {
   if (apiProcess.state === 'not-paused')
     return 'When the deadline ran out, the API process was running, not paused at any breakpoint. If the request reached the API, it may be waiting inside the app, for example on its database or another service it calls; or no request reached the line.'
   if (apiProcess.state === 'paused')
-    return `When the deadline ran out, the API process was paused ${apiProcess.at ? `at ${apiProcess.at.path}:${apiProcess.at.line}` : "at a place outside the repository's own files"}.`
+    return `When the deadline ran out, the API process was paused ${apiProcess.at ? `at ${apiProcess.at.path}:${apiProcess.at.line}` : 'at a place Codebook could not map to a file of the repository'}.`
   return 'Codebook could not read whether the API process was paused when the deadline ran out.'
 }
