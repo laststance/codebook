@@ -81,6 +81,78 @@ test('a version 3 configuration accepts hold record and explain on the top-level
   assert.deepEqual([recordedFirst, explainedFirst], [[], []])
 })
 
+/** Parses a version 3 configuration with one change and returns the parsed `data`, failing the test when it is refused. @example parsedOf((c) => { c.hold = 'record' }).hold // 'record' */
+function parsedOf(change: (configuration: Record<string, unknown>) => void) {
+  const input = versionThree()
+  change(input)
+  const result = operationsRepositoryConfigSchema.safeParse(input)
+  assert.equal(result.success, true)
+  return result.data as unknown as Record<string, unknown> & {
+    additionalStops: Record<string, unknown>[]
+  }
+}
+
+// Value: protects=the parsed configuration keeps hold on the top-level stop and on additionalStops[0], and an omitted hold stays absent from the parsed output; fails_when=the parser drops or defaults hold, so a recorded stop runs held or a held stop gains a field; no_claim=the run's behavior
+test('the parsed version 3 configuration keeps hold where it was declared and adds none where it was omitted', () => {
+  // Arrange, Act
+  const declared = parsedOf((configuration) => {
+    configuration.hold = 'record'
+    additionalStop(configuration).hold = 'explain'
+  })
+  const omitted = parsedOf(() => {})
+  // Assert
+  assert.equal(declared.hold, 'record')
+  assert.equal(declared.additionalStops[0]!.hold, 'explain')
+  assert.equal('hold' in omitted, false)
+  assert.equal('hold' in omitted.additionalStops[0]!, false)
+})
+
+// Value: protects=hold "explain" is accepted on a stop with afterOperation 0 (an entry-render stop is held anyway), top-level and additional; fails_when=explain is refused together with record on an entry-render stop; no_claim=the run's behavior
+test('hold explain is accepted on an afterOperation 0 stop', () => {
+  // Arrange, Act
+  const topLevel = issuesOf((configuration) => {
+    configuration.participant = 'server'
+    configuration.afterOperation = 0
+    configuration.hold = 'explain'
+  })
+  const additional = issuesOf((configuration) => {
+    configuration.participant = 'server'
+    configuration.afterOperation = 0
+    additionalStop(configuration).afterOperation = 0
+    additionalStop(configuration).hold = 'explain'
+  })
+  // Assert
+  assert.deepEqual([topLevel, additional], [[], []])
+})
+
+// Value: protects=a browser stop with afterOperation 0 and hold "record" reports its hold issue at the hold field (beside the afterOperation issue every browser entry stop gets), top-level and additional; fails_when=the hold issue is missing for a browser stop, or names another path; no_claim=the run's behavior
+test('hold record on a browser stop with afterOperation 0 reports the hold issue at the hold field', () => {
+  // Arrange, Act
+  const topLevel = issuesOf((configuration) => {
+    configuration.afterOperation = 0
+    configuration.hold = 'record'
+    additionalStop(configuration).afterOperation = 1
+  })
+  const additional = issuesOf((configuration) => {
+    // The first stop is a server entry stop, so the stops stay in order and only the browser stop is refused.
+    configuration.participant = 'server'
+    configuration.afterOperation = 0
+    additionalStop(configuration).participant = 'browser'
+    additionalStop(configuration).afterOperation = 0
+    additionalStop(configuration).hold = 'record'
+  })
+  // Assert
+  // A browser stop cannot pause the entry render at all, so its afterOperation is refused too: the two issues are pinned, each at its own path.
+  assert.deepEqual(topLevel.map((issue) => issue.split(': ')[0]).sort(), [
+    'afterOperation',
+    'hold',
+  ])
+  assert.deepEqual(additional.map((issue) => issue.split(': ')[0]).sort(), [
+    'additionalStops.0.afterOperation',
+    'additionalStops.0.hold',
+  ])
+})
+
 // Value: protects=hold takes only explain or record, and record is refused on a stop with afterOperation 0 with the hold field's path (top-level and additional); fails_when=another value is accepted, or an entry-load stop may be recorded, or the refusal does not name the field; no_claim=none beyond protects
 test('hold refuses other values and record on an afterOperation 0 stop, naming the hold field', () => {
   // Arrange, Act
