@@ -20,8 +20,10 @@ const CRAFTED_PAGE_BOUND_RATIO = 4
 const CLOSED_SVG_PAGE_BOUND_RATIO = 6
 /** How many times as long as its first half the whole {@link ORDINARY_PAGE} may take in the growth test: time that grows with the page gives about two, time that grows with its square about four. On the development host (16 CPUs, Node 24) the ratio was 1.97 to 2.29 plain and 2.01 to 2.03 under c8. */
 const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
-/** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting, where the parser's own time grows with the square of the nesting. The reader keeps the mode a select was pushed in, where the parser alone walks the stack at each select end: on the development host the reader took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). */
-const SELECT_PAIRS_PARSER_BOUND_RATIO = 1.5
+/** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting. Under parse5 8.1.0 the parser alone walked the stack at each select end, so its time grew with the square of the nesting, and the reader, which keeps the mode a select was pushed in, took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). parse5 8.1.1 finds the topmost select without a walk, so the parser alone is linear here and the reader's own work per tag shows: on the development host (16 CPUs, Node 24.22) the shortest of five runs each gave 1.33 to 1.54 times the parser's time in 24 samples (the shortest of two, 1.09 to 1.68), and a reader that walks the stack at each select would grow with the square of the nesting against a linear parser, many times the bound. The bound is the test's own failing line, twice the parser's time (Cycle 0103). */
+const SELECT_PAIRS_PARSER_BOUND_RATIO = 2
+/** How many runs of the page the select-pairs timing test times for the reader and for the parser alone; the shortest of each counts, so one scheduling stall on a loaded host does not decide the ratio. */
+const SELECT_PAIRS_TIMED_RUNS = 5
 /** How long the timing test waits for its worker's warm-up and ordinary page before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
 /** How many times as long as {@link ORDINARY_PAGE} the timing test waits for each crafted page before it takes the filtering for unfinished: more than every bound of these tests ({@link CLOSED_SVG_PAGE_BOUND_RATIO} the largest), so a page that misses its bound is measured, and a page that never ends is stopped. One fixed deadline for the whole worker cut the last page of the closed-svg test on a CI runner under coverage, where the ordinary page took 1,835 ms and the four pages together about 28 s more. */
@@ -366,8 +368,8 @@ test('the reader filters a page of more than 1 MB of select pairs after deep nes
   )
 })
 
-// Value: protects=the extension host against the reader's own cost on select pairs after deep nesting, which the HTML parser makes as long as the nesting is deep for each pair; fails_when=a select start or end sets the mode by the pinned reset, which walks the stack, so the reader takes twice as long as the parser alone or more (8.3 s against 3.2 s for 1 MB); why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief; seam=a worker thread that times the reader and the parser alone on the same page, the shorter of two runs each after a warm-up; no_claim=the parser's own time, which only the Wiki reader's deadline bounds
-test('the reader reads select pairs after deep nesting within one and a half times the time the HTML parser alone takes for them', async () => {
+// Value: protects=the extension host against the reader's own cost on select pairs after deep nesting, which the HTML parser makes as long as the nesting is deep for each pair; fails_when=a select start or end sets the mode by the pinned reset, which walks the stack, so the reader takes twice as long as the parser alone or more (8.3 s against 3.2 s for 1 MB); why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief; seam=a worker thread that times the reader and the parser alone on the same page, the shortest of five runs each after a warm-up; no_claim=the parser's own time, which only the Wiki reader's deadline bounds
+test('the reader reads select pairs after deep nesting within twice the time the HTML parser alone takes for them', async () => {
   // Arrange: 5,000 open elements, then 15,000 select pairs.
   const page = '<x>'.repeat(5_000) + '<select></select>'.repeat(15_000)
 
@@ -384,9 +386,10 @@ const timeOf = (run) => {
 const parseAlone = (html) => parse(html, { sourceCodeLocationInfo: true, scriptingEnabled: true })
 timeOf(() => readHtmlStartTags(workerData.warmUp))
 timeOf(() => parseAlone(workerData.warmUp))
+const shortestOf = (run) => Math.min(...Array.from({ length: workerData.runs }, () => timeOf(run)))
 parentPort.postMessage({
-  reader: Math.min(timeOf(() => readHtmlStartTags(workerData.page)), timeOf(() => readHtmlStartTags(workerData.page))),
-  parser: Math.min(timeOf(() => parseAlone(workerData.page)), timeOf(() => parseAlone(workerData.page))),
+  reader: shortestOf(() => readHtmlStartTags(workerData.page)),
+  parser: shortestOf(() => parseAlone(workerData.page)),
 })`,
     {
       eval: true,
@@ -395,6 +398,7 @@ parentPort.postMessage({
         parser: require.resolve('parse5'),
         warmUp: WARM_UP_PAGE,
         page,
+        runs: SELECT_PAIRS_TIMED_RUNS,
       },
     },
   )

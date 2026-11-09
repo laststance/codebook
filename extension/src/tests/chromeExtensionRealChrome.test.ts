@@ -459,13 +459,15 @@ test(
       surfaceUrl: `chrome-extension://${idOfPath(await realpath(FIXTURE))}/page.html`,
     })
     const { browser } = await launch(context, chrome, run)
-    // The precondition holds before the start: no worker is listed, so a later listing is the start's doing.
+    // A start of a version Chrome has not activated yet does nothing, so the start is timed only from an activated version.
+    await assertWorkerActivated(browser)
+    // Chrome may start a newly installed extension's worker by itself while it activates, so the worker is stopped again after the wait.
+    await browser.stopWorkers(EXTENSION_STOP_WORKERS_BOUND_MS)
+    // The precondition holds right before the start: no worker is listed, so a later listing is the start's doing.
     const before = (await targetsOf(browser)).filter(
       ({ type }) => type === 'service_worker',
     )
     assert.deepEqual(before, [])
-    // A start of a version Chrome has not activated yet does nothing, so the start is timed only from an activated version.
-    await assertWorkerActivated(browser)
     // Act
     // startWorker re-sends the start while the worker is not listed (Chrome can drop one start without an error), so a slow or dropped first start still ends listed.
     const start = await browser.startWorker(
