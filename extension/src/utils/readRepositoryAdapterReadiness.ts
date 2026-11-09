@@ -348,7 +348,7 @@ export async function readRepositoryAdapterReadiness(
  * Reads the root workspace's `static-page` readiness from the shared judgement ({@link readStaticPageReadiness}).
  * Called by {@link readRepositoryAdapterReadiness}; a read that throws is a not-ready report, never a rejection.
  * @param workspace - The workspace root, which is the page folder.
- * @returns The root page's facts; a root with no `index.html` reports `no-entry-page`.
+ * @returns The root page's facts; a root with no `index.html` reports `no-entry-page`, and a root that cannot be read reports the gap code `entry-unreadable`.
  * @example await readStaticPageRootReadiness('/repo') // => { ready: false, missing: ['no-entry-page'], entry: 'index.html' }
  */
 async function readStaticPageRootReadiness(
@@ -359,7 +359,7 @@ async function readStaticPageRootReadiness(
   } catch {
     return {
       ready: false,
-      missing: ['The workspace root could not be checked.'],
+      missing: ['entry-unreadable'],
       entry: 'index.html',
     }
   }

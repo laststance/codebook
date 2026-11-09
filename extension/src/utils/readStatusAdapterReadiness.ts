@@ -305,7 +305,7 @@ export async function readStatusAdapterReadiness(
   }
   const staticPage: StaticPageAdapterReadiness = {
     ...base['static-page'],
-    ...(await staticPageListing(workspace, placement.kind === 'root')),
+    ...(await staticPageListing(workspace)),
   }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
@@ -318,28 +318,19 @@ export async function readStatusAdapterReadiness(
 
 /**
  * Lists the plain pages of the repository for the `static-page` status report.
- * Called by {@link readStatusAdapterReadiness}; the listing has its own scan (a plain page has no `package.json` to find), so it needs no Git.
- * @param workspace - The opened repository's root.
- * @param isAtGitRoot - Whether the opened folder is the repository root; below it, no adapter lists anything.
+ * Called by {@link readStatusAdapterReadiness}; the listing has its own scan (a plain page has no `package.json` to find), so it needs no Git and lists the opened folder even when Git cannot place it (a folder outside any repository).
+ * @param workspace - The opened folder.
  * @returns `rootIsApp`, `packages`, `packagesTruncated` and, when truncated, `packagesTruncatedReason`.
- * @example await staticPageListing('/repo', true) // => { rootIsApp: false, packages: [{ packageRoot: 'examples/page', … }], packagesTruncated: false }
+ * @example await staticPageListing('/repo') // => { rootIsApp: false, packages: [{ packageRoot: 'examples/page', … }], packagesTruncated: false }
  */
 async function staticPageListing(
   workspace: string,
-  isAtGitRoot: boolean,
 ): Promise<
   Pick<
     StaticPageAdapterReadiness,
     'rootIsApp' | 'packages' | 'packagesTruncated' | 'packagesTruncatedReason'
   >
 > {
-  if (!isAtGitRoot)
-    return {
-      rootIsApp: false,
-      packages: [],
-      packagesTruncated: true,
-      packagesTruncatedReason: 'git-failed',
-    }
   try {
     return await discoverStaticPages(workspace)
   } catch {

@@ -1384,6 +1384,10 @@ const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
 const staticPageRepositoryConfigSchema = operationsConfigurationShape
   .extend({ adapter: z.literal('static-page') })
   .superRefine(validateRetainedStudyConfiguration)
+  .refine(
+    pressKeysAreCanonical,
+    'A format 23 study keeps each press key in canonical spelling.',
+  )
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
 /**
  * The configuration a format 21 study retains: a version 3 configuration that declares at least one press, every press key in canonical spelling.

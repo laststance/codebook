@@ -26,6 +26,10 @@ const REACT_SCRIPTS_READINESS_UNAVAILABLE =
 const EXPO_WEB_READINESS_UNAVAILABLE =
   "Codebook could not read the Expo adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
 
+/** The sentence of a static-page start whose window reported no static-page readiness. */
+const STATIC_PAGE_READINESS_UNAVAILABLE =
+  "Codebook could not read the static-page adapter's readiness for this window. Call codebook_status again, or reload the window, and retry."
+
 type EnvironmentPrerequisites = Awaited<
   ReturnType<StudyEnvironment['prerequisites']>
 >
@@ -63,7 +67,8 @@ export function repositoryBrowserStartPrerequisites(
   if (
     adapter !== 'vite-dev' &&
     adapter !== 'react-scripts-dev' &&
-    adapter !== 'expo-web-dev'
+    adapter !== 'expo-web-dev' &&
+    adapter !== 'static-page'
   )
     return undefined
   const profileReadiness = prerequisites.profiles?.[REPOSITORY_BROWSER_PROFILE]
@@ -78,6 +83,7 @@ export function repositoryBrowserStartPrerequisites(
           'vite-dev': VITE_READINESS_UNAVAILABLE,
           'react-scripts-dev': REACT_SCRIPTS_READINESS_UNAVAILABLE,
           'expo-web-dev': EXPO_WEB_READINESS_UNAVAILABLE,
+          'static-page': STATIC_PAGE_READINESS_UNAVAILABLE,
         }[adapter],
       ],
     }

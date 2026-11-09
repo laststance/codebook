@@ -138,8 +138,8 @@ test('the bare-import finder reads every import form and ignores paths and URLs'
     "import a from 'https://unpkg.com/x@1/a.js'",
   ]
   // Act
-  const found = forms.map(firstBareImport)
-  const skipped = ignored.map(firstBareImport)
+  const found = forms.map((form) => firstBareImport(form))
+  const skipped = ignored.map((form) => firstBareImport(form))
   // Assert
   assert.deepEqual(found, ['pkg', 'pkg', 'pkg', 'pkg'])
   assert.deepEqual(skipped, [undefined, undefined, undefined, undefined])

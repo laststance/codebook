@@ -10,6 +10,7 @@ import {
 } from '../constants'
 
 import { isInsideFolder } from './isInsideFolder'
+import { listStaticImportSpecifiers } from './listStaticImportSpecifiers'
 import { manifestDeclaresPackage } from './manifestDeclaresPackage'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
 import { readStaticPageHtml } from './readStaticPageHtml'
@@ -50,12 +51,8 @@ const OTHER_ADAPTER_PACKAGES: ReadonlyArray<readonly [string, string]> = [
   ['expo', 'expo-web-dev'],
 ]
 
-/** A package-name or scheme-bearing reference: it names something other than a file of the folder. */
+/** A scheme-bearing reference (`https:`, `data:`, `blob:`, …): it names something other than a file of the folder. */
 const SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i
-
-/** The statements of a script that import another module with a literal specifier (static form, at a statement start). */
-const STATIC_IMPORT_PATTERN =
-  /(?:^|[;}\n])\s*(?:import|export)\s+(?:[\w$*{},\s]*?\s*from\s*)?(['"])([^'"\n]+)\1/g
 
 /** A dynamic `import('specifier')` with a literal specifier. */
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g
@@ -74,19 +71,39 @@ export function otherAdapterOfManifest(manifest: unknown): string | undefined {
 }
 
 /**
+ * Decodes a percent-encoded path.
+ * @param value - The path as written.
+ * @returns The decoded path; `undefined` for a malformed percent-encoding.
+ * @example decodePath('/a%20b.js') // => '/a b.js'
+ * @example decodePath('/a%zz.js') // => undefined
+ */
+function decodePath(value: string): string | undefined {
+  try {
+    return decodeURI(value)
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Resolves the entry file of a page folder from the configured entry path.
  * Called by {@link judgeStaticPage} and the run's workspace check.
  * @param entryPath - The configured entry path (`/` when none).
  * @returns The entry file relative to the folder, forward slashes; `undefined` for a path that names no `.html` file.
  * @example staticPageEntryFile('/') // => 'index.html'
  * @example staticPageEntryFile('/demo/page.html?x=1') // => 'demo/page.html'
+ * @example staticPageEntryFile('/demo/') // => 'demo/index.html'
  */
 export function staticPageEntryFile(entryPath: string): string | undefined {
-  const pathname = decodeURI(entryPath.split(/[?#]/)[0] ?? '/')
+  const pathname = decodePath(entryPath.split(/[?#]/)[0] ?? '/')
+  // A malformed percent-encoding names no file.
+  if (pathname === undefined) return undefined
   if (pathname === '/' || pathname === '') return 'index.html'
   const relative = posix.normalize(pathname.replace(/^\/+/, ''))
-  if (relative.startsWith('..') || !relative.endsWith('.html')) return undefined
-  return relative
+  if (relative.startsWith('..')) return undefined
+  // A trailing slash names the folder's index page, as the server answers it.
+  if (pathname.endsWith('/')) return posix.join(relative, 'index.html')
+  return relative.endsWith('.html') ? relative : undefined
 }
 
 /**
@@ -111,21 +128,31 @@ async function fileExistsInside(
 /**
  * Finds the first bare-specifier import of a script text.
  * @param text - The script text.
+ * @param importMapKeys - The specifier keys of the entry page's import maps, which resolve what they map.
  * @returns The first specifier that only a bundler resolves, or `undefined`.
  * @example firstBareImport("import { createStore } from 'redux'") // => 'redux'
  * @example firstBareImport("import x from './x.js'") // => undefined
  */
-export function firstBareImport(text: string): string | undefined {
+export function firstBareImport(
+  text: string,
+  importMapKeys: readonly string[] = [],
+): string | undefined {
   const isBare = (specifier: string): boolean =>
     !specifier.startsWith('./') &&
     !specifier.startsWith('../') &&
     !specifier.startsWith('/') &&
-    !SCHEME_PATTERN.test(specifier)
-  for (const pattern of [STATIC_IMPORT_PATTERN, DYNAMIC_IMPORT_PATTERN])
-    for (const match of text.matchAll(pattern)) {
-      const specifier = match[2]
-      if (specifier !== undefined && isBare(specifier)) return specifier
-    }
+    !SCHEME_PATTERN.test(specifier) &&
+    // The page's import map resolves a specifier it maps, by key or by a key ending in a slash.
+    !importMapKeys.some(
+      (key) =>
+        specifier === key || (key.endsWith('/') && specifier.startsWith(key)),
+    )
+  const staticFound = listStaticImportSpecifiers(text).find(isBare)
+  if (staticFound !== undefined) return staticFound
+  for (const match of text.matchAll(DYNAMIC_IMPORT_PATTERN)) {
+    const specifier = match[2]
+    if (specifier !== undefined && isBare(specifier)) return specifier
+  }
   return undefined
 }
 
@@ -133,17 +160,19 @@ export function firstBareImport(text: string): string | undefined {
  * Resolves a page reference to a folder-relative file path.
  * @param reference - A `src` or `href` as written.
  * @param entryFolder - The entry file's folder, folder-relative (`.` at the root).
- * @returns The folder-relative path; `undefined` for a reference that is not a file of the folder (an `https:` URL, a `data:` URL or a fragment).
+ * @returns The folder-relative path; `undefined` for a fragment-only reference; `null` for a malformed percent-encoding (no file).
  * @example resolveReference('/main.js', 'demo') // => 'main.js'
  * @example resolveReference('./a.css?v=1', 'demo') // => 'demo/a.css'
  */
 function resolveReference(
   reference: string,
   entryFolder: string,
-): string | undefined {
+): string | null | undefined {
   const bare = reference.split(/[?#]/)[0] ?? ''
   if (bare === '') return undefined
-  const decoded = decodeURI(bare)
+  const decoded = decodePath(bare)
+  // A malformed percent-encoding names no file of the folder.
+  if (decoded === undefined) return null
   return decoded.startsWith('/')
     ? posix.normalize(decoded.slice(1))
     : posix.normalize(posix.join(entryFolder, decoded))
@@ -174,11 +203,12 @@ async function findMissingReference(
     0,
     STATIC_PAGE_REFERENCES_MAX,
   )) {
-    // Only an absolute https URL or a data URL names something other than a file of the folder.
-    if (/^https:\/\//i.test(reference) || /^data:/i.test(reference)) continue
+    // A protocol-relative or scheme-bearing reference is remote and never a file of the folder.
+    if (reference.startsWith('//') || SCHEME_PATTERN.test(reference)) continue
     const resolved = resolveReference(reference, entryFolder)
     if (resolved === undefined) continue
     if (
+      resolved === null ||
       resolved.startsWith('..') ||
       !(await fileExistsInside(folder, resolved))
     )
@@ -197,13 +227,15 @@ async function findMissingReference(
  * @param folder - The page folder's real path.
  * @param inlineTexts - The texts of the page's inline scripts.
  * @param scriptFiles - The folder-relative paths of the page's script files.
+ * @param importMapKeys - The specifier keys of the page's import maps.
  * @returns The first bare import, or `undefined`.
- * @example await findBareImportProblem('/p', ["import 'redux'"], []) // => { gap: 'needs-bundler', reference: 'redux', kind: 'bare-import' }
+ * @example await findBareImportProblem('/p', ["import 'redux'"], [], []) // => { gap: 'needs-bundler', reference: 'redux', kind: 'bare-import' }
  */
 async function findBareImportProblem(
   folder: string,
   inlineTexts: readonly string[],
   scriptFiles: readonly string[],
+  importMapKeys: readonly string[],
 ): Promise<StaticPageProblem | undefined> {
   const fileTexts: string[] = []
   for (const file of scriptFiles.slice(0, STATIC_PAGE_SCRIPT_READS_MAX)) {
@@ -215,7 +247,7 @@ async function findBareImportProblem(
     if (text !== undefined) fileTexts.push(text)
   }
   for (const text of [...inlineTexts, ...fileTexts]) {
-    const specifier = firstBareImport(text)
+    const specifier = firstBareImport(text, importMapKeys)
     if (specifier !== undefined)
       return { gap: 'needs-bundler', reference: specifier, kind: 'bare-import' }
   }
@@ -247,6 +279,7 @@ async function findBundlerProblem(
     folder,
     page.inlineScripts.map((script) => script.text),
     scriptFiles,
+    page.importMapKeys,
   )
 }
 

@@ -30,7 +30,7 @@ export type StaticPageDiscovery = {
  * Called by {@link discoverStaticPages} for the root and each child folder.
  * @param folder - The folder's real path.
  * @returns `true` for a candidate page.
- * @example await isCandidateStaticPage('/repo/examples/counter-vanilla') // => true
+ * @example await isCandidateStaticPage('/repo/examples/page') // => true
  */
 async function isCandidateStaticPage(folder: string): Promise<boolean> {
   const entries = await readdir(folder, { withFileTypes: true }).catch(() => [])

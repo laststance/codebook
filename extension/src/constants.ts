@@ -3798,3 +3798,6 @@ export const API_PROXY_PATH_MAX_CHARS = 256
  */
 export const API_SERVER_PAGE_ROUTE_RULE =
   "A question that starts from the repository's own web app (what the server does when the learner signs in, opens a screen or presses something) uses a browser run of the app that declares `apiServer` when the app is a Vite or Expo app whose page reaches the repository's own Node API (`viteApiServer` for a Vite app from API 1.38, `expoWebQuickStart.apiServer` for an Expo app from API 1.37), so the server stop pauses during the request the page sends; a Next app's own server code (route handlers, server actions, API routes) pauses in its own browser run (see its help) and never declares `apiServer`; the `node-server` profile is for a server request asked on its own, with no screen, for an API that is not part of a Vite, Expo or Next app run, or when the app's adapter is not ready."
+
+/** The most characters of one script text that the bare-import scan of a `static-page` readiness reads; the scan is linear in it, and a longer text is judged on this prefix. */
+export const STATIC_PAGE_IMPORT_SCAN_MAX_CHARS = 1_048_576

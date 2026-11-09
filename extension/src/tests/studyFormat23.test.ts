@@ -12,6 +12,7 @@ import {
 } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import type { LibraryRunFacts } from '../libraryRunFactsSchema'
+import { studyConfigurationSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { assertReadableStudyFormat } from '../utils/assertReadableStudyFormat'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
@@ -71,6 +72,7 @@ async function pageStudy(
     library?: boolean
     facts?: LibraryRunFacts
     press?: boolean
+    pressKey?: string
   } = {},
 ): Promise<ConfiguredStudy> {
   const study: ConfiguredStudy = JSON.parse(
@@ -90,7 +92,7 @@ async function pageStudy(
             {
               kind: 'press',
               title: 'Open',
-              key: 'Control+k',
+              key: options.pressKey ?? 'Control+k',
               after: [{ kind: 'visible', selector: '#palette' }],
             },
           ],
@@ -108,6 +110,16 @@ async function pageStudy(
     })),
     ...(options.facts === undefined ? {} : { library: options.facts }),
   } as ConfiguredStudy
+}
+
+/** The message the reader refuses the study with; `undefined` when it accepts. */
+function refusalOf(study: ConfiguredStudy): string | undefined {
+  try {
+    decodeConfiguredStudy(study, study.workspaceKey)
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
 }
 
 /** Whether the reader accepts the study. */
@@ -191,10 +203,15 @@ test('only format 23 holds a static-page configuration, and format 23 holds no o
   const own = await pageStudy(23, { packageRoot: 'examples/page' })
   // Act
   const olderResults = pageStudies.map(decodes)
+  const olderRefusals = pageStudies.map(refusalOf)
   // Assert
   assert.deepEqual(
     olderResults,
     older.map(() => false),
+  )
+  assert.deepEqual(
+    olderRefusals,
+    older.map(() => 'Configured archive and intent versions disagree.'),
   )
   assert.equal(decodes(pressStudy), false)
   assert.deepEqual(others.map(decodes), [false, false, false])
@@ -290,4 +307,32 @@ test('a static-page study reopened after a window reload names and shows its pag
     `${study.id}.study.v23.json`,
   ])
   assert.deepEqual(listed, ['v23'])
+})
+
+// Value: protects=AC 7 a format 23 study keeps each press key in canonical spelling, as formats 21 and 22 do; fails_when=a static-page study with a non-canonical press key decodes; no_claim=the press operation's other rules
+test('a static-page study with a non-canonical press key is refused and a canonical one is read', async () => {
+  // Arrange
+  const canonical = await pageStudy(23, {
+    packageRoot: 'examples/page',
+    press: true,
+    pressKey: 'Control+k',
+  })
+  const nonCanonical = await pageStudy(23, {
+    packageRoot: 'examples/page',
+    press: true,
+    pressKey: 'Ctrl+k',
+  })
+  // Act
+  const results = [canonical, nonCanonical].map((study) =>
+    studyConfigurationSchema.safeParse(study.configuration),
+  )
+  // Assert
+  assert.deepEqual(
+    results.map((result) => result.success),
+    [true, false],
+  )
+  assert.match(
+    JSON.stringify(results[1]?.error?.issues),
+    /A format 23 study keeps each press key in canonical spelling\./,
+  )
 })
