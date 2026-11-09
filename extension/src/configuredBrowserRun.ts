@@ -17126,7 +17126,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Waits, for {@link recordAndContinue}, until a pending js-debug stack refresh of the recorded stop's own pause is verified (`participant.refresh`, which {@link continue} refuses control during) or, for a refresh deferred while the stop's own pause was awaited, until its re-announced `stopped` is consumed (`participant.deferredRefresh`, cleared by {@link onEvent}); resuming earlier would let that late `stopped` fail the run as an unexpected stop.
-   * Both routes keep the pause's generation ({@link verifyStackRefresh}, the deferred consumption), so the same pause identity then continues the same stop. The wait ends the run with a named reason, and nothing is resumed, when the gate no longer holds that pause or the stop is no longer the run's current stop; the `refresh` route is bounded by its own progress deadline (`ACTIVE_TIMEOUT_MS`), a deferred refresh that is pending when the wait starts gets the same bound armed here ("Native stack refresh did not re-announce the recorded stop"), and a failed verification fails the run.
+   * Both routes keep the pause's generation ({@link verifyStackRefresh}, the deferred consumption), so the same pause identity then continues the same stop. The wait ends the run with a named reason, and nothing is resumed, when the gate no longer holds that pause or the stop is no longer the run's current stop; the `refresh` route is bounded by its own progress deadline (`ACTIVE_TIMEOUT_MS`), a deferred refresh that is pending when the wait starts gets the same bound armed here ("Native stack refresh did not re-announce the recorded stop"), which gives the pause hold back once the wait ends, and a failed verification fails the run.
    * @param stop - The recorded stop being finished.
    * @param pause - The identity of the pause the observation was captured at.
    * @throws When the run ended during the wait, or the pause was replaced by another one (the run is failed with "Recorded stop's pause changed during a stack refresh and no resume was sent").
@@ -17141,7 +17141,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     const participant = this.participants[stop.participant]
     // A deferred refresh arms no deadline when it arrives; its re-announced stop can still be pending when a recorded stop resumes within milliseconds, so the wait is bounded here.
-    if (participant.deferredRefresh && !participant.refresh)
+    const didBoundDeferredRefresh = Boolean(
+      participant.deferredRefresh && !participant.refresh,
+    )
+    if (didBoundDeferredRefresh)
       this.progressDeadline(
         ACTIVE_TIMEOUT_MS,
         'Native stack refresh did not re-announce the recorded stop',
@@ -17153,6 +17156,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
       this.alive()
     }
+    // The bound ends with the wait: the pause hold comes back, as {@link verifyStackRefresh} gives it back on the refresh route, so a slow later step is never reported as a missing re-announcement.
+    if (didBoundDeferredRefresh) this.holdPauseDeadline()
     if (
       this.stops[this.stopIndex] !== stop ||
       !participant.gate.matches(pause) ||

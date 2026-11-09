@@ -241,3 +241,32 @@ test('a recorded stop with a deferred stack refresh resumes only after the re-an
   assert.deepEqual(plain(harness.run.view().failures), [])
   assert.equal(harness.run.view().operation?.afterVerified, true)
 })
+
+// Value: protects=once a deferred refresh's re-announced stop is consumed, the recorded stop's resume starts under the pause hold again, not under the refresh's bound, so a slow arming of the next stop is never reported as "did not re-announce the recorded stop"; fails_when=the deferred-refresh bound stays armed into continue(); no_claim=a real js-debug refresh or a slow arming (the fake session stands in, and the test reads the deadline in force when continue() starts)
+test('a recorded stop resumes under the pause hold once its deferred stack refresh is consumed', async (context) => {
+  // Arrange
+  const { harness, participant, announceStop } =
+    await openRunWithDeferredRefresh(context)
+  const run = harness.run
+  const continueRun = run.continue.bind(run)
+  const holdingPauseAtContinue: boolean[] = []
+  run.continue = async (
+    ...args: Parameters<typeof run.continue>
+  ): Promise<void> => {
+    holdingPauseAtContinue.push(run['holdingPause'])
+    await continueRun(...args)
+  }
+  run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => participant.deferredRefresh !== undefined,
+    'the deferred stack refresh',
+  )
+  // Act
+  announceStop()
+  await waitUntil(
+    () => run.view().status === 'completed',
+    'the result after the deferred refresh',
+  )
+  // Assert
+  assert.deepEqual(holdingPauseAtContinue, [true])
+})

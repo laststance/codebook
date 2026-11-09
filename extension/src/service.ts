@@ -4019,6 +4019,30 @@ export class StudyService {
     }
   }
 
+  /**
+   * Gives the run resource's `recordedStops` (API 1.43): the declared stop indexes a version 3 run recorded without a hold, as its runtime reports them.
+   * A version 3 run lists none before its runtime exists, as it lists its operations; the accepted start decides, so a run still preparing or whose preparation failed lists the field too. Called by {@link state}.
+   * @param record - The run.
+   * @param runtime - The runtime view {@link state} shows, absent before the runtime exists.
+   * @returns
+   * - `{ recordedStops: [...] }` from the runtime, or `{ recordedStops: [] }` for a version 3 run without one
+   * - `{}` for every other run
+   * @example
+   * this.recordedStopsOf(record, undefined) // => { recordedStops: [] } for a version 3 run still preparing
+   */
+  private recordedStopsOf(
+    record: StudyRecord,
+    runtime: Pick<ConfiguredRuntimeView, 'recordedStops'> | undefined,
+  ): Pick<ConfiguredRuntimeView, 'recordedStops'> {
+    if (runtime?.recordedStops) return { recordedStops: runtime.recordedStops }
+    // Only the accepted start of a repository-browser version 3 run carries the field before its runtime exists.
+    return record.profile === REPOSITORY_BROWSER_PROFILE &&
+      'version' in record.configuration &&
+      record.configuration.version === OPERATIONS_CONFIG_VERSION
+      ? { recordedStops: [] }
+      : {}
+  }
+
   /** Projects bounded current state and actionable next steps without copying the full event log; a completed run whose final save is under way shows no result yet ({@link StudyService.shownRuntimeOf}). @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const { runtime, runtimeOutcome } = this.shownRuntimeOf(record)
@@ -4297,15 +4321,7 @@ export class StudyService {
         runtime?.operations ??
         [...record.actions.values()].map((action) => action.receipt),
       ...(operationStatus ? { operationStatus } : {}),
-      // A version 3 run lists the declared stop indexes it recorded without a hold (API 1.43).
-      ...(runtime?.recordedStops
-        ? { recordedStops: runtime.recordedStops }
-        : // A version 3 run lists none before its runtime exists, as it lists its operations; the accepted start decides, so a run still preparing or whose preparation failed lists it too.
-          record.profile === REPOSITORY_BROWSER_PROFILE &&
-            'version' in record.configuration &&
-            record.configuration.version === OPERATIONS_CONFIG_VERSION
-          ? { recordedStops: [] as number[] }
-          : {}),
+      ...this.recordedStopsOf(record, runtime),
       // A server render in progress says what it waits for, and that its first execution was not observed.
       ...(runtime?.renderMessage ? { message: runtime.renderMessage } : {}),
       ...(runtime?.libraryPhase === 'building' && runtime.library
