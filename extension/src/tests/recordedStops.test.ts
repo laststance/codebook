@@ -405,6 +405,34 @@ test('a recorded stop whose cited source changed after its observation ends the 
   await harness.run.stop()
 })
 
+// Value: protects=when the evidence save rejects after a recorded stop's observation is committed, the run ends failed with the save's error text and sends no resume; fails_when=the program is resumed before the save, or the save error is swallowed and the run resumes; no_claim=real disk: a wrapped persist stands in
+test('a recorded stop whose evidence save fails ends the run with the save error and sends no resume', async (context) => {
+  // Arrange
+  const harness = await openRun(context, ['record'])
+  const resumes = watchBrowserResumes(harness)
+  const persist = harness.run['persist'].bind(harness.run)
+  harness.run['persist'] = async (): Promise<void> => {
+    // The first save after the commit lists the recorded stop: that is the save recordAndContinue awaits before any resume.
+    if (ownView(harness.run).recordedStops?.length)
+      throw new Error('disk full while saving the evidence')
+    await persist()
+  }
+  // Act
+  harness.run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the failed evidence save',
+  )
+  // Assert
+  assert.equal(continueCount(harness), 0)
+  assert.deepEqual(resumes, [])
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: disk full while saving the evidence',
+  )
+  await harness.run.stop()
+})
+
 // Value: protects=a recorded stop declared on a source the learner had already changed in the editor ends the run before any resume; fails_when=the stop is recorded and the program resumed over a source that differs from the article; no_claim=which sentence the run reports first (the not-confirmed sentence is the test above)
 test('a recorded stop on a source changed before the stop sends no resume', async (context) => {
   // Arrange
