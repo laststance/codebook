@@ -335,6 +335,75 @@ test('the retired Select Presentation command is neither contributed to the Comm
   }
 })
 
+// Value: protects=? in Codebook's three native views, their title-bar ? control and the Command Palette entry reaching the Keyboard shortcuts list; fails_when=activation no longer registers `codebook.showKeyboardShortcuts`, so all three routes end in "command not found" while the manifest still offers them; why_new=Cycle 0108 hosted review (the native checks proved it, no unit test did); seam=vscode.commands.registerCommand stub
+test('activation registers Keyboard shortcuts, so ? in the views, the title control and the Command Palette entry open the list', async () => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-shortcuts-command-')),
+  )
+  const registered: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string) {
+            registered.push(name)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '.codebook/wiki' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        env: { openExternal: async () => true },
+        Uri: {
+          parse: (value: string) => ({ value }),
+          file: (fsPath: string) => ({ fsPath }),
+        },
+        window: { showErrorMessage: async () => undefined },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './deepWikiReader': {
+        readDeepWikiManifest: async () => undefined,
+        startDeepWikiReader: async () => ({
+          url: 'http://127.0.0.1:9/reader/index.html',
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: resolve(__dirname, '../..'),
+      globalStorageUri: { fsPath: projectRoot },
+      subscriptions: [],
+      workspaceState: { get: () => undefined, update: async () => {} },
+    })
+
+    // Assert
+    assert.equal(
+      registered.filter((name) => name === 'codebook.showKeyboardShortcuts')
+        .length,
+      1,
+    )
+  } finally {
+    await boundary.deactivate()
+    await removeTestFolder(projectRoot)
+  }
+})
+
 // Value: protects=the lasting way to move the Learning summary in Cursor; fails_when=the manifest loses the command, its title action on the Learning summary or its Command Palette entry, shows them outside Cursor, or activation no longer registers the command, so the title action would end in "command not found"; why_new=Cycle 0045 NF-25 as DR-9 (a notification Cursor removes after 15 s was the only way); seam=vscode.commands.registerCommand stub and the manifest file
 test('Move Learning Summary… is contributed as a title action of the Learning summary and a Command Palette entry, both shown only while the reader turned them on, and is registered at activation', async () => {
   // Arrange

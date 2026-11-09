@@ -33,6 +33,10 @@ export interface ShortcutGroup {
  *
  * @param platform - The editor host's `process.platform`; decides the notation of the native entry's key.
  * @returns The Codebook views, Learning replay and DeepWiki reader groups.
+ * @example
+ * ```ts
+ * shortcutGroups('linux').map(({ heading }) => heading) // ['Codebook views', 'Learning replay', 'DeepWiki reader']
+ * ```
  */
 function shortcutGroups(platform: NodeJS.Platform): ShortcutGroup[] {
   return [
@@ -64,6 +68,12 @@ function shortcutGroups(platform: NodeJS.Platform): ShortcutGroup[] {
  * @param heading - The group's name.
  * @param entries - One group's entries.
  * @returns The group's shortcut items.
+ * @example
+ * ```ts
+ * const entry = { action: 'Play', keys: 'Space', context: 'Replay' }
+ * dedupedShortcuts('Learning replay', [entry, entry])
+ * // [{ kind: 'shortcut', label: 'Play', description: 'Space', detail: 'Learning replay · Replay' }]
+ * ```
  */
 function dedupedShortcuts(
   heading: string,
@@ -109,6 +119,11 @@ export function keyboardShortcutItems(
  *
  * @param groups - The groups in display order.
  * @returns The list items.
+ * @example
+ * ```ts
+ * groupedShortcutItems([{ heading: 'First', entries: [{ action: 'Open', keys: 'Enter', context: 'List' }] }])
+ * // [{ kind: 'separator', label: 'First' }, { kind: 'shortcut', label: 'Open', description: 'Enter', detail: 'First · List' }]
+ * ```
  */
 export function groupedShortcutItems(
   groups: readonly ShortcutGroup[],
@@ -125,6 +140,11 @@ export function groupedShortcutItems(
  * @param item - A list item.
  * @param needle - The trimmed, lower-cased search text.
  * @returns True when label, description or detail contains the needle.
+ * @example
+ * ```ts
+ * matchesNeedle({ kind: 'shortcut', label: 'Play', description: 'Space', detail: 'Learning replay · Replay' }, 'space') // true
+ * matchesNeedle({ kind: 'separator', label: 'Learning replay' }, 'replay') // false
+ * ```
  */
 function matchesNeedle(item: ShortcutListItem, needle: string): boolean {
   if (item.kind === 'separator') return false

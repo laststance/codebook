@@ -60,6 +60,11 @@ let openList: KeyboardShortcutsQuickPick | undefined
  * @param editor - The editor API, for the separator kind.
  * @param items - What {@link itemsForQuery} gave.
  * @returns QuickPick items; every one has `alwaysShow` so the editor's filter hides none.
+ * @example
+ * ```ts
+ * toQuickPickItems(editor, [{ kind: 'separator', label: 'Codebook views' }])
+ * // [{ label: 'Codebook views', kind: editor.QuickPickItemKind.Separator, alwaysShow: true }]
+ * ```
  */
 function toQuickPickItems(
   editor: KeyboardShortcutsEditor,
