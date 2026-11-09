@@ -9,6 +9,7 @@ import {
   STATIC_PAGE_SCRIPT_READS_MAX,
 } from '../constants'
 
+import { boundStaticPageText } from './boundStaticPageText'
 import { isInsideFolder } from './isInsideFolder'
 import { leavesStaticPageFolder } from './leavesStaticPageFolder'
 import { listDynamicImportSpecifiers } from './listDynamicImportSpecifiers'
@@ -334,7 +335,7 @@ export async function judgeStaticPage(
  */
 function staticPageMissingOf(problem: StaticPageProblem): string {
   return problem.gap === 'needs-bundler'
-    ? `needs-bundler: ${problem.reference.slice(0, 200).replaceAll(/[\r\n]/g, ' ')}`
+    ? `needs-bundler: ${boundStaticPageText(problem.reference)}`
     : problem.gap
 }
 

@@ -92,9 +92,15 @@ export class CdnImportRedirect {
   private async answer(
     event: Protocol.Fetch.RequestPausedEvent,
   ): Promise<void> {
-    if (!this.isEnabled) return
     const { cdp, packageName, files, onPathAbsent } = this.options
     const { requestId } = event
+    if (!this.isEnabled) {
+      // A request paused in the gap before Fetch.disable took effect would hang: let it through unchanged, best effort.
+      await cdp
+        .request('Fetch.continueRequest', { requestId })
+        .catch(() => undefined)
+      return
+    }
     const match = matchCdnPackageUrl(event.request.url, packageName)
     if (match === undefined || event.request.method !== 'GET') {
       this.continuedCount++

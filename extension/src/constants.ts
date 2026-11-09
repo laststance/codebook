@@ -3476,6 +3476,9 @@ export const STATIC_PAGE_FILE_LIMIT_BYTES = 1_048_576
 /** The most `<script src>` and `<link href>` references of the entry page that readiness checks (the first ones, in document order); a page that names more is judged on these. */
 export const STATIC_PAGE_REFERENCES_MAX = 64
 
+/** The most characters of page-controlled text (a reference, a file or a library name) a static-page refusal or status line carries; longer text is cut. */
+export const STATIC_PAGE_REFUSAL_TEXT_MAX_CHARS = 200
+
 /** The most same-origin scripts of the entry page whose text readiness reads for a bare-specifier import (one level deep). */
 export const STATIC_PAGE_SCRIPT_READS_MAX = 16
 

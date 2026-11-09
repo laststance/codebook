@@ -226,8 +226,8 @@ test('requests that are not files of the declared package continue unchanged', a
   )
 })
 
-// Value: protects=AC 4 Fetch.disable is sent when the run ends and again-safe, also after a request failed the run, and a request paused after the disable gets no answer from the redirect; fails_when=interception stays on, a second disable sends again, or a late event is answered; no_claim=a page session that already closed (the disable then fails quietly)
-test('Fetch.disable is sent once when the run ends, also after a failed request, and a late event is not answered', async (context) => {
+// Value: protects=AC 4 Fetch.disable is sent when the run ends and again-safe, also after a request failed the run, and a request paused after the disable is let through unchanged so it never hangs; fails_when=interception stays on, a second disable sends again, or a late event is answered with anything but a continue; no_claim=a page session that already closed (the disable then fails quietly)
+test('Fetch.disable is sent once when the run ends, also after a failed request, and a late event is only continued', async (context) => {
   // Arrange
   const library = await createPackedLibrary(context)
   const { session, redirect } = await startRedirect(library)
@@ -239,13 +239,38 @@ test('Fetch.disable is sent once when the run ends, also after a failed request,
   await redirect.disable()
   await redirect.disable()
   session.pause('https://unpkg.com/lib@1/dist/lib.mjs', 'late')
-  // gstack-timing-ok: an absence check; a slow runner can only delay a wrong answer past the wait (a false pass), never fail a correct redirect
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  await session.until((commands) =>
+    commands.some((command) => command.method === 'Fetch.continueRequest'),
+  )
   // Assert
   assert.deepEqual(
     session.commands.map((command) => command.method),
-    ['JsDebug.subscribe', 'Fetch.enable', 'Fetch.failRequest', 'Fetch.disable'],
+    [
+      'JsDebug.subscribe',
+      'Fetch.enable',
+      'Fetch.failRequest',
+      'Fetch.disable',
+      'Fetch.continueRequest',
+    ],
   )
+})
+
+// Value: protects=AC 4 a request paused in the gap after disable() began (or when Fetch.disable throws) is continued, not left paused; fails_when=answer returns without answering once disabled; no_claim=that the browser then loads the published copy (native check)
+test('a request paused after disable() gets Fetch.continueRequest with its own request id', async (context) => {
+  // Arrange
+  const library = await createPackedLibrary(context)
+  const { session, redirect } = await startRedirect(library)
+  await redirect.disable()
+  // Act
+  session.pause('https://example.test/other.js', 'gap-1')
+  await session.until((commands) =>
+    commands.some((command) => command.method === 'Fetch.continueRequest'),
+  )
+  // Assert
+  const continued = session.commands.find(
+    (command) => command.method === 'Fetch.continueRequest',
+  )
+  assert.deepEqual(continued?.params, { requestId: 'gap-1' })
 })
 
 // Value: protects=AC 4 a page session that is gone when the run ends does not make the disable throw; fails_when=disable rejects on a closed session, which would skip the rest of the cleanup; no_claim=that interception ended (the page is gone)

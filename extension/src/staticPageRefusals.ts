@@ -1,4 +1,5 @@
 import { StudyError, type ErrorCode } from './errors'
+import { boundStaticPageText } from './utils/boundStaticPageText'
 import { encodeViteLibraryVariant } from './utils/viteLibraryFailureIdentity'
 
 /**
@@ -84,17 +85,23 @@ export function staticPageNeedsBundlerRefusal(
   reference: string,
   kind: 'missing-file' | 'bare-import' | 'scripts-not-all-judged',
 ): StudyError {
+  const boundedReference = boundStaticPageText(reference)
   const problem =
     kind === 'missing-file'
-      ? `names ${reference}, a file that does not exist in the page folder`
+      ? `names ${boundedReference}, a file that does not exist in the page folder`
       : kind === 'scripts-not-all-judged'
-        ? `names more same-origin scripts than are read (first unread: ${reference})`
-        : `imports ${reference}, a bare specifier only a bundler resolves`
+        ? `names more same-origin scripts than are read (first unread: ${boundedReference})`
+        : `imports ${boundedReference}, a bare specifier only a bundler resolves`
   return staticPageRefusal(
     'STATIC_PAGE_UNSUPPORTED',
     `The page ${problem}, so it needs a bundler and Codebook serves only a page whose files exist as written; nothing was started.`,
     `Tell the learner the page needs a bundler (details.reference is the first reference that does), so this version cannot serve it; never edit the project or run its bundler yourself. ${recoveryEnd('STATIC_PAGE_UNSUPPORTED')}`,
-    { reason: 'needs-bundler', reference, kind, sideEffects: 'none' },
+    {
+      reason: 'needs-bundler',
+      reference: boundedReference,
+      kind,
+      sideEffects: 'none',
+    },
   )
 }
 
@@ -181,10 +188,11 @@ export function staticPageOutsidePackageRefusal(
   files: readonly string[],
   sideEffects: StaticPageSideEffects = 'none',
 ): StudyError {
+  const boundedFiles = files.map(boundStaticPageText)
   return staticPageSealRefusal(
-    `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} lie${files.length === 1 ? 's' : ''} outside packageRoot ${packageRoot}; Codebook seals stops inside the page's own folder only.`,
+    `Stop file${files.length === 1 ? '' : 's'} ${boundedFiles.join(', ')} lie${files.length === 1 ? 's' : ''} outside packageRoot ${packageRoot}; Codebook seals stops inside the page's own folder only.`,
     `Declare stops only in files inside details.packageRoot (every file in details.files lies outside it), or tell the learner a file outside the page folder cannot be observed in this version.`,
-    { reason: 'outside-package', files: [...files], packageRoot },
+    { reason: 'outside-package', files: boundedFiles, packageRoot },
     sideEffects,
   )
 }
@@ -201,10 +209,11 @@ export function staticPageNodeModulesRefusal(
   files: readonly string[],
   sideEffects: StaticPageSideEffects = 'none',
 ): StudyError {
+  const boundedFiles = files.map(boundStaticPageText)
   return staticPageSealRefusal(
-    `Stop file${files.length === 1 ? '' : 's'} ${files.join(', ')} lie${files.length === 1 ? 's' : ''} in node_modules, a published package and not the checked-out library.`,
+    `Stop file${files.length === 1 ? '' : 's'} ${boundedFiles.join(', ')} lie${files.length === 1 ? 's' : ''} in node_modules, a published package and not the checked-out library.`,
     `A published package in node_modules is not the checked-out library, so put the stop in the page's own source (a file listed in details.files lies in node_modules); otherwise tell the learner this version observes only the page's own files.`,
-    { reason: 'node-modules', files: [...files] },
+    { reason: 'node-modules', files: boundedFiles },
     sideEffects,
   )
 }
@@ -221,10 +230,11 @@ export function staticPageNotInScriptRefusal(
   file: string,
   line: number,
 ): StudyError {
+  const boundedFile = boundStaticPageText(file)
   return staticPageSealRefusal(
-    `Declared stop ${file}:${line} lies outside every inline <script> of the page, so no JavaScript runs there and the stop cannot be sealed.`,
+    `Declared stop ${boundedFile}:${line} lies outside every inline <script> of the page, so no JavaScript runs there and the stop cannot be sealed.`,
     `Move the stop to a line inside an inline <script> element of details.file (line details.line is markup), or to a .js file the page loads; otherwise tell the learner the stop cannot be sealed.`,
-    { reason: 'not-in-page-script', file, line },
+    { reason: 'not-in-page-script', file: boundedFile, line },
     'partial',
   )
 }
@@ -237,10 +247,11 @@ export function staticPageNotInScriptRefusal(
  * staticPageAmbiguousSourceRefusal('examples/page/index.html').details?.reason // => 'ambiguous-source'
  */
 export function staticPageAmbiguousSourceRefusal(file: string): StudyError {
+  const boundedFile = boundStaticPageText(file)
   return staticPageSealRefusal(
-    `The served maps name ${file} more than once, so Codebook cannot tell which copy the page runs and the stop cannot be sealed.`,
+    `The served maps name ${boundedFile} more than once, so Codebook cannot tell which copy the page runs and the stop cannot be sealed.`,
     `Tell the learner the served maps name the stop file more than once (details.file), so this version cannot seal a stop in it; never edit the project.`,
-    { reason: 'ambiguous-source', file },
+    { reason: 'ambiguous-source', file: boundedFile },
     'partial',
   )
 }
@@ -259,10 +270,11 @@ export function staticPageUnmappedLineRefusal(
   line: number,
   citationEndLine: number,
 ): StudyError {
+  const boundedFile = boundStaticPageText(file)
   return staticPageSealRefusal(
-    `Declared stop ${file}:${line} cannot be sealed: no mapped position of the served script lies on line ${line} or within its citation through line ${citationEndLine}.`,
+    `Declared stop ${boundedFile}:${line} cannot be sealed: no mapped position of the served script lies on line ${line} or within its citation through line ${citationEndLine}.`,
     `Move the stop to a line of details.file that the page runs (details.line to details.citationEndLine has no mapped position), or tell the learner the stop cannot be sealed.`,
-    { reason: 'unmapped-line', file, line, citationEndLine },
+    { reason: 'unmapped-line', file: boundedFile, line, citationEndLine },
     'partial',
   )
 }
@@ -362,7 +374,9 @@ export function staticPageLibrarySealRefusal(request: {
   file: string
   cause?: 'no-sources-content' | 'content-differs'
 }): StudyError {
-  const { reason, packageRoot, library, file, cause } = request
+  const { reason, packageRoot, cause } = request
+  const library = boundStaticPageText(request.library)
+  const file = boundStaticPageText(request.file)
   const texts = STATIC_PAGE_LIBRARY_SEAL_TEXTS[reason]
   return staticPageSealRefusal(
     texts.message(
