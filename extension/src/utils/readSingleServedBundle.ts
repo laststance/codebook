@@ -45,6 +45,19 @@ export class SingleBundleCache {
   /** @param entryPath - The path the entry page is served at (`/` unless a `homepage` or `PUBLIC_URL` moves it). */
   constructor(readonly entryPath: string = '/') {}
 
+  /**
+   * Counts the map reads per script, so a stale-map retry can ask about the script that holds the stop. One-script caches count under the empty key.
+   * @example cache.mapReadsByScript().get(cache.scriptKeyOf('http://127.0.0.1:3000/static/js/bundle.js')) // => 1
+   */
+  mapReadsByScript(): ReadonlyMap<string, number> {
+    return new Map([['', this.mapReads]])
+  }
+
+  /** Names the script in {@link mapReadsByScript}; a one-script cache has one key. */
+  scriptKeyOf(_scriptUrl: string): string {
+    return ''
+  }
+
   /** Drops what was read, so the next read fetches the map again. A cache that holds several scripts overrides it to drop all of them. */
   forgetEntries(): void {
     this.entry = undefined

@@ -313,7 +313,7 @@ export async function sealSingleBundleStop(
   if (sha256(sourceText) !== source.hash)
     throw refusals.sourceChanged(source.path)
   const stopPath = canonicalForwardSlashPath(join(realRoot, ...segments))
-  const mapReadsBefore = request.cache.mapReads
+  const mapReadsBefore = request.cache.mapReadsByScript()
   let located = locateStop(
     await readAll(request.ownedOrigin, request.signal, request.cache),
     stopPath,
@@ -324,7 +324,11 @@ export async function sealSingleBundleStop(
   // The cache is keyed by the bundle bytes, which an edit can leave unchanged while the map differs: a cached map that disagrees with the checked-out file is read once more before the stop is refused.
   if (
     located.retained !== sourceText &&
-    request.cache.mapReads === mapReadsBefore
+    // Only a re-read of the map of the script that holds the stop can have changed what it says.
+    stopMapReads(request.cache, located.served.bundleUrl) ===
+      (mapReadsBefore.get(
+        request.cache.scriptKeyOf(located.served.bundleUrl),
+      ) ?? 0)
   ) {
     request.cache.forgetEntries()
     located = locateStop(
@@ -389,4 +393,9 @@ export async function sealSingleBundleStop(
     // Only an adapter with its own limits names them; the others return what they always did.
     ...(limits === DEFAULT_SOURCE_MAP_LIMITS ? {} : { limits }),
   }
+}
+
+/** Gives the map reads counted so far for the script at `scriptUrl`. @example stopMapReads(cache, 'http://127.0.0.1:3000/static/js/main.chunk.js') // => 1 */
+function stopMapReads(cache: SingleBundleCache, scriptUrl: string): number {
+  return cache.mapReadsByScript().get(cache.scriptKeyOf(scriptUrl)) ?? 0
 }

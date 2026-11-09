@@ -1,6 +1,9 @@
 import { realpath } from 'node:fs/promises'
 
-import { REACT_SCRIPTS_SERVED_SCRIPTS_MAX } from '../constants'
+import {
+  REACT_SCRIPTS_BUNDLE_PATH,
+  REACT_SCRIPTS_SERVED_SCRIPTS_MAX,
+} from '../constants'
 import { reactScriptsServedScriptRefusal } from '../reactScriptsRefusals'
 import { REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE } from '../reactScriptsSingleBundleProfile'
 
@@ -57,6 +60,19 @@ export class ReactScriptsBundleCache extends SingleBundleCache {
     )
   }
 
+  override mapReadsByScript(): ReadonlyMap<string, number> {
+    return new Map(
+      [...this.scriptCaches].map(([url, scriptCache]) => [
+        url,
+        scriptCache.mapReads,
+      ]),
+    )
+  }
+
+  override scriptKeyOf(scriptUrl: string): string {
+    return scriptUrl
+  }
+
   override forgetEntries(): void {
     super.forgetEntries()
     for (const scriptCache of this.scriptCaches.values())
@@ -82,6 +98,7 @@ async function eligibleScriptUrls(
 ): Promise<string[]> {
   if (cache.scriptUrls) return cache.scriptUrls
   const named: string[] = []
+  const entryUrl = new URL(cache.entryPath, origin)
   // The shared page read hands its lazy list of script addresses to the selector; this one keeps every address.
   await findSingleBundleUrl(
     origin,
@@ -89,7 +106,17 @@ async function eligibleScriptUrls(
     {
       ...REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE,
       selectBundleScript(scripts) {
-        for (const script of scripts) named.push(script.href)
+        const all = [...scripts]
+        // The webpack output folder for scripts: the folder of the page's own bundle.js (it carries a non-root public path), else static/js/ next to the entry page.
+        const bundle = all.find((script) =>
+          script.pathname.endsWith(REACT_SCRIPTS_BUNDLE_PATH),
+        )
+        const folder = (
+          bundle ?? new URL(`.${REACT_SCRIPTS_BUNDLE_PATH}`, entryUrl)
+        ).pathname.replace(/[^/]*$/, '')
+        // Other same-origin scripts (an env-config.js, a vendored file) are not webpack's and stay unread.
+        for (const script of all)
+          if (script.pathname.startsWith(folder)) named.push(script.href)
         return undefined
       },
     },
@@ -175,7 +202,15 @@ export async function readReactScriptsServedBundle(
       'no served script names a source map',
     )
   if (cache.appRoot !== undefined) {
-    cache.realAppRoot ??= await realpath(cache.appRoot)
+    cache.realAppRoot ??= await realpath(cache.appRoot).catch(
+      (error: unknown) => {
+        // A cancelled run stays cancelled; an app folder that cannot be read yet is the same wait as a map that names no app file.
+        signal.throwIfAborted()
+        throw new SingleBundleNotReadyError(
+          `the app folder cannot be read yet: ${String(error)}`,
+        )
+      },
+    )
     if (!mapsNameAppFile(mapped, cache.realAppRoot))
       throw new SingleBundleNotReadyError(
         'no served map names a file below the app folder yet',

@@ -11,6 +11,7 @@ import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { awaitReactScriptsFirstCompile } from '../utils/awaitReactScriptsFirstCompile'
 import {
   ReactScriptsBundleCache,
+  ReactScriptsBundleNotReadyError,
   readReactScriptsServedBundle,
 } from '../utils/readReactScriptsServedBundle'
 import { sealReactScriptsLibraryStop } from '../utils/sealReactScriptsLibraryStop'
@@ -27,6 +28,13 @@ type FixtureScript = {
   answer?: (requestCount: number) => ScriptAnswer
   /** Pads the script text to this many bytes. */
   padToBytes?: number
+  /** Changes the script bytes by request count (a recompile that leaves the other scripts alone). */
+  version?: (requestCount: number) => string
+  /** Gives the map by the count of requests for it (a map that is stale on its first read). */
+  mapAt?: (requestCount: number) => {
+    sources: string[]
+    sourcesContent: string[]
+  }
 }
 
 /**
@@ -39,16 +47,26 @@ type FixtureScript = {
 async function serveScripts(
   context: TestContext,
   scripts: Record<string, FixtureScript>,
+  outsideScripts: string[] = [],
 ) {
   const requestCounts = new Map<string, number>()
-  const page = Object.keys(scripts)
-    .map((name) => `<script src="/static/js/${name}"></script>`)
+  // Scripts outside static/js/ (an env-config.js) name a map that does not exist.
+  const page = [
+    ...Object.keys(scripts).map((name) => `/static/js/${name}`),
+    ...outsideScripts,
+  ]
+    .map((src) => `<script src="${src}"></script>`)
     .join('')
   const server = createServer((request, response) => {
     const path = request.url ?? '/'
     if (path === '/') {
       response.setHeader('content-type', 'text/html')
       response.end(page)
+      return
+    }
+    if (outsideScripts.includes(path)) {
+      response.setHeader('content-type', 'application/javascript')
+      response.end(`window.x = 1\n//# sourceMappingURL=${path}.map\n`)
       return
     }
     const isMap = path.endsWith('.map')
@@ -81,13 +99,13 @@ async function serveScripts(
           file: name,
           names: [],
           mappings: 'AAAA;AACA;AACA;AACA',
-          ...script.map,
+          ...(script.mapAt?.(count) ?? script.map),
         }),
       )
     } else {
       const reference =
         script.map === null ? '' : `\n//# sourceMappingURL=${name}.map\n`
-      const body = `console.log(${JSON.stringify(name)})${reference}`
+      const body = `console.log(${JSON.stringify(name)}${script.version ? `, ${JSON.stringify(script.version(count))}` : ''})${reference}`
       response.setHeader('content-type', 'application/javascript')
       response.end(
         script.padToBytes === undefined
@@ -378,4 +396,128 @@ test('a library file named only by the vendors map is sealed', async (context) =
   // Assert
   assert.equal(bundle.scriptUrl, `${origin}/static/js/vendors~main.chunk.js`)
   assert.equal(bundle.sourcePath, checkedOut.replaceAll('\\', '/'))
+})
+
+// Value: protects=a react-scripts 5 page with a second same-origin script outside static/js/ reads ready and seals; fails_when=the reader fetches every same-origin script and a missing map of an env-config.js keeps the app waiting; no_claim=scripts under static/js/ that are not webpack's
+test('a script outside static/js whose map is missing does not stop readiness or the seal', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const stopPath = join(repository.appRoot, 'src/App.js')
+  const { origin } = await serveScripts(
+    context,
+    {
+      'bundle.js': {
+        map: { sources: [stopPath], sourcesContent: [repository.sourceText] },
+      },
+    },
+    ['/config.js'],
+  )
+  const cache = new ReactScriptsBundleCache('/', repository.appRoot)
+  // Act
+  await awaitReactScriptsFirstCompile(
+    origin,
+    cache,
+    10_000,
+    new AbortController().signal,
+  )
+  const { bundle } = await sealReactScriptsStop(
+    appStopRequest(repository, origin, cache),
+  )
+  // Assert
+  assert.deepEqual(
+    [...cache.scriptCaches.keys()],
+    [`${origin}/static/js/bundle.js`],
+  )
+  assert.equal(bundle.scriptUrl, `${origin}/static/js/bundle.js`)
+})
+
+// Value: protects=the eight-script limit counts only the scripts under static/js/; fails_when=scripts outside the webpack output folder count toward the limit; no_claim=the limit value
+test('scripts outside static/js do not count toward the eight-script limit', async (context) => {
+  // Arrange
+  const scripts: Record<string, FixtureScript> = {}
+  for (let index = 1; index <= 8; index++)
+    scripts[`chunk${index}.js`] = { map: OTHER_MAP }
+  const { origin } = await serveScripts(context, scripts, [
+    '/config.js',
+    '/vendor/a.js',
+    '/vendor/b.js',
+  ])
+  // Act
+  const served = await readReactScriptsServedBundle(
+    origin,
+    new AbortController().signal,
+    new ReactScriptsBundleCache(),
+  )
+  // Assert
+  assert.equal(served.length, 8)
+})
+
+// Value: protects=a seal without the app folder never reads an HTML answer as a script; fails_when=the HTML check is removed and the HTML page seals or is refused not-in-entry-bundle; no_claim=how long the server stays in that state
+test('a chunk that answers HTML makes the seal read not ready', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const stopPath = join(repository.appRoot, 'src/App.js')
+  const { origin } = await serveScripts(context, {
+    'vendors~main.chunk.js': { map: OTHER_MAP, answer: () => 'html' },
+    'main.chunk.js': {
+      map: { sources: [stopPath], sourcesContent: [repository.sourceText] },
+    },
+  })
+  // Act
+  const sealing = sealReactScriptsStop(
+    appStopRequest(repository, origin, new ReactScriptsBundleCache()),
+  )
+  // Assert
+  await assert.rejects(sealing, ReactScriptsBundleNotReadyError)
+})
+
+// Value: protects=a stale map of the script that holds the stop is read once more even when another script's map was re-read; fails_when=the retry compares the summed map-read count; no_claim=a stale map that stays stale
+test('a stale map of the stop script is re-read after another script recompiled', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const stopPath = join(repository.appRoot, 'src/App.js')
+  const stale = {
+    sources: [stopPath],
+    sourcesContent: ['export const old = 1\n'],
+  }
+  const fresh = { sources: [stopPath], sourcesContent: [repository.sourceText] }
+  const { origin } = await serveScripts(context, {
+    'a.chunk.js': { map: OTHER_MAP, version: (count) => `v${count}` },
+    'main.chunk.js': {
+      map: stale,
+      mapAt: (count) => (count === 1 ? stale : fresh),
+    },
+  })
+  const cache = new ReactScriptsBundleCache()
+  const first = await refusalOf(
+    sealReactScriptsStop(appStopRequest(repository, origin, cache)),
+  )
+  // Act
+  const { bundle } = await sealReactScriptsStop(
+    appStopRequest(repository, origin, cache),
+  )
+  // Assert
+  assert.equal(first.code, 'SOURCE_CHANGED')
+  assert.equal(bundle.scriptUrl, `${origin}/static/js/main.chunk.js`)
+})
+
+// Value: protects=an app folder that cannot be read is a not-ready result, not a raw filesystem error; fails_when=the realpath error escapes readiness; no_claim=the folder comes back later
+test('an unreadable app folder reads not ready', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const { origin } = await serveScripts(context, {
+    'bundle.js': { map: OTHER_MAP },
+  })
+  const cache = new ReactScriptsBundleCache(
+    '/',
+    join(repository.root, 'no-such-app-folder'),
+  )
+  // Act
+  const reading = readReactScriptsServedBundle(
+    origin,
+    new AbortController().signal,
+    cache,
+  )
+  // Assert
+  await assert.rejects(reading, ReactScriptsBundleNotReadyError)
 })
