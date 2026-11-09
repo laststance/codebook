@@ -316,6 +316,51 @@ export async function apiServerRunHarness(
   }
 }
 
+/** How the stand-in debug session answers the API thread's `threads` and `stackTrace` when an API stop's deadline expires: a stack frame (`paused`), js-debug's `Thread is not paused` error (`running`), no answer at all (`silent`), or any other error. */
+export type ScriptedApiThread =
+  | { kind: 'paused'; path?: string; line: number }
+  | { kind: 'running' }
+  | { kind: 'silent' }
+  | { kind: 'error'; message: string }
+
+/**
+ * Scripts how the API's debug session answers `threads` and `stackTrace` (the probe of an unreached API stop), and records the commands the run sent.
+ * Why it exists: the not-reached tests need the three states js-debug can answer; every other command keeps the stand-in's own answer.
+ * @param harness - The run's harness.
+ * @param thread - What the one API thread answers.
+ * @returns The commands the run sent after this call, in order.
+ * @example const asked = scriptApiThread(harness, { kind: 'running' })
+ */
+export function scriptApiThread(
+  harness: ApiServerRunHarness,
+  thread: ScriptedApiThread,
+): string[] {
+  const session = harness.server!.session
+  const original = session.customRequest.bind(session)
+  const asked: string[] = []
+  session.customRequest = async (command, arguments_) => {
+    if (command !== 'threads' && command !== 'stackTrace')
+      return original(command, arguments_)
+    asked.push(command)
+    if (thread.kind === 'silent') return new Promise<never>(() => {})
+    if (command === 'threads') return { threads: [{ id: 1, name: 'main' }] }
+    if (thread.kind === 'running') throw new Error('Thread is not paused')
+    if (thread.kind === 'error') throw new Error(thread.message)
+    return {
+      stackFrames: [
+        {
+          id: 1,
+          name: 'waitingStep',
+          source: { path: thread.path },
+          line: thread.line,
+          column: 1,
+        },
+      ],
+    }
+  }
+  return asked
+}
+
 /** The inspector's report of the API's entry: js-debug names the reason `Break on start`, which the protocol's list does not. */
 const ENTRY_CDP_PAUSE = {
   reason: 'Break on start',

@@ -9,7 +9,7 @@ import { describeOperationFailureDetails } from './describeOperationFailureDetai
  * @param failure - The run's first failure with its `serverRender` or `entryLoad` fields.
  * @param runUri - The run's resource address, when the caller has it.
  * @returns
- * - For `SERVER_STOP_NOT_REACHED`: `phase`, `stop`, `operationIndex` (after-operation only), `pausedStops`, `notReachedStops`, `firstExecutionObserved: false`, plus the operation fields (`sent`, `sideEffects`, `retry`, `logId`, `runUri`); in a Pages run also `router: "pages"`, `resumedHits`, `attributionMode` and `nextVersion`
+ * - For `SERVER_STOP_NOT_REACHED`: `phase`, `stop`, `operationIndex` (after-operation only), `pausedStops`, `notReachedStops`, `firstExecutionObserved: false`, `apiProcess` (an API server stop only), plus the operation fields (`sent`, `sideEffects`, `retry`, `logId`, `runUri`); in a Pages run also `router: "pages"`, `resumedHits`, `attributionMode` and `nextVersion`
  * - For `ENTRY_LOAD_TIMEOUT`: `entryRoute`, `lastPausedStop`, `elapsedMs` (and `router: "pages"` in a Pages run) and the operation fields
  * - Only the operation fields when neither group is present
  * @example
@@ -31,6 +31,7 @@ export function describeServerRenderFailureDetails(
       pages,
       routeHandler,
       apiRoute,
+      apiProcess,
     } = failure.serverRender
     return {
       phase,
@@ -59,6 +60,8 @@ export function describeServerRenderFailureDetails(
             resumedHits: apiRoute.resumedHits,
           }
         : {}),
+      // An API server stop names what the run measured of the API process at the deadline (API 1.44).
+      ...(apiProcess ? { apiProcess } : {}),
       // A Pages run says so, which hits of the stop it resumed, how hits are attributed and the Next version.
       ...(pages ? { router: 'pages', ...pages } : {}),
       ...operationFields,

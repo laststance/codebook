@@ -44,6 +44,7 @@ import type {
 } from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
+  API_PROCESS_PROBE_MS,
   NEXT_LIBRARY_WRAPPED_WAIT_MS,
   NEXT_ROUTER_POLL_INTERVAL_MS,
   RECORDED_STOP_REFRESH_POLL_MS,
@@ -424,6 +425,8 @@ import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { publishedStopFiles } from './utils/publishedStopFiles'
+import { readApiProcessState } from './utils/readApiProcessState'
+import type { ApiProcessState } from './utils/readApiProcessState'
 import { readCappedBody } from './utils/readCappedBody'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import {
@@ -502,6 +505,7 @@ import {
   API_ROUTE_NOT_REACHED_POSSIBILITIES,
   API_SERVER_NOT_REACHED_POSSIBILITIES,
   ROUTE_HANDLER_NOT_REACHED_POSSIBILITIES,
+  apiProcessSentence,
 } from './utils/routeHandlerWording'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
@@ -1489,6 +1493,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** True while {@link progressTimer} is the pause hold, the only deadline {@link renewPauseHold} may restart. */
   private holdingPause = false
   private runTimer?: ReturnType<typeof setTimeout>
+  /** Set while the text of an expired deadline is composed, when it is the not-reached failure of an API stop whose process state is not read yet ({@link expireProgressDeadline} reads it, then composes the text again). */
+  private isApiProcessReadWanted = false
+  /** What the run read of the API process when an API stop's not-reached deadline expired (API 1.44); read once, before the failure is worded. */
+  private apiProcessAtExpiry?: ApiProcessState
   private cleaning = false
   private cleaned = false
   private resourcesReleased = false
@@ -14189,6 +14197,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @example this.routeHandlerNotReachedText(entry) // 'SERVER_STOP_NOT_REACHED: Declared stop app/api/todos/route.ts:25 (route handler /api/todos) was not reached within 20 s after operation 2. …'
    */
   private routeHandlerNotReachedText(entry: RouteHandlerStop): string {
+    // An API stop is worded after the API process was asked: this first composition only asks {@link expireProgressDeadline} to read it, and its text is discarded.
+    if (entry.kind === 'node-api' && !this.apiProcessAtExpiry) {
+      this.isApiProcessReadWanted = true
+      return ''
+    }
     const place = `${entry.stop.source.path}:${entry.stop.source.line}`
     const isApi = entry.kind === 'pages-api'
     const resumedHits = [...entry.resumed].map(([reason, count]) => ({
@@ -14216,11 +14229,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           .map((other) => this.declaredAt(other)),
         notReachedStops: [place],
         ...this.notReachedHandlerFacts(entry, isApi, resumedHits, sent),
+        ...(this.apiProcessAtExpiry
+          ? { apiProcess: this.apiProcessAtExpiry }
+          : {}),
       },
     }
     return formatRefusalFailure(
       'SERVER_STOP_NOT_REACHED',
-      `Declared stop ${place} (${this.handlerKindWords(entry)} ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${this.notReachedPossibilities(entry)} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
+      `Declared stop ${place} (${this.handlerKindWords(entry)} ${entry.route}) was not reached within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after operation ${entry.operationIndex}. ${this.apiProcessWords()}${this.notReachedPossibilities(entry)} The inputs were sent and their side effects are unknown: explain what ran, offer the partial replay and do not start again unasked.`,
     )
   }
 
@@ -18705,9 +18721,70 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.activeBound = { endsAtMs: performance.now() + milliseconds, reason }
     // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
     this.progressTimer = setTimeout(
-      () => this.fail(this.expiredDeadlineText(reason, milliseconds)),
+      () => this.expireProgressDeadline(reason, milliseconds),
       milliseconds,
     )
+  }
+  /**
+   * Fails the run when a progress deadline expires; for an API stop that no request reached, it first reads whether the API process was paused, so the failure names a measured fact (API 1.44).
+   * Called by the timer of {@link progressDeadline}. The read is bounded by {@link API_PROCESS_PROBE_MS}; the run ends only after it, and every other deadline fails at once.
+   * @param reason - The deadline's text, or a function that reads it at expiry.
+   * @param milliseconds - The deadline's length.
+   * @example this.expireProgressDeadline('after timed out', 20_000)
+   */
+  private expireProgressDeadline(
+    reason: string | (() => string),
+    milliseconds: number,
+  ): void {
+    this.isApiProcessReadWanted = false
+    const text = this.expiredDeadlineText(reason, milliseconds)
+    if (!this.isApiProcessReadWanted) {
+      this.fail(text)
+      return
+    }
+    this.isApiProcessReadWanted = false
+    void this.readApiProcessAtExpiry().then((state) => {
+      this.apiProcessAtExpiry = state
+      // The text is composed again with the state, which an API stop's failure then carries.
+      this.fail(this.expiredDeadlineText(reason, milliseconds))
+    })
+  }
+  /**
+   * Reads whether the API process is paused, within {@link API_PROCESS_PROBE_MS}, for {@link expireProgressDeadline}; an answer after the bound is ignored.
+   * @returns The measured state; `unknown` without a server session, on an error or when the bound passes. Never rejects.
+   * @example await this.readApiProcessAtExpiry() // { state: 'not-paused' }
+   */
+  private async readApiProcessAtExpiry(): Promise<ApiProcessState> {
+    const session = this.participants.server.selected
+    if (!session) return { state: 'unknown' }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const bound = new Promise<ApiProcessState>((resolve) => {
+      timer = setTimeout(
+        () => resolve({ state: 'unknown' }),
+        API_PROCESS_PROBE_MS,
+      )
+    })
+    try {
+      return await Promise.race([
+        readApiProcessState(
+          (command, args) => session.customRequest(command, args),
+          this.options.workspace,
+        ),
+        bound,
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  /**
+   * Gives the sentence that leads an API stop's not-reached failure with the measured state of the API process, and nothing for any other stop.
+   * @returns The sentence and a space, or an empty string.
+   * @example this.apiProcessWords() // 'Codebook could not read whether the API process was paused when the deadline ran out. '
+   */
+  private apiProcessWords(): string {
+    return this.apiProcessAtExpiry
+      ? `${apiProcessSentence(this.apiProcessAtExpiry)} `
+      : ''
   }
   /**
    * Builds a deadline's failure text when it expires, called by the timers of {@link progressDeadline} and of the whole-run deadline.
