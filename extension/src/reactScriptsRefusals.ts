@@ -5,7 +5,7 @@ import {
   REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES,
   REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS,
   REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT,
-  REACT_SCRIPTS_SUPPORTED_MAJOR,
+  REACT_SCRIPTS_SUPPORTED_MAJORS,
   REPOSITORY_SETUP_TIMEOUT_MS,
 } from './constants'
 import { StudyError, type ErrorCode } from './errors'
@@ -118,12 +118,32 @@ export function reactScriptsNotInstalledRefusal(
   )
 }
 
+/** The supported majors as a sentence part: `4 and 5`. */
+const SUPPORTED_MAJORS_TEXT = REACT_SCRIPTS_SUPPORTED_MAJORS.join(' and ')
+
+/**
+ * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of a react-scripts 4 app whose Node version cannot be read.
+ *
+ * Why it exists: react-scripts 4 needs `--openssl-legacy-provider` on Node 17 or later and Node 16 or older refuses that option, so a run that cannot tell which Node it has cannot pick safely. Called by {@link assessReactScriptsWorkspace} before anything starts.
+ * @returns The refusal: `details.reason: "node-version-unreadable"` and `sideEffects: "none"`.
+ * @example
+ * reactScriptsNodeVersionRefusal().details?.reason // => 'node-version-unreadable'
+ */
+export function reactScriptsNodeVersionRefusal(): StudyError {
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_UNSUPPORTED',
+    'The Node version that runs react-scripts 4 could not be read, so Codebook cannot tell whether it needs the OpenSSL legacy provider; nothing was started.',
+    `Ask the learner to point the setting Codebook uses for the external Node (codebook.nodeExecutable) at a Node that runs \`--version\`, or to install one; never edit the project. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+    { reason: 'node-version-unreadable', sideEffects: 'none' },
+  )
+}
+
 /**
  * Builds the `REACT_SCRIPTS_UNSUPPORTED` refusal of an installed react-scripts of another major.
  * @param installedVersion - The `version` of the installed react-scripts manifest, or `undefined` when the manifest holds no readable version.
- * @returns The refusal: `details.reason: "react-scripts-version"`, `installedVersion` (absent when unreadable), `requiredMajor` and `sideEffects: "none"`.
+ * @returns The refusal: `details.reason: "react-scripts-version"`, `installedVersion` (absent when unreadable), `requiredMajor` (5, kept for readers of the older field), `supportedMajors` (`[4, 5]`) and `sideEffects: "none"`.
  * @example
- * reactScriptsVersionRefusal('4.0.3').details?.requiredMajor // => 5
+ * reactScriptsVersionRefusal('3.4.4').details?.supportedMajors // => [4, 5]
  * reactScriptsVersionRefusal(undefined).details?.installedVersion // => undefined
  */
 export function reactScriptsVersionRefusal(
@@ -132,13 +152,14 @@ export function reactScriptsVersionRefusal(
   return reactScriptsRefusal(
     'REACT_SCRIPTS_UNSUPPORTED',
     installedVersion === undefined
-      ? `The installed react-scripts has no readable version; Codebook supports react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR}. Nothing was started.`
-      : `react-scripts ${installedVersion} is installed; Codebook supports react-scripts ${REACT_SCRIPTS_SUPPORTED_MAJOR}. Nothing was started.`,
-    `Tell the learner that the installed react-scripts (details.installedVersion, absent when its version is unreadable) is not the major named in details.requiredMajor, so this version cannot observe the app; never edit the project or its dependencies. Start again only if the learner changes the app. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
+      ? `The installed react-scripts has no readable version; Codebook supports react-scripts ${SUPPORTED_MAJORS_TEXT}. Nothing was started.`
+      : `react-scripts ${installedVersion} is installed; Codebook supports react-scripts ${SUPPORTED_MAJORS_TEXT}. Nothing was started.`,
+    `Tell the learner that the installed react-scripts (details.installedVersion, absent when its version is unreadable) is not one of the majors named in details.supportedMajors, so this version cannot observe the app; never edit the project or its dependencies. Start again only if the learner changes the app. ${recoveryEnd('REACT_SCRIPTS_UNSUPPORTED')}`,
     {
       reason: 'react-scripts-version',
       ...(installedVersion === undefined ? {} : { installedVersion }),
-      requiredMajor: REACT_SCRIPTS_SUPPORTED_MAJOR,
+      requiredMajor: 5,
+      supportedMajors: [...REACT_SCRIPTS_SUPPORTED_MAJORS],
       sideEffects: 'none',
     },
   )
@@ -466,7 +487,7 @@ export function reactScriptsSealedOutsidePackageRefusal(
 }
 
 /**
- * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file that the served source map lists more than once.
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of a stop file that the served source maps name more than once (one map lists it twice, or two served scripts' maps both name it).
  * @param file - The repository-relative stop file.
  * @returns The refusal: `details.reason: "ambiguous-source"`, `file` and `sideEffects: "partial"`.
  * @example
@@ -475,9 +496,40 @@ export function reactScriptsSealedOutsidePackageRefusal(
 export function reactScriptsAmbiguousSourceRefusal(file: string): StudyError {
   return reactScriptsRefusal(
     'REACT_SCRIPTS_SEAL_FAILED',
-    `The served source map lists ${file} more than once, so Codebook cannot tell which copy the bundle runs and the stop cannot be sealed. The owned server was stopped and no click was sent.`,
-    `Tell the learner the app's bundle names the stop file more than once (details.file), so this version cannot seal a stop in it; never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    `The served source maps name ${file} more than once (one map lists it twice, or two served scripts' maps both name it), so Codebook cannot tell which copy the bundle runs and the stop cannot be sealed. The owned server was stopped and no click was sent.`,
+    `Tell the learner the app's served maps name the stop file more than once, in one map or in two scripts' maps (details.file), so this version cannot seal a stop in it; never edit the project. The owned server was stopped and no click was sent. ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
     { reason: 'ambiguous-source', file, sideEffects: 'partial' },
+  )
+}
+
+/** The reasons of {@link reactScriptsServedScriptRefusal}. */
+export type ReactScriptsServedScriptReason =
+  'script-off-origin' | 'too-many-scripts' | 'script-too-large'
+
+/**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of an entry page whose served scripts cannot all be read: one redirected off the owned origin, more than the allowed number, or one over the byte limit.
+ *
+ * Why it exists: react-scripts 4 serves a runtime and chunks, so the reader sees several scripts and refuses the set by a named reason instead of reading part of it. Called by the react-scripts single-bundle profile's `servedScripts`.
+ * @param reason - Which rule the served scripts broke.
+ * @param subject - What broke the rule, one phrase: a script address or a count of scripts.
+ * @returns The refusal: `details.reason`, `details.subject` and `sideEffects: "partial"`.
+ * @example
+ * reactScriptsServedScriptRefusal('too-many-scripts', '9 scripts').details?.reason // => 'too-many-scripts'
+ */
+export function reactScriptsServedScriptRefusal(
+  reason: ReactScriptsServedScriptReason,
+  subject: string,
+): StudyError {
+  const problem = {
+    'script-off-origin': `${subject} redirected off the owned origin, and only the owned origin is read`,
+    'too-many-scripts': `the entry page names ${subject}, more than Codebook reads`,
+    'script-too-large': `${subject} is over Codebook's reading limit`,
+  }[reason]
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    `The served scripts of the app cannot be sealed: ${problem}. The owned server was stopped and no click was sent.`,
+    `Tell the learner the app's served scripts are not in the form this version reads (details.reason names the rule, details.subject what broke it); never edit the project. The owned server was stopped and no click was sent (details.sideEffects is partial). ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    { reason, subject, sideEffects: 'partial' },
   )
 }
 

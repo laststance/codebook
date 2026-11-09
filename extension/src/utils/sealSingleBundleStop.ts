@@ -20,6 +20,7 @@ import { readRepositoryBuildText } from './readRepositoryBuildText'
 import {
   readSingleServedBundle,
   type SingleBundleCache,
+  type SingleServedBundle,
 } from './readSingleServedBundle'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
 
@@ -41,6 +42,13 @@ export type SingleBundleSealRequest = Readonly<{
   /** The run's bundle cache: one map read per compile. */
   cache: SingleBundleCache
 }>
+
+/** Reads every served script of the owned server with its map; react-scripts' reader returns all scripts of the entry page, the default one returns the one bundle. */
+export type ServedBundlesReader = (
+  origin: string,
+  signal: AbortSignal,
+  cache: SingleBundleCache,
+) => Promise<readonly SingleServedBundle[]>
 
 /**
  * Tells whether a read failed because the file or a folder above it does not exist.
@@ -137,7 +145,7 @@ function scanLimitOf(
 
 /**
  * Finds the one `sources` entry of the served map that names the stop file.
- * @param served - The bundle and map read.
+ * @param servedBundles - Every served script with its map.
  * @param stopPath - The stop file's canonical path.
  * @param request - The seal request, for the refusal.
  * @param profile - The adapter's profile, which words the refusals.
@@ -147,28 +155,32 @@ function scanLimitOf(
  * @example locateStop(served, '/app/src/App.js', request, profile).stopIndex // => 0
  */
 function locateStop(
-  served: Awaited<ReturnType<typeof readSingleServedBundle>>,
+  servedBundles: readonly SingleServedBundle[],
   stopPath: string,
   request: SingleBundleSealRequest,
   profile: SingleBundleProfile,
   library?: SingleBundleLibraryRoute,
 ) {
-  const sources = served.map.sources.map(normalizeMapSource)
   // A library stop is named by the checked-out file or, when its packed copy was not byte-equal at compile time, by the packed copy.
   const packedPath =
     library &&
     canonicalForwardSlashPath(
       join(library.packedRoot, ...request.packageRelativePath.split('/')),
     )
-  const matches = sources.flatMap((entry, index) =>
-    ABSOLUTE_PATH.test(entry) &&
-    (mapSourceNamesStop(entry, stopPath) ||
-      (packedPath !== undefined && mapSourceNamesStop(entry, packedPath)))
-      ? [index]
-      : [],
-  )
+  // Every served script's map is searched: the stop file is named by one map of one script.
+  const matches = servedBundles.flatMap((served) => {
+    const sources = served.map.sources.map(normalizeMapSource)
+    return sources.flatMap((entry, stopIndex) =>
+      ABSOLUTE_PATH.test(entry) &&
+      (mapSourceNamesStop(entry, stopPath) ||
+        (packedPath !== undefined && mapSourceNamesStop(entry, packedPath)))
+        ? [{ served, sources, stopIndex }]
+        : [],
+    )
+  })
   // A map that does not name the file names another folder; one that names it twice leaves the executed copy unknown.
-  if (matches.length === 0)
+  const [match] = matches
+  if (match === undefined)
     throw library
       ? library.notInBuild()
       : profile.refusals.notInEntryBundle(request.packageRootRelative, [
@@ -176,7 +188,7 @@ function locateStop(
         ])
   if (matches.length > 1)
     throw profile.refusals.ambiguousSource(request.source.path)
-  const stopIndex = matches[0]!
+  const { served, sources, stopIndex } = match
   return {
     served,
     sources,
@@ -261,6 +273,7 @@ function unvouchedTextRefusal(
  * @param request - The app, the stop, the owned origin and the run's cache.
  * @param profile - The adapter's profile: refusal wording, limits, bundle selection and map address.
  * @param library - Set for a stop in the checked-out library: the checks run in order stale, not-in-build, unmapped and refuse with the library's own refusals instead of `SOURCE_CHANGED`; absent, the seal is byte-identical to an app stop's.
+ * @param readServed - Reads the served scripts and maps; absent, the profile's one bundle is read.
  * @returns The sealed bundle (served bytes unchanged) with the discovery measurements, and `limits` when the profile's limits are not today's defaults, so the run applies them to its verifier and source resources.
  * @throws The profile's refusals (`nodeModules`, `outsidePackage`, `notInEntryBundle`, `ambiguousSource`, `unmappedLine`, `mapLimit`, `mapUnreadable`); the profile's `sourceChanged` (`SOURCE_CHANGED`) when the file differs from the accepted article or from the compiled text.
  * @example
@@ -270,8 +283,15 @@ export async function sealSingleBundleStop(
   request: SingleBundleSealRequest,
   profile: SingleBundleProfile,
   library?: SingleBundleLibraryRoute,
+  readServed?: ServedBundlesReader,
 ) {
   const { refusals, limits } = profile
+  // An adapter that serves several scripts brings its own reader; the others read their one bundle.
+  const readAll: ServedBundlesReader =
+    readServed ??
+    (async (origin, signal, cache) => [
+      await readSingleServedBundle(origin, signal, cache, profile),
+    ])
   const started = performance.now()
   const { source, packageRelativePath } = request
   const segments = packageRelativePath.split('/')
@@ -293,14 +313,9 @@ export async function sealSingleBundleStop(
   if (sha256(sourceText) !== source.hash)
     throw refusals.sourceChanged(source.path)
   const stopPath = canonicalForwardSlashPath(join(realRoot, ...segments))
-  const mapReadsBefore = request.cache.mapReads
+  const mapReadsBefore = request.cache.mapReadsByScript()
   let located = locateStop(
-    await readSingleServedBundle(
-      request.ownedOrigin,
-      request.signal,
-      request.cache,
-      profile,
-    ),
+    await readAll(request.ownedOrigin, request.signal, request.cache),
     stopPath,
     request,
     profile,
@@ -309,16 +324,15 @@ export async function sealSingleBundleStop(
   // The cache is keyed by the bundle bytes, which an edit can leave unchanged while the map differs: a cached map that disagrees with the checked-out file is read once more before the stop is refused.
   if (
     located.retained !== sourceText &&
-    request.cache.mapReads === mapReadsBefore
+    // Only a re-read of the map of the script that holds the stop can have changed what it says.
+    stopMapReads(request.cache, located.served.bundleUrl) ===
+      (mapReadsBefore.get(
+        request.cache.scriptKeyOf(located.served.bundleUrl),
+      ) ?? 0)
   ) {
-    request.cache.entry = undefined
+    request.cache.forgetEntries()
     located = locateStop(
-      await readSingleServedBundle(
-        request.ownedOrigin,
-        request.signal,
-        request.cache,
-        profile,
-      ),
+      await readAll(request.ownedOrigin, request.signal, request.cache),
       stopPath,
       request,
       profile,
@@ -379,4 +393,9 @@ export async function sealSingleBundleStop(
     // Only an adapter with its own limits names them; the others return what they always did.
     ...(limits === DEFAULT_SOURCE_MAP_LIMITS ? {} : { limits }),
   }
+}
+
+/** Gives the map reads counted so far for the script at `scriptUrl`. @example stopMapReads(cache, 'http://127.0.0.1:3000/static/js/main.chunk.js') // => 1 */
+function stopMapReads(cache: SingleBundleCache, scriptUrl: string): number {
+  return cache.mapReadsByScript().get(cache.scriptKeyOf(scriptUrl)) ?? 0
 }

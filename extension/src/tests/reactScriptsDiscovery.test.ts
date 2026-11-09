@@ -87,8 +87,8 @@ test('discovery lists an installed react-scripts 5 app as ready with its version
   assert.equal(discovery.reactScripts.packagesTruncated, false)
 })
 
-// Value: protects=a react-scripts 4 app is listed and refused with react-scripts-5, not hidden and not ready; fails_when=a 4.x app reads ready or is dropped from the list; why_new=decision D3 supports major 5 only; seam=temporary Git repository; no_claim=that react-scripts 4 would run
-test('discovery lists an installed react-scripts 4 app as not ready with react-scripts-5', async (context) => {
+// Value: protects=a react-scripts 4 app is listed as ready with its version, so a learner's Create React App 4 Example is offered; fails_when=a 4.x app reads not ready or is dropped from the list; why_new=Cycle 0104 widens the supported majors from 5 to 4 and 5; seam=temporary Git repository; no_claim=that react-scripts 4 starts (the environment and launch tests)
+test('discovery lists an installed react-scripts 4 app as ready', async (context) => {
   // Arrange
   const root = await makeRepository(context)
   await trackedReactScriptsApp(root, 'examples/todos')
@@ -100,10 +100,44 @@ test('discovery lists an installed react-scripts 4 app as not ready with react-s
     {
       packageRoot: 'examples/todos',
       installed: true,
-      ready: false,
+      ready: true,
       version: '4.0.3',
-      missing: ['react-scripts-5'],
+      missing: [],
       startScript: { form: 'accepted' },
+    },
+  ])
+})
+
+// Value: protects=a react-scripts major outside 4 and 5 (3 or older, 6 or newer) or a version that is not a version is listed as not ready with the kept identifier react-scripts-5; fails_when=a 3.x or 6.x app reads ready, or the identifier is renamed (decision D5); why_new=Cycle 0104 widened the gate to a list of majors; seam=temporary Git repository; no_claim=the wording of the refusal
+test('discovery lists react-scripts 3, react-scripts 6 and an unreadable version as not ready with react-scripts-5', async (context) => {
+  // Arrange
+  const root = await makeRepository(context)
+  const versions = [
+    ['examples/three', '3.4.4'],
+    ['examples/six', '6.0.0'],
+    ['examples/unreadable', 'not-a-version'],
+  ] as const
+  for (const [folder, version] of versions) {
+    await trackedReactScriptsApp(root, folder)
+    await installReactScripts(root, folder, version)
+  }
+  // Act
+  const discovery = await discoverPackages(root, { node: process.execPath })
+  // Assert
+  const summary = discovery.reactScripts.packages
+    .map(({ packageRoot, ready, missing }) => ({ packageRoot, ready, missing }))
+    .sort((a, b) => a.packageRoot.localeCompare(b.packageRoot))
+  assert.deepEqual(summary, [
+    { packageRoot: 'examples/six', ready: false, missing: ['react-scripts-5'] },
+    {
+      packageRoot: 'examples/three',
+      ready: false,
+      missing: ['react-scripts-5'],
+    },
+    {
+      packageRoot: 'examples/unreadable',
+      ready: false,
+      missing: ['react-scripts-5'],
     },
   ])
 })

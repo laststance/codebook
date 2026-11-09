@@ -399,13 +399,140 @@ test('refuses library-redirect-not-applied with the cause of the preload error l
   assert.equal(refusal.details?.cause, 'unexpected configuration shape')
 })
 
-// protects=the applied marker lets readiness pass; fails_when=a wrapped report is refused
-test('accepts a report that starts with the wrapped marker', async (context) => {
+/** Runs a check and returns what it threw, or `undefined`. */
+function refusalOf(check: () => void): unknown {
+  try {
+    check()
+  } catch (error) {
+    return error
+  }
+  return undefined
+}
+
+// Value: protects=readiness passes only when the report names the packed library among the compiled modules; fails_when=a wrapped line alone, or a report without the packed folder, is accepted; no_claim=that the page runs the packed copy (the script match judges that)
+test('accepts a report with the wrapped marker and a compiled module of the packed library', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const file = await put(join(run.packedRoot, 'es', 'redux.js'))
+  await appendFile(
+    run.reportPath,
+    `{"wrapped":true}\n${compilationLine([{ name: 'static/js/bundle.js', sha256: BUNDLE_HASH, resources: [file] }])}`,
+  )
+  // Act and Assert
+  assert.doesNotThrow(() => run.route.assertRedirectApplied())
+})
+
+// Value: protects=a wrapped line without any packed-library resource is not taken for an applied redirect (webpack 4 wrapped the factory and redirected nothing); fails_when=readiness passes on the wrapped marker alone or on the installed copy's resource; no_claim=which resolver step failed
+test('refuses library-redirect-not-applied when wrapped is followed only by the installed copy of the library', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const installed = await put(
+    join(run.appRoot, 'node_modules', 'redux', 'es', 'redux.js'),
+  )
+  await appendFile(
+    run.reportPath,
+    `{"wrapped":true}\n${compilationLine([{ name: 'static/js/bundle.js', sha256: BUNDLE_HASH, resources: [installed] }])}`,
+  )
+  // Act
+  const refusal = refusalOf(() => run.route.assertRedirectApplied())
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.details?.reason, 'library-redirect-not-applied')
+  assert.equal(
+    refusal.details?.cause,
+    'the compilation names no module of the packed library',
+  )
+})
+
+// Value: protects=the exact report of the webpack 4 run (a wrapped line, then a reportError line) is refused with the report error as its cause; fails_when=the reportError line is ignored and wrapped alone passes; no_claim=that webpack 4 is supported
+test('refuses library-redirect-not-applied for the report of the webpack 4 run, wrapped then reportError', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(
+    run.reportPath,
+    '{"wrapped":true}\n{"reportError":"Cannot read properties of undefined (reading \'getChunkModulesIterable\')"}\n',
+  )
+  // Act
+  const refusal = refusalOf(() => run.route.assertRedirectApplied())
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.details?.reason, 'library-redirect-not-applied')
+  assert.equal(
+    refusal.details?.cause,
+    "Cannot read properties of undefined (reading 'getChunkModulesIterable')",
+  )
+})
+
+// Value: protects=a compilation line cut at the line bound that carries the packed flag counts as an applied redirect; fails_when=readiness needs the resource list the cut dropped, so a working redirect is refused; no_claim=that the page runs the packed copy (the script match judges that)
+test('accepts a truncated compilation line that carries the packed flag', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(
+    run.reportPath,
+    '{"wrapped":true}\n{"compilationHash":"c1","packed":true,"publicPath":"/","truncated":true}\n',
+  )
+  // Act and Assert
+  assert.doesNotThrow(() => run.route.assertRedirectApplied())
+})
+
+// Value: protects=a truncated compilation line without the packed flag is refused as unconfirmed, with a message saying the report was incomplete; fails_when=the refusal calls it a plain failure or a truncated line is accepted; no_claim=that the redirect failed
+test('refuses a truncated compilation line without the packed flag as an unconfirmed redirect', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  await appendFile(
+    run.reportPath,
+    '{"wrapped":true}\n{"compilationHash":"c1","publicPath":"/","truncated":true}\n',
+  )
+  // Act
+  const refusal = refusalOf(() => run.route.assertRedirectApplied())
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.details?.reason, 'library-redirect-not-applied')
+  assert.equal(
+    refusal.details?.cause,
+    'the compilation report was incomplete, so the redirect could not be confirmed',
+  )
+})
+
+// Value: protects=readiness waits for the compilation line the preload writes at emit instead of reading too early; fails_when=awaitRedirectApplied reads once and refuses a line that arrives within the bound; no_claim=the length of the default bound
+test('waits for a compilation line that arrives after the wrapped line within the bound', async (context) => {
+  // Arrange
+  const run = await stage(context)
+  const file = await put(join(run.packedRoot, 'es', 'redux.js'))
+  await appendFile(run.reportPath, '{"wrapped":true}\n')
+  const waiting = run.route.awaitRedirectApplied(
+    run.controller.signal,
+    () => undefined,
+    2000,
+  )
+  // gstack-timing-ok: the pause only lets the wait start polling; the outcome is asserted and the bound (2000 ms) is far above it
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  // Act
+  await appendFile(
+    run.reportPath,
+    compilationLine([
+      { name: 'static/js/bundle.js', sha256: BUNDLE_HASH, resources: [file] },
+    ]),
+  )
+  // Assert
+  await assert.doesNotReject(waiting)
+})
+
+// Value: protects=the wait ends with the refusal at the bound when no packed-library resource ever arrives; fails_when=the wait returns without a refusal or never ends; no_claim=the default bound
+test('refuses library-redirect-not-applied when the bound ends with wrapped and no compilation line', async (context) => {
   // Arrange
   const run = await stage(context)
   await appendFile(run.reportPath, '{"wrapped":true}\n')
-  // Act and Assert
-  assert.doesNotThrow(() => run.route.assertRedirectApplied())
+  // Act
+  const refusal = await run.route
+    .awaitRedirectApplied(run.controller.signal, () => undefined, 150)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.details?.reason, 'library-redirect-not-applied')
 })
 
 // protects=a declined confirmation builds nothing and leaves no preload; fails_when=prepare runs after a decline

@@ -329,6 +329,20 @@ test('an ambiguous-source refusal names the file the served map lists twice', ()
   assert.match(recovery, /#REACT_SCRIPTS_SEAL_FAILED\.$/)
 })
 
+// Value: protects=the ambiguous-source message and recovery cover a file named by two served scripts' maps; fails_when=they describe only one map; no_claim=the seal's detection
+test('an ambiguous-source refusal covers a file named by two served maps', () => {
+  // Arrange
+  const error = reactScriptsAmbiguousSourceRefusal('src/App.js')
+  // Act
+  const recovery = recoveryOf(error)
+  // Assert
+  assert.match(
+    error.message,
+    /one map lists it twice, or two served scripts' maps both name it/,
+  )
+  assert.match(recovery, /in one map or in two scripts' maps/)
+})
+
 // Value: protects=an unreadable installed version gets its own sentence and no installedVersion field; fails_when=the message reads "react-scripts undefined is installed"; no_claim=how the manifest is read
 test('a react-scripts version refusal without a readable version says so and omits the field', () => {
   // Arrange
@@ -380,4 +394,16 @@ test('a react-scripts library refusal for a root app tells the chat to declare p
     ),
   )
   assert.ok(!described.recovery.includes('node-script'))
+})
+
+// Value: protects=the version refusal names both supported majors in its message and details while keeping requiredMajor; fails_when=the message says only major 5 or supportedMajors is lost; no_claim=the help wording
+test('the react-scripts version refusal names both supported majors', () => {
+  // Arrange
+  const error = reactScriptsVersionRefusal('3.4.4')
+  // Act
+  const { message } = error
+  // Assert
+  assert.match(message, /supports react-scripts 4 and 5\./)
+  assert.deepEqual(error.details?.supportedMajors, [4, 5])
+  assert.equal(error.details?.requiredMajor, 5)
 })

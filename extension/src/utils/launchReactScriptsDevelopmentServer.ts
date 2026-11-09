@@ -204,6 +204,7 @@ export async function launchReactScriptsDevelopmentServer(
       environment: buildReactScriptsEnvironment(
         workspace.assignments,
         declared.port,
+        workspace.runtime,
       ),
       mask: maskText,
       maskHoldback: () => longestMaskedLength(maskedValues),

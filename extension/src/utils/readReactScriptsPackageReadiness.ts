@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { z } from 'zod'
 
 import {
-  REACT_SCRIPTS_SUPPORTED_MAJOR,
+  REACT_SCRIPTS_SUPPORTED_MAJORS,
   REACT_SCRIPTS_VERSION_MAX_CHARS,
 } from '../constants'
 
@@ -135,10 +135,12 @@ export async function readReactScriptsPackageReadiness(
   const start = parseReactScriptsStartScript(manifest?.scripts?.start)
   const missing: ReactScriptsGap[] = []
   if (!installation) missing.push('react-scripts-installed')
-  // An installed react-scripts whose version cannot be read as a short semantic version cannot be shown to be major 5.
+  // An installed react-scripts whose version cannot be read as a short semantic version cannot be shown to be a supported major (4 or 5).
   else if (
     installation.version === undefined ||
-    Number.parseInt(installation.version, 10) !== REACT_SCRIPTS_SUPPORTED_MAJOR
+    !(REACT_SCRIPTS_SUPPORTED_MAJORS as readonly number[]).includes(
+      Number.parseInt(installation.version, 10),
+    )
   )
     missing.push('react-scripts-5')
   if (start.readiness.form !== 'accepted') missing.push('start-script')

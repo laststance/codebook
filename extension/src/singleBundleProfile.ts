@@ -76,6 +76,16 @@ export type SingleBundleProfile = Readonly<{
     bundleUrl: string,
     ownedOrigin: string,
   ) => URL | undefined
+  /**
+   * Opts in to reading every same-origin script of the entry page (react-scripts 4 serves a runtime and chunks) instead of one bundle.
+   * With it, the shared read also treats a redirect off the owned origin, a script over the byte limit and an HTML answer in place of JavaScript by the rules below. Absent (Expo web), nothing changes.
+   */
+  servedScripts?: Readonly<{
+    /** The refusal for a script over `limitBytes`. */
+    tooLarge: (url: string, limitBytes: number) => StudyError
+    /** The refusal for a script or map that redirected off the owned origin. */
+    offOrigin: (url: string) => StudyError
+  }>
 }>
 
 /** Why the served map cannot tie a library stop to the checked-out file. */

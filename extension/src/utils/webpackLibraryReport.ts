@@ -34,6 +34,8 @@ type WebpackLibraryReportErrorLine = { reportError: string }
 type WebpackLibraryCompilationLine = {
   compilationHash: string
   publicPath: string
+  /** Written by the react-scripts preload: some compiled module lies inside the packed folder; unlike the resource list it survives truncation. */
+  packed?: true
   assets: WebpackLibraryReportAsset[]
   /** Requests of external modules that name the package: Node loads them at run time, so no resource shows which copy they are. */
   externals?: string[]
@@ -43,6 +45,8 @@ type WebpackLibraryCompilationLine = {
 type WebpackLibraryTruncatedLine = {
   compilationHash: string
   publicPath?: string
+  /** See {@link WebpackLibraryCompilationLine}. */
+  packed?: true
   truncated: true
 } & WebpackLibraryCompilerFields
 
@@ -174,10 +178,11 @@ function parseCompilationLine(
 ): WebpackLibraryReportLine | undefined {
   const { compilationHash, publicPath, assets, externals } = record
   if (typeof compilationHash !== 'string') return undefined
+  const packed = record.packed === true ? ({ packed: true } as const) : {}
   if (record.truncated === true) {
     return typeof publicPath === 'string'
-      ? { compilationHash, publicPath, truncated: true, ...fields }
-      : { compilationHash, truncated: true, ...fields }
+      ? { compilationHash, publicPath, ...packed, truncated: true, ...fields }
+      : { compilationHash, ...packed, truncated: true, ...fields }
   }
   if (typeof publicPath !== 'string' || !Array.isArray(assets)) return undefined
   if (externals !== undefined && !isStringArray(externals)) return undefined
@@ -187,6 +192,7 @@ function parseCompilationLine(
   return {
     compilationHash,
     publicPath,
+    ...packed,
     assets: valid,
     ...(externals ? { externals } : {}),
     ...fields,
@@ -300,6 +306,9 @@ export class WebpackLibraryReportReader {
   private serverOutputUnknownCompiler: string | undefined
   private readonly externalRequests = new Set<string>()
   private readonly edgeAssets: WebpackLibraryReportMatch[] = []
+  /** Every resource any described asset named (the preload lists only library resources); kept so a rebuild that replaces an index entry does not forget a resource. */
+  private readonly describedResources = new Set<string>()
+  private packedFlagSeen = false
 
   /**
    * @param wholeLimitBytes - The most bytes of the report that are read.
@@ -558,6 +567,7 @@ export class WebpackLibraryReportReader {
     line: WebpackLibraryCompilationLine | WebpackLibraryTruncatedLine,
   ): void {
     this.compilationCount += 1
+    if (line.packed === true) this.packedFlagSeen = true
     if (line.compiler !== undefined)
       this.compiledCompilerNames.add(line.compiler)
     if (line.publicPath !== undefined && isPageCompiler(line.compiler)) {
@@ -592,6 +602,8 @@ export class WebpackLibraryReportReader {
     line: WebpackLibraryCompilationLine,
     asset: WebpackLibraryReportAsset,
   ): void {
+    for (const resource of asset.resources)
+      this.describedResources.add(resource)
     const entries = this.index.get(asset.sha256) ?? []
     const kept = entries.filter(
       (entry) =>
@@ -710,6 +722,31 @@ export class WebpackLibraryReportReader {
       // Not there yet: do not cache a path that will change
       return resolve(outputPath)
     }
+  }
+
+  /**
+   * Tells whether any described asset names a resource inside a folder.
+   *
+   * Called by the react-scripts flavor of {@link WebpackLibraryRoute.assertRedirectApplied} with the packed folder: a `wrapped` line alone shows the factory was wrapped, not that the resolver served the packed copy; only a compiled module inside the packed folder shows that.
+   * @param root - The real folder (the packed package's folder).
+   * @returns `true` when some compilation line named a resource at or below `root`.
+   * @example reader.hasResourceInside('/tmp/run/node_modules/redux') // => true
+   */
+  hasResourceInside(root: string): boolean {
+    for (const resource of this.describedResources)
+      if (isInsideFolder(root, resource)) return true
+    return false
+  }
+
+  /**
+   * Tells whether any compilation line (complete or truncated) carried the preload's `packed` flag.
+   *
+   * Called by {@link WebpackLibraryRoute.assertRedirectApplied}: the flag is written early in the line, so it survives a line cut at the line bound that lost its resource list.
+   * @returns `true` when the preload saw a compiled module inside the packed folder.
+   * @example reader.packedFlagged() // => true
+   */
+  packedFlagged(): boolean {
+    return this.packedFlagSeen
   }
 
   /** The compilers a `wrapped` line named; the Next preload writes one per compiler (`client`, `server`, `edge-server`) when it builds the compiler's configuration. */

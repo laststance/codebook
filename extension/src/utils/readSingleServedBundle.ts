@@ -2,6 +2,7 @@ import type { z } from 'zod'
 
 import {
   HTTP_REDIRECT_STATUS_END,
+  HTTP_REDIRECT_STATUS_MIN,
   SINGLE_BUNDLE_ERROR_BODY_LIMIT_BYTES,
   VITE_MODULE_FETCH_TIMEOUT_MS,
 } from '../constants'
@@ -43,6 +44,24 @@ export class SingleBundleCache {
 
   /** @param entryPath - The path the entry page is served at (`/` unless a `homepage` or `PUBLIC_URL` moves it). */
   constructor(readonly entryPath: string = '/') {}
+
+  /**
+   * Counts the map reads per script, so a stale-map retry can ask about the script that holds the stop. One-script caches count under the empty key.
+   * @example cache.mapReadsByScript().get(cache.scriptKeyOf('http://127.0.0.1:3000/static/js/bundle.js')) // => 1
+   */
+  mapReadsByScript(): ReadonlyMap<string, number> {
+    return new Map([['', this.mapReads]])
+  }
+
+  /** Names the script in {@link mapReadsByScript}; a one-script cache has one key. */
+  scriptKeyOf(_scriptUrl: string): string {
+    return ''
+  }
+
+  /** Drops what was read, so the next read fetches the map again. A cache that holds several scripts overrides it to drop all of them. */
+  forgetEntries(): void {
+    this.entry = undefined
+  }
 }
 
 /** What a server answered instead of the bundle or map: its status and the start of its body, which an adapter may read as the server's own error (Metro answers a failed build with an error response). */
@@ -81,7 +100,7 @@ function isInvalidUtf8Error(error: unknown): boolean {
  * @returns The request's timeout in milliseconds, at least 1.
  * @example requestTimeoutMs(performance.now() + 200) // => about 200
  */
-function requestTimeoutMs(deadlineAtMs: number | undefined): number {
+export function requestTimeoutMs(deadlineAtMs: number | undefined): number {
   if (deadlineAtMs === undefined) return VITE_MODULE_FETCH_TIMEOUT_MS
   // AbortSignal.timeout takes whole milliseconds.
   return Math.max(
@@ -125,6 +144,18 @@ async function readServedText(
     )
   })
   if (!response.ok) {
+    const redirectTarget = response.headers.get('location')
+    const isRedirect =
+      response.status >= HTTP_REDIRECT_STATUS_MIN &&
+      response.status < HTTP_REDIRECT_STATUS_END
+    // A script or map that redirects off the owned origin is refused for good; any other redirect is "not ready yet".
+    if (profile.servedScripts && isRedirect && redirectTarget !== null) {
+      const target = URL.parse(redirectTarget, url)
+      if (target !== null && target.origin !== new URL(url).origin) {
+        await response.body?.cancel().catch(() => undefined)
+        throw profile.servedScripts.offOrigin(url)
+      }
+    }
     // Only a profile that quotes the server's error reads its body (its head, cut at the cap); the others cancel it unread, so a stalled body never holds the poll.
     const isErrorStatus = response.status >= HTTP_REDIRECT_STATUS_END
     const body =
@@ -263,9 +294,6 @@ export async function readSingleServedBundle(
   deadlineAtMs?: number,
   onProgress?: (step: SingleBundleProgress) => void,
 ): Promise<SingleServedBundle> {
-  const { limits, refusals } = profile
-  // The Host the browser asked with (Metro writes it into the bundle), so the sealed bytes are the executed bytes.
-  const requestHost = profile.requestHostOf?.(origin)
   const bundleUrl =
     cache.bundleUrl ??
     (await entryBundleUrl(
@@ -277,6 +305,51 @@ export async function readSingleServedBundle(
     ))
   cache.bundleUrl = bundleUrl
   onProgress?.('html')
+  const served = await readServedBundleAt(
+    bundleUrl,
+    origin,
+    signal,
+    cache,
+    profile,
+    deadlineAtMs,
+    onProgress,
+    false,
+  )
+  // Only `skipUnmapped` returns nothing, and it is off here.
+  if (served === undefined)
+    throw profile.refusals.mapUnreadable('the bundle names no source map')
+  return served
+}
+
+/**
+ * Reads the script at a known address and, unless the cache holds this exact compile, its source map.
+ *
+ * Why it exists: {@link readSingleServedBundle} finds the one bundle on the entry page, while a reader of several scripts (react-scripts 4's runtime and chunks) already knows each address and keeps one cache per script. Called by both.
+ * @param bundleUrl - The script's address on the owned origin.
+ * @param origin - The owned origin.
+ * @param signal - Ends the read when the run is cancelled.
+ * @param cache - The cache of this script: a hit for the served hash returns its entry and fetches no map.
+ * @param profile - The adapter's profile.
+ * @param deadlineAtMs - The `performance.now()` the caller's budget ends at.
+ * @param onProgress - Told when the script and its map were read.
+ * @param skipUnmapped - Returns `undefined` for a script that names no `sourceMappingURL` (webpack's runtime) instead of refusing.
+ * @returns The served script and map; `undefined` only for a skipped unmapped script.
+ * @throws {@link SingleBundleNotReadyError} while the script or map is not served (a profile with `servedScripts` also takes HTML in place of JavaScript as not ready); the profile's refusals for an unreadable script or map, its `servedScripts` refusals for a script over the limit and a redirect off the owned origin.
+ * @example const served = await readServedBundleAt('http://127.0.0.1:3000/static/js/main.chunk.js', 'http://127.0.0.1:3000', signal, cache, profile, undefined, undefined, true)
+ */
+export async function readServedBundleAt(
+  bundleUrl: string,
+  origin: string,
+  signal: AbortSignal,
+  cache: SingleBundleCache,
+  profile: SingleBundleProfile,
+  deadlineAtMs: number | undefined,
+  onProgress: ((step: SingleBundleProgress) => void) | undefined,
+  skipUnmapped: boolean,
+): Promise<SingleServedBundle | undefined> {
+  const { limits, refusals } = profile
+  // The Host the browser asked with (Metro writes it into the bundle), so the sealed bytes are the executed bytes.
+  const requestHost = profile.requestHostOf?.(origin)
   const javascript = await readServedText(
     bundleUrl,
     limits.bundleBytes,
@@ -286,18 +359,26 @@ export async function readSingleServedBundle(
     requestHost,
   )
   if (javascript === undefined)
-    throw refusals.mapUnreadable(
-      `the bundle exceeds ${limits.bundleBytes} bytes`,
+    throw (
+      profile.servedScripts?.tooLarge(bundleUrl, limits.bundleBytes) ??
+      refusals.mapUnreadable(`the bundle exceeds ${limits.bundleBytes} bytes`)
+    )
+  // A dev server answers an unknown or not yet compiled path with its HTML page; that is not the script.
+  if (profile.servedScripts && /^\s*</.test(javascript))
+    throw new SingleBundleNotReadyError(
+      `${bundleUrl} answered HTML in place of JavaScript`,
     )
   onProgress?.('bundle')
   const bundleHash = sha256(javascript)
   // The same bytes are the same compile: its map is already read.
   if (cache.entry?.bundleHash === bundleHash) return cache.entry
   const reference = sourceMappingUrlOf(javascript)
-  if (reference === undefined)
+  if (reference === undefined) {
+    if (skipUnmapped) return undefined
     throw refusals.mapUnreadable(
       'the bundle names no source map (no sourceMappingURL comment)',
     )
+  }
   // A reference that is not an http(s) address (an inline `data:` map) is refused now, not waited for.
   if (!isHttpReference(reference, bundleUrl))
     throw refusals.mapUnreadable(

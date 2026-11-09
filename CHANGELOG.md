@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.106.0] - 2026-11-09 (development candidate)
+
+Cycle 0104 ([Issue #269](https://github.com/laststance/codebook/issues/269)), a feature cycle. **A question about a Create React App 4 app, or a library's react-scripts 4 Example run on the checked-out library, now runs in Codebook and pauses in the app's own source and in the library's source.** Codebook refused react-scripts 4, so no question about such an app or Example could run: its webpack 4 needs the OpenSSL legacy provider on current Node, serves the app as a runtime and several chunks, and does not read a package's own source maps. Codebook now starts react-scripts 4 with that provider in the app's own process, reads every script the page serves, and, on the pack route, gives webpack the packed library's own source maps, so stops seal and pause as on react-scripts 5.
+
+### Added
+- **react-scripts 4 apps (MCP API 1.41):** `codebook_status` lists an installed react-scripts 4 app as ready beside react-scripts 5, and the `react-scripts-dev` adapter runs it at or below the repository root. On Node 17 or later Codebook adds `--openssl-legacy-provider` to the `NODE_OPTIONS` of the app's own process only, after your own value (the start script's `NODE_OPTIONS=` assignment, else the editor's environment), never twice; Node 16 and react-scripts 5 runs get nothing. When the Node that runs the app reports no readable version, the start is refused with `REACT_SCRIPTS_UNSUPPORTED`, reason `node-version-unreadable`, before anything starts. react-scripts 3 or older and 6 or newer stay refused under the same names.
+- **Pages with several scripts:** Codebook reads every same-origin script of the app's entry page under its webpack output folder (`static/js/`), up to 8, with its source map, and seals a stop in the script whose map names its file. Three more `REACT_SCRIPTS_SEAL_FAILED` reasons name a set of scripts it cannot read: `script-off-origin`, `too-many-scripts` and `script-too-large`; a file named by two scripts' maps is refused `ambiguous-source`.
+- **The pack route on react-scripts 4:** a `library` declaration (an Example run on the checked-out library) works on react-scripts 4: Codebook redirects the Example's import to the packed, checked-out library under webpack 4, hands webpack the packed files' own source maps (react-scripts 4 reads none itself), and counts the redirect as applied only when the compile report names the packed library among its modules; otherwise the start stops with `library-redirect-not-applied` before the browser opens.
+
+### Changed
+- **MCP API 1.41 and bundled skill 1.0.84:** `codebook_status` and the server's instructions report API 1.41; the react-scripts help names both supported majors, the legacy provider, the multi-script reasons and the react-scripts 4 pack route; the bundled skill runs a react-scripts 4 app only when `codebook_status` reports API 1.41 or later and otherwise asks you to update Codebook.
+- **A recompile during a run:** when a recompile makes Codebook read the maps again, it also reads the entry page's script list again.
+- **Agent rules (AGENTS.md):** react-scripts 4 Examples are trialled on the pinned P03 clone's `examples/todos`.
+
 ## [0.2.105.0] - 2026-11-09 (development candidate)
 
 Cycle 0103 ([Issue #267](https://github.com/laststance/codebook/issues/267)), a bug-fix cycle. **A question about how sign-in works now pauses inside the sign-in code the request runs, such as an auth library's `authorize` callback.** In a Next app that signs in through a Server Action, a server stop in a module that the sign-in request loads for the first time bound only after its line had already run, so the run ended with a refusal after 20 s. Codebook now binds such a stop before the module runs, and the bundled skill runs the sign-in itself when the question is about it.

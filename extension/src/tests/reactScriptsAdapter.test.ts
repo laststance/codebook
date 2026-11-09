@@ -205,11 +205,11 @@ test('a server that never serves its bundle is not ready before the budget ends'
   await assert.rejects(waiting, WaitTimeoutError)
 })
 
-// Value: protects=AC 5 / DX-9: a react-scripts 4 app is refused with the same judgement status lists, before any process; fails_when=an unsupported major starts; no_claim=the other gaps (covered by the readiness tests)
-test('an app on react-scripts 4 is refused before any process starts', async (context) => {
+// Value: protects=AC 5 / DX-9: a react-scripts app of an unsupported major (here 3) is refused with the same judgement status lists, before any process; fails_when=an unsupported major starts; no_claim=the other gaps (covered by the readiness tests)
+test('an app on react-scripts 3 is refused before any process starts', async (context) => {
   // Arrange
   const { repository, controller, request } = await startAdapter(context, {
-    version: '4.0.3',
+    version: '3.4.4',
   })
   // Act
   const refusal = await refusalOf(

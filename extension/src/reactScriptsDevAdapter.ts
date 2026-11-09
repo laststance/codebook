@@ -54,24 +54,29 @@ export const REACT_SCRIPTS_DEV_ADAPTER: DevelopmentServerAdapter = {
   name: 'react-scripts-dev',
   async assertWorkspace(
     _workspace,
-    _node,
-    _signal,
+    node,
+    signal,
     _nextPackage,
     _vitePackage,
     reactScriptsPackage,
   ) {
     if (!reactScriptsPackage)
       throw new Error('A react-scripts run resolves its package first')
-    await assessReactScriptsWorkspace(reactScriptsPackage)
+    await assessReactScriptsWorkspace(reactScriptsPackage, node, signal)
   },
   async start(request) {
     if (!request.reactScriptsPackage)
       throw new Error('A react-scripts run resolves its package first')
     const workspace = await assessReactScriptsWorkspace(
       request.reactScriptsPackage,
+      request.node,
+      request.signal,
     )
     // Created before the launch so the server's cleanup can tell this run's entry from a later run's on the same port.
-    const cache = new ReactScriptsBundleCache(workspace.publicPath)
+    const cache = new ReactScriptsBundleCache(
+      workspace.publicPath,
+      request.reactScriptsPackage.packageRoot,
+    )
     const launch = await launchReactScriptsDevelopmentServer(
       request,
       workspace,

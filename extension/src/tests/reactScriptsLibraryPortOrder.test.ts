@@ -37,6 +37,8 @@ test('a busy declared port refuses a react-scripts library run before the build 
   // Act
   const refusal = await assertReactScriptsLibraryPortFree(
     request.reactScriptsPackage!,
+    process.execPath,
+    controller.signal,
     (declared, refuse) =>
       assertDevelopmentPortFree(declared, {
         signal: controller.signal,
@@ -68,6 +70,8 @@ test('a free declared port lets a react-scripts library run go on to the build',
   // Act
   const outcome = await assertReactScriptsLibraryPortFree(
     request.reactScriptsPackage!,
+    process.execPath,
+    controller.signal,
     (declared, refuse) =>
       assertDevelopmentPortFree(declared, {
         signal: controller.signal,

@@ -53,10 +53,11 @@ const directoryFor = (specifier, context) => {
   if (context === ANCHOR) return ''
   return isNamed(specifier, CONFIG.packageName) ? ANCHOR : ''
 }
-// Tapped on 'normal-resolve', the one step every bare request passes after enhanced-resolve (5.x) has parsed it (query and fragment are split off), applied the package's alias fields ('browser' on raw-resolve) and expanded the 'imports' field (which re-enters through internal-resolve or imports-resolve, depending on the version). A request the packed package's alias fields map to a relative path or false never reaches it; one mapped to another bare name or expanded from '#name' arrives here with the path of the packed folder and is redirected like a direct bare import.
+// Tapped on 'normal-resolve' (enhanced-resolve 5; a resolver without that hook is enhanced-resolve 4, webpack 4, which has no such step and is tapped on 'described-resolve': the step after the description file; on enhanced-resolve 4.5.0 user resolver plugins are applied first, so the tap runs before the alias, alias-field and module-kind steps, and the redirected request re-enters 'resolve' so those steps then apply with the redirect target's description file), the one step every bare request passes after enhanced-resolve (5.x) has parsed it (query and fragment are split off), applied the package's alias fields ('browser' on raw-resolve) and expanded the 'imports' field (which re-enters through internal-resolve or imports-resolve, depending on the version). A request the packed package's alias fields map to a relative path or false never reaches it; one mapped to another bare name or expanded from '#name' arrives here with the path of the packed folder and is redirected like a direct bare import.
 const createResolverPlugin = () => ({
   apply(resolver) {
-    resolver.ensureHook('normal-resolve').tapAsync(PLUGIN_NAME, (request, resolveContext, callback) => {
+    const hookName = resolver.hooks && resolver.hooks.normalResolve ? 'normal-resolve' : 'described-resolve'
+    resolver.ensureHook(hookName).tapAsync(PLUGIN_NAME, (request, resolveContext, callback) => {
       const specifier = request.request
       const context = request.path
       if (typeof specifier !== 'string' || typeof context !== 'string' || !isBare(specifier)) return callback()
@@ -139,9 +140,11 @@ const resourcesOfModule = (module) => {
   if (source.modules) for (const inner of source.modules) if (typeof inner.resource === 'string') files.push(inner.resource)
   return files
 }
+// webpack 5 lists a chunk's modules through the chunk graph, webpack 4 on the chunk itself.
+const modulesOfChunk = (compilation, chunk) => (compilation.chunkGraph ? compilation.chunkGraph.getChunkModulesIterable(chunk) : chunk.modulesIterable)
 const resourcesOfChunk = (compilation, chunk) => {
   const found = new Set()
-  for (const module of compilation.chunkGraph.getChunkModulesIterable(chunk)) {
+  for (const module of modulesOfChunk(compilation, chunk)) {
     for (const file of resourcesOfModule(module)) {
       const real = realOf(file)
       if (isLibraryResource(real)) found.add(real)
@@ -153,6 +156,11 @@ const publicPathOf = (compilation) => {
   const publicPath = compilation.outputOptions && compilation.outputOptions.publicPath
   return typeof publicPath === 'string' ? publicPath : ''
 }
+// webpack 5 has getAsset; webpack 4 keeps the sources in compilation.assets, and its older sources may lack buffer().
+const bytesOfAsset = (compilation, name) => {
+  const source = typeof compilation.getAsset === 'function' ? compilation.getAsset(name).source : compilation.assets[name]
+  return typeof source.buffer === 'function' ? source.buffer() : Buffer.from(source.source())
+}
 const describeCompilation = (compilation) => {
   const assets = []
   const seen = new Set()
@@ -161,18 +169,19 @@ const describeCompilation = (compilation) => {
     for (const name of chunk.files) {
       if (seen.has(name) || !name.endsWith('.js')) continue
       seen.add(name)
-      const asset = compilation.getAsset(name)
-      assets.push({ name, sha256: crypto.createHash('sha256').update(asset.source.buffer()).digest('hex'), resources })
+      assets.push({ name, sha256: crypto.createHash('sha256').update(bytesOfAsset(compilation, name)).digest('hex'), resources })
     }
   }
-  return { compilationHash: String(compilation.hash), publicPath: publicPathOf(compilation), assets }
+  // Written before the assets so it survives a line cut at the bound.
+  const packed = assets.some((asset) => asset.resources.some((file) => isInside(CONFIG.packedRoot, file)))
+  return { compilationHash: String(compilation.hash), ...(packed ? { packed: true } : {}), publicPath: publicPathOf(compilation), assets }
 }
 const reportCompilation = (compilation) => {
   try {
     const line = describeCompilation(compilation)
     const text = JSON.stringify(line)
     if (Buffer.byteLength(text) + 1 > CONFIG.lineLimitBytes) {
-      writeLine({ compilationHash: line.compilationHash, publicPath: line.publicPath, truncated: true })
+      writeLine({ compilationHash: line.compilationHash, ...(line.packed ? { packed: true } : {}), publicPath: line.publicPath, truncated: true })
     } else writeLine(line)
   } catch (error) { writeLine({ reportError: String(error && error.message || error) }) }
 }
@@ -194,6 +203,51 @@ const patchConfiguration = (config, changes) => {
   changes.set(config, 'plugins', [...config.plugins, createReporterPlugin()])
 }
 
+// react-scripts 4 (webpack 4) has no source-map-loader, so the packed library would reach the served map as its built files. This pre-loader, limited to the packed folder and added only where no source-map-loader rule exists, hands webpack each packed file's own source map with absolute source paths, as source-map-loader does for react-scripts 5; any failure leaves the file and its map as they were.
+const loaderNameOf = (use) => (typeof use === 'string' ? use : isPlainObject(use) && typeof use.loader === 'string' ? use.loader : '')
+const hasSourceMapLoader = (rules) => entriesOf(rules).some((rule) => isPlainObject(rule) && (
+  loaderNameOf(rule).includes('source-map-loader') ||
+  entriesOf(rule.use).some((use) => loaderNameOf(use).includes('source-map-loader')) ||
+  hasSourceMapLoader(rule.oneOf) ||
+  hasSourceMapLoader(rule.rules)))
+const addPackedSourceMapRule = (config, changes) => {
+  if (!isPlainObject(config.module) || !Array.isArray(config.module.rules) || hasSourceMapLoader(config.module.rules)) return
+  // Appended, so the indexes of the configuration's own rules stay; enforce 'pre' runs it before babel-loader, which then carries the map on.
+  changes.set(config.module, 'rules', [...config.module.rules, { enforce: 'pre', test: /\.(js|mjs|cjs)$/, include: [packedPrefix], loader: __filename }])
+}
+const SOURCE_MAP_REFERENCE = /\/\/[#@] sourceMappingURL=([^\s'"]+)\s*$/
+const hasScheme = (value) => /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)
+const readPackedMap = (resourcePath, text) => {
+  const reference = SOURCE_MAP_REFERENCE.exec(text)
+  // An inline (data:) or remote map is left to webpack, as before.
+  if (!reference || hasScheme(reference[1])) return undefined
+  const mapPath = path.resolve(path.dirname(resourcePath), decodeURIComponent(reference[1]))
+  if (!isInside(CONFIG.packedRoot, realOf(mapPath))) return undefined
+  const { sourceRoot, ...map } = JSON.parse(fs.readFileSync(mapPath, 'utf8'))
+  if (!Array.isArray(map.sources)) return undefined
+  const base = path.resolve(path.dirname(mapPath), typeof sourceRoot === 'string' ? sourceRoot : '')
+  const sources = map.sources.map((source) => (typeof source === 'string' && !hasScheme(source) ? path.resolve(base, source) : source))
+  // A source without text in the map is read from the packed copy, as source-map-loader does; one whose real path lies outside the packed copy gets no text, so no other local file reaches the served map.
+  const sourcesContent = sources.map((source, index) => {
+    const given = Array.isArray(map.sourcesContent) ? map.sourcesContent[index] : undefined
+    if (typeof given === 'string') return given
+    if (typeof source !== 'string') return null
+    const real = realOf(source)
+    if (!isInside(CONFIG.packedRoot, real)) return null
+    try { return fs.readFileSync(real, 'utf8') } catch { return null }
+  })
+  return { mapPath, map: { ...map, sources, sourcesContent } }
+}
+module.exports = function codebookPackedSourceMapLoader(source, inputMap) {
+  const callback = this.async()
+  try {
+    const found = readPackedMap(this.resourcePath, String(source))
+    if (found === undefined) return callback(null, source, inputMap)
+    this.addDependency(found.mapPath)
+    return callback(null, source, found.map)
+  } catch { return callback(null, source, inputMap) }
+}
+
 const wrapped = new WeakMap()
 const wrapFactory = (factory) => {
   if (wrapped.has(factory)) return wrapped.get(factory)
@@ -202,6 +256,7 @@ const wrapFactory = (factory) => {
     const changes = makeChanges()
     try {
       patchConfiguration(config, changes)
+      addPackedSourceMapRule(config, changes)
       writeLine({ wrapped: true })
     } catch (error) {
       changes.revert()

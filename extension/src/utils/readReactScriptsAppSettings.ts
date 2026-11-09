@@ -11,6 +11,7 @@ import { expandDotenvFile } from './expandDotenvFile'
 import {
   buildReactScriptsEnvironment,
   declaredReactScriptsPort,
+  type ReactScriptsRuntime,
 } from './reactScriptsChildEnvironment'
 import {
   REACT_SCRIPTS_ENV_FILE_POLICY,
@@ -112,18 +113,21 @@ async function loadEnvFiles(
  * Why it exists: `PUBLIC_URL` and `homepage` move the served bundle, `HTTPS=true` cannot be observed over `http://`, and every `REACT_APP_*` value is inlined into the bundle the run archives, so the mask list needs the values react-scripts settles. Called by {@link assessReactScriptsWorkspace}.
  * @param appRoot - The app's folder.
  * @param assignments - The accepted `start` script's assignments; with Codebook's own values they are the process environment, which `.env` never overrides.
+ * @param runtime - The installed react-scripts major and the run's Node major, which decide the child's `NODE_OPTIONS`.
  * @returns The settled environment and the homepage.
  * @throws `REACT_SCRIPTS_UNSUPPORTED` (`env-file-unreadable`) for an `.env` file over the limit or not a regular file, or one whose values expand past Codebook's bounds.
- * @example await readReactScriptsAppSettings('/app', { PORT: '3000' }) // => { environment: { PORT: '3000', REACT_APP_KEY: 'k', … }, homepage: undefined }
+ * @example await readReactScriptsAppSettings('/app', { PORT: '3000' }, { reactScriptsMajor: 5 }) // => { environment: { PORT: '3000', REACT_APP_KEY: 'k', … }, homepage: undefined }
  */
 export async function readReactScriptsAppSettings(
   appRoot: string,
   assignments: Readonly<Record<string, string>>,
+  runtime: ReactScriptsRuntime,
 ): Promise<ReactScriptsAppSettings> {
   const scriptAssignments = { ...assignments }
   const childEnvironment = buildReactScriptsEnvironment(
     scriptAssignments,
     declaredReactScriptsPort(scriptAssignments).port,
+    runtime,
   )
   const environment = new Map<string, string>()
   for (const [name, value] of Object.entries(childEnvironment))

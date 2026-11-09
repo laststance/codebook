@@ -5,6 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.41 is additive: a Create React App app on react-scripts 4 is ready under `react-scripts-dev` (a version 3 configuration declares the same adapter as for react-scripts 5; react-scripts 3 and older stay refused as `react-scripts-version`). On Node 17 or later Codebook adds `--openssl-legacy-provider` to the `NODE_OPTIONS` of the app's own process only, after the learner's own value (the start script's `NODE_OPTIONS=` assignment, else the editor's environment); when the Node that runs react-scripts 4 reports no readable version the start is refused as `REACT_SCRIPTS_UNSUPPORTED` with reason `node-version-unreadable`. The sealing reader now reads every same-origin script of the entry page (react-scripts 4 serves a runtime and chunks), and `REACT_SCRIPTS_SEAL_FAILED` gains three reasons: `script-off-origin`, `too-many-scripts` and `script-too-large`; a file named by two served scripts' maps is refused `ambiguous-source`. A `library` declaration (the pack route, API 1.35) works on react-scripts 4 as well: the redirect to the packed library counts as applied only when the compile report names the packed library among its modules, and otherwise the start stops with `library-redirect-not-applied` before the browser opens. A saved study gains no field: a react-scripts 4 run is saved as format 11, or format 17 with `library`, as a react-scripts 5 run is. A client that finds an older API tells the learner to update Codebook and does not run a react-scripts 4 app by another route.
  * 1.40 is additive: a version 3 `next-dev-webpack` configuration may declare `reverseProxy: { origin, upstreamPort }`, for a Next app the learner opens through their own local reverse proxy (nginx, Caddy or Traefik) at a host name instead of directly at the dev server's localhost address. Codebook starts the dev server itself on `upstreamPort`, resolves the origin's host (every address must be a loopback address), proves with one keyed request that the origin reaches the server it started, checks with a throwaway browser that a browser reaches the same address, and opens the entry at the origin; certificates are never bypassed. A refusal answers `REVERSE_PROXY_REFUSED` with one of {@link REVERSE_PROXY_REFUSAL_REASONS} as its `details.reason`; a run saved with the declaration is saved as format 22 ({@link REVERSE_PROXY_STUDY_VERSION}).
  * 1.39 is additive: a version 3 configuration may declare an operation `{ kind: "press", title, key, selector?, after }`, one key press (optionally with Control, Alt, Shift or Meta, spelled `Control+k`) sent to the page in the browser run, for an app that opens a screen from a keyboard shortcut. The press is refused, nothing sent, when the key would go to a secret control (always, with or without a `selector`), to a frame, or to a text entry (only without a declared `selector`; naming a text input as the `selector` sends the key to it), when a declared `selector` is not a focusable target, and when its `after` condition already holds; a run saved with a press is saved as format 21 ({@link PRESS_STUDY_VERSION}). A failed press reports one of {@link OPERATION_PRESS_REASONS} as the `reason` of its `INPUT_NOT_ACCEPTED` error.
  * 1.38 is additive: a version 3 `vite-dev` configuration may declare the same `apiServer` (plus the optional `proxyPaths`, the request prefixes the dev server forwards to the API), for a Vite app whose page reaches the repository's own Node API; Codebook starts the API beside the dev server, a server stop in the API pauses during the request the page sends (directly or through the dev server's proxy), the attribution sentence names the route, and the run is saved as format 20 ({@link VITE_API_SERVER_STUDY_VERSION}). A failed operation reports the API's output tail as `apiOutputTail`, and the refusals gain `api-port-conflict` and `api-folder-nesting` (`VITE_UNSUPPORTED`) and `VITE_SEAL_FAILED` for the API's source. A root run may also sign in within the run with `session: "fresh"`.
@@ -42,7 +43,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.40'
+export const API_VERSION = '1.41'
 
 /** The API that first accepts a `press` operation in a version 3 configuration. */
 export const PRESS_MINIMUM_API = '1.39'
@@ -300,6 +301,12 @@ export const NEXT_LIBRARY_WRAPPED_WAIT_MS = 5000
 /** How often that wait looks at the report again. */
 export const NEXT_LIBRARY_WRAPPED_POLL_MS = 50
 
+/** How long the react-scripts library route waits after the first compile for the preload's compilation line before it refuses (the line is written at `emit`, so it normally exists already). */
+export const REACT_SCRIPTS_LIBRARY_REDIRECT_WAIT_MS = 5000
+
+/** The pause between two reads of the report while waiting for that line. */
+export const REACT_SCRIPTS_LIBRARY_REDIRECT_POLL_MS = 50
+
 /** The most project sources a `STOP_FILE_NOT_LOADED` refusal of a `wxt-build` run lists in `details.contextSources`. */
 export const EXTENSION_CONTEXT_SOURCES_LIMIT = 20
 
@@ -368,6 +375,10 @@ export const NODE_SCRIPT_MINIMUM_EXTENSION_VERSION = '0.2.84'
 export const REACT_SCRIPTS_MINIMUM_API = '1.25'
 /** The API that first accepts `library.packageRoot` in a nested version 3 `react-scripts-dev` configuration. */
 export const REACT_SCRIPTS_LIBRARY_MINIMUM_API = '1.35'
+
+/** The first API version whose `react-scripts-dev` adapter runs a react-scripts 4 app; an older Codebook refuses it as `react-scripts-version`, so a client tells the learner to update Codebook. */
+export const REACT_SCRIPTS_FOUR_MINIMUM_API = '1.41'
+
 /** The API that first accepts `library.packageRoot` in a nested version 3 `next-dev-webpack` configuration. */
 export const NEXT_LIBRARY_MINIMUM_API = '1.36'
 
@@ -394,7 +405,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.105'
+export const EXTENSION_VERSION = '0.2.106'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -3395,8 +3406,14 @@ export const CHROME_EXTENSION_FAILED_STATE_CODES: readonly string[] = [
 /** The one Vite major the `vite-dev` adapter supports, the major verified natively (Cycle 0063); widening needs a native run on that major. */
 export const VITE_SUPPORTED_MAJOR = 8
 
-/** The one react-scripts major the `react-scripts-dev` adapter supports (Cycle 0083, decision D3); react-scripts 4 is listed but refused. */
-export const REACT_SCRIPTS_SUPPORTED_MAJOR = 5
+/** The react-scripts majors the `react-scripts-dev` adapter supports: 5 (Cycle 0083, decision D3) and 4 (Cycle 0104, which adds the OpenSSL legacy provider on Node 17 or later); any other major is listed but refused. */
+export const REACT_SCRIPTS_SUPPORTED_MAJORS = [4, 5] as const
+
+/** The Node option webpack 4 needs on Node 17 or later (it hashes with MD4, which OpenSSL 3 refuses); older Node does not know it and refuses it. */
+export const REACT_SCRIPTS_OPENSSL_LEGACY_OPTION = '--openssl-legacy-provider'
+
+/** The first Node major that ships OpenSSL 3, so the one that needs {@link REACT_SCRIPTS_OPENSSL_LEGACY_OPTION} for react-scripts 4. */
+export const REACT_SCRIPTS_OPENSSL_MIN_NODE_MAJOR = 17
 
 /** The longest a `react-scripts/package.json` version may be to be published in `codebook_status`: the studied repository chose that text, so a longer one reads as a version that could not be read. */
 export const REACT_SCRIPTS_VERSION_MAX_CHARS = 64
@@ -3406,6 +3423,9 @@ export const EXPO_VERSION_MAX_CHARS = 64
 
 /** The path react-scripts 5 serves its one development bundle at; its source map is the `sourceMappingURL` the bundle names. */
 export const REACT_SCRIPTS_BUNDLE_PATH = '/static/js/bundle.js'
+
+/** The most same-origin `<script src>` elements of the entry page a `react-scripts-dev` run reads for sealing (react-scripts 4 serves a runtime and chunks, react-scripts 5 one bundle); a ninth is refused as `too-many-scripts`. */
+export const REACT_SCRIPTS_SERVED_SCRIPTS_MAX = 8
 
 /** How long the first-compile wait of a `react-scripts-dev` run pauses between two reads of the entry page, the bundle and its map. */
 export const REACT_SCRIPTS_READINESS_POLL_MS = 250

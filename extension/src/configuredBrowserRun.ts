@@ -2527,6 +2527,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.reactScriptsPackage)
       await assertReactScriptsLibraryPortFree(
         this.reactScriptsPackage,
+        this.options.node,
+        this.abort.signal,
         (declared, refuse) =>
           assertDevelopmentPortFree(declared, {
             signal: this.abort.signal,
@@ -3153,8 +3155,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.setupStep = firstBundleStep
       await this.waitForServerSettledWithinBudget(adapter)
       this.alive()
-      // A react-scripts library run is refused here when the preload did not wrap the configuration (decision D13): the page would run the installed copy.
-      this.reactScriptsLibraryRoute?.assertRedirectApplied()
+      // A react-scripts library run is refused here when the report does not show the packed library compiled (decision D13): the page would run the installed copy. The read waits, within the route's bound, for the preload's line written at emit.
+      await this.reactScriptsLibraryRoute?.awaitRedirectApplied(
+        this.abort.signal,
+        () => this.app?.assertRunning(),
+      )
     }
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).

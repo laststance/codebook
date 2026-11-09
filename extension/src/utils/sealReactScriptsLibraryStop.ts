@@ -2,9 +2,10 @@ import { reactScriptsLibrarySealRefusal } from '../reactScriptsRefusals'
 import { REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE } from '../reactScriptsSingleBundleProfile'
 
 import {
-  sealSingleBundleStop,
-  type SingleBundleSealRequest,
-} from './sealSingleBundleStop'
+  reactScriptsServedBundlesReader,
+  type ReactScriptsSealRequest,
+} from './sealReactScriptsStop'
+import { sealSingleBundleStop } from './sealSingleBundleStop'
 
 /** What the library seal needs besides the request: which library, which Example and where the packed copy lies. */
 export type ReactScriptsLibraryStopInput = Readonly<{
@@ -29,7 +30,7 @@ export type ReactScriptsLibraryStopInput = Readonly<{
  * const { bundle } = await sealReactScriptsLibraryStop({ appRoot: libraryRoot, packageRootRelative: 'packages/redux', packageRelativePath: 'src/createStore.ts', source, citationEndLine: 301, ownedOrigin, signal, cache }, { packageName: 'redux', examplePackageRoot: 'examples/counter', packedRoot })
  */
 export function sealReactScriptsLibraryStop(
-  request: SingleBundleSealRequest,
+  request: ReactScriptsSealRequest,
   library: ReactScriptsLibraryStopInput,
 ) {
   const identity = {
@@ -37,23 +38,28 @@ export function sealReactScriptsLibraryStop(
     library: library.packageName,
     file: request.source.path,
   }
-  return sealSingleBundleStop(request, REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE, {
-    packedRoot: library.packedRoot,
-    buildStale: () =>
-      reactScriptsLibrarySealRefusal({
-        ...identity,
-        reason: 'library-build-stale',
-      }),
-    notInBuild: () =>
-      reactScriptsLibrarySealRefusal({
-        ...identity,
-        reason: 'library-not-in-build',
-      }),
-    buildUnmapped: (cause) =>
-      reactScriptsLibrarySealRefusal({
-        ...identity,
-        reason: 'library-build-unmapped',
-        cause,
-      }),
-  })
+  return sealSingleBundleStop(
+    request,
+    REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE,
+    {
+      packedRoot: library.packedRoot,
+      buildStale: () =>
+        reactScriptsLibrarySealRefusal({
+          ...identity,
+          reason: 'library-build-stale',
+        }),
+      notInBuild: () =>
+        reactScriptsLibrarySealRefusal({
+          ...identity,
+          reason: 'library-not-in-build',
+        }),
+      buildUnmapped: (cause) =>
+        reactScriptsLibrarySealRefusal({
+          ...identity,
+          reason: 'library-build-unmapped',
+          cause,
+        }),
+    },
+    reactScriptsServedBundlesReader(request.cache),
+  )
 }

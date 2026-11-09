@@ -4,6 +4,7 @@ import {
   reactScriptsAmbiguousSourceRefusal,
   reactScriptsMapLimitRefusal,
   reactScriptsMapUnreadableRefusal,
+  reactScriptsServedScriptRefusal,
   reactScriptsSealedNodeModulesRefusal,
   reactScriptsSealedOutsidePackageRefusal,
   reactScriptsUnmappedLineRefusal,
@@ -52,5 +53,11 @@ export const REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE: SingleBundleProfile =
     resolveMapUrl(reference, bundleUrl, ownedOrigin) {
       const mapUrl = new URL(reference, bundleUrl)
       return mapUrl.origin === new URL(ownedOrigin).origin ? mapUrl : undefined
+    },
+    servedScripts: {
+      tooLarge: (url) =>
+        reactScriptsServedScriptRefusal('script-too-large', url),
+      offOrigin: (url) =>
+        reactScriptsServedScriptRefusal('script-off-origin', url),
     },
   })
