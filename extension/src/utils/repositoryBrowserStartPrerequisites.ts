@@ -1,9 +1,12 @@
+import { realpath } from 'node:fs/promises'
+
 import { REPOSITORY_BROWSER_PROFILE } from '../constants'
 import type { StudyEnvironment } from '../runtime'
 
 import { assertDevelopmentWorkspace } from './assertDevelopmentWorkspace'
 import { describeReadFailure } from './discoverNextPackages'
 import { managedRunStateOf } from './managedRunStateMessages'
+import { readStaticPageReadiness } from './readStaticPageReadiness'
 import { resolveExpoWebPackage } from './resolveExpoWebPackage'
 import { resolveNextPackage } from './resolveNextPackage'
 import { resolveReactScriptsPackage } from './resolveReactScriptsPackage'
@@ -201,6 +204,57 @@ export async function selectedVitePackageStartPrerequisites(
     ...managedRunStateOf(
       prerequisites.profiles?.[REPOSITORY_BROWSER_PROFILE]?.missing ?? [],
     ),
+  ]
+  return { ready: missing.length === 0, missing }
+}
+
+/**
+ * Judges a root `static-page` start that declares an `entryPath` other than `/` by that entry page, not by the root's precomputed `index.html` readiness.
+ *
+ * The root readiness always judges `/` (`index.html`), so a root with only `demo.html` would be refused `no-entry-page` before the adapter judged the declared page. The shared prerequisites (Node, Chrome, a managed run) stay the window's own. Called by {@link StudyService} before {@link repositoryBrowserStartPrerequisites}.
+ *
+ * @param prerequisites - What the environment reported; its shared `missing` and the profile's managed-run sentences are read.
+ * @param profile - The profile of the run that is starting.
+ * @param configuration - The run's configuration; `adapter`, `packageRoot` and `entryPath` are read.
+ * @param workspace - The opened repository's root, which is the page folder.
+ * @returns
+ * - `undefined` for any other profile or adapter, a nested `packageRoot`, or an absent or `/` entry, so the caller keeps the root readiness
+ * - The shared prerequisites joined with the declared entry's own gap (`no-entry-page`, `needs-bundler: …`, `entry-unreadable`)
+ * @example
+ * await rootStaticPageEntryStartPrerequisites(prerequisites, 'repository-browser', { adapter: 'static-page', entryPath: '/demo.html' }, '/repo')
+ * // => { ready: true, missing: [] }
+ */
+export async function rootStaticPageEntryStartPrerequisites(
+  prerequisites: EnvironmentPrerequisites,
+  profile: string,
+  configuration: unknown,
+  workspace: string,
+): Promise<{ ready: boolean; missing: string[] } | undefined> {
+  if (
+    profile !== REPOSITORY_BROWSER_PROFILE ||
+    typeof configuration !== 'object' ||
+    configuration === null ||
+    !('adapter' in configuration) ||
+    configuration.adapter !== 'static-page' ||
+    !('entryPath' in configuration) ||
+    typeof configuration.entryPath !== 'string' ||
+    configuration.entryPath === '/' ||
+    // A nested page is judged by its own folder.
+    ('packageRoot' in configuration &&
+      typeof configuration.packageRoot === 'string' &&
+      configuration.packageRoot !== '.')
+  )
+    return undefined
+  const entryReadiness = await readStaticPageReadiness(
+    await realpath(workspace).catch(() => workspace),
+    configuration.entryPath,
+  )
+  const missing = [
+    ...prerequisites.missing,
+    ...managedRunStateOf(
+      prerequisites.profiles?.[REPOSITORY_BROWSER_PROFILE]?.missing ?? [],
+    ),
+    ...entryReadiness.missing,
   ]
   return { ready: missing.length === 0, missing }
 }

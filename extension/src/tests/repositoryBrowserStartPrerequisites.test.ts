@@ -1,7 +1,116 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { repositoryBrowserStartPrerequisites } from '../utils/repositoryBrowserStartPrerequisites'
+import {
+  repositoryBrowserStartPrerequisites,
+  rootStaticPageEntryStartPrerequisites,
+} from '../utils/repositoryBrowserStartPrerequisites'
+
+/** A ready window report for a static-page start: shared prerequisites pass. */
+const READY_REPORT = {
+  ready: true,
+  missing: [],
+  profiles: { 'repository-browser': { ready: true, missing: [] } },
+} as unknown as Parameters<typeof repositoryBrowserStartPrerequisites>[0]
+
+/** Makes a temp root holding the given files. */
+async function rootWith(files: Record<string, string>): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'codebook-root-entry-'))
+  for (const [name, text] of Object.entries(files))
+    await writeFile(join(root, name), text)
+  return root
+}
+
+// Value: protects=a root page whose only file is the declared demo.html starts; fails_when=the root's precomputed index.html readiness judges a declared entry; no_claim=serving the page
+test('a root with only demo.html and entryPath /demo.html is ready to start', async () => {
+  // Arrange
+  const root = await rootWith({ 'demo.html': '<h1>demo</h1>' })
+  // Act
+  const result = await rootStaticPageEntryStartPrerequisites(
+    READY_REPORT,
+    'repository-browser',
+    { adapter: 'static-page', entryPath: '/demo.html' },
+    root,
+  )
+  // Assert
+  assert.deepEqual(result, { ready: true, missing: [] })
+})
+
+// Value: protects=the default entry keeps the root readiness, which reports no-entry-page without index.html; fails_when=a / or absent entry is judged by another file; no_claim=the refusal wording
+test('a root with entryPath / or none keeps the root readiness', async () => {
+  // Arrange
+  const root = await rootWith({ 'demo.html': '<h1>demo</h1>' })
+  // Act
+  const slash = await rootStaticPageEntryStartPrerequisites(
+    READY_REPORT,
+    'repository-browser',
+    { adapter: 'static-page', entryPath: '/' },
+    root,
+  )
+  const absent = await rootStaticPageEntryStartPrerequisites(
+    READY_REPORT,
+    'repository-browser',
+    { adapter: 'static-page' },
+    root,
+  )
+  // Assert
+  assert.equal(slash, undefined)
+  assert.equal(absent, undefined)
+})
+
+// Value: protects=a declared entry that needs a bundler is refused; fails_when=the declared entry is not judged; no_claim=other gap kinds
+test('a root whose demo.html imports a bare specifier is refused needs-bundler', async () => {
+  // Arrange
+  const root = await rootWith({
+    'demo.html': '<script type="module">import "lib"</script>',
+  })
+  // Act
+  const result = await rootStaticPageEntryStartPrerequisites(
+    READY_REPORT,
+    'repository-browser',
+    { adapter: 'static-page', entryPath: '/demo.html' },
+    root,
+  )
+  // Assert
+  assert.deepEqual(result, { ready: false, missing: ['needs-bundler: lib'] })
+})
+
+// Value: protects=a root with no declared entry file is refused no-entry-page; fails_when=the declared entry is not checked for existence; no_claim=wording
+test('a root without the declared entry file is refused no-entry-page', async () => {
+  // Arrange
+  const root = await rootWith({ 'index.html': '<h1>index</h1>' })
+  // Act
+  const result = await rootStaticPageEntryStartPrerequisites(
+    READY_REPORT,
+    'repository-browser',
+    { adapter: 'static-page', entryPath: '/demo.html' },
+    root,
+  )
+  // Assert
+  assert.deepEqual(result, { ready: false, missing: ['no-entry-page'] })
+})
+
+// Value: protects=a nested packageRoot keeps its own judgement; fails_when=the root judges a nested start; no_claim=the nested rules
+test('a nested packageRoot is left to the nested package judgement', async () => {
+  // Arrange
+  const root = await rootWith({})
+  // Act
+  const result = await rootStaticPageEntryStartPrerequisites(
+    READY_REPORT,
+    'repository-browser',
+    {
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      packageRoot: 'examples/page',
+    },
+    root,
+  )
+  // Assert
+  assert.equal(result, undefined)
+})
 
 /** A window report whose repository-browser profile is ready for Next but not for Vite. */
 const NEXT_ONLY_REPORT = {

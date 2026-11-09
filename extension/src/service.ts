@@ -255,6 +255,7 @@ import {
   isRootNextStart,
   repositoryBrowserStartPrerequisites,
   selectedNextPackageStartPrerequisites,
+  rootStaticPageEntryStartPrerequisites,
   selectedVitePackageStartPrerequisites,
 } from './utils/repositoryBrowserStartPrerequisites'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
@@ -5164,6 +5165,13 @@ export class StudyService {
                 )) ??
                 // A nested Vite app is judged by its own folder the same way.
                 (await selectedVitePackageStartPrerequisites(
+                  prerequisites,
+                  record.profile,
+                  record.configuration,
+                  this.environment.workspace,
+                )) ??
+                // A root static page that declares an entry is judged by that entry, not by `index.html`.
+                (await rootStaticPageEntryStartPrerequisites(
                   prerequisites,
                   record.profile,
                   record.configuration,

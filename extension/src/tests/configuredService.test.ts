@@ -145,6 +145,74 @@ test('a vite-dev start in a Vite app without Next waits on Vite readiness, not o
   assert.equal(runtimes.length, 1)
 })
 
+test('a root static-page start with entryPath /demo.html is judged by demo.html, not the root index.html readiness', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes, directory } =
+    await configuredServiceHarness(context)
+  await writeFile(join(directory, 'demo.html'), '<h1>demo</h1>')
+  environment.prerequisites = async () => ({
+    ready: true,
+    missing: [],
+    profiles: {
+      'repository-browser': {
+        ready: true,
+        missing: [],
+        adapters: {
+          'next-dev-webpack': { ready: true, missing: [] },
+          'vite-dev': {
+            ready: false,
+            installed: false,
+            supportedMajor: 8,
+            yarnPnp: false,
+            missing: ['vite does not resolve from the workspace root.'],
+          },
+          'react-scripts-dev': {
+            ready: false,
+            installed: false,
+            missing: ['not-a-react-scripts-app'],
+            startScript: { form: 'absent' },
+          },
+          'expo-web-dev': {
+            ready: false,
+            installed: false,
+            missing: ['not-an-expo-app'],
+          },
+          'static-page': {
+            ready: false,
+            missing: ['no-entry-page'],
+            entry: 'index.html',
+          },
+        },
+      },
+    },
+  })
+  // Act
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'static-root-demo-entry',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  await service.stop(receipt)
+  // Assert
+  assert.notEqual(record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(runtimes.length, 1)
+})
+
 test('a vite-dev start is refused with the Vite gate sentence when Vite itself is not ready', async (context) => {
   // Arrange
   const { service, configuration, environment, runtimes } =
