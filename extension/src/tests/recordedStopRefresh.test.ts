@@ -141,3 +141,28 @@ test('a recorded stop whose refresh shows another place ends the run and sends n
   )
   await harness.run.stop()
 })
+
+// Value: protects=a recorded stop that is no longer the run's current stop when its pending stack refresh is verified ends the run with the named "pause changed during a stack refresh" reason and sends no resume; fails_when=the guard in awaitRecordedStopRefresh is removed and the run resumes a stale pause; no_claim=a real js-debug refresh: the fake session answers the stack read late and the test advances the run's stop itself
+test('a recorded stop that is no longer current after its refresh ends the run with the pause-changed reason and sends no resume', async (context) => {
+  // Arrange
+  const { harness, release, participant } = await openRunWithRefresh(context)
+  harness.run.action('op-1', OPERATION_ACTION)
+  await waitUntil(
+    () => participant.refresh?.stage === 'validating',
+    'the pending stack refresh',
+  )
+  // Act: the run moves past this stop while the refresh is still pending.
+  harness.run['stopIndex'] += 1
+  release()
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the failure after the stop changed during the refresh',
+  )
+  // Assert
+  assert.equal(continueCount(harness), 0)
+  assert.match(
+    harness.run.view().failures.join('; '),
+    /Recorded stop's pause changed during a stack refresh and no resume was sent/,
+  )
+  await harness.run.stop()
+})
