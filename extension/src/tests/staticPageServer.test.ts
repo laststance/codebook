@@ -211,3 +211,40 @@ test('the static server answers 403 for a dotfile and a file in a dot-folder', a
   // Assert
   assert.deepEqual([env.status, git.status, page.status], [403, 403, 200])
 })
+
+// Value: protects=a backslash cannot hide a dot segment (`/%5C.git/config`) on Windows, where it separates segments; fails_when=a path with a backslash before a dot name is answered; no_claim=files the folder keeps under other names
+test('the static server answers 403 for a dot segment behind a backslash', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context, {
+    '.env': 'SECRET=1',
+  })
+  const server = await startStaticPageServer(repository.pageFolder)
+  context.after(() => server.close())
+  // Act
+  const git = await get(server.origin, '/%5C.git/config')
+  const env = await get(server.origin, '/sub%5C.env')
+  // Assert
+  assert.deepEqual([git.status, env.status], [403, 403])
+})
+
+// Value: protects=a link inside the folder to a dotfile of the folder answers 403 like the dotfile; fails_when=the link target is served; no_claim=links on Windows without symlink privilege (test skipped there)
+test('the static server answers 403 for a link to a dotfile of the folder', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  const repository = await createStaticPageRepository(context, {
+    '.env': 'SECRET=1',
+  })
+  await symlink(
+    join(repository.pageFolder, '.env'),
+    join(repository.pageFolder, 'config.txt'),
+  )
+  const server = await startStaticPageServer(repository.pageFolder)
+  context.after(() => server.close())
+  // Act
+  const linked = await get(server.origin, '/config.txt')
+  // Assert
+  assert.equal(linked.status, 403)
+})

@@ -6,7 +6,7 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http'
-import { extname, join } from 'node:path'
+import { extname, join, relative } from 'node:path'
 import { pipeline } from 'node:stream'
 
 import { STATIC_PAGE_CACHE_CONTROL } from '../constants'
@@ -65,6 +65,17 @@ function isLoopbackHost(host: string | undefined, port: number): boolean {
 }
 
 /**
+ * Tells whether a path has a segment starting with a dot, splitting on `/` and `\`.
+ * Called by {@link answerStaticPageRequest} on the requested path and on the resolved real path.
+ * @param path - A decoded request path or a folder-relative real path.
+ * @returns `true` when any segment starts with `.`.
+ * @example hasDotSegment('/sub\\.env') // => true
+ */
+function hasDotSegment(path: string): boolean {
+  return path.split(/[\\/]/).some((segment) => segment.startsWith('.'))
+}
+
+/**
  * Answers one request from the page folder: the file under the real-path containment rule, `index.html` for a folder path.
  * Called by the server {@link startStaticPageServer} creates for each request.
  * @param root - The page folder's real path.
@@ -100,8 +111,8 @@ async function answerStaticPageRequest(
   }
   if (pathname.includes('\0')) return send(400, 'Bad request')
   // Dotfiles and dot-folders (`.git`, `.env`) are never served, whatever the folder holds.
-  if (pathname.split('/').some((segment) => segment.startsWith('.')))
-    return send(403, 'Forbidden')
+  // `\` also separates segments on Windows, so it is split on and refused the same way.
+  if (hasDotSegment(pathname)) return send(403, 'Forbidden')
   const wanted = pathname.endsWith('/') ? `${pathname}index.html` : pathname
   let real: string
   try {
@@ -111,6 +122,8 @@ async function answerStaticPageRequest(
   }
   // A path that leaves the folder, also through a link, is never answered.
   if (!isInsideFolder(root, real)) return send(403, 'Forbidden')
+  // A link inside the folder that points at a dotfile of the folder is refused like the dotfile itself.
+  if (hasDotSegment(relative(root, real))) return send(403, 'Forbidden')
   const info = await stat(real).catch(() => undefined)
   if (!info?.isFile()) return send(404, 'Not found')
   response.writeHead(200, {

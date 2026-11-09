@@ -142,6 +142,7 @@ test('README, skill and help state page discovery and the contents rules of a st
     'a malformed import map is ignored',
     'malformed percent-encoding counts as a missing file',
     'answers only requests for its own loopback host (`127.0.0.1:<port>` or `localhost:<port>`) and never serves a file or folder whose name starts with `.`',
+    'also behind a backslash or through a link',
     'at most 3 levels and 16 files, so a code-split chunk is covered',
   ].filter((phrase) => !readme.includes(phrase))
   const missingFromSkill = [
@@ -153,6 +154,7 @@ test('README, skill and help state page discovery and the contents rules of a st
     'rel contains stylesheet or modulepreload',
     'malformed import map is ignored',
     'answers 403 to a request whose Host is not its own',
+    'also behind a backslash or through a link',
     'at most 3 levels and 16 files',
   ].filter((phrase) => !help.includes(phrase))
   // Assert
