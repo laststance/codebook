@@ -57,8 +57,8 @@ test('a route-handler stop is armed only just before its own operation', async (
   )
 })
 
-// Value: protects=R2/native C86-1 a run that declares a route-handler stop attaches the server with pauseForSourceMap so the route's breakpoint binds before its first compile runs; fails_when=the route run attaches without it; no_claim=js-debug's own pause timing
-test('a run with a route-handler stop attaches the server debugger with pauseForSourceMap', async (context) => {
+// Value: protects=R2/native C86-1 a run that declares a route-handler stop attaches the server with pauseForSourceMap so the route's breakpoint binds before its first compile runs; fails_when=the route run attaches without it; no_claim=js-debug's own pause timing, and that the route-handler clause alone decides it (a route-handler stop is always afterOperation 1 or more, so the after-operation rule also holds)
+test('a route-handler run attaches the server debugger with pauseForSourceMap', async (context) => {
   // Arrange
   const route = await routeHandlerRunHarness(context)
   // Act

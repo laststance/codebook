@@ -3713,7 +3713,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async attachNextLibraryServer(): Promise<void> {
     const route = this.nextLibraryRoute
     if (!route) return
-    // The window attaches with its own source-map pause; every other run attaches here without one.
+    // The window attaches with its own source-map pause; here the default decides: a route-handler stop or a server stop after an operation attaches with it, every other run without.
     if (!this.serverSelectedEarly) {
       await this.selectServer()
       this.serverSelectedEarly = true
