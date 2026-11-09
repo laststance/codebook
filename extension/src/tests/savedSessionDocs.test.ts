@@ -103,7 +103,7 @@ test('the README and the bundled skill name both commands, forbid typing a passw
     'Saved session needed',
   ])
     assert.ok(readme.includes(text), text)
-  assert.ok(skill.includes('metadata:\n  version: "1.0.82"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.83"\n'))
   assert.ok(skill.includes('never type, ask for or accept a password'))
   assert.ok(
     skill.includes('only when `codebook_status` reports `savedSession`'),
@@ -137,4 +137,33 @@ test('the packaged help and the bundled skill name the saved session, its comman
       `${name} lacks the password rule`,
     )
   }
+})
+
+// Value: protects=a question about the sign-in itself is answered by running the sign-in with a fresh session and the learner typing the password into the masked box, not refused as a password rule; fails_when=the skill, the help or the README loses the fresh-session sign-in run, the ask-learner secret or the rule that the chat never takes the password; no_claim=how well a chat follows it
+test('the skill, the help and the README let the chat run the sign-in itself with a fresh session and the password typed into the masked box', async () => {
+  // Arrange
+  const { savedSession } = savedSessionHelp()
+  const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
+  const readme = await readPackaged('README.md')
+  // Act / Assert
+  for (const phrase of [
+    'the sign-in is the flow to observe, not a wall',
+    'session: "fresh"',
+    'secret: "ask-learner"',
+    "Codebook's masked box",
+    'non-secret fields',
+    'never ask for or accept the password in the chat',
+  ])
+    assert.ok(skill.includes(phrase), phrase)
+  assert.match(
+    savedSession.summary,
+    /To show the sign-in itself, run it with session: "fresh"/,
+  )
+  assert.match(savedSession.summary, /secret: "ask-learner"/)
+  assert.match(savedSession.summary, /never asks for or accepts the password/)
+  assert.ok(
+    readme.includes(
+      'To show the sign-in itself, the chat can run it in a version 3 run with a fresh session (`session: "fresh"`) from the sign-in page: it types the account\'s non-secret fields, you type the password into Codebook\'s masked box',
+    ),
+  )
 })

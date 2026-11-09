@@ -21,7 +21,7 @@ export function savedSessionHelp() {
     savedSession: {
       anchor: 'codebook://help/repository-browser#set-up-a-saved-session',
       summary:
-        "A version 3 run starts with the learner's saved session for this repository once the learner has set one up with Codebook: Set Up Saved Session… and finished with Done. The learner signs in by hand in a Codebook browser window that is never recorded; Codebook never sees, stores or types the password. Never type, ask for or accept a password to get past sign-in.",
+        'A version 3 run starts with the learner\'s saved session for this repository once the learner has set one up with Codebook: Set Up Saved Session… and finished with Done. The learner signs in by hand in a Codebook browser window that is never recorded; Codebook never sees, stores or types the password. Never type, ask for or accept a password to get past sign-in. To show the sign-in itself, run it with session: "fresh" from the sign-in page as operations: the account\'s non-secret fields typed, the password with secret: "ask-learner" so the learner types it into Codebook\'s masked box, then the sign-in control; the chat never asks for or accepts the password.',
       whatIsKept:
         "The saved session keeps what that browser keeps for the app: cookies, local storage, IndexedDB, and an OAuth provider's session (for example GitHub) when the sign-in went through one. Password saving is turned off, so no password is stored.",
       where:
