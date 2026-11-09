@@ -46,6 +46,7 @@ type RepositoryBrowserHelp = Record<string, unknown> & {
   viteRefusals?: Record<string, unknown>
   reactScriptsQuickStart?: { refusals: Record<string, unknown> }
   expoWebQuickStart?: { refusals: Record<string, unknown> }
+  staticPageQuickStart?: { refusals: Record<string, unknown> }
   nextReverseProxy?: { refusals: { code: string } }
 }
 
@@ -163,6 +164,7 @@ test('every repository-browser anchor the help names resolves to a refusal secti
     ...Object.keys(help.viteRefusals ?? {}),
     ...Object.keys(help.reactScriptsQuickStart?.refusals ?? {}),
     ...Object.keys(help.expoWebQuickStart?.refusals ?? {}),
+    ...Object.keys(help.staticPageQuickStart?.refusals ?? {}),
     ...Object.keys(help.operationsErrorCodes?.codes ?? {}),
     ...Object.keys(help.serverRenderErrors?.codes ?? {}),
     // The reverse proxy section holds one refusal code with a row per reason
@@ -197,6 +199,7 @@ test('the repository-browser help keeps its existing top keys and leads with sta
     'viteApiServer',
     'viteLibrary',
     'reactScriptsQuickStart',
+    'staticPageQuickStart',
     'expoWebQuickStart',
     'nextQuickStart',
     'nextSupport',

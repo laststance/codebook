@@ -14,7 +14,7 @@ export const STATIC_PAGE_REFUSAL_CODES = [
 ] as const satisfies readonly ErrorCode[]
 
 /** One code of {@link STATIC_PAGE_REFUSAL_CODES}. */
-type StaticPageRefusalCode = (typeof STATIC_PAGE_REFUSAL_CODES)[number]
+export type StaticPageRefusalCode = (typeof STATIC_PAGE_REFUSAL_CODES)[number]
 
 /**
  * The help anchor of a refusal code: `codebook://help/repository-browser#<CODE>`.
@@ -23,7 +23,7 @@ type StaticPageRefusalCode = (typeof STATIC_PAGE_REFUSAL_CODES)[number]
  * @example
  * staticPageHelpAnchor('STATIC_PAGE_SEAL_FAILED') // => 'codebook://help/repository-browser#STATIC_PAGE_SEAL_FAILED'
  */
-function staticPageHelpAnchor(code: StaticPageRefusalCode): string {
+export function staticPageHelpAnchor(code: StaticPageRefusalCode): string {
   return `codebook://help/repository-browser#${code}`
 }
 

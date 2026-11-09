@@ -50,6 +50,7 @@ import { savedSessionHelp } from './savedSessionHelp'
 import { serverRenderHelp } from './serverRenderHelp'
 import type { StudyService } from './service'
 import { DEFAULT_SOURCE_MAP_LIMITS } from './sourceMapLimits'
+import { staticPageHelp } from './staticPageHelp'
 import { describeStudy } from './utils/describeStudy'
 import { maskFactString } from './utils/maskFactString'
 import { maskSavedDebugSnapshot } from './utils/maskSavedDebugSnapshot'
@@ -285,6 +286,8 @@ export async function readResource(
       ...viteHelp(),
       // The react-scripts (Create React App) quick start, selection rule, refusal anchors and limits (API 1.25).
       ...reactScriptsHelp(),
+      // The static-page (plain HTML page) quick start, refusal anchors, library route and limits (API 1.42).
+      ...staticPageHelp(),
       // The Expo web (Metro) quick start, selection rule, refusal anchors and limits (API 1.30).
       ...expoWebHelp(),
       ...nextHelp(),
