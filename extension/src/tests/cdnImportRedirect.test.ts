@@ -151,17 +151,19 @@ test('a request for an absent path or one leaving the packed folder is reported 
   // Arrange
   const library = await createPackedLibrary(context)
   const { session, absent } = await startRedirect(library)
+  const failedRequestCount = (
+    commands: ReadonlyArray<{ method: string }>,
+  ): number =>
+    commands.filter((command) => command.method === 'Fetch.failRequest').length
   // Act
+  // Each request is answered before the next is paused: the two absence checks read the file system, so concurrent requests could report in either order.
   session.pause('https://unpkg.com/lib@1/dist/missing.mjs', 'r4')
+  await session.until((commands) => failedRequestCount(commands) === 1)
   session.pause(
     'https://unpkg.com/lib@1/..%2f..%2f..%2fchecked-out%2fsrc%2fa.ts',
     'r5',
   )
-  await session.until(
-    (commands) =>
-      commands.filter((command) => command.method === 'Fetch.failRequest')
-        .length === 2,
-  )
+  await session.until((commands) => failedRequestCount(commands) === 2)
   // Assert
   assert.deepEqual(absent, [
     'dist/missing.mjs',
