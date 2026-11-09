@@ -114,7 +114,7 @@ function staticPageLibraryHelp() {
       'library-build-unmapped': `${staticPageHelpAnchor('STATIC_PAGE_SEAL_FAILED')} (library-build-unmapped)`,
     },
     limits: [
-      'Without library, a CDN import loads the published copy, which is not the checked-out library; the run says so, and a chat must not call it the checked-out library.',
+      'Without library, a CDN import (in the served page or in one of its same-origin scripts) loads the published copy, which is not the checked-out library; the run says so, and a chat must not call it the checked-out library.',
       'One library per run; browser stops only.',
     ],
     sample: STATIC_PAGE_LIBRARY_CONFIGURATION,

@@ -49,7 +49,7 @@ test('the README explains the CDN redirect with library, library-path-absent and
     "with the build's source map inline",
     '`REPOSITORY_BROWSER_LIBRARY_REFUSED` and the reason `library-path-absent`',
     'Its `details.cause` is `absent` (the packed build lacks the path), `too-large` (a file over 32 MiB) or `unreadable` (a directory or a read error).',
-    'Without `library`, the page loads the published copy from the CDN, and the run says so',
+    'Without `library`, the page loads the published copy from the CDN (named in the served page or in one of its same-origin scripts), and the run says so',
     'that copy is not the checked-out library',
   ].filter((phrase) => !readme.includes(phrase))
   // Assert

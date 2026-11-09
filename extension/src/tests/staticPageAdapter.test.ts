@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { rm, symlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type {
@@ -255,4 +257,44 @@ test('the adapter seals a library stop against the packed build the page imports
   // Assert
   assert.equal(bundle.scriptUrl, 'https://unpkg.com/lib@latest/dist/lib.mjs')
   assert.equal(bundle.source, LIBRARY_SOURCE)
+})
+
+// Value: protects=the library-stop branch never reads an entry page that is a link leaving the page folder; fails_when=the linked file's CDN address is found and the stop is sealed; no_claim=the wording of the refusal
+test('a library stop does not read an entry page that is a link leaving the folder', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const library = await createPackedLibrary(context)
+  const { started } = await startAdapter(context, repository)
+  const origin = `http://127.0.0.1:${started.port}`
+  const outside = join(repository.root, 'outside.html')
+  await writeFile(
+    outside,
+    '<script type="module">import "https://unpkg.com/lib@latest/dist/lib.mjs"</script>',
+  )
+  await rm(join(repository.pageFolder, 'index.html'))
+  await symlink(outside, join(repository.pageFolder, 'index.html'))
+  const source = {
+    path: 'src/a.ts',
+    hash: sha256(LIBRARY_SOURCE),
+    line: 2,
+    column: 1,
+  }
+  // Act
+  const outcome = await STATIC_PAGE_ADAPTER.readBundle(
+    await bundleRequestOf(repository, source, origin, {
+      staticPageLibraryStop: {
+        packageName: 'lib',
+        examplePackageRoot: 'examples/page',
+        packedRoot: library.packedRoot,
+        libraryRoot: library.libraryRoot,
+        libraryRootRelative: '.',
+        files: library.files,
+      },
+    }),
+  ).then(
+    () => 'sealed',
+    () => 'refused',
+  )
+  // Assert
+  assert.equal(outcome, 'refused')
 })

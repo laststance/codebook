@@ -269,3 +269,72 @@ test('the published-copy note names the CDN address of the served page', async (
     },
   ])
 })
+
+// Value: protects=the published-copy note also names a CDN address that only a same-origin script of the page holds; fails_when=the note is missing because only the entry page is scanned; no_claim=the wording of the note
+test('the published-copy note names the CDN address found in a same-origin script', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context, {
+    'main.js': 'import "https://unpkg.com/lib@1/dist/from-script.js"\n',
+  })
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html')
+    response.end('<script type="module" src="main.js"></script>')
+  })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  context.after(() => server.close())
+  const { port } = server.address() as AddressInfo
+  const recorded: Array<{ type: string; detail: unknown }> = []
+  const run = await bareRun(
+    {
+      staticPageLibraryFolder: () => undefined,
+      staticPagePackage: await repository.resolvePage(),
+      definition: { configuration: { entryPath: '/' } },
+      abort: new AbortController(),
+      evidence: {
+        record: (type: string, detail: unknown) =>
+          recorded.push({ type, detail }),
+      },
+    },
+    { fetch },
+  )
+  // Act
+  await run.noteCdnImports!(`http://127.0.0.1:${port}`)
+  // Assert
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(recorded)).map(
+      (entry: { detail: { url: string } }) => entry.detail.url,
+    ),
+    ['https://unpkg.com/lib@1/dist/from-script.js'],
+  )
+})
+
+// Value: protects=the published-copy note never holds more than the page limit of a served answer; fails_when=an oversized served page is read whole and still yields a note; no_claim=the limit value
+test('an oversized served page gives no published-copy note', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html')
+    response.end(
+      '<script src="https://unpkg.com/lib@1/dist/big.js"></script>' +
+        ' '.repeat(2 * 1024 * 1024),
+    )
+  })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  context.after(() => server.close())
+  const { port } = server.address() as AddressInfo
+  const recorded: unknown[] = []
+  const run = await bareRun(
+    {
+      staticPageLibraryFolder: () => undefined,
+      staticPagePackage: await repository.resolvePage(),
+      definition: { configuration: { entryPath: '/' } },
+      abort: new AbortController(),
+      evidence: { record: (...values: unknown[]) => recorded.push(values) },
+    },
+    { fetch },
+  )
+  // Act
+  await run.noteCdnImports!(`http://127.0.0.1:${port}`)
+  // Assert
+  assert.deepEqual(recorded, [])
+})

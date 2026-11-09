@@ -105,6 +105,7 @@ import {
   REPLAY_DEBUG_MAX_DEPTH,
   REPLAY_DEBUG_MAX_FRAMES,
   REPLAY_DEBUG_MAX_VARIABLES,
+  STATIC_PAGE_FILE_LIMIT_BYTES,
 } from './constants'
 import type {
   DevelopmentBundle,
@@ -421,6 +422,7 @@ import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { publishedStopFiles } from './utils/publishedStopFiles'
+import { readCappedBody } from './utils/readCappedBody'
 import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import {
   readDevelopmentBundle,
@@ -440,6 +442,8 @@ import { readPagesApiRequest } from './utils/readPagesApiRequest'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
+import { staticPageEntryFile } from './utils/readStaticPageReadiness'
+import { readStaticPageScriptTexts } from './utils/readStaticPageScriptTexts'
 import { readSystemCertificates } from './utils/readSystemCertificates'
 import {
   readWithinVerdictBudget,
@@ -2176,9 +2180,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       `${ownedOrigin}${this.definition.configuration.entryPath ?? '/'}`,
       { redirect: 'manual', signal: this.abort.signal },
     )
-      .then((response) => (response.ok ? response.text() : undefined))
+      .then((response) =>
+        // A served page larger than the page limit gives no note.
+        response.ok
+          ? readCappedBody(response, STATIC_PAGE_FILE_LIMIT_BYTES)
+          : undefined,
+      )
       .catch(() => undefined)
-    const [first] = html === undefined ? [] : findCdnAddresses(html)
+    // The page's same-origin scripts may name the CDN address too (one level, as the library seal reads).
+    const scriptTexts =
+      html === undefined
+        ? []
+        : await readStaticPageScriptTexts(
+            this.staticPagePackage.packageRoot,
+            staticPageEntryFile(
+              this.definition.configuration.entryPath ?? '/',
+            ) ?? 'index.html',
+            html,
+          ).catch(() => [])
+    const [first] =
+      html === undefined ? [] : findCdnAddresses(html, scriptTexts)
     if (first !== undefined)
       this.evidence.record('static-page.published-copy', {
         note: `The page loaded a published copy from a CDN, not the checked-out library: ${first}`,

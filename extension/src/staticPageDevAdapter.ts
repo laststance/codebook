@@ -1,5 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises'
-import { join } from 'node:path'
+import { realpath } from 'node:fs/promises'
 
 import { STATIC_PAGE_FILE_LIMIT_BYTES, VITE_SETUP_STEPS } from './constants'
 import type {
@@ -17,6 +16,7 @@ import { awaitStaticPageReady } from './utils/awaitStaticPageReady'
 import { findCdnPackageImports } from './utils/findCdnPackageImports'
 import { isStaticPageScriptOfModule } from './utils/isStaticPageScriptOfModule'
 import { libraryRelativePath } from './utils/libraryRelativePath'
+import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
 import { SingleBundleCache } from './utils/readSingleServedBundle'
 import {
   judgeStaticPage,
@@ -160,11 +160,13 @@ export const STATIC_PAGE_ADAPTER: DevelopmentServerAdapter = {
     // A stop in the declared library is sealed against the packed build the redirect serves, not refused as outside the page.
     if (libraryStop) {
       const entry = staticPageEntryFile(request.entryPath) ?? 'index.html'
-      const pageText = await readFile(
-        join(await realpath(staticPagePackage.packageRoot), entry),
-        'utf8',
-      )
-      const pageHtml = pageText.slice(0, STATIC_PAGE_FILE_LIMIT_BYTES)
+      // The entry page is read with containment and size checks; a page that leaves the folder or is too large names no CDN imports.
+      const pageHtml = await readRepositoryBuildText(
+        await realpath(staticPagePackage.packageRoot),
+        entry,
+        STATIC_PAGE_FILE_LIMIT_BYTES,
+        request.signal,
+      ).catch(() => '')
       // The page's same-origin scripts may import the library from a CDN too.
       const scriptTexts = await readStaticPageScriptTexts(
         staticPagePackage.packageRoot,
