@@ -18,8 +18,8 @@ const PAGE_OPTIONS = {
   publication: undefined,
 } as const
 
-/** A page on which the HTML parser takes about 6 s on the development host: 10,000 open elements and 100,000 paragraph ends. */
-const SLOW_PAGE = `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(100_000)}</body>`
+/** A page the reader takes far longer than any deadline of these tests for (about 28 s on the development host with parse5 8.1.1): an open select, then 10,000 open elements and 100,000 paragraph ends, each of which walks the open elements for the select's scope. Without the select the same elements and ends took the parser alone about 6 s with parse5 8.1.0 and take 50 ms with 8.1.1. */
+const SLOW_PAGE = `<!doctype html><body><select>${'<x>'.repeat(10_000)}${'</p>'.repeat(100_000)}</body>`
 
 /**
  * Loads the page-worker module with a `Worker` class that records each worker thread it starts, how many threads it started before were still alive then, and when each thread ends, so a test can tell how many workers prepared its pages and how many lived at once; the threads themselves are the real ones, running the compiled worker file.
@@ -615,7 +615,7 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
   )
   const secondWorkerStart = await within(pool.onlineOfWorker(1), 5_000)
   letTheFirstStopGo()
-  // gstack-timing-ok: the lost thread's end is awaited, not timed, and the 2 s only bound it; it has to come before the second worker's stop limit, 2.3 s after that worker's start (its page's deadline of 2 s, which SLOW_PAGE at about 6 s passes, and the stop limit of 300 ms), and a held stop that went on ended its thread within 39 ms in 6 runs under coverage and two busy loops on two and four cores.
+  // gstack-timing-ok: the lost thread's end is awaited, not timed, and the 2 s only bound it; it has to come before the second worker's stop limit, 2.3 s after that worker's start (its page's deadline of 2 s, which SLOW_PAGE, taking far longer, passes, and the stop limit of 300 ms), and a held stop that went on ended its thread within 39 ms in 6 runs under coverage and two busy loops on two and four cores.
   const firstLostThreadEnd = await within(pool.endOfWorker(0), 2_000)
   const slowAnswers = await within(Promise.all([firstSlow, secondSlow]), 5_000)
   const behindWhileTheSecondStopIsHeld = await within(behind, 2_000)
