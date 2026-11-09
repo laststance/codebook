@@ -105,3 +105,24 @@ test('a file named ..app.js is present and ../x.js leaves the folder', async (co
   assert.equal(scriptPath, '..app.js')
   assert.equal(scriptLeaving, undefined)
 })
+
+// Value: protects=a same-origin script too large to read is never treated as clean, so its bare imports cannot slip past readiness; fails_when=an oversized script is skipped and the page reads ready; no_claim=that an oversized script would run in the browser
+test('a page whose same-origin script is too large to read is not ready', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context, {
+    'index.html':
+      '<!doctype html><html><body><script type="module" src="big.js"></script></body></html>',
+    'big.js': `import 'lib'\n${' '.repeat(1_048_577)}`,
+  })
+  // Act
+  const readiness = await readStaticPageReadiness(repository.pageFolder)
+  const problem = await judgeStaticPage(repository.pageFolder, '/')
+  // Assert
+  assert.equal(readiness.ready, false)
+  assert.deepEqual(problem, {
+    gap: 'needs-bundler',
+    reference:
+      'big.js (a same-origin script could not be read within the size limit, so it was not judged)',
+    kind: 'scripts-not-all-judged',
+  })
+})

@@ -234,19 +234,43 @@ async function findBareImportProblem(
   importMapKeys: readonly string[],
 ): Promise<StaticPageProblem | undefined> {
   const fileTexts: string[] = []
+  const unreadable: string[] = []
   for (const file of scriptFiles.slice(0, STATIC_PAGE_SCRIPT_READS_MAX)) {
     const text = await readRepositoryBuildText(
       folder,
       file,
       STATIC_PAGE_FILE_LIMIT_BYTES,
     ).catch(() => undefined)
-    if (text !== undefined) fileTexts.push(text)
+    // A script that cannot be read within the size limit is not judged, so it cannot count as clean.
+    if (text === undefined) unreadable.push(file)
+    else fileTexts.push(text)
   }
   for (const text of [...inlineTexts, ...fileTexts]) {
     const specifier = firstBareImport(text, importMapKeys)
     if (specifier !== undefined)
       return { gap: 'needs-bundler', reference: specifier, kind: 'bare-import' }
   }
+  return unjudgedScriptProblem(unreadable[0], scriptFiles)
+}
+
+/**
+ * Names the first same-origin script the readiness scan could not judge, so the page is never called ready while one of its scripts went unread.
+ * Called by {@link findBareImportProblem} after the readable scripts held no bare import.
+ * @param unreadable - The first listed script that could not be read within the size limit, if any.
+ * @param scriptFiles - Every same-origin script the page names, in document order.
+ * @returns A `scripts-not-all-judged` problem naming the unread or unreadable script, or `undefined` when every script was judged.
+ * @example unjudgedScriptProblem('big.js', ['big.js']) // => { gap: 'needs-bundler', reference: 'big.js (a same-origin script could not be read within the size limit, so it was not judged)', kind: 'scripts-not-all-judged' }
+ */
+function unjudgedScriptProblem(
+  unreadable: string | undefined,
+  scriptFiles: readonly string[],
+): StaticPageProblem | undefined {
+  if (unreadable !== undefined)
+    return {
+      gap: 'needs-bundler',
+      reference: `${unreadable} (a same-origin script could not be read within the size limit, so it was not judged)`,
+      kind: 'scripts-not-all-judged',
+    }
   // Scripts past the read cap were not judged, so the page cannot be called ready.
   const unread = scriptFiles[STATIC_PAGE_SCRIPT_READS_MAX]
   if (unread !== undefined)

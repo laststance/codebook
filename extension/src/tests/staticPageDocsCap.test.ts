@@ -17,11 +17,13 @@ test('README and help state the 16-script readiness cap and that commented impor
   const missingFromReadme = [
     'A page that names more than 16 same-origin scripts is listed not ready with `needs-bundler`',
     'inside a comment or a string is not an import',
+    'a page whose same-origin script cannot be read within the 1 MiB size limit',
   ].filter((phrase) => !readme.includes(phrase))
   const missingFromHelp = [
     'A page that names more than 16 same-origin scripts is listed not ready with needs-bundler',
     'scripts-not-all-judged',
     'inside a comment or a string is not an import',
+    'a page whose same-origin script cannot be read within the 1 MiB size limit is listed not ready',
   ].filter((phrase) => !help.includes(phrase))
   // Assert
   assert.deepEqual(missingFromReadme, [])
