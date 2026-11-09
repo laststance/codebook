@@ -157,6 +157,8 @@ async function namedMap(
   } catch {
     return undefined
   }
+  // JSON null parses but is no map: serve the script without one.
+  if (parsed === null) return undefined
   const { sources, mappings } = parsed
   if (
     parsed.version !== 3 ||

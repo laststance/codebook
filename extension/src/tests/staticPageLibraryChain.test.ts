@@ -234,6 +234,35 @@ test('a malformed sourceMappingURL serves the script and URL sources keep their 
   ])
 })
 
+// Value: protects=a script whose map file or inline map is the JSON value null is served unchanged with no map, like any other unreadable map; fails_when=reading the map throws, so the CDN request for a valid script fails; no_claim=maps that are other non-object JSON values
+test('a script whose map is JSON null is served unchanged without a map', async (context) => {
+  // Arrange
+  const library = await createPackedLibrary(context)
+  const nullInline = Buffer.from('null').toString('base64')
+  await writeFile(
+    join(library.packedRoot, 'dist', 'external.mjs'),
+    'export const x = 1\n//# sourceMappingURL=external.mjs.map\n',
+  )
+  await writeFile(join(library.packedRoot, 'dist', 'external.mjs.map'), 'null')
+  await writeFile(
+    join(library.packedRoot, 'dist', 'inline.mjs'),
+    `export const y = 2\n//# sourceMappingURL=data:application/json;base64,${nullInline}\n`,
+  )
+  // Act
+  const external = await library.files.read('dist/external.mjs')
+  const inline = await library.files.read('dist/inline.mjs')
+  // Assert
+  assert.deepEqual(
+    [external?.text, external?.map, inline?.text, inline?.map],
+    [
+      'export const x = 1\n//# sourceMappingURL=external.mjs.map\n',
+      undefined,
+      `export const y = 2\n//# sourceMappingURL=data:application/json;base64,${nullInline}\n`,
+      undefined,
+    ],
+  )
+})
+
 // Value: protects=a serving error never leaves a paused CDN request hanging: the request is failed with reason Failed; fails_when=answer lets the error escape without Fetch.failRequest; no_claim=the run's own ending
 test('a packed file that fails to serve fails the paused request instead of hanging it', async () => {
   // Arrange
