@@ -70,6 +70,30 @@ test('the ? key opens Keyboard shortcuts only in the three native views and outs
   ])
 })
 
+// Value: protects=the key clause matching exactly the three native views and no look-alike; fails_when=the clause matches a webview view, a longer id or a prefixed id, or misses one of the three; no_claim=that the host honors the clause
+test('the ? key clause matches the three native view ids and no other view id', async () => {
+  // Arrange
+  const manifest = await readManifest()
+  const when = manifest.contributes.keybindings.find(
+    (entry) => entry.command === COMMAND,
+  )?.when
+  const pattern = /=~ \/(.+)\/ &&/.exec(when ?? '')?.[1]
+  assert.ok(pattern)
+  const regex = new RegExp(pattern)
+
+  // Act
+  const matches = (id: string): boolean => regex.test(id)
+
+  // Assert
+  assert.equal(matches('codebook.repositoryWiki'), true)
+  assert.equal(matches('codebook.llmWiki'), true)
+  assert.equal(matches('codebook.learningOutline'), true)
+  assert.equal(matches('codebook.learningSummary'), false)
+  assert.equal(matches('codebook.observedMoments'), false)
+  assert.equal(matches('codebook.llmWiki2'), false)
+  assert.equal(matches('xcodebook.llmWiki'), false)
+})
+
 // Value: protects=the visible ? control in the title bar of each of Codebook's three native views, last in the bar; fails_when=a view loses its control, the control moves from the last navigation slot, or it appears on another view; no_claim=how the host draws the control or its tooltip (native checks own that)
 test('each native view has the Keyboard shortcuts control last in its title bar', async () => {
   // Arrange

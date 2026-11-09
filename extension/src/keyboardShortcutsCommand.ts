@@ -7,6 +7,7 @@ import {
   keyboardShortcutItems,
   type ShortcutListItem,
 } from './utils/keyboardShortcutItems'
+import { showPlainNotice } from './utils/showPlainNotice'
 
 /** The command id of the Keyboard shortcuts list; the keybinding, the title controls and the palette entry name it. */
 export const SHOW_KEYBOARD_SHORTCUTS_COMMAND = 'codebook.showKeyboardShortcuts'
@@ -39,7 +40,10 @@ export type KeyboardShortcutsQuickPick = Pick<
 
 /** The slice of the editor API the list uses; the real `vscode` satisfies it and a test supplies a small stand-in. */
 export interface KeyboardShortcutsEditor {
-  window: { createQuickPick(): KeyboardShortcutsQuickPick }
+  window: Pick<
+    typeof vscode.window,
+    'showInformationMessage' | 'showWarningMessage' | 'showErrorMessage'
+  > & { createQuickPick(): KeyboardShortcutsQuickPick }
   commands: {
     executeCommand(command: string, ...args: unknown[]): Thenable<unknown>
   }
@@ -108,7 +112,11 @@ export function showKeyboardShortcuts(
     tooltip: CURRENT_BINDINGS_BUTTON_TOOLTIP,
   }
   const list = editor.window.createQuickPick()
-  openList = list
+  // Closing paths release the module's open list first, so a call right after a close makes a new list.
+  const closeList = (): void => {
+    if (openList === list) openList = undefined
+    list.hide()
+  }
   list.title = KEYBOARD_SHORTCUTS_TITLE
   list.placeholder = SEARCH_PLACEHOLDER
   list.buttons = [closeButton, bindingsButton]
@@ -124,19 +132,30 @@ export function showKeyboardShortcuts(
       showQuery('')
       return
     }
-    list.hide()
+    closeList()
   })
-  list.onDidTriggerButton((button) => {
-    if (button === bindingsButton)
-      void editor.commands.executeCommand(
+  list.onDidTriggerButton(async (button) => {
+    closeList()
+    if (button !== bindingsButton) return
+    try {
+      await editor.commands.executeCommand(
         OPEN_KEYBINDINGS_COMMAND,
         SHOW_KEYBOARD_SHORTCUTS_COMMAND,
       )
-    list.hide()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await showPlainNotice(
+        editor.window,
+        'error',
+        `Codebook could not open the Keyboard Shortcuts editor: ${message}`,
+      )
+    }
   })
   list.onDidHide(() => {
-    openList = undefined
+    // A late hide of a closed list must not clear a newer list.
+    if (openList === list) openList = undefined
     list.dispose()
   })
   list.show()
+  openList = list
 }

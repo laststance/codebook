@@ -23,7 +23,7 @@ export type ShortcutListItem =
   | { kind: 'no-match'; label: string; description: 'Clear search' }
 
 /** A feature's heading and its shortcuts, before they become list items. */
-interface ShortcutGroup {
+export interface ShortcutGroup {
   heading: string
   entries: readonly ShortcutHelpEntry[]
 }
@@ -59,10 +59,14 @@ function shortcutGroups(platform: NodeJS.Platform): ShortcutGroup[] {
 /**
  * Lists a group's entries as shortcut items, an entry whose (action, keys, context) tuple repeats within the group once.
  *
+ * Each item's detail starts with the group's name, so the group stays visible when the host re-sorts a filtered list and drops the separators.
+ *
+ * @param heading - The group's name.
  * @param entries - One group's entries.
  * @returns The group's shortcut items.
  */
 function dedupedShortcuts(
+  heading: string,
   entries: readonly ShortcutHelpEntry[],
 ): ShortcutListItem[] {
   const seenIdentities = new Set<string>()
@@ -76,7 +80,7 @@ function dedupedShortcuts(
       kind: 'shortcut',
       label: action,
       description: keys,
-      detail: context,
+      detail: `${heading} · ${context}`,
     })
   }
   return shortcuts
@@ -97,9 +101,21 @@ function dedupedShortcuts(
 export function keyboardShortcutItems(
   platform: NodeJS.Platform,
 ): ShortcutListItem[] {
-  return shortcutGroups(platform).flatMap(({ heading, entries }) => [
+  return groupedShortcutItems(shortcutGroups(platform))
+}
+
+/**
+ * Turns groups into list items: a separator per group followed by that group's deduplicated shortcuts.
+ *
+ * @param groups - The groups in display order.
+ * @returns The list items.
+ */
+export function groupedShortcutItems(
+  groups: readonly ShortcutGroup[],
+): ShortcutListItem[] {
+  return groups.flatMap(({ heading, entries }) => [
     { kind: 'separator' as const, label: heading },
-    ...dedupedShortcuts(entries),
+    ...dedupedShortcuts(heading, entries),
   ])
 }
 
