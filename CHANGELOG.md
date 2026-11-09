@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.107.0] - 2026-11-09 (development candidate)
+
+Cycle 0105 ([Issue #272](https://github.com/laststance/codebook/issues/272)), a feature cycle. **A question about a plain HTML page, such as a library's simplest Example whose inline script imports the library from a CDN, now runs in Codebook and pauses in the page's script and in the checked-out library's source.** No adapter served such a page, and its CDN import loaded a published copy, not the library you are reading. Codebook now serves the page as written from its own loopback server and, when the run declares `library`, serves the checked-out library's build in place of the CDN import, with the build's source map inline, so stops in the library's source pause and their values read by their source names.
+
+### Added
+- **Plain HTML pages (MCP API 1.42):** the `static-page` adapter serves a page at the repository root or in a folder below it (`examples/*`, `apps/*`, or a `packageRoot` you declare) from a Codebook-owned loopback static server, with no build step and nothing installed. `codebook_status` lists such pages with their readiness; a page that needs a bundler (a missing `<script src>` or `<link href>` file, a bare import in an inline or same-origin script, or more than 16 same-origin scripts) is listed not ready with `needs-bundler`. Browser stops pause in the page's inline scripts and same-origin `.js` files. A run is saved as study format 23.
+- **The checked-out library in place of a CDN import:** with `library` declared, Codebook builds and packs the checked-out library and answers the page's `https://unpkg.com/<name>@<version>/<path>` and `https://cdn.jsdelivr.net/npm/<name>@<version>/<path>` requests with the packed build, its map inline (also when the build already inlines its own), following the build's relative imports to its chunks. A path the build lacks ends the run with `REPOSITORY_BROWSER_LIBRARY_REFUSED` `library-path-absent` and a `cause` (`absent`, `too-large`, `unreadable`). Without `library`, the run says that the page loaded a published copy.
+- **Inspections in a minified library build:** a library stop in a minified build reads each declared inspection by its source name through the build's source map names; a name the map does not tie to one variable of the paused frame stays unavailable instead of reading another variable.
+
+### Changed
+- **MCP API 1.42 and bundled skill 1.0.85:** the skill routes a plain HTML page to `static-page` on API 1.42 or later; the repository-browser help gains `staticPageQuickStart` and an anchor for each static-page refusal.
+- **Agent rules (AGENTS.md):** plain HTML Examples that import their library from a CDN are trialled on the pinned P03 clone.
+
 ## [0.2.106.0] - 2026-11-09 (development candidate)
 
 Cycle 0104 ([Issue #269](https://github.com/laststance/codebook/issues/269)), a feature cycle. **A question about a Create React App 4 app, or a library's react-scripts 4 Example run on the checked-out library, now runs in Codebook and pauses in the app's own source and in the library's source.** Codebook refused react-scripts 4, so no question about such an app or Example could run: its webpack 4 needs the OpenSSL legacy provider on current Node, serves the app as a runtime and several chunks, and does not read a package's own source maps. Codebook now starts react-scripts 4 with that provider in the app's own process, reads every script the page serves, and, on the pack route, gives webpack the packed library's own source maps, so stops seal and pause as on react-scripts 5.
