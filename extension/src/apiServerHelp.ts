@@ -106,7 +106,7 @@ export function apiServerHelp<Configuration extends object>(
     ],
     order: [
       `Codebook checks the configuration first, then prepares in order: api-server-launch (the API starts with an inspector), api-server-attach (the run's server participant attaches and verifies the process), api-server-listen (the API listens on apiServer.port), and only then ${devServer}. Read the run resource's preparing step to tell the learner which one is running.`,
-      'Then send each declared operation with codebook_action repository-operation as for any version 3 run; at a server pause explain the values and the attribution below, then codebook_continue.',
+      'Then send each declared operation with codebook_action repository-operation as for any version 3 run; at a server pause explain the values and the attribution below, then codebook_continue. When the request is bounded by the app\'s own deadline or timeout (read its client wrapper, server middleware or transaction helper), declare hold: "record" on its server stops (API 1.43 or later, see operationsQuickStart.recordedStops): Codebook records the values and continues at once, and you explain the recorded stops after the operation\'s result, because a long explanation at a held stop ends the request. A held stop stays the default for code without a deadline.',
     ],
     attribution: [
       'Every server pause carries apiRequest: state attributed (method, path without its query, operation, basis), or unattributed with reason none or several (and count).',

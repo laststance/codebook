@@ -263,6 +263,21 @@ export function operationsHelp() {
         'The chat knows the first operation took effect only when the run resource shows operations[0].state done with ack yes, valueCheck passed or n/a and, if you claim its result, effect after-verified. A receipt or a ready state is not that evidence. The whole flow succeeded when every operation reads done and observed.afterVerified is true.',
       stops:
         "Every stop declares afterOperation, the one-based operation after whose input the stop is armed; Codebook arms a stop only in its operation's turn. The declared stops stay in order and afterOperation never decreases from one to the next.",
+      recordedStops: {
+        minimumApi: '1.43',
+        field:
+          'hold: "explain" (the default, and what a stop without the field does) or hold: "record", optional on the top-level stop and on each additionalStops entry of a version 3 configuration. A stop with afterOperation 0 refuses "record" with the field\'s path.',
+        whenToRecord:
+          "Declare record for a stop inside a request that the app bounds with its own deadline or timeout, which you find by reading that request's code (a client wrapper, server middleware or a transaction helper): the target's own clocks keep running while a held stop waits, so a long explanation ends the request before the next stop or the result. Never declare record merely to avoid explaining; a stop in code without a deadline stays held.",
+        whatHappens:
+          "Codebook captures a recorded stop's observation (values, scopes, call stack and image) as for a held stop, then continues at once without the chat. The run never shows it paused; the run resource lists the zero-based declared stop indexes recorded in recordedStops, in order (the top-level stop is 0, additionalStops[i] is i + 1). Held and recorded stops may be mixed.",
+        explaining:
+          "After the operation's result, explain each recorded stop in order from its recorded observation (its values and call stack). Tell the learner that the program did not wait at a recorded stop. Live inspection at a recorded stop is not available; its recorded values are available in the saved replay's native debugger.",
+        stalePause:
+          'codebook_continue with the arguments of a recorded stop is refused STALE_PAUSE, and a later held stop stays paused.',
+        olderCodebook:
+          'Declare record only when codebook_status reports API 1.43 or later; an older Codebook refuses the field as INVALID_CONFIGURATION.',
+      },
     },
     operationsDeclare: {
       anchor: 'codebook://help/repository-browser#declare-operations',
