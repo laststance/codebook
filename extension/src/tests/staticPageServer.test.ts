@@ -122,15 +122,21 @@ test('the readiness wait ends once the entry page and its same-origin scripts ar
   const server = await startStaticPageServer(repository.pageFolder)
   context.after(() => server.close())
   const signal = new AbortController().signal
+  let didSettle = false
   const settled = awaitStaticPageReady(`${server.origin}/`, 5_000, signal).then(
-    () => 'ready',
+    () => {
+      didSettle = true
+      return 'ready'
+    },
   )
   // Act
   await new Promise((resolve) => setTimeout(resolve, 250))
+  const didSettleBeforeScript = didSettle
   await mkdir(repository.pageFolder, { recursive: true })
   await writeFile(join(repository.pageFolder, 'late.js'), 'window.late = 1\n')
   const outcome = await settled
   // Assert
+  assert.equal(didSettleBeforeScript, false)
   assert.equal(outcome, 'ready')
 })
 

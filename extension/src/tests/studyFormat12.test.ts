@@ -237,7 +237,7 @@ test('a format 12 study with a packageRoot validates and a preparation pause aft
   })
 })
 
-// Value: protects=R7 a study of format 24 (above the readable 23) is listed as saved by a newer Codebook and kept; fails_when=READABLE_STUDY_VERSION stays 11 or the file is read; no_claim=the 0.2.85 binary
+// Value: protects=R7 a study of format 24 (above the readable 23) is listed as saved by a newer Codebook and kept; fails_when=READABLE_STUDY_VERSION stays below 23 or the file is read; no_claim=the 0.2.85 binary
 test('a study saved in format 24 is listed as saved by a newer Codebook', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-format-13-'))

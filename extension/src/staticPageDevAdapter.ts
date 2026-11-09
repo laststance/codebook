@@ -101,8 +101,8 @@ function staticPageAppOf(
       record('application.closed', { origin: server.origin })
     },
   }
-  // The run reads only the members above for a browser-only adapter; the child-process members (messages, inspector, raw output) are never asked of a static server.
-  return Object.assign(handle)
+  // The run reads only the members above for a browser-only adapter; the child-process members (messages, inspector, raw output) are never asked of a static server, so the handle truly lacks them and is asserted, not widened.
+  return handle as unknown as DevelopmentApp
 }
 
 /**

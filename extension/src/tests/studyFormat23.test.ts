@@ -182,10 +182,10 @@ test('studyFormatOfConfiguration gives 23 to every static-page configuration and
   assert.deepEqual(formats, [23, 23, 23, 23, 23, 11, 7])
 })
 
-// Value: protects=AC 7 a static-page configuration is readable as format 23 only (formats 7 to 22 each refuse it, press formats included), and format 23 refuses the other adapters; fails_when=an older format decodes a static-page study or format 23 decodes another adapter's; no_claim=the schema member for each older format beyond its refusal
+// Value: protects=AC 7 a static-page configuration is readable as format 23 only (every format from 7 to 22 refuses it, press formats included), and format 23 refuses the other adapters; fails_when=an older format decodes a static-page study or format 23 decodes another adapter's; no_claim=the schema member for each older format beyond its refusal
 test('only format 23 holds a static-page configuration, and format 23 holds no other adapter', async () => {
   // Arrange
-  const older = [7, 8, 9, 10, 11, 15, 16, 17, 18, 19, 20, 21, 22]
+  const older = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
   const pageStudies = await Promise.all(
     older.map((version) =>
       pageStudy(version, { packageRoot: 'examples/page' }),

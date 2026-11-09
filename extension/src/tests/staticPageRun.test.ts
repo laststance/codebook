@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
 
@@ -11,25 +13,28 @@ import { refusalFailureOf } from '../utils/refusalFailureOf'
 import { FakePageSession } from './utils/fakePageSession'
 import { loadModule } from './utils/loadModule'
 import { createPackedLibrary } from './utils/packedLibraryFixture'
-import {
-  createStaticPageRepository,
-  stopOf,
-  STATIC_PAGE_HTML,
-} from './utils/staticPageFixture'
+import { createStaticPageRepository } from './utils/staticPageFixture'
 
 /** Loads the run class with an editor stand-in and builds a bare run whose own fields a test sets. */
-async function bareRun(fields: Record<string, unknown>) {
+async function bareRun(
+  fields: Record<string, unknown>,
+  globals: Record<string, unknown> = {},
+) {
   const vscode = {}
   const breakpointModule = await loadModule<
     typeof OwnedRepositoryBreakpointModule
   >(resolve(__dirname, '../ownedRepositoryBreakpoint.js'), { vscode })
   const { ConfiguredBrowserRun } = await loadModule<
     typeof ConfiguredBrowserRunModule
-  >(resolve(__dirname, '../configuredBrowserRun.js'), {
-    vscode,
-    './ownedRepositoryBreakpoint': breakpointModule,
-    './runtimeSupport/hostBrowser': { HostBrowser: class {} },
-  })
+  >(
+    resolve(__dirname, '../configuredBrowserRun.js'),
+    {
+      vscode,
+      './ownedRepositoryBreakpoint': breakpointModule,
+      './runtimeSupport/hostBrowser': { HostBrowser: class {} },
+    },
+    globals,
+  )
   const run = Object.create(ConfiguredBrowserRun.prototype) as Record<
     string,
     (...values: unknown[]) => unknown
@@ -221,5 +226,46 @@ test('the page resolution refuses a stop outside the page and lets a declared li
     'resolved',
     'node-modules',
   ])
-  assert.equal(stopOf(repository.htmlPath, STATIC_PAGE_HTML, 8).line, 8)
+})
+
+// Value: protects=the published-copy note names the CDN address of the page the server answered, not of a file read from disk, so the note describes the bytes served; fails_when=the note is empty or names an address only the disk file holds; no_claim=the learner-facing wording of the note
+test('the published-copy note names the CDN address of the served page', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html')
+    response.end(
+      '<script type="module" src="https://unpkg.com/lib@1/dist/served.js"></script>',
+    )
+  })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  context.after(() => server.close())
+  const { port } = server.address() as AddressInfo
+  const recorded: Array<{ type: string; detail: unknown }> = []
+  const run = await bareRun(
+    {
+      staticPageLibraryFolder: () => undefined,
+      staticPagePackage: await repository.resolvePage(),
+      definition: { configuration: { entryPath: '/' } },
+      abort: new AbortController(),
+      evidence: {
+        record: (type: string, detail: unknown) =>
+          recorded.push({ type, detail }),
+      },
+    },
+    { fetch },
+  )
+  // Act
+  await run.noteCdnImports!(`http://127.0.0.1:${port}`)
+  // Assert
+  // The run is loaded in its own realm, so the records are compared as JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(recorded)), [
+    {
+      type: 'static-page.published-copy',
+      detail: {
+        note: 'The page loaded a published copy from a CDN, not the checked-out library: https://unpkg.com/lib@1/dist/served.js',
+        url: 'https://unpkg.com/lib@1/dist/served.js',
+      },
+    },
+  ])
 })

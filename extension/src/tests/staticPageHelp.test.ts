@@ -9,7 +9,6 @@ import {
   STATIC_PAGE_NESTED_CONFIGURATION,
   STATIC_PAGE_LIBRARY_CONFIGURATION,
 } from '../staticPageHelp'
-import { STATIC_PAGE_REFUSAL_CODES } from '../staticPageRefusals'
 
 import { createHarness } from './helpers'
 
@@ -20,6 +19,7 @@ type StaticPageQuickStart = {
   refusals: Record<string, { anchor: string; reasons: Record<string, string> }>
   library: {
     whatRuns: string[]
+    refusals: Record<string, string>
     limits: string[]
     sample: unknown
   }
@@ -77,8 +77,14 @@ test('the static-page help lists every refusal code with each reason the code ra
   // Act
   const reasonsOf = (code: string) => Object.keys(refusals[code]?.reasons ?? {})
   // Assert
-  assert.deepEqual(Object.keys(refusals), [...STATIC_PAGE_REFUSAL_CODES])
-  for (const code of STATIC_PAGE_REFUSAL_CODES)
+  const codes = [
+    'STATIC_PAGE_UNSUPPORTED',
+    'STATIC_PAGE_SERVER_FAILED',
+    'STATIC_PAGE_SEAL_FAILED',
+    'REPOSITORY_BROWSER_LIBRARY_REFUSED',
+  ]
+  assert.deepEqual(Object.keys(refusals), codes)
+  for (const code of codes)
     assert.equal(
       refusals[code]?.anchor,
       `codebook://help/repository-browser#${code}`,
@@ -159,6 +165,11 @@ test('the static-page help states its use, its limits and the library CDN replac
   )
   assert.ok(
     section.library.limits.join('\n').includes('loads the published copy'),
+  )
+  assert.ok(
+    section.library.refusals['library-path-absent']?.includes(
+      'details.cause is absent (the packed build lacks the path), too-large (a file over 32 MiB) or unreadable (a directory or a read error)',
+    ),
   )
 })
 

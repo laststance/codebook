@@ -108,7 +108,7 @@ function staticPageLibraryHelp() {
       `The build and pack together are bounded at ${LIBRARY_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s. Codebook never installs packages.`,
     ],
     refusals: {
-      'library-path-absent': `A path the packed build lacks ends the run with REPOSITORY_BROWSER_LIBRARY_REFUSED (library-path-absent): ${staticPageHelpAnchor('REPOSITORY_BROWSER_LIBRARY_REFUSED')}.`,
+      'library-path-absent': `A path the packed build lacks ends the run with REPOSITORY_BROWSER_LIBRARY_REFUSED (library-path-absent): ${staticPageHelpAnchor('REPOSITORY_BROWSER_LIBRARY_REFUSED')}. details.cause is absent (the packed build lacks the path), too-large (a file over 32 MiB) or unreadable (a directory or a read error).`,
       'library-build-stale': `${staticPageHelpAnchor('STATIC_PAGE_SEAL_FAILED')} (library-build-stale)`,
       'library-not-in-build': `${staticPageHelpAnchor('STATIC_PAGE_SEAL_FAILED')} (library-not-in-build, for example a page reached only through a nested import of the library)`,
       'library-build-unmapped': `${staticPageHelpAnchor('STATIC_PAGE_SEAL_FAILED')} (library-build-unmapped)`,

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
+import { DEFAULT_SOURCE_MAP_LIMITS } from '../sourceMapLimits'
 import { createBundleVerifier } from '../utils/createBundleVerifier'
 import { isStaticPageScriptOfModule } from '../utils/isStaticPageScriptOfModule'
 import {
@@ -85,6 +86,33 @@ test('a stop on a line of the inline module script is sealed at that line with p
   )
 })
 
+// Value: protects=a stop whose identity map exceeds the scan's segment limit is refused map-limit naming the limit the scan enforced, not a number the refusal assumed; fails_when=the refusal reports 4000000 (or any value other than the injected limit); no_claim=the default limit's value
+test('a stop whose map exceeds the segment limit is refused with the enforced limit in its details', async (context) => {
+  // Arrange
+  const repository = await createStaticPageRepository(context)
+  const request = await sealRequestOf(
+    context,
+    repository,
+    stopOf(repository.htmlPath, STATIC_PAGE_HTML, 8),
+  )
+  const limited = {
+    ...request,
+    limits: { ...DEFAULT_SOURCE_MAP_LIMITS, mappedSegments: 3 },
+  }
+  // Act
+  const outcome = await sealStaticPageScript(limited).then(
+    () => 'sealed',
+    (error: unknown) => (error instanceof StudyError ? error.details : 'other'),
+  )
+  // Assert
+  assert.deepEqual(outcome, {
+    reason: 'map-limit',
+    limit: 'mapped-position-segments',
+    limitValue: 3,
+    sideEffects: 'partial',
+  })
+})
+
 // Value: protects=AC 3 a stop on a line that lies in no inline script (markup) is refused not-in-page-script naming the line; fails_when=a markup line is sealed or the refusal loses its reason; no_claim=stops in scripts the page loads
 test('a stop on a markup line of the page is refused as not in a page script', async (context) => {
   // Arrange
@@ -152,7 +180,7 @@ test('a stop in a same-origin script file is sealed with the file as its script'
   assert.equal(verifier.originalLine({ lineNumber: 1, columnNumber: 0 }), 2)
 })
 
-// Value: protects=AC 3 a stop in a folder other than the page's (or in node_modules) is refused by name and never read; fails_when=a file outside the page is sealed; no_claim=the refusal before the server starts (the run checks the stops first)
+// Value: protects=AC 3 a stop in a folder other than the page's is refused by name and never read; fails_when=a file outside the page is sealed; no_claim=the refusal before the server starts (the run checks the stops first)
 test('a stop outside the page folder is refused as outside the package', async (context) => {
   // Arrange
   const repository = await createStaticPageRepository(context)

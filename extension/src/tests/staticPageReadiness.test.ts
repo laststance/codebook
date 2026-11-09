@@ -88,8 +88,8 @@ test('a same-origin module script that imports a bare specifier makes the page n
   })
 })
 
-// Value: protects=AC 1 a folder without the entry page is listed no-entry-page, and an app of another adapter is listed not-a-static-page; fails_when=either is listed ready; no_claim=that the other adapter can run the app
-test('a folder without index.html is no-entry-page and a Vite app is not-a-static-page', async (context) => {
+// Value: protects=AC 1 an entry path naming a file the folder lacks is listed no-entry-page, a named entry that exists is ready, and an app of another adapter is listed not-a-static-page; fails_when=either is listed ready; no_claim=that the other adapter can run the app
+test('a missing entry file is no-entry-page, a named existing entry is ready and a Vite app is not-a-static-page', async (context) => {
   // Arrange
   const empty = await createStaticPageRepository(context, {
     'other.html': '<html></html>',
@@ -145,7 +145,7 @@ test('the bare-import finder reads every import form and ignores paths and URLs'
   assert.deepEqual(skipped, [undefined, undefined, undefined, undefined])
 })
 
-// Value: protects=AC 1 status lists the pages under examples and apps (and the root when it is a page) with their own readiness, skipping other adapters' apps and linked folders; fails_when=a page is missing, an app of another adapter is listed, or the readiness is not per page; no_claim=Git placement (the listing needs none)
+// Value: protects=AC 1 status lists the pages under examples and apps (and the root when it is a page) with their own readiness, skipping other adapters' apps; fails_when=a page is missing, an app of another adapter is listed, or the readiness is not per page; no_claim=Git placement (the listing needs none)
 test('the discovery lists examples and apps pages with their readiness and skips other adapters apps', async (context) => {
   // Arrange
   const repository = await createStaticPageRepository(context, {

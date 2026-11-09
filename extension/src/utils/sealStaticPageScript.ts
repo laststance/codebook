@@ -6,6 +6,11 @@ import type { BundleSource } from '../repositoryBundle'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import {
+  DEFAULT_SOURCE_MAP_LIMITS,
+  SOURCE_MAP_LIMIT_FIELD,
+  type SourceMapLimits,
+} from '../sourceMapLimits'
+import {
   staticPageMapLimitRefusal,
   staticPageMapUnreadableRefusal,
   staticPageNodeModulesRefusal,
@@ -36,6 +41,8 @@ export type StaticPageSealRequest = Readonly<{
   /** The configured entry path (`/` when none). */
   entryPath: string
   signal: AbortSignal
+  /** The size limits the scan of the identity map stops at; today's shared limits when absent. */
+  limits?: SourceMapLimits
 }>
 
 /**
@@ -151,11 +158,15 @@ export async function sealStaticPageScript(
     startLine: script.startLine,
     startColumn: script.startColumn,
   })
+  // One limits object feeds both the scan and the refusal, so the reported number is the enforced one.
+  const limits = request.limits ?? DEFAULT_SOURCE_MAP_LIMITS
   const scan = sourceMapMappedPositions(
     JSON.parse(sourceMap).mappings,
     0,
     source.line,
     request.citationEndLine,
+    undefined,
+    limits,
   )
   if (!scan.positions.length) {
     if (scan.complete)
@@ -164,7 +175,10 @@ export async function sealStaticPageScript(
         source.line,
         request.citationEndLine,
       )
-    throw staticPageMapLimitRefusal('mapped-position-segments', 4_000_000)
+    throw staticPageMapLimitRefusal(
+      'mapped-position-segments',
+      limits[SOURCE_MAP_LIMIT_FIELD['mapped-position-segments']],
+    )
   }
   const bundle: BundleSource = {
     sourcePath,

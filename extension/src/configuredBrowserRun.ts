@@ -439,7 +439,6 @@ import { readPagesApiRequest } from './utils/readPagesApiRequest'
 import { readPagesDevelopmentBundle } from './utils/readPagesDevelopmentBundle'
 import { readNextInstallation } from './utils/readRepositoryAdapterReadiness'
 import { readRepositoryBuildText } from './utils/readRepositoryBuildText'
-import { staticPageEntryFile } from './utils/readStaticPageReadiness'
 import { readSystemCertificates } from './utils/readSystemCertificates'
 import {
   readWithinVerdictBudget,
@@ -2165,20 +2164,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Journals that a static-page run without `library` loads a published copy from a CDN, naming the first address.
-   * Called by {@link prepareOwned} once the entry page is served; the learner reads it in the run's notes.
-   * @example await this.noteCdnImports()
+   * Called by {@link prepareOwned} once the entry page is served; the learner reads it in the run's notes. It reads the entry page from the owned origin, so the note describes the bytes served, not the file on disk.
+   * @param ownedOrigin - The origin the static server reported.
+   * @example await this.noteCdnImports('http://127.0.0.1:4310')
    */
-  private async noteCdnImports(): Promise<void> {
+  private async noteCdnImports(ownedOrigin: string): Promise<void> {
     if (this.staticPageLibraryFolder() !== undefined || !this.staticPagePackage)
       return
-    const entry = staticPageEntryFile(
-      this.definition.configuration.entryPath ?? '/',
+    const html = await fetch(
+      `${ownedOrigin}${this.definition.configuration.entryPath ?? '/'}`,
+      { redirect: 'manual', signal: this.abort.signal },
     )
-    if (entry === undefined) return
-    const html = await readFile(
-      join(this.staticPagePackage.packageRoot, entry),
-      'utf8',
-    ).catch(() => undefined)
+      .then((response) => (response.ok ? response.text() : undefined))
+      .catch(() => undefined)
     const [first] = html === undefined ? [] : findCdnAddresses(html)
     if (first !== undefined)
       this.evidence.record('static-page.published-copy', {
@@ -3373,7 +3371,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         () => this.app?.assertRunning(),
       )
     }
-    await this.noteCdnImports()
+    await this.noteCdnImports(ownedOrigin)
     this.origin = browserOriginOf(ownedOrigin)
     // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
     this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
@@ -7692,20 +7690,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     adapter: DevelopmentServerAdapter,
   ): Promise<void> {
     const remainingMs = this.preparationDeadlineAt - Date.now()
-    const deadlineRefusal = (): StudyError =>
-      adapter.name === 'react-scripts-dev'
-        ? reactScriptsSetupDeadlineRefusal(this.setupStep, 'partial')
-        : adapter.name === 'expo-web-dev'
-          ? expoWebSetupDeadlineRefusal(this.setupStep, 'partial')
-          : adapter.name === 'static-page'
-            ? staticPageNotReadyRefusal(this.setupStep)
-            : viteRefusal(
-                'VITE_SETUP_DEADLINE',
-                viteSetupDeadlineSentence(
-                  this.setupStep,
-                  this.preparationBudgetMs,
-                ),
-              )
+    const deadlineRefusal = (): StudyError => {
+      if (adapter.name === 'react-scripts-dev')
+        return reactScriptsSetupDeadlineRefusal(this.setupStep, 'partial')
+      if (adapter.name === 'expo-web-dev')
+        return expoWebSetupDeadlineRefusal(this.setupStep, 'partial')
+      if (adapter.name === 'static-page')
+        return staticPageNotReadyRefusal(this.setupStep)
+      return viteRefusal(
+        'VITE_SETUP_DEADLINE',
+        viteSetupDeadlineSentence(this.setupStep, this.preparationBudgetMs),
+      )
+    }
     // No floor: a spent budget is a deadline, not a one-second grace wait.
     if (remainingMs <= 0) throw deadlineRefusal()
     try {

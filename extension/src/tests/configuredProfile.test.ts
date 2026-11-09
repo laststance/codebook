@@ -57,6 +57,7 @@ test('the public repository-browser scope describes five adapters including reac
     /react-scripts-dev \(react-scripts 4 or 5, since API 1\.25; react-scripts 4 since API 1\.41\)/,
   )
   assert.match(scope, /browser stops only \(no server participant\)/)
+  assert.match(scope, /static-page \(since API 1\.42\)/)
   assert.match(scope, /up to 32 MiB and its source map of up to 64 MiB/)
   assert.equal(scope.split('A fourth adapter').length, 1)
   assert.equal(scope.split('expo-web-dev (Expo SDK 57').length, 2)
