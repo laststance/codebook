@@ -126,6 +126,7 @@ test('the MCP instructions name react-scripts-dev, its selection rule and the AP
   assert.ok(protocol.includes('${REACT_SCRIPTS_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(
+      // pregate-literal: API_VERSION=1.41 react-scripts 4 arrived in API 1.41, and the protocol names that minimum
       'since API 1.25 its third adapter react-scripts-dev runs a Create React App app (react-scripts 4 or 5; react-scripts 4 needs API 1.41 or later)',
     ),
   )

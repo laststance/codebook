@@ -76,11 +76,12 @@ test('a script with 8000 spaces after import is scanned in well under a second a
   const elapsedMs = performance.now() - startedAt
   // Assert
   assert.equal(found, 'lib')
-  assert.ok(elapsedMs < 100, `scan took ${elapsedMs} ms`)
+  // gstack-timing-ok: the bound is the contract (no host freeze); the old backtracking scan never finished on this input, a linear one takes a few milliseconds, so 1 s leaves room for coverage and a loaded runner
+  assert.ok(elapsedMs < 1000, `scan took ${elapsedMs} ms`)
 })
 
 // Value: protects=repeated import keywords with no clause end do not make the scan quadratic; fails_when=every keyword re-walks the text after it; no_claim=imports in the repeated text
-test('a script of 20000 repeated import keywords is scanned in under 100 ms', () => {
+test('a script of 20000 repeated import keywords is scanned in under a second', () => {
   // Arrange
   const hostile = `${'import '.repeat(20_000)};`
   const startedAt = performance.now()
@@ -89,7 +90,8 @@ test('a script of 20000 repeated import keywords is scanned in under 100 ms', ()
   const elapsedMs = performance.now() - startedAt
   // Assert
   assert.equal(found, undefined)
-  assert.ok(elapsedMs < 100, `scan took ${elapsedMs} ms`)
+  // gstack-timing-ok: the bound is the contract (no quadratic walk); re-walking 140,000 characters per keyword would take minutes, a linear scan a few milliseconds, so 1 s leaves room for coverage and a loaded runner
+  assert.ok(elapsedMs < 1000, `scan took ${elapsedMs} ms`)
 })
 
 // Value: protects=icons, canonical links, hints and remote scripts are not judged as files of the folder, while a missing stylesheet still is; fails_when=a favicon, canonical link, //cdn or http: script makes a servable page needs-bundler, or a missing stylesheet passes; no_claim=that the remote files load

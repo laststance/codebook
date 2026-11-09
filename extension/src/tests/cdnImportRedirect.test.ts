@@ -239,6 +239,7 @@ test('Fetch.disable is sent once when the run ends, also after a failed request,
   await redirect.disable()
   await redirect.disable()
   session.pause('https://unpkg.com/lib@1/dist/lib.mjs', 'late')
+  // gstack-timing-ok: an absence check; a slow runner can only delay a wrong answer past the wait (a false pass), never fail a correct redirect
   await new Promise((resolve) => setTimeout(resolve, 30))
   // Assert
   assert.deepEqual(
