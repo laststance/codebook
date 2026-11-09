@@ -1,9 +1,30 @@
 import { REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE } from '../reactScriptsSingleBundleProfile'
 
 import {
+  readReactScriptsServedBundle,
+  type ReactScriptsBundleCache,
+} from './readReactScriptsServedBundle'
+import {
   sealSingleBundleStop,
+  type ServedBundlesReader,
   type SingleBundleSealRequest,
 } from './sealSingleBundleStop'
+
+/** A seal request whose cache holds every served script of the run. */
+export type ReactScriptsSealRequest = Omit<SingleBundleSealRequest, 'cache'> &
+  Readonly<{ cache: ReactScriptsBundleCache }>
+
+/**
+ * Gives the seal a reader of all served scripts of the run's cache.
+ * @param cache - The run's cache.
+ * @returns A reader that reads the scripts the entry page names.
+ * @example sealSingleBundleStop(request, profile, undefined, reactScriptsServedBundlesReader(cache))
+ */
+export function reactScriptsServedBundlesReader(
+  cache: ReactScriptsBundleCache,
+): ServedBundlesReader {
+  return (origin, signal) => readReactScriptsServedBundle(origin, signal, cache)
+}
 
 export { mapSourceNamesStop } from './sealSingleBundleStop'
 
@@ -17,6 +38,11 @@ export { mapSourceNamesStop } from './sealSingleBundleStop'
  * @example
  * const { bundle } = await sealReactScriptsStop({ appRoot, packageRootRelative: '.', packageRelativePath: 'src/App.js', source, citationEndLine: 12, ownedOrigin, signal, cache })
  */
-export function sealReactScriptsStop(request: SingleBundleSealRequest) {
-  return sealSingleBundleStop(request, REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE)
+export function sealReactScriptsStop(request: ReactScriptsSealRequest) {
+  return sealSingleBundleStop(
+    request,
+    REACT_SCRIPTS_SINGLE_BUNDLE_PROFILE,
+    undefined,
+    reactScriptsServedBundlesReader(request.cache),
+  )
 }

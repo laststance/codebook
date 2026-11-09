@@ -73,7 +73,10 @@ export const REACT_SCRIPTS_DEV_ADAPTER: DevelopmentServerAdapter = {
       request.signal,
     )
     // Created before the launch so the server's cleanup can tell this run's entry from a later run's on the same port.
-    const cache = new ReactScriptsBundleCache(workspace.publicPath)
+    const cache = new ReactScriptsBundleCache(
+      workspace.publicPath,
+      request.reactScriptsPackage.packageRoot,
+    )
     const launch = await launchReactScriptsDevelopmentServer(
       request,
       workspace,

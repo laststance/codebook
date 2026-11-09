@@ -502,6 +502,37 @@ export function reactScriptsAmbiguousSourceRefusal(file: string): StudyError {
   )
 }
 
+/** The reasons of {@link reactScriptsServedScriptRefusal}. */
+export type ReactScriptsServedScriptReason =
+  'script-off-origin' | 'too-many-scripts' | 'script-too-large'
+
+/**
+ * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of an entry page whose served scripts cannot all be read: one redirected off the owned origin, more than the allowed number, or one over the byte limit.
+ *
+ * Why it exists: react-scripts 4 serves a runtime and chunks, so the reader sees several scripts and refuses the set by a named reason instead of reading part of it. Called by the react-scripts single-bundle profile's `servedScripts`.
+ * @param reason - Which rule the served scripts broke.
+ * @param subject - What broke the rule, one phrase: a script address or a count of scripts.
+ * @returns The refusal: `details.reason`, `details.subject` and `sideEffects: "partial"`.
+ * @example
+ * reactScriptsServedScriptRefusal('too-many-scripts', '9 scripts').details?.reason // => 'too-many-scripts'
+ */
+export function reactScriptsServedScriptRefusal(
+  reason: ReactScriptsServedScriptReason,
+  subject: string,
+): StudyError {
+  const problem = {
+    'script-off-origin': `${subject} redirected off the owned origin, and only the owned origin is read`,
+    'too-many-scripts': `the entry page names ${subject}, more than Codebook reads`,
+    'script-too-large': `${subject} is over Codebook's reading limit`,
+  }[reason]
+  return reactScriptsRefusal(
+    'REACT_SCRIPTS_SEAL_FAILED',
+    `The served scripts of the app cannot be sealed: ${problem}. The owned server was stopped and no click was sent.`,
+    `Tell the learner the app's served scripts are not in the form this version reads (details.reason names the rule, details.subject what broke it); never edit the project. The owned server was stopped and no click was sent (details.sideEffects is partial). ${recoveryEnd('REACT_SCRIPTS_SEAL_FAILED')}`,
+    { reason, subject, sideEffects: 'partial' },
+  )
+}
+
 /**
  * Builds the `REACT_SCRIPTS_SEAL_FAILED` refusal of stop files that lie in `node_modules`.
  * @param files - Every offending repository-relative stop file.

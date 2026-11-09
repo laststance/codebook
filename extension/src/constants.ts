@@ -3413,6 +3413,9 @@ export const EXPO_VERSION_MAX_CHARS = 64
 /** The path react-scripts 5 serves its one development bundle at; its source map is the `sourceMappingURL` the bundle names. */
 export const REACT_SCRIPTS_BUNDLE_PATH = '/static/js/bundle.js'
 
+/** The most same-origin `<script src>` elements of the entry page a `react-scripts-dev` run reads for sealing (react-scripts 4 serves a runtime and chunks, react-scripts 5 one bundle); a ninth is refused as `too-many-scripts`. */
+export const REACT_SCRIPTS_SERVED_SCRIPTS_MAX = 8
+
 /** How long the first-compile wait of a `react-scripts-dev` run pauses between two reads of the entry page, the bundle and its map. */
 export const REACT_SCRIPTS_READINESS_POLL_MS = 250
 
