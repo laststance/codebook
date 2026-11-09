@@ -82,12 +82,14 @@ export function staticPageNoEntryRefusal(entry: string): StudyError {
  */
 export function staticPageNeedsBundlerRefusal(
   reference: string,
-  kind: 'missing-file' | 'bare-import',
+  kind: 'missing-file' | 'bare-import' | 'scripts-not-all-judged',
 ): StudyError {
   const problem =
     kind === 'missing-file'
       ? `names ${reference}, a file that does not exist in the page folder`
-      : `imports ${reference}, a bare specifier only a bundler resolves`
+      : kind === 'scripts-not-all-judged'
+        ? `names more same-origin scripts than are read (first unread: ${reference})`
+        : `imports ${reference}, a bare specifier only a bundler resolves`
   return staticPageRefusal(
     'STATIC_PAGE_UNSUPPORTED',
     `The page ${problem}, so it needs a bundler and Codebook serves only a page whose files exist as written; nothing was started.`,

@@ -1,5 +1,7 @@
 import { posix } from 'node:path'
 
+import { leavesStaticPageFolder } from './leavesStaticPageFolder'
+
 /** A reference that names something other than a file of the folder: protocol-relative or any scheme. */
 const REMOTE_REFERENCE = /^(?:\/\/|[A-Za-z][A-Za-z0-9+.-]*:)/
 
@@ -28,5 +30,7 @@ export function resolveStaticPageScriptPath(
   const relative = decoded.startsWith('/')
     ? posix.normalize(decoded.slice(1))
     : posix.normalize(posix.join(entryFolder, decoded))
-  return relative === '' || relative.startsWith('..') ? undefined : relative
+  return relative === '' || leavesStaticPageFolder(relative)
+    ? undefined
+    : relative
 }

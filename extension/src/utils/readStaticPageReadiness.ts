@@ -10,6 +10,8 @@ import {
 } from '../constants'
 
 import { isInsideFolder } from './isInsideFolder'
+import { leavesStaticPageFolder } from './leavesStaticPageFolder'
+import { listDynamicImportSpecifiers } from './listDynamicImportSpecifiers'
 import { listStaticImportSpecifiers } from './listStaticImportSpecifiers'
 import { manifestDeclaresPackage } from './manifestDeclaresPackage'
 import { readRepositoryBuildText } from './readRepositoryBuildText'
@@ -38,7 +40,7 @@ export type StaticPageProblem =
   | {
       gap: 'needs-bundler'
       reference: string
-      kind: 'missing-file' | 'bare-import'
+      kind: 'missing-file' | 'bare-import' | 'scripts-not-all-judged'
     }
   | { gap: 'entry-unreadable'; problem: string }
   | { gap: 'not-a-static-page'; adapter: string }
@@ -53,9 +55,6 @@ const OTHER_ADAPTER_PACKAGES: ReadonlyArray<readonly [string, string]> = [
 
 /** A scheme-bearing reference (`https:`, `data:`, `blob:`, …): it names something other than a file of the folder. */
 const SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i
-
-/** A dynamic `import('specifier')` with a literal specifier. */
-const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g
 
 /**
  * Names the adapter whose app a folder is, from its `package.json`.
@@ -100,7 +99,7 @@ export function staticPageEntryFile(entryPath: string): string | undefined {
   if (pathname === undefined) return undefined
   if (pathname === '/' || pathname === '') return 'index.html'
   const relative = posix.normalize(pathname.replace(/^\/+/, ''))
-  if (relative.startsWith('..')) return undefined
+  if (leavesStaticPageFolder(relative)) return undefined
   // A trailing slash names the folder's index page, as the server answers it.
   if (pathname.endsWith('/')) return posix.join(relative, 'index.html')
   return relative.endsWith('.html') ? relative : undefined
@@ -149,11 +148,7 @@ export function firstBareImport(
     )
   const staticFound = listStaticImportSpecifiers(text).find(isBare)
   if (staticFound !== undefined) return staticFound
-  for (const match of text.matchAll(DYNAMIC_IMPORT_PATTERN)) {
-    const specifier = match[2]
-    if (specifier !== undefined && isBare(specifier)) return specifier
-  }
-  return undefined
+  return listDynamicImportSpecifiers(text).find(isBare)
 }
 
 /**
@@ -209,7 +204,7 @@ async function findMissingReference(
     if (resolved === undefined) continue
     if (
       resolved === null ||
-      resolved.startsWith('..') ||
+      leavesStaticPageFolder(resolved) ||
       !(await fileExistsInside(folder, resolved))
     )
       return {
@@ -251,6 +246,14 @@ async function findBareImportProblem(
     if (specifier !== undefined)
       return { gap: 'needs-bundler', reference: specifier, kind: 'bare-import' }
   }
+  // Scripts past the read cap were not judged, so the page cannot be called ready.
+  const unread = scriptFiles[STATIC_PAGE_SCRIPT_READS_MAX]
+  if (unread !== undefined)
+    return {
+      gap: 'needs-bundler',
+      reference: `${unread} (more than ${STATIC_PAGE_SCRIPT_READS_MAX} same-origin scripts were not all judged)`,
+      kind: 'scripts-not-all-judged',
+    }
   return undefined
 }
 
