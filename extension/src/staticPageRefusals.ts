@@ -457,10 +457,13 @@ export function staticPageLibraryPathAbsentRefusal(request: {
   cause?: StaticPageLibraryPathCause
 }): StudyError {
   const { path, library, packageRoot, cause = 'absent' } = request
+  // The path comes from the page's request URL (percent-decoded), so the text a chat reads is bounded to one line; details keep the raw values
+  const shownPath = boundStaticPageText(path)
+  const shownLibrary = boundStaticPageText(library)
   return staticPageRefusal(
     'REPOSITORY_BROWSER_LIBRARY_REFUSED',
-    `The page asked for ${path} of ${library}, which ${LIBRARY_PATH_CAUSE_WORDS[cause]}, so the run would not load the checked-out library; the run was ended before any stop was sealed.`,
-    `Tell the learner the page imports ${library} at a path (details.path) that the library's build output cannot serve (details.cause is ${cause}), then either declare the library folder whose build produces that file or start again once without library, saying the page then runs its published copy; never run the build yourself. Codebook built and packed the library, the owned server and browser were stopped, no stop was sealed and no input was sent (details.sideEffects is partial). ${recoveryEnd('REPOSITORY_BROWSER_LIBRARY_REFUSED')}`,
+    `The page asked for ${shownPath} of ${shownLibrary}, which ${LIBRARY_PATH_CAUSE_WORDS[cause]}, so the run would not load the checked-out library; the run was ended before any stop was sealed.`,
+    `Tell the learner the page imports ${shownLibrary} at a path (details.path) that the library's build output cannot serve (details.cause is ${cause}), then either declare the library folder whose build produces that file or start again once without library, saying the page then runs its published copy; never run the build yourself. Codebook built and packed the library, the owned server and browser were stopped, no stop was sealed and no input was sent (details.sideEffects is partial). ${recoveryEnd('REPOSITORY_BROWSER_LIBRARY_REFUSED')}`,
     {
       reason: 'library-path-absent',
       cause,

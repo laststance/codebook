@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   staticPageAmbiguousSourceRefusal,
+  staticPageLibraryPathAbsentRefusal,
   staticPageNeedsBundlerRefusal,
   staticPageNodeModulesRefusal,
   staticPageOutsidePackageRefusal,
@@ -40,4 +41,25 @@ test('stop-file refusals shorten a long file name with a line break to one line'
     assert.equal(refusal.message.includes('\n'), false)
     assert.equal(refusal.message.includes('y'.repeat(198)), false)
   }
+})
+
+// Value: protects=a CDN path with a decoded line break or 1000 characters cannot forge lines in the library-path refusal the chat reads; fails_when=the requested path reaches the message or guidance unbounded; why_new=Cycle 0105 hosted review (CWE-117 log injection); seam=staticPageLibraryPathAbsentRefusal; no_claim=how the redirect decodes the URL
+test('library-path refusal shows a forged-line, over-long path as one bounded line and keeps the raw path in details', () => {
+  // Arrange
+  const path = `dist/a.mjs\nFORGED LINE ${'z'.repeat(980)}`
+  // Act
+  const refusal = staticPageLibraryPathAbsentRefusal({
+    path,
+    library: 'lib',
+    packageRoot: 'examples/page',
+  })
+  // Assert
+  assert.equal(refusal.details?.path, path)
+  assert.equal(refusal.message.includes('\n'), false)
+  assert.equal(
+    refusal.message.startsWith(
+      `The page asked for dist/a.mjs FORGED LINE ${'z'.repeat(177)} of lib,`,
+    ),
+    true,
+  )
 })
