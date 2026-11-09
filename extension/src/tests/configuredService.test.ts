@@ -2848,7 +2848,7 @@ test('configured help names the declared, the requested and the bound place, say
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.entry,
-    'API 1.42, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+    'API 1.43, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
   )
   assert.equal(
     (contract.sequence[2] ?? '').includes(
@@ -4936,7 +4936,7 @@ test('API 1.8 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.42')
+  assert.equal(status.apiVersion, '1.43')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')
@@ -5023,5 +5023,120 @@ test('configured help tells an agent that a start the library refused can be rep
   assert.equal(
     contract.sequence[0],
     "codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run. A start on a revision or a node id the book does not have is refused in its own answer with BOOK_UNAVAILABLE, which names the revision's node ids; every other preparation failure is read from the run resource.",
+  )
+})
+
+// Value: protects=a version 3 run lists recordedStops as an empty array in its run resource while its runtime reports none, as it lists its operations; fails_when=the field is absent until the runtime exists, so an agent reading the run cannot tell version 3 from version 2; no_claim=recording of a stop (the runtime's own tests)
+test('a version 3 run resource lists an empty recordedStops while its runtime reports none', async (context) => {
+  // Arrange
+  const { service, configuration } = await configuredServiceHarness(context)
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'record',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  // Act
+  await service.record(receipt).preparation
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  assert.deepEqual(
+    z
+      .object({ recordedStops: z.array(z.number()) })
+      .parse(JSON.parse(resource.text)).recordedStops,
+    [],
+  )
+  await service.stop(receipt)
+})
+
+// Value: protects=a version 3 run resource lists recordedStops while its preparation is still pending; fails_when=the field depends on a finished preparation; no_claim=recording of a stop
+test('a version 3 run resource read while its preparation is pending lists an empty recordedStops', async (context) => {
+  // Arrange
+  const { service, configuration } = await configuredServiceHarness(context)
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'one',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  assert.deepEqual(
+    z
+      .object({ recordedStops: z.array(z.number()) })
+      .parse(JSON.parse(resource.text)).recordedStops,
+    [],
+  )
+  await service.record(receipt).preparation
+  await service.stop(receipt)
+})
+
+// Value: protects=a version 3 run resource lists recordedStops after its preparation failed; fails_when=the field depends on a finished preparation; no_claim=recording of a stop
+test('a version 3 run whose preparation failed lists an empty recordedStops', async (context) => {
+  // Arrange
+  const { service, configuration, environment } =
+    await configuredServiceHarness(context)
+  // The workspace check fails inside the preparation, before the definition is read.
+  let isWorkspaceChecked = false
+  environment.assertWorkspace = (): void => {
+    if (isWorkspaceChecked) return
+    isWorkspaceChecked = true
+    throw new Error('The workspace changed.')
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'valid',
+    configuration: {
+      version: 3,
+      adapter: 'static-page',
+      entryPath: '/demo.html',
+      book: configuration.book,
+      source: configuration.source,
+      participant: 'browser',
+      afterOperation: 1,
+      before: [{ kind: 'visible', selector: '#go' }],
+      after: [{ kind: 'text', selector: 'title', equals: '4' }],
+      operations: [{ kind: 'click', title: 'Go', selector: '#go' }],
+      inspections: [{ path: 'total', mode: 'value', required: true }],
+    },
+  })
+  await service.record(receipt).preparation
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  assert.deepEqual(
+    z
+      .object({ recordedStops: z.array(z.number()) })
+      .parse(JSON.parse(resource.text)).recordedStops,
+    [],
   )
 })

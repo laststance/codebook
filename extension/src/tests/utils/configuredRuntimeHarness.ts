@@ -217,6 +217,11 @@ function nestSources(
   descriptor.citationContext = citationContext(descriptor.anchors)
 }
 
+/** The harness {@link configuredRuntimeHarness} builds. @example const harness: ConfiguredRuntimeHarness = await configuredRuntimeHarness(context) */
+export type ConfiguredRuntimeHarness = Awaited<
+  ReturnType<typeof configuredRuntimeHarness>
+>
+
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
   context: TestContext,
@@ -462,6 +467,8 @@ export async function configuredRuntimeHarness(
       /** The operations; an empty list omits the field from the configuration (allowed when every stop declares `afterOperation: 0`). */
       operations: RepositoryOperation[]
       stopOperations: number[]
+      /** The `hold` each stop declares, the first stop first; a missing or undefined entry declares nothing (API 1.43). */
+      stopHolds?: Array<'explain' | 'record' | undefined>
       /** The participant of each stop, the first stop first; by default the first is `options.participant ?? 'browser'` and every other stop is a browser stop. */
       stopParticipants?: Participant[]
       /** The controls the stand-in page reports, by selector. */
@@ -577,6 +584,9 @@ export async function configuredRuntimeHarness(
           options.participant ??
           ('browser' as const),
         afterOperation: options.operations.stopOperations[0]!,
+        ...(options.operations.stopHolds?.[0]
+          ? { hold: options.operations.stopHolds[0] }
+          : {}),
         before: reference.configuration.action.before,
         after: reference.configuration.action.after,
         ...(options.operations.operations.length
@@ -603,6 +613,9 @@ export async function configuredRuntimeHarness(
             : reference.configuration.book.anchorIndex,
           inspections: stop.inspections,
           afterOperation: options.operations!.stopOperations[index + 1]!,
+          ...(options.operations!.stopHolds?.[index + 1]
+            ? { hold: options.operations!.stopHolds[index + 1] }
+            : {}),
         })),
         ...(reference.configuration.entryPath
           ? { entryPath: reference.configuration.entryPath }

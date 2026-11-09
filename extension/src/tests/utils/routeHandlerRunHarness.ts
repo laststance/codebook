@@ -44,7 +44,7 @@ function controlOf(context: TestContext): RuntimeControl {
  * Opens a prepared version 3 run whose server stops are in an App Router route handler (`app/api/todos/route.ts`), one click operation, and the route handler's script answering as Next's does.
  * Why it exists: every route-handler integration test starts the same way; the options add what differs (the stops' operations, a browser stop beside them).
  * @param context - The test.
- * @param options - `stopOperations` names the `afterOperation` of each stop in declared order (default one stop after operation 1); `stopParticipants` replaces the participants (default all `server`); `extra` further harness options.
+ * @param options - `stopOperations` names the `afterOperation` of each stop in declared order (default one stop after operation 1); `stopParticipants` replaces the participants (default all `server`); `stopHolds` the `hold` of each stop; `extra` further harness options.
  * @returns The harness with the run prepared and no operation sent yet.
  * @example const harness = await routeHandlerRunHarness(context)
  */
@@ -53,6 +53,8 @@ export async function routeHandlerRunHarness(
   options: {
     stopOperations?: number[]
     stopParticipants?: ('server' | 'browser')[]
+    /** The `hold` each stop declares, the first stop first; a missing entry declares nothing. */
+    stopHolds?: Array<'explain' | 'record' | undefined>
     operations?: RepositoryOperation[]
     additionalStops?: Parameters<typeof configuredRuntimeHarness>[2]
     extra?: Partial<Parameters<typeof configuredRuntimeHarness>[3]>
@@ -75,6 +77,7 @@ export async function routeHandlerRunHarness(
         stopOperations,
         stopParticipants:
           options.stopParticipants ?? stopOperations.map(() => 'server'),
+        ...(options.stopHolds ? { stopHolds: options.stopHolds } : {}),
       },
       ...options.extra,
     },

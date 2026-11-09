@@ -46,6 +46,7 @@ import {
   ACTIVE_TIMEOUT_MS,
   NEXT_LIBRARY_WRAPPED_WAIT_MS,
   NEXT_ROUTER_POLL_INTERVAL_MS,
+  RECORDED_STOP_REFRESH_POLL_MS,
   NEXT_SETUP_STEPS,
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
   MAX_EVENTS,
@@ -359,6 +360,7 @@ import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
 import { isReactServerCopyUrl } from './utils/isReactServerCopyUrl'
+import { isRecordedStop } from './utils/isRecordedStop'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isRscScriptUrl } from './utils/isRscScriptUrl'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
@@ -1666,6 +1668,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
+  /** Declared stop indexes recorded without a hold (`hold: "record"`), in recording order; read by {@link view}. A stop is listed once its observation is committed ({@link inspect} pushed the snapshot, as for a held stop) and before its evidence save, so "recorded" means "observation committed", not "saved": the persisted view that save writes already names it, and a run that fails there keeps both the snapshot and this index. */
+  private readonly recordedStopIndexes: number[] = []
   private readonly failures: string[] = []
   private readonly captures: ConfiguredRuntimeView['captures'] = {}
   private readonly snapshotCaptures: NonNullable<
@@ -17060,11 +17064,110 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate(true)
       throw inspectionFailure
     }
-    // The paused state is published in one step with the observation (above) and the continuation it offers (the ready snapshot), so no read sees one without the others.
+    await this.publishCommittedStop(stop, phase, pause)
+  }
+
+  /**
+   * Ends {@link inspect} for a committed observation: a held stop publishes its `paused-<participant>` state, a recorded stop (`hold: "record"`, API 1.43) never does and hands off to {@link recordAndContinue}, which resumes it at once.
+   * @param stop - The stop whose observation was just committed.
+   * @param phase - The `paused-<participant>` state a held stop publishes.
+   * @param pause - The identity of the pause the observation was captured at.
+   * @example
+   * ```ts
+   * await this.publishCommittedStop(stop, 'paused-server', pause)
+   * ```
+   */
+  private async publishCommittedStop(
+    stop: PreparedStop,
+    phase: 'paused-server' | 'paused-browser',
+    pause: PauseIdentity,
+  ): Promise<void> {
+    if (isRecordedStop(stop)) {
+      await this.recordAndContinue(stop, pause)
+      return
+    }
+    // The paused state is published in one step with the observation (before it) and the continuation it offers (the ready snapshot), so no read sees one without the others.
     this.status = phase
     this.markOperationPaused(stop)
     this.snapshotReady = true
     await this.persist()
+  }
+
+  /**
+   * Finishes a recorded stop (`hold: "record"`, API 1.43) after {@link inspect} committed its observation: lists it in `recordedStops`, saves the run evidence, then resumes through {@link continue}, the path `codebook_continue` takes.
+   * The run's status never becomes `paused-*` and the operation is never marked paused; the continuation offer (`snapshotReady`) is switched on only in the same synchronous step that calls {@link continue}, which reserves the pause before its first await, so no read can find an offer a chat could act on. A later `codebook_continue` with this stop's arguments finds the gate reserved or a later pause and is refused as a stale pause.
+   * Called only by {@link inspect}, so a rejection reaches the run's failure handling through {@link track}: {@link continue} has already ended the run with its documented reason, and anything else fails it with the error's text.
+   * @param stop - The recorded stop whose observation was just committed.
+   * @param pause - The identity of the pause the observation was captured at.
+   * @throws What {@link continue} throws, after the continuation offer (`snapshotReady`) is switched off again; nothing is resumed when the evidence save fails.
+   * @example
+   * ```ts
+   * await this.recordAndContinue(stop, pause)
+   * ```
+   */
+  private async recordAndContinue(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+  ): Promise<void> {
+    this.recordedStopIndexes.push(stop.declaredIndex)
+    await this.persist()
+    this.alive()
+    await this.awaitRecordedStopRefresh(stop, pause)
+    // No await between the offer and the reservation inside continue().
+    this.snapshotReady = true
+    try {
+      await this.continue(stop.participant, pause)
+    } catch (error) {
+      // A pause nobody can continue must not keep offering the recorded stop's snapshot on the failed run.
+      this.snapshotReady = false
+      throw error
+    }
+  }
+
+  /**
+   * Waits, for {@link recordAndContinue}, until a pending js-debug stack refresh of the recorded stop's own pause is verified (`participant.refresh`, which {@link continue} refuses control during) or, for a refresh deferred while the stop's own pause was awaited, until its re-announced `stopped` is consumed (`participant.deferredRefresh`, cleared by {@link onEvent}); resuming earlier would let that late `stopped` fail the run as an unexpected stop.
+   * Both routes keep the pause's generation ({@link verifyStackRefresh}, the deferred consumption), so the same pause identity then continues the same stop. The wait ends the run with a named reason, and nothing is resumed, when the gate no longer holds that pause or the stop is no longer the run's current stop; the `refresh` route is bounded by its own progress deadline (`ACTIVE_TIMEOUT_MS`), a deferred refresh that is pending when the wait starts gets the same bound armed here ("Native stack refresh did not re-announce the recorded stop"), which gives the pause hold back once the wait ends, and a failed verification fails the run.
+   * @param stop - The recorded stop being finished.
+   * @param pause - The identity of the pause the observation was captured at.
+   * @throws When the run ended during the wait, or the pause was replaced by another one (the run is failed with "Recorded stop's pause changed during a stack refresh and no resume was sent").
+   * @example
+   * ```ts
+   * await this.awaitRecordedStopRefresh(stop, pause)
+   * ```
+   */
+  private async awaitRecordedStopRefresh(
+    stop: PreparedStop,
+    pause: PauseIdentity,
+  ): Promise<void> {
+    const participant = this.participants[stop.participant]
+    // A deferred refresh arms no deadline when it arrives; its re-announced stop can still be pending when a recorded stop resumes within milliseconds, so the wait is bounded here.
+    const didBoundDeferredRefresh = Boolean(
+      participant.deferredRefresh && !participant.refresh,
+    )
+    if (didBoundDeferredRefresh)
+      this.progressDeadline(
+        ACTIVE_TIMEOUT_MS,
+        'Native stack refresh did not re-announce the recorded stop',
+      )
+    // Each turn re-reads the gate: a refresh may start again after the previous one was verified, and a deferred one ends when its re-announced stop is consumed.
+    while (participant.refresh || participant.deferredRefresh) {
+      await sleep(RECORDED_STOP_REFRESH_POLL_MS, undefined, {
+        signal: this.abort.signal,
+      })
+      this.alive()
+    }
+    // The bound ends with the wait: the pause hold comes back, as {@link verifyStackRefresh} gives it back on the refresh route, so a slow later step is never reported as a missing re-announcement.
+    if (didBoundDeferredRefresh) this.holdPauseDeadline()
+    if (
+      this.stops[this.stopIndex] !== stop ||
+      !participant.gate.matches(pause) ||
+      this.continuation
+    ) {
+      const reason =
+        "Recorded stop's pause changed during a stack refresh and no resume was sent"
+      this.fail(reason)
+      throw new Error(reason)
+    }
   }
 
   /**
@@ -18063,6 +18166,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
 
+  /**
+   * Gives the run resource's `recordedStops`: a version 3 run always lists the declared stop indexes it recorded without a hold, empty when none; versions 1 and 2 list nothing.
+   * Called by {@link view}.
+   * @example this.recordedStopsView() // { recordedStops: [0, 2] }
+   */
+  private recordedStopsView(): Pick<ConfiguredRuntimeView, 'recordedStops'> {
+    return this.operationsConfiguration
+      ? { recordedStops: [...this.recordedStopIndexes] }
+      : {}
+  }
+
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {
     const runtimeOutcome =
@@ -18127,6 +18241,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       },
       snapshots: [...this.snapshots],
       operation: this.operation,
+      ...this.recordedStopsView(),
       // Only a version 3 run lists its operations and, after a refusal or failure, the fields that decide a retry.
       ...(this.operationsConfiguration
         ? {

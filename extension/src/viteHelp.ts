@@ -574,7 +574,7 @@ export function viteHelp() {
         'codebook_start: profile repository-browser, the configuration above with the copied values and a stable key; the answer is a receipt with a run id.',
         'Poll the run resource it names until the run reads ready, paused (read inspectionUri and sourceUri, then codebook_continue) or an error: preparation starts Vite, seals the stops and opens the app.',
         'codebook_action repository-click: copy the run id and revision from the run resource (its nextActions), send it once with a stable action key.',
-        'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource.',
+        "At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource. A stop declared with hold set to record (API 1.43) is never paused, so do not wait for it and do not call codebook_continue for it; after the operation's result read recordedStops and the recorded observations, then explain them.",
       ],
     },
     viteSupport: {

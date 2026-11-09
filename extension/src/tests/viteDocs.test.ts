@@ -74,7 +74,7 @@ test('the Vite quick start gives the call order, the copy sources and the limits
     'codebook_start',
     'Poll the run resource it names until the run reads ready, paused (read inspectionUri and sourceUri, then codebook_continue) or an error',
     'codebook_action repository-click',
-    'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource.',
+    "At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource. A stop declared with hold set to record (API 1.43) is never paused, so do not wait for it and do not call codebook_continue for it; after the operation's result read recordedStops and the recorded observations, then explain them.",
   ])
   assert.ok(limits.some((line) => line.includes('Vite major 8')))
   assert.ok(limits.some((line) => line.includes('not honored')))
