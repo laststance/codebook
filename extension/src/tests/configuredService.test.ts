@@ -190,7 +190,7 @@ test('a root static-page start with entryPath /demo.html is judged by demo.html,
   const receipt = service.start({
     instanceId: service.instanceId,
     profile: 'repository-browser',
-    key: 'static-root-demo-entry',
+    key: 'root',
     configuration: {
       version: 3,
       adapter: 'static-page',
