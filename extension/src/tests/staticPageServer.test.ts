@@ -53,9 +53,13 @@ test('the static server listens on a loopback port and serves index.html for / a
   })
 })
 
-// Value: protects=AC 2 a path that leaves the folder (dot segments, encoded dots, a link out) answers 403 and a missing file 404, so no file outside the page folder is served; fails_when=a file outside the folder is answered; no_claim=other transports than HTTP on the loopback port
+// Value: protects=AC 2 a path that leaves the folder (dot segments, encoded dots, a link out) answers 403 and a missing file 404, so no file outside the page folder is served; fails_when=a file outside the folder is answered; no_claim=other transports than HTTP on the loopback port, or links on Windows without symlink privilege (test skipped there)
 test('the static server answers 403 for a path or link leaving the folder and 404 for a missing file', async (context) => {
   // Arrange
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
   const repository = await createStaticPageRepository(context, {
     '../outside.txt': 'secret',
   })

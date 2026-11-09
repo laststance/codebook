@@ -259,7 +259,7 @@ test('the adapter seals a library stop against the packed build the page imports
   assert.equal(bundle.source, LIBRARY_SOURCE)
 })
 
-// Value: protects=the library-stop branch never reads an entry page that is a link leaving the page folder; fails_when=the linked file's CDN address is found and the stop is sealed; no_claim=the wording of the refusal, or links on Windows without symlink privilege (test skipped there)
+// Value: protects=the library-stop branch never reads an entry page that is a link leaving the page folder; fails_when=the linked file's CDN address is found and the stop is sealed, or the stop is refused for another reason than library-not-in-build; no_claim=the wording of the refusal, or links on Windows without symlink privilege (test skipped there)
 test('a library stop does not read an entry page that is a link leaving the folder', async (context) => {
   // Arrange
   if (process.platform === 'win32') {
@@ -297,8 +297,9 @@ test('a library stop does not read an entry page that is a link leaving the fold
     }),
   ).then(
     () => 'sealed',
-    () => 'refused',
+    (error: unknown) =>
+      error instanceof StudyError ? error.details?.reason : 'other',
   )
   // Assert
-  assert.equal(outcome, 'refused')
+  assert.equal(outcome, 'library-not-in-build')
 })
