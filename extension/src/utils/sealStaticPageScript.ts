@@ -75,6 +75,41 @@ async function readServedBytes(
 }
 
 /**
+ * Refuses a stop whose line the identity map does not place within the scan's limits.
+ * Called by {@link sealStaticPageScript}; one limits object feeds both the scan and the refusal, so the reported number is the enforced one.
+ * @param sourceMap - The identity map text of the stop's script.
+ * @param request - The seal request: the stop, its citation end and the optional limits.
+ * @throws The unmapped-line refusal when the whole map was read and holds no position; the map-limit refusal naming the enforced segment limit when the scan stopped first.
+ * @example assertStopIsMapped(sourceMap, request) // returns when the stop line has a mapped position
+ */
+function assertStopIsMapped(
+  sourceMap: string,
+  request: StaticPageSealRequest,
+): void {
+  const { source, citationEndLine } = request
+  const limits = request.limits ?? DEFAULT_SOURCE_MAP_LIMITS
+  const scan = sourceMapMappedPositions(
+    JSON.parse(sourceMap).mappings,
+    0,
+    source.line,
+    citationEndLine,
+    undefined,
+    limits,
+  )
+  if (scan.positions.length) return
+  if (scan.complete)
+    throw staticPageUnmappedLineRefusal(
+      source.path,
+      source.line,
+      citationEndLine,
+    )
+  throw staticPageMapLimitRefusal(
+    'mapped-position-segments',
+    limits[SOURCE_MAP_LIMIT_FIELD['mapped-position-segments']],
+  )
+}
+
+/**
  * Seals one declared browser stop in a script of the page the static server serves, before the browser opens.
  *
  * Why it exists: the executed bytes are checked against these served bytes before the click. A page script has no source map of its own, so the seal gives it an identity map onto the file it sits in: the entry page's inline `<script>` (the stop line must lie inside one, and the served page must equal the file) or a same-origin `.js` file (the served bytes must equal the file). Called by the `static-page` adapter's `readBundle` for a stop in the page's own files.
@@ -158,28 +193,7 @@ export async function sealStaticPageScript(
     startLine: script.startLine,
     startColumn: script.startColumn,
   })
-  // One limits object feeds both the scan and the refusal, so the reported number is the enforced one.
-  const limits = request.limits ?? DEFAULT_SOURCE_MAP_LIMITS
-  const scan = sourceMapMappedPositions(
-    JSON.parse(sourceMap).mappings,
-    0,
-    source.line,
-    request.citationEndLine,
-    undefined,
-    limits,
-  )
-  if (!scan.positions.length) {
-    if (scan.complete)
-      throw staticPageUnmappedLineRefusal(
-        source.path,
-        source.line,
-        request.citationEndLine,
-      )
-    throw staticPageMapLimitRefusal(
-      'mapped-position-segments',
-      limits[SOURCE_MAP_LIMIT_FIELD['mapped-position-segments']],
-    )
-  }
+  assertStopIsMapped(sourceMap, request)
   const bundle: BundleSource = {
     sourcePath,
     mapSource: sourcePath,
