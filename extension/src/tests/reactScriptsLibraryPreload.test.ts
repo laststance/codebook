@@ -799,3 +799,159 @@ console.log('{}')`,
     { compilationHash: 'hh', packed: true, publicPath: '/', truncated: true },
   ])
 })
+
+/** The text of a packed library's built file, which names its own source map. */
+const BUILT_FILE_TEXT =
+  'module.exports = function built(value) {\n  return value + 1\n}\n//# sourceMappingURL=built.js.map\n'
+/** The original source the built file's map names. */
+const BUILT_SOURCE_TEXT =
+  'export function built(value: number): number {\n  return value + 1\n}\n'
+
+/** Adds a built file with its own source map to the fixture's packed copy (as a tsdown or Rollup build ships it) and makes the packed entry load it. */
+function addBuiltFileWithMap(fixture: Fixture): void {
+  writeAt(join(fixture.packedRoot, 'dist/built.js'), BUILT_FILE_TEXT)
+  writeAt(
+    join(fixture.packedRoot, 'dist/built.js.map'),
+    JSON.stringify({
+      version: 3,
+      file: 'built.js',
+      names: [],
+      sources: ['../src/built.ts'],
+      sourcesContent: [BUILT_SOURCE_TEXT],
+      mappings: 'AAAA;AACA;AACA',
+    }),
+  )
+  writeAt(join(fixture.packedRoot, 'src/built.ts'), BUILT_SOURCE_TEXT)
+  writeAt(join(fixture.libraryRoot, 'src/built.ts'), BUILT_SOURCE_TEXT)
+  writeAt(
+    join(fixture.packedRoot, 'index.js'),
+    "module.exports = [require('peer'), require('dep'), require('lib/sub'), require('./src/same.js'), require('./src/differs.js'), require('./dist/built.js')]\n",
+  )
+}
+
+// Value: protects=on a configuration without source-map-loader (react-scripts 4's webpack 4 one) a packed built file reaches the served map as the original source it was built from, named by its checked-out path, so a stop in the library's checked-out source can be sealed; fails_when=the served map names the packed built file (dist/built.js), and a library stop is refused library-not-in-build as in the Cycle 0104 native run; no_claim=a real webpack 4 compile (webpack 5 applies the same pre-loader rule here) or babel-loader carrying the map on
+test('a packed built file with its own map is named in the served map by its checked-out source when no source-map-loader is configured', async () => {
+  // Arrange
+  const fixture = createFixture()
+  addBuiltFileWithMap(fixture)
+
+  // Act
+  const output = await runWithPreload(fixture)
+
+  // Assert
+  assert.deepEqual(output.errors, [])
+  const map = JSON.parse(
+    readFileSync(join(fixture.outDir, 'bundle.js.map'), 'utf8'),
+  ) as { sources: string[]; sourcesContent: string[] }
+  const index = map.sources.indexOf(join(fixture.libraryRoot, 'src/built.ts'))
+  assert.notEqual(index, -1)
+  assert.equal(map.sourcesContent[index], BUILT_SOURCE_TEXT)
+  assert.equal(
+    map.sources.includes(join(fixture.packedRoot, 'dist/built.js')),
+    false,
+  )
+})
+
+// Value: protects=the packed-map rule is appended only to a configuration that has no source-map-loader, after the configuration's own rules, as a pre-loader limited to the packed folder; fails_when=a react-scripts 5 configuration (which has source-map-loader for every package) gets a second map loader, the rule is put in front of the configuration's rules, or it covers files outside the packed folder; no_claim=what the loader returns (the compile test above and the loader test below cover it)
+test('the packed-map rule is appended to a configuration without source-map-loader and left out where one exists', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const withLoaderFactory = join(
+    fixture.root,
+    'rs5/node_modules/react-scripts/config/webpack.config.js',
+  )
+  writeAt(
+    withLoaderFactory,
+    FACTORY_SOURCE(fixture.appRoot, fixture.outDir, false).replace(
+      'module: { rules: [',
+      "module: { rules: [{ enforce: 'pre', test: /\\.js$/, loader: 'source-map-loader' }, ",
+    ),
+  )
+
+  // Act
+  const result = await runScriptWithPreload(
+    fixture,
+    'rules.js',
+    `const describe = (factoryPath) => require(factoryPath)('development').module.rules.map((rule) => ({ enforce: rule.enforce, test: String(rule.test), include: rule.include, loader: rule.loader === ${JSON.stringify(fixture.preloadPath)} ? 'preload' : rule.loader }))
+console.log(JSON.stringify({ without: describe(${JSON.stringify(fixture.factoryPath)}), with: describe(${JSON.stringify(withLoaderFactory)}) }))`,
+  )
+
+  // Assert
+  assert.deepEqual(result, {
+    without: [
+      { test: '/\\.never$/' },
+      {
+        enforce: 'pre',
+        test: '/\\.(js|mjs|cjs)$/',
+        include: [join(fixture.packedRoot, '/')],
+        loader: 'preload',
+      },
+    ],
+    with: [
+      { enforce: 'pre', test: '/\\.js$/', loader: 'source-map-loader' },
+      { test: '/\\.never$/' },
+    ],
+  })
+})
+
+// Value: protects=the packed-map loader resolves a map's relative sources (with its sourceRoot) to absolute paths, reads a missing source text from the packed copy, and leaves a file alone whose map lies outside the packed folder; fails_when=the map is passed on with relative sources (webpack would resolve them against the Example), without source text, or a map outside the packed folder is read; no_claim=webpack's own handling of the returned map
+test('the packed-map loader gives absolute sources with their text and ignores a map outside the packed folder', async () => {
+  // Arrange
+  const fixture = createFixture()
+  const builtPath = join(fixture.packedRoot, 'dist/mapped.js')
+  writeAt(builtPath, 'exports.a = 1\n//# sourceMappingURL=mapped.js.map\n')
+  writeAt(
+    join(fixture.packedRoot, 'dist/mapped.js.map'),
+    JSON.stringify({
+      version: 3,
+      sourceRoot: '../lib-src/',
+      sources: ['a.ts'],
+      names: [],
+      mappings: 'AAAA',
+    }),
+  )
+  writeAt(join(fixture.packedRoot, 'lib-src/a.ts'), 'export const a = 1\n')
+  const outsidePath = join(fixture.packedRoot, 'dist/outside.js')
+  writeAt(
+    outsidePath,
+    'exports.b = 2\n//# sourceMappingURL=../../../../outside.js.map\n',
+  )
+  writeAt(
+    join(fixture.root, 'outside.js.map'),
+    JSON.stringify({
+      version: 3,
+      sources: ['b.ts'],
+      names: [],
+      mappings: 'AAAA',
+    }),
+  )
+
+  // Act
+  const result = await runScriptWithPreload(
+    fixture,
+    'loader.js',
+    `const loader = require(${JSON.stringify(fixture.preloadPath)})
+const fs = require('fs')
+const results = []
+const runLoader = (resourcePath) => new Promise((resolve) => {
+  const dependencies = []
+  loader.call({ resourcePath, addDependency: (file) => dependencies.push(file), async: () => (error, source, map) => resolve({ map, dependencies }) }, fs.readFileSync(resourcePath, 'utf8'), 'input-map')
+})
+Promise.all([runLoader(${JSON.stringify(builtPath)}), runLoader(${JSON.stringify(outsidePath)})]).then(([mapped, outside]) => console.log(JSON.stringify({ mapped, outside })))`,
+  )
+
+  // Assert
+  assert.deepEqual(result, {
+    mapped: {
+      map: {
+        version: 3,
+        sources: [join(fixture.packedRoot, 'lib-src/a.ts')],
+        names: [],
+        mappings: 'AAAA',
+        sourcesContent: ['export const a = 1\n'],
+      },
+      dependencies: [join(fixture.packedRoot, 'dist/mapped.js.map')],
+    },
+    outside: { map: 'input-map', dependencies: [] },
+  })
+})

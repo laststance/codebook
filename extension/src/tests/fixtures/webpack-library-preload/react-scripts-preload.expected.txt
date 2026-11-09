@@ -203,6 +203,48 @@ const patchConfiguration = (config, changes) => {
   changes.set(config, 'plugins', [...config.plugins, createReporterPlugin()])
 }
 
+// react-scripts 4 (webpack 4) has no source-map-loader, so the packed library would reach the served map as its built files. This pre-loader, limited to the packed folder and added only where no source-map-loader rule exists, hands webpack each packed file's own source map with absolute source paths, as source-map-loader does for react-scripts 5; any failure leaves the file and its map as they were.
+const loaderNameOf = (use) => (typeof use === 'string' ? use : isPlainObject(use) && typeof use.loader === 'string' ? use.loader : '')
+const hasSourceMapLoader = (rules) => entriesOf(rules).some((rule) => isPlainObject(rule) && (
+  loaderNameOf(rule).includes('source-map-loader') ||
+  entriesOf(rule.use).some((use) => loaderNameOf(use).includes('source-map-loader')) ||
+  hasSourceMapLoader(rule.oneOf) ||
+  hasSourceMapLoader(rule.rules)))
+const addPackedSourceMapRule = (config, changes) => {
+  if (!isPlainObject(config.module) || !Array.isArray(config.module.rules) || hasSourceMapLoader(config.module.rules)) return
+  // Appended, so the indexes of the configuration's own rules stay; enforce 'pre' runs it before babel-loader, which then carries the map on.
+  changes.set(config.module, 'rules', [...config.module.rules, { enforce: 'pre', test: /\.(js|mjs|cjs)$/, include: [packedPrefix], loader: __filename }])
+}
+const SOURCE_MAP_REFERENCE = /\/\/[#@] sourceMappingURL=([^\s'"]+)\s*$/
+const hasScheme = (value) => /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)
+const readPackedMap = (resourcePath, text) => {
+  const reference = SOURCE_MAP_REFERENCE.exec(text)
+  // An inline (data:) or remote map is left to webpack, as before.
+  if (!reference || hasScheme(reference[1])) return undefined
+  const mapPath = path.resolve(path.dirname(resourcePath), decodeURIComponent(reference[1]))
+  if (!isInside(CONFIG.packedRoot, realOf(mapPath))) return undefined
+  const { sourceRoot, ...map } = JSON.parse(fs.readFileSync(mapPath, 'utf8'))
+  if (!Array.isArray(map.sources)) return undefined
+  const base = path.resolve(path.dirname(mapPath), typeof sourceRoot === 'string' ? sourceRoot : '')
+  const sources = map.sources.map((source) => (typeof source === 'string' && !hasScheme(source) ? path.resolve(base, source) : source))
+  // A source without text in the map is read from the packed copy, as source-map-loader does.
+  const sourcesContent = sources.map((source, index) => {
+    const given = Array.isArray(map.sourcesContent) ? map.sourcesContent[index] : undefined
+    if (typeof given === 'string') return given
+    try { return fs.readFileSync(source, 'utf8') } catch { return null }
+  })
+  return { mapPath, map: { ...map, sources, sourcesContent } }
+}
+module.exports = function codebookPackedSourceMapLoader(source, inputMap) {
+  const callback = this.async()
+  try {
+    const found = readPackedMap(this.resourcePath, String(source))
+    if (found === undefined) return callback(null, source, inputMap)
+    this.addDependency(found.mapPath)
+    return callback(null, source, found.map)
+  } catch { return callback(null, source, inputMap) }
+}
+
 const wrapped = new WeakMap()
 const wrapFactory = (factory) => {
   if (wrapped.has(factory)) return wrapped.get(factory)
@@ -211,6 +253,7 @@ const wrapFactory = (factory) => {
     const changes = makeChanges()
     try {
       patchConfiguration(config, changes)
+      addPackedSourceMapRule(config, changes)
       writeLine({ wrapped: true })
     } catch (error) {
       changes.revert()

@@ -22,7 +22,7 @@ export { SingleBundleNotReadyError as ReactScriptsBundleNotReadyError }
 /**
  * The run's cache of a react-scripts server: one cache per served script, so a map is read once per compile of that script.
  *
- * Why it exists: react-scripts 4 serves a runtime and chunks, so one {@link SingleBundleCache} entry is not enough. `entry` keeps the first script that has a map, `mapReads` counts the map reads of all scripts, and {@link forgetEntries} drops them all. Created by the react-scripts adapter per started server.
+ * Why it exists: react-scripts 4 serves a runtime and chunks, so one {@link SingleBundleCache} entry is not enough. `entry` keeps the first script that has a map, `mapReads` counts the map reads of all scripts, and {@link forgetEntries} drops them all, with the entry page's script list. Created by the react-scripts adapter per started server.
  */
 export class ReactScriptsBundleCache extends SingleBundleCache {
   /** The entry page's eligible script addresses, kept once every one of them was read. */
@@ -75,6 +75,8 @@ export class ReactScriptsBundleCache extends SingleBundleCache {
 
   override forgetEntries(): void {
     super.forgetEntries()
+    // A recompile may change which scripts the entry page names, so the page is read again too.
+    this.scriptUrls = undefined
     for (const scriptCache of this.scriptCaches.values())
       scriptCache.forgetEntries()
   }

@@ -11,7 +11,7 @@ export type ReactScriptsLibraryPreloadConfiguration =
 /*
  * The react-scripts tail of the shared preload ({@link assembleWebpackLibraryPreloadSource}).
  *
- * It is inert at load: it only replaces `Module._load`, writing and creating nothing, because forked children inherit it through `process.execArgv`. Only when react-scripts' `config/webpack.config.js` factory is required does it wrap the factory once; the wrapped factory patches the configuration it returns and writes `{"wrapped":true}`, or, when anything throws, undoes every change, writes `{"error":"<message>"}` and returns the configuration unpatched. A failure while describing a later compilation writes `{"reportError":"<message>"}` instead, which does not mean the patch was not applied.
+ * It is inert at load: it only replaces `Module._load` and sets `module.exports` to the packed-map loader, writing and creating nothing, because forked children inherit it through `process.execArgv`. Only when react-scripts' `config/webpack.config.js` factory is required does it wrap the factory once; the wrapped factory patches the configuration it returns (on a configuration without `source-map-loader`, react-scripts 4's, it also appends the packed-map pre-loader rule) and writes `{"wrapped":true}`, or, when anything throws, undoes every change, writes `{"error":"<message>"}` and returns the configuration unpatched. A failure while describing a later compilation writes `{"reportError":"<message>"}` instead, which does not mean the patch was not applied.
  * Its lines carry no compiler name and no output path: react-scripts builds one compilation, matched by its public path.
  */
 
@@ -53,6 +53,52 @@ const createReporterPlugin = () => ({
 })
 
 `
+/**
+ * The packed-map pre-loader of the react-scripts tail: react-scripts 4's webpack 4 configuration has no `source-map-loader` (react-scripts 5's has one for every package), so without it the packed library reaches the served map as its built files and a stop in its checked-out source cannot be sealed. The preload file itself is the loader (`module.exports`), added as one `enforce: 'pre'` rule limited to the packed folder, only to a configuration that has no `source-map-loader`.
+ */
+const REACT_SCRIPTS_PACKED_MAP_LOADER = `// react-scripts 4 (webpack 4) has no source-map-loader, so the packed library would reach the served map as its built files. This pre-loader, limited to the packed folder and added only where no source-map-loader rule exists, hands webpack each packed file's own source map with absolute source paths, as source-map-loader does for react-scripts 5; any failure leaves the file and its map as they were.
+const loaderNameOf = (use) => (typeof use === 'string' ? use : isPlainObject(use) && typeof use.loader === 'string' ? use.loader : '')
+const hasSourceMapLoader = (rules) => entriesOf(rules).some((rule) => isPlainObject(rule) && (
+  loaderNameOf(rule).includes('source-map-loader') ||
+  entriesOf(rule.use).some((use) => loaderNameOf(use).includes('source-map-loader')) ||
+  hasSourceMapLoader(rule.oneOf) ||
+  hasSourceMapLoader(rule.rules)))
+const addPackedSourceMapRule = (config, changes) => {
+  if (!isPlainObject(config.module) || !Array.isArray(config.module.rules) || hasSourceMapLoader(config.module.rules)) return
+  // Appended, so the indexes of the configuration's own rules stay; enforce 'pre' runs it before babel-loader, which then carries the map on.
+  changes.set(config.module, 'rules', [...config.module.rules, { enforce: 'pre', test: /\\.(js|mjs|cjs)$/, include: [packedPrefix], loader: __filename }])
+}
+const SOURCE_MAP_REFERENCE = /\\/\\/[#@] sourceMappingURL=([^\\s'"]+)\\s*$/
+const hasScheme = (value) => /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)
+const readPackedMap = (resourcePath, text) => {
+  const reference = SOURCE_MAP_REFERENCE.exec(text)
+  // An inline (data:) or remote map is left to webpack, as before.
+  if (!reference || hasScheme(reference[1])) return undefined
+  const mapPath = path.resolve(path.dirname(resourcePath), decodeURIComponent(reference[1]))
+  if (!isInside(CONFIG.packedRoot, realOf(mapPath))) return undefined
+  const { sourceRoot, ...map } = JSON.parse(fs.readFileSync(mapPath, 'utf8'))
+  if (!Array.isArray(map.sources)) return undefined
+  const base = path.resolve(path.dirname(mapPath), typeof sourceRoot === 'string' ? sourceRoot : '')
+  const sources = map.sources.map((source) => (typeof source === 'string' && !hasScheme(source) ? path.resolve(base, source) : source))
+  // A source without text in the map is read from the packed copy, as source-map-loader does.
+  const sourcesContent = sources.map((source, index) => {
+    const given = Array.isArray(map.sourcesContent) ? map.sourcesContent[index] : undefined
+    if (typeof given === 'string') return given
+    try { return fs.readFileSync(source, 'utf8') } catch { return null }
+  })
+  return { mapPath, map: { ...map, sources, sourcesContent } }
+}
+module.exports = function codebookPackedSourceMapLoader(source, inputMap) {
+  const callback = this.async()
+  try {
+    const found = readPackedMap(this.resourcePath, String(source))
+    if (found === undefined) return callback(null, source, inputMap)
+    this.addDependency(found.mapPath)
+    return callback(null, source, found.map)
+  } catch { return callback(null, source, inputMap) }
+}
+
+`
 /** Wraps the sync factory of react-scripts' `config/webpack.config.js` and hooks it through `Module._load`. */
 const REACT_SCRIPTS_TAIL = `const wrapped = new WeakMap()
 const wrapFactory = (factory) => {
@@ -62,6 +108,7 @@ const wrapFactory = (factory) => {
     const changes = makeChanges()
     try {
       patchConfiguration(config, changes)
+      addPackedSourceMapRule(config, changes)
       writeLine({ wrapped: true })
     } catch (error) {
       changes.revert()
@@ -103,6 +150,6 @@ export function buildReactScriptsLibraryPreloadSource(
   return assembleWebpackLibraryPreloadSource(configuration, {
     realOf: WEBPACK_PRELOAD_REAL_OF_PLAIN,
     reporter: REACT_SCRIPTS_REPORTER,
-    tail: REACT_SCRIPTS_TAIL,
+    tail: REACT_SCRIPTS_PACKED_MAP_LOADER + REACT_SCRIPTS_TAIL,
   })
 }

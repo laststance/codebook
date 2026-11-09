@@ -372,6 +372,7 @@ test('the API note, skill and README state the react-scripts 4 support of API 1.
     '`script-too-large`',
     '`node-version-unreadable`',
     'works on react-scripts 4 too',
+    "a stop in the library's checked-out source pauses there as on react-scripts 5",
     "extends `ambiguous-source` to a file named by two served scripts' maps",
     'API 1.41 is additive:',
   ])
@@ -413,6 +414,11 @@ test('the README and help state the script scope, the NODE_OPTIONS source and th
   ])
     assert.ok(limitText.includes(phrase), phrase)
   assert.ok(libraryLimitText.includes('nothing ran on the installed copy'))
+  assert.ok(
+    libraryLimitText.includes(
+      "Codebook hands webpack the packed library's own source maps and a stop in its checked-out source seals as on react-scripts 5",
+    ),
+  )
 })
 
 // Value: protects=the ambiguous-source help and the react-scripts-version help name both maps case and the requiredMajor / supportedMajors meaning, and the start guide names API 1.41 for react-scripts 4; fails_when=a sentence leaves the help; no_claim=that the reader raises the reason

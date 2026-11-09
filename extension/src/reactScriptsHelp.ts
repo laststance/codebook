@@ -179,7 +179,7 @@ function reactScriptsLibraryHelp() {
       "A browser stop in the library's checked-out source (a file below library.packageRoot, never in node_modules) is sealed against the served bundle's source map and pauses there. Its refusals, in the order the checks run, are library-build-stale, library-not-in-build, library-build-unmapped (details.cause) and, during the run, library-build-changed; each carries details.library and details.sideEffects partial.",
     limits: [
       "Versions can differ from a fresh install: the library's dependencies come from its own install, not from the Example's.",
-      `One library per run; browser stops only; the Example must use react-scripts 4 or 5 (react-scripts 4 needs API ${REACT_SCRIPTS_FOUR_MINIMUM_API} or later, and the redirect counts as applied only when the compile report names the packed library among its modules).`,
+      `One library per run; browser stops only; the Example must use react-scripts 4 or 5 (react-scripts 4 needs API ${REACT_SCRIPTS_FOUR_MINIMUM_API} or later, and the redirect counts as applied only when the compile report names the packed library among its modules; react-scripts 4 reads no package's own source maps, so Codebook hands webpack the packed library's own source maps and a stop in its checked-out source seals as on react-scripts 5).`,
       'A react-scripts installation whose webpack configuration the preload cannot wrap is refused after the first compile (library-redirect-not-applied) before the browser opens, so nothing ran on the installed copy; a new run without library then uses the installed copy.',
       'Yarn and Bun repositories are refused (package-manager-unsupported); the Example runs its installed copy.',
     ],

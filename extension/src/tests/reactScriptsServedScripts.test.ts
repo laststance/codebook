@@ -41,6 +41,8 @@ type FixtureScript = {
  * Serves an entry page naming the given scripts in order, each with its own map, from one loopback server (the shape react-scripts 4 serves: a runtime, a vendors chunk and the app's chunk).
  * @param context - The test, which closes the server.
  * @param scripts - The scripts by file name, in page order.
+ * @param outsideScripts - Script addresses outside static/js/ the page also names.
+ * @param pageScriptsAt - The script names the page names on its nth request; when absent, every script of {@link scripts}.
  * @returns The owned origin.
  * @example const { origin } = await serveScripts(context, { 'main.chunk.js': { map: null } })
  */
@@ -48,20 +50,23 @@ async function serveScripts(
   context: TestContext,
   scripts: Record<string, FixtureScript>,
   outsideScripts: string[] = [],
+  pageScriptsAt?: (pageCount: number) => string[],
 ) {
   const requestCounts = new Map<string, number>()
   // Scripts outside static/js/ (an env-config.js) name a map that does not exist.
-  const page = [
-    ...Object.keys(scripts).map((name) => `/static/js/${name}`),
-    ...outsideScripts,
-  ]
-    .map((src) => `<script src="${src}"></script>`)
-    .join('')
+  const pageOf = (names: string[]) =>
+    [...names.map((name) => `/static/js/${name}`), ...outsideScripts]
+      .map((src) => `<script src="${src}"></script>`)
+      .join('')
+  const page = pageOf(Object.keys(scripts))
+  let pageCount = 0
   const server = createServer((request, response) => {
     const path = request.url ?? '/'
     if (path === '/') {
+      pageCount += 1
       response.setHeader('content-type', 'text/html')
-      response.end(page)
+      // A page whose script list changes by request count stands for a recompile that adds a chunk.
+      response.end(pageScriptsAt ? pageOf(pageScriptsAt(pageCount)) : page)
       return
     }
     if (outsideScripts.includes(path)) {
@@ -520,4 +525,41 @@ test('an unreadable app folder reads not ready', async (context) => {
   )
   // Assert
   await assert.rejects(reading, ReactScriptsBundleNotReadyError)
+})
+
+// Value: protects=after a stale map makes the seal forget its entries, the next seal reads the entry page again, so a chunk a recompile added is read and the stop seals in the map that now names its file; fails_when=forgetEntries keeps the cached script list, the added chunk is never read and the stop is refused; no_claim=a real webpack recompile
+test('a chunk added by a recompile after a stale map is read on the next seal', async (context) => {
+  // Arrange
+  const repository = await createReactScriptsRepository(context)
+  const stopPath = join(repository.appRoot, 'src/App.js')
+  const stale = {
+    sources: [stopPath],
+    sourcesContent: ['export const old = 1\n'],
+  }
+  const fresh = { sources: [stopPath], sourcesContent: [repository.sourceText] }
+  const { origin } = await serveScripts(
+    context,
+    {
+      'main.chunk.js': {
+        map: stale,
+        // The bundle bytes stay, so the second seal reads the cached stale map first and then forgets the cache.
+        mapAt: (count) => (count === 1 ? stale : OTHER_MAP),
+      },
+      'added.chunk.js': { map: fresh },
+    },
+    [],
+    (pageCount) =>
+      pageCount === 1 ? ['main.chunk.js'] : ['main.chunk.js', 'added.chunk.js'],
+  )
+  const cache = new ReactScriptsBundleCache()
+  const first = await refusalOf(
+    sealReactScriptsStop(appStopRequest(repository, origin, cache)),
+  )
+  // Act
+  const { bundle } = await sealReactScriptsStop(
+    appStopRequest(repository, origin, cache),
+  )
+  // Assert
+  assert.equal(first.code, 'SOURCE_CHANGED')
+  assert.equal(bundle.scriptUrl, `${origin}/static/js/added.chunk.js`)
 })
