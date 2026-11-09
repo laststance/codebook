@@ -223,7 +223,7 @@ export async function readStatusAdapterReadiness(
   const deadlineAt =
     now() + (options.discovery?.timeoutMs ?? REPOSITORY_GIT_TIMEOUT_MS)
   const placement = await readPlacement(workspace, signal, deadlineAt - now())
-  const [base, rootApps, discovery] = await Promise.all([
+  const [base, rootApps, discovery, pages] = await Promise.all([
     readRepositoryAdapterReadiness(workspace, node, signal),
     readRootApps(workspace, placement.kind === 'nested'),
     // One pass classifies each tracked package.json for both Next and Vite.
@@ -235,6 +235,8 @@ export async function readStatusAdapterReadiness(
           signal,
         })
       : undefined,
+    // Start the static-page walk with the other reads; a nested workspace never uses it.
+    placement.kind === 'nested' ? undefined : staticPageListing(workspace),
   ])
   if (placement.kind === 'nested') {
     const recovery = describeNestedWorkspaceRecovery(
@@ -305,7 +307,7 @@ export async function readStatusAdapterReadiness(
   }
   const staticPage: StaticPageAdapterReadiness = {
     ...base['static-page'],
-    ...(await staticPageListing(workspace)),
+    ...pages,
   }
   return {
     'next-dev-webpack': { ...next, missing: rootMissing(next) },
