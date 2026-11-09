@@ -238,7 +238,7 @@ const REACT_SCRIPTS_REFUSAL_REASONS = {
     'script-too-large':
       "A script the entry page names (details.subject) is over Codebook's reading limit, so the served scripts cannot be sealed. Tell the learner the app's bundle is too large for this version to seal; never edit the project. The owned server was stopped and no click was sent.",
     'map-unreadable':
-      'The served bundle or its source map cannot be read as react-scripts serves it (details.problem: an oversized bundle, a missing or foreign sourceMappingURL, or a map that is not a flat version 3 JSON map), so the stop cannot be sealed. The owned server was stopped and no click was sent; tell the learner this app cannot be observed in this version.',
+      'The served bundle or its source map cannot be read as react-scripts serves it (details.problem: a missing or foreign sourceMappingURL, a script that is not UTF-8 text, or a map that is not a flat version 3 JSON map; a script over the reading limit is script-too-large instead), so the stop cannot be sealed. The owned server was stopped and no click was sent; tell the learner this app cannot be observed in this version.',
   },
 } as const satisfies Record<
   (typeof REACT_SCRIPTS_REFUSAL_CODES)[number],

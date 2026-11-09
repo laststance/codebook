@@ -12,6 +12,7 @@ import type { ReverseProxyDeclaration } from '../reverseProxyDeclarationSchema'
 import type { ReverseProxyFailure } from '../reverseProxyGate'
 import type { ReverseProxyRefusalFacts } from '../reverseProxyRefusals'
 import type { SavedSessionServer } from '../runtimeSupport/savedSessionTypes'
+import { waitUntil as pollUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as SavedSessionCommands from '../savedSessionCommands'
 import type * as SavedSessionServerModule from '../savedSessionServer'
 import type {
@@ -49,9 +50,15 @@ const PIN = '--host-resolver-rules=MAP app.example.test 127.0.0.1'
 const settle = (): Promise<void> =>
   new Promise((resolve) => setImmediate(resolve))
 
-/** Waits, a turn at a time, until a condition holds; the setup reads the sign-in routes from disk before it starts, so a fixed number of turns would guess. */
+/**
+ * Waits until a condition holds, failing the test when it never does.
+ * The setup reads the sign-in routes from disk before it starts, and on a loaded runner (CI's coverage run) that outlasts any fixed number of turns: a turn-bounded wait returned early there and the test asserted before the notice it waited for (PR #270, Fallow health shard 3).
+ * @param condition - What the test waits for; every caller expects it to become true.
+ * @throws WaitTimeoutError when it is still false after the shared active budget.
+ * @example await waitUntil(() => startRequests.length > 0)
+ */
 async function waitUntil(condition: () => boolean): Promise<void> {
-  for (let turn = 0; turn < 500 && !condition(); turn += 1) await settle()
+  await pollUntil(condition, 'the awaited setup state', undefined, undefined, 1)
 }
 
 /** Makes a stand-in for the refusal builder so the tests read how the setup server calls it; the real wording is lane D's. */

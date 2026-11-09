@@ -311,6 +311,12 @@ test('a react-scripts 4 app with an unreadable Node version is refused node-vers
   )
 })
 
+/** The fake Node below is a POSIX shell script, which Windows cannot execute; the tests that run it are skipped there. */
+const FAKE_NODE_SKIP =
+  process.platform === 'win32'
+    ? 'the fake Node executable is a POSIX shell script'
+    : false
+
 /** Writes an executable that prints the given Node version and returns its unique path. */
 async function fakeNodePrinting(
   directory: string,
@@ -324,52 +330,60 @@ async function fakeNodePrinting(
 }
 
 // Value: protects=the Node major read from the executable reaches workspace.runtime and Node 16 gets no OpenSSL flag; fails_when=nodeMajor is lost or misparsed, or the flag is added for Node 16; no_claim=the flag reaching a real child
-test('a react-scripts 4 app on a Node 16 executable gets nodeMajor 16 and no OpenSSL option', async (context) => {
-  // Arrange
-  const repository = await createReactScriptsRepository(context, {
-    appFolder: '.',
-    version: '4.0.3',
-  })
-  const node = await fakeNodePrinting(
-    repository.root,
-    'fake-node-16',
-    'v16.20.0',
-  )
-  // Act
-  const { runtime } = await assessReactScriptsWorkspace(
-    await resolveReactScriptsPackage(repository.root, undefined),
-    node,
-    new AbortController().signal,
-  )
-  const child = buildReactScriptsEnvironment({}, 3000, runtime, {})
-  // Assert
-  assert.deepEqual(runtime, { reactScriptsMajor: 4, nodeMajor: 16 })
-  assert.equal(child.NODE_OPTIONS, undefined)
-})
+test(
+  'a react-scripts 4 app on a Node 16 executable gets nodeMajor 16 and no OpenSSL option',
+  { skip: FAKE_NODE_SKIP },
+  async (context) => {
+    // Arrange
+    const repository = await createReactScriptsRepository(context, {
+      appFolder: '.',
+      version: '4.0.3',
+    })
+    const node = await fakeNodePrinting(
+      repository.root,
+      'fake-node-16',
+      'v16.20.0',
+    )
+    // Act
+    const { runtime } = await assessReactScriptsWorkspace(
+      await resolveReactScriptsPackage(repository.root, undefined),
+      node,
+      new AbortController().signal,
+    )
+    const child = buildReactScriptsEnvironment({}, 3000, runtime, {})
+    // Assert
+    assert.deepEqual(runtime, { reactScriptsMajor: 4, nodeMajor: 16 })
+    assert.equal(child.NODE_OPTIONS, undefined)
+  },
+)
 
 // Value: protects=Node 17 is the first major that gets the OpenSSL legacy provider for react-scripts 4; fails_when=Node 17 gets no flag; no_claim=Node 18 or later
-test('a react-scripts 4 app on a Node 17 executable gets nodeMajor 17 and the OpenSSL option', async (context) => {
-  // Arrange
-  const repository = await createReactScriptsRepository(context, {
-    appFolder: '.',
-    version: '4.0.3',
-  })
-  const node = await fakeNodePrinting(
-    repository.root,
-    'fake-node-17',
-    'v17.0.0',
-  )
-  // Act
-  const { runtime } = await assessReactScriptsWorkspace(
-    await resolveReactScriptsPackage(repository.root, undefined),
-    node,
-    new AbortController().signal,
-  )
-  const child = buildReactScriptsEnvironment({}, 3000, runtime, {})
-  // Assert
-  assert.deepEqual(runtime, { reactScriptsMajor: 4, nodeMajor: 17 })
-  assert.equal(child.NODE_OPTIONS, '--openssl-legacy-provider')
-})
+test(
+  'a react-scripts 4 app on a Node 17 executable gets nodeMajor 17 and the OpenSSL option',
+  { skip: FAKE_NODE_SKIP },
+  async (context) => {
+    // Arrange
+    const repository = await createReactScriptsRepository(context, {
+      appFolder: '.',
+      version: '4.0.3',
+    })
+    const node = await fakeNodePrinting(
+      repository.root,
+      'fake-node-17',
+      'v17.0.0',
+    )
+    // Act
+    const { runtime } = await assessReactScriptsWorkspace(
+      await resolveReactScriptsPackage(repository.root, undefined),
+      node,
+      new AbortController().signal,
+    )
+    const child = buildReactScriptsEnvironment({}, 3000, runtime, {})
+    // Assert
+    assert.deepEqual(runtime, { reactScriptsMajor: 4, nodeMajor: 17 })
+    assert.equal(child.NODE_OPTIONS, '--openssl-legacy-provider')
+  },
+)
 
 // Value: protects=react-scripts 5 never reads the Node version, so an unusable Node path does not refuse it; fails_when=a react-scripts 5 app is refused node-version-unreadable; no_claim=react-scripts 4
 test('a react-scripts 5 app still assesses when the Node executable does not exist', async (context) => {
