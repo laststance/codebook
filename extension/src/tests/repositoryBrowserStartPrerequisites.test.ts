@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import {
   repositoryBrowserStartPrerequisites,
   rootStaticPageEntryStartPrerequisites,
 } from '../utils/repositoryBrowserStartPrerequisites'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** A ready window report for a static-page start: shared prerequisites pass. */
 const READY_REPORT = {
@@ -16,18 +18,22 @@ const READY_REPORT = {
   profiles: { 'repository-browser': { ready: true, missing: [] } },
 } as unknown as Parameters<typeof repositoryBrowserStartPrerequisites>[0]
 
-/** Makes a temp root holding the given files. */
-async function rootWith(files: Record<string, string>): Promise<string> {
+/** Makes a temp root holding the given files, removed when the test ends. */
+async function rootWith(
+  context: TestContext,
+  files: Record<string, string>,
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'codebook-root-entry-'))
+  context.after(() => removeTestFolder(root))
   for (const [name, text] of Object.entries(files))
     await writeFile(join(root, name), text)
   return root
 }
 
 // Value: protects=a root page whose only file is the declared demo.html starts; fails_when=the root's precomputed index.html readiness judges a declared entry; no_claim=serving the page
-test('a root with only demo.html and entryPath /demo.html is ready to start', async () => {
+test('a root with only demo.html and entryPath /demo.html is ready to start', async (context) => {
   // Arrange
-  const root = await rootWith({ 'demo.html': '<h1>demo</h1>' })
+  const root = await rootWith(context, { 'demo.html': '<h1>demo</h1>' })
   // Act
   const result = await rootStaticPageEntryStartPrerequisites(
     READY_REPORT,
@@ -40,9 +46,9 @@ test('a root with only demo.html and entryPath /demo.html is ready to start', as
 })
 
 // Value: protects=the default entry keeps the root readiness, which reports no-entry-page without index.html; fails_when=a / or absent entry is judged by another file; no_claim=the refusal wording
-test('a root with entryPath / or none keeps the root readiness', async () => {
+test('a root with entryPath / or none keeps the root readiness', async (context) => {
   // Arrange
-  const root = await rootWith({ 'demo.html': '<h1>demo</h1>' })
+  const root = await rootWith(context, { 'demo.html': '<h1>demo</h1>' })
   // Act
   const slash = await rootStaticPageEntryStartPrerequisites(
     READY_REPORT,
@@ -62,9 +68,9 @@ test('a root with entryPath / or none keeps the root readiness', async () => {
 })
 
 // Value: protects=a declared entry that needs a bundler is refused; fails_when=the declared entry is not judged; no_claim=other gap kinds
-test('a root whose demo.html imports a bare specifier is refused needs-bundler', async () => {
+test('a root whose demo.html imports a bare specifier is refused needs-bundler', async (context) => {
   // Arrange
-  const root = await rootWith({
+  const root = await rootWith(context, {
     'demo.html': '<script type="module">import "lib"</script>',
   })
   // Act
@@ -79,9 +85,9 @@ test('a root whose demo.html imports a bare specifier is refused needs-bundler',
 })
 
 // Value: protects=a root with no declared entry file is refused no-entry-page; fails_when=the declared entry is not checked for existence; no_claim=wording
-test('a root without the declared entry file is refused no-entry-page', async () => {
+test('a root without the declared entry file is refused no-entry-page', async (context) => {
   // Arrange
-  const root = await rootWith({ 'index.html': '<h1>index</h1>' })
+  const root = await rootWith(context, { 'index.html': '<h1>index</h1>' })
   // Act
   const result = await rootStaticPageEntryStartPrerequisites(
     READY_REPORT,
@@ -94,9 +100,9 @@ test('a root without the declared entry file is refused no-entry-page', async ()
 })
 
 // Value: protects=a nested packageRoot keeps its own judgement; fails_when=the root judges a nested start; no_claim=the nested rules
-test('a nested packageRoot is left to the nested package judgement', async () => {
+test('a nested packageRoot is left to the nested package judgement', async (context) => {
   // Arrange
-  const root = await rootWith({})
+  const root = await rootWith(context, {})
   // Act
   const result = await rootStaticPageEntryStartPrerequisites(
     READY_REPORT,

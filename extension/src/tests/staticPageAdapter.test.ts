@@ -259,9 +259,13 @@ test('the adapter seals a library stop against the packed build the page imports
   assert.equal(bundle.source, LIBRARY_SOURCE)
 })
 
-// Value: protects=the library-stop branch never reads an entry page that is a link leaving the page folder; fails_when=the linked file's CDN address is found and the stop is sealed; no_claim=the wording of the refusal
+// Value: protects=the library-stop branch never reads an entry page that is a link leaving the page folder; fails_when=the linked file's CDN address is found and the stop is sealed; no_claim=the wording of the refusal, or links on Windows without symlink privilege (test skipped there)
 test('a library stop does not read an entry page that is a link leaving the folder', async (context) => {
   // Arrange
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
   const repository = await createStaticPageRepository(context)
   const library = await createPackedLibrary(context)
   const { started } = await startAdapter(context, repository)

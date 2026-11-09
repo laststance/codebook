@@ -43,7 +43,7 @@ export type PackedLibraryFixture = {
 /**
  * Builds a checked-out library and its packed copy, whose map names `src/a.ts` with the text both copies hold.
  * @param context - The test, which removes the folders when it ends.
- * @param options - `packedSource` writes another text into the packed `src/a.ts`; `checkedOutSource` another one into the checked-out file.
+ * @param options - `checkedOutSource` writes another text into the checked-out `src/a.ts`; the packed copy keeps the shared text.
  * @returns The folders and the files served from the packed copy.
  * @example const library = await createPackedLibrary(context)
  */

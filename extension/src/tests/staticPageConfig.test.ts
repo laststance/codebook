@@ -76,6 +76,12 @@ test('versions 1 and 2 refuse the static-page adapter', () => {
     results.map((result) => result.success),
     [false, false],
   )
+  assert.deepEqual(
+    results.map((result) =>
+      result.error?.issues.some((issue) => issue.path[0] === 'adapter'),
+    ),
+    [true, true],
+  )
 })
 
 // Value: protects=AC 1 a static-page configuration is browser stops only: a server participant is refused by the public schema, not by a later start; fails_when=a server stop is accepted under static-page; no_claim=the wording of the message

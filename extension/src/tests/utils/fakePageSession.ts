@@ -1,6 +1,7 @@
 import type { Protocol } from 'devtools-protocol'
 
 import { Cdp } from '../../runtimeSupport/cdp'
+import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 
 /** One command the code under test sent over the fake page session. */
 export type SentCommand = { method: string; params: unknown }
@@ -67,12 +68,9 @@ export class FakePageSession extends EventTarget {
   async until(
     condition: (commands: readonly SentCommand[]) => boolean,
   ): Promise<void> {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      if (condition(this.commands)) return
-      await new Promise((resolve) => setTimeout(resolve, 5))
-    }
-    throw new Error(
-      `The commands never satisfied the condition: ${this.commands.map((command) => command.method).join(', ')}`,
+    await waitUntil(
+      () => condition(this.commands),
+      'the fake page session commands satisfied the condition',
     )
   }
 }
