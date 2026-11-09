@@ -239,7 +239,7 @@ export function operationsHelp() {
         'Poll the run resource it names while it reads preparing, until it reads ready, paused (read inspectionUri and sourceUri, then codebook_continue) or a failed state with an error code; read nextActions: it offers repository-operation while an operation is left.',
         `codebook_action ${REPOSITORY_OPERATION_ACTION}: one call per operation, each with a new key; the run takes the next declared operation in order, so a call names no index.`,
         'Read the run resource after every call; its operations[i] tell what the run did.',
-        'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource. Send the next operation only when the run reads ready again.',
+        'At each pause read inspectionUri and sourceUri, explain the values in the chat, then codebook_continue with the continueArguments of the current run resource. Send the next operation only when the run reads ready again. A stop declared with hold: "record" (API 1.43) is never paused, so do not wait for it and do not call codebook_continue for it; after the operation\'s result read recordedStops and the recorded observations, then explain them.',
       ],
       receipt: {
         shape: '{ operationId, key, runUri, operationIndex, accepted: true }',
@@ -266,7 +266,7 @@ export function operationsHelp() {
       recordedStops: {
         minimumApi: '1.43',
         field:
-          'hold: "explain" (the default, and what a stop without the field does) or hold: "record", optional on the top-level stop and on each additionalStops entry of a version 3 configuration. A stop with afterOperation 0 refuses "record" with the field\'s path.',
+          'hold: "explain" (the default, and what a stop without the field does) or hold: "record", optional on the top-level stop and on each additionalStops entry of a version 3 configuration. A stop with afterOperation 0 refuses "record" with the field\'s path, and a version 1 or 2 configuration refuses hold as an unknown field.',
         whenToRecord:
           "Declare record for a stop inside a request that the app bounds with its own deadline or timeout, which you find by reading that request's code (a client wrapper, server middleware or a transaction helper): the target's own clocks keep running while a held stop waits, so a long explanation ends the request before the next stop or the result. Never declare record merely to avoid explaining; a stop in code without a deadline stays held.",
         whatHappens:

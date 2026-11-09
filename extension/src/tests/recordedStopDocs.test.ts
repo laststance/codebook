@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { expoWebHelp } from '../expoWebHelp'
 import { operationsHelp } from '../operationsHelp'
 import { viteHelp } from '../viteHelp'
 
@@ -33,6 +34,8 @@ test('the operations help names hold record, when to declare it, recordedStops a
     'saved replay',
     'STALE_PAUSE',
     'API 1.43 or later',
+    'a version 1 or 2 configuration refuses hold as an unknown field',
+    "field's path",
   ].filter((phrase) => !text.includes(phrase))
   // Assert
   assert.equal(recorded.minimumApi, '1.43')
@@ -68,6 +71,11 @@ test('the skill and the README describe recorded stops from API 1.43 with the de
     "explain the recorded stops in order after the operation's result",
     'never call `codebook_continue` for a recorded stop (it is refused `STALE_PAUSE`)',
     'Never declare `record` merely to avoid explaining',
+    'in a `repository-browser` version 3 run only',
+    'The `node-server` profile accepts no `version: 3`, `afterOperation` or `hold`',
+    'resume promptly, explain after the response',
+    "the app's own deadline may expire while a stop holds",
+    'inspectable there only once the save has completed',
   ].filter((phrase) => !skill.includes(phrase))
   const missingFromReadme = [
     '**Record a stop without pausing (MCP API 1.43).**',
@@ -77,8 +85,31 @@ test('the skill and the README describe recorded stops from API 1.43 with the de
     "recorded values are in the saved replay's native debugger",
     'refused `STALE_PAUSE`',
     'updates to **1.0.86**',
+    'is saved as format 24 (`.study.v24.json`)',
+    'a Codebook older than API 1.43 lists it as saved by a newer Codebook',
   ].filter((phrase) => !readme.includes(phrase))
   // Assert
   assert.deepEqual(missingFromSkill, [])
   assert.deepEqual(missingFromReadme, [])
+})
+
+// Value: protects=no help surface that carries the pause order tells the chat to wait for paused or to call codebook_continue for a recorded stop; fails_when=the apiServer, Vite or Expo order sends a recorded stop through the wait-then-continue step; no_claim=that a real run records the stops
+test('the apiServer, Vite and Expo help limit wait-then-continue to held stops and read recordedStops for a recorded stop', () => {
+  // Arrange
+  const apiText = viteHelp().viteApiServer.attribution.join('\n')
+  const viteText = viteHelp().viteQuickStart.callOrder.join('\n')
+  const expoText = expoWebHelp().expoWebQuickStart.callOrder.join('\n')
+  const never = 'do not wait for it and do not call codebook_continue for it'
+  // Act
+  const missing = [
+    apiText.includes(
+      'A recorded stop (hold: "record") is never held: do not wait for paused-server and never call codebook_continue for it',
+    )
+      ? ''
+      : 'apiServer',
+    viteText.includes(never) ? '' : 'vite',
+    expoText.includes(never) ? '' : 'expo',
+  ].filter((name) => name !== '')
+  // Assert
+  assert.deepEqual(missing, [])
 })

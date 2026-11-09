@@ -178,7 +178,7 @@ export function expoWebHelp() {
         'codebook_sources, then codebook_source: read the file the stop is in; copy its path, full SHA-256 and the line and column from numberedText.',
         'codebook_publish_book: publish a source-only article whose node cites that file.',
         'codebook_start: profile repository-browser, the configuration above with the copied values and a stable key.',
-        `Poll the run resource until it reads ready, paused or an error; read its nextActions (it offers ${REPOSITORY_OPERATION_ACTION} while an operation is left) and send codebook_action ${REPOSITORY_OPERATION_ACTION} once per declared operation, each with a new stable key; at each pause explain the values, then codebook_continue with the current continueArguments.`,
+        `Poll the run resource until it reads ready, paused or an error; read its nextActions (it offers ${REPOSITORY_OPERATION_ACTION} while an operation is left) and send codebook_action ${REPOSITORY_OPERATION_ACTION} once per declared operation, each with a new stable key; at each held pause explain the values, then codebook_continue with the current continueArguments. A stop declared with hold: "record" (API 1.43) is never paused, so do not wait for it and do not call codebook_continue for it; after the operation's result read recordedStops and the recorded observations, then explain them.`,
       ],
       refusals: Object.fromEntries(
         EXPO_WEB_REFUSAL_CODES.map((code) => [
