@@ -58,6 +58,10 @@ async function readInside(
 /** Why a path of the packed copy cannot be served: `absent` (no such file, or it leaves the folder), `too-large` (over {@link STATIC_PAGE_CDN_FILE_LIMIT_BYTES}) or `unreadable` (a directory or a read error). */
 export type PackedFileAbsenceCause = 'absent' | 'too-large' | 'unreadable'
 
+/** A `sourceMappingURL` that carries the map itself: a base64 JSON data URL. */
+const INLINE_MAP_REFERENCE =
+  /^data:application\/json(?:;charset=[^;,]+)?;base64,([A-Za-z0-9+/=]*)$/i
+
 /** A source of a map that names a location by URL scheme (`webpack://…`, `file://…`); a one-letter scheme is a Windows drive. */
 const URL_SOURCE = /^[A-Za-z][A-Za-z0-9+.-]+:/
 
@@ -198,6 +202,41 @@ async function namedMap(
 }
 
 /**
+ * Finds the map a script's trailing `sourceMappingURL` names: the map file beside the script, or the base64 JSON map the reference carries inline.
+ * Called by {@link createPackedLibraryFiles} for each script that has the comment.
+ * @param roots - The packed copy's real folder and the checked-out library's real folder.
+ * @param scriptPath - The script's absolute path; sources of an inline map resolve against its folder.
+ * @param reference - The `sourceMappingURL` value.
+ * @returns The named map; `undefined` when the reference names no readable flat version 3 map (a malformed percent-encoding, an absent file, a data URL that is not base64 JSON, an inline map over the size limit).
+ * @example await mapOfReference(roots, '/p/dist/a.mjs', 'a.mjs.map') // => { version: 3, sources: ['/repo/src/a.ts'], … }
+ */
+async function mapOfReference(
+  roots: { packed: string; libraryRoot: string },
+  scriptPath: string,
+  reference: string,
+): Promise<NonNullable<ServedPackedFile['map']> | undefined> {
+  if (reference.startsWith('data:')) {
+    // A map already inline is decoded and named like an external one.
+    const encoded = INLINE_MAP_REFERENCE.exec(reference)?.[1]
+    if (encoded === undefined) return undefined
+    const decoded = Buffer.from(encoded, 'base64')
+    return decoded.length > STATIC_PAGE_CDN_FILE_LIMIT_BYTES
+      ? undefined
+      : namedMap(roots, scriptPath, decoded)
+  }
+  let mapName: string
+  try {
+    mapName = decodeURI(reference)
+  } catch {
+    // A reference with a malformed percent-encoding names no map file.
+    return undefined
+  }
+  const mapPath = join(dirname(scriptPath), mapName)
+  const mapBytes = await readInside(roots.packed, mapPath)
+  return mapBytes === undefined ? undefined : namedMap(roots, mapPath, mapBytes)
+}
+
+/**
  * Serves the files of the packed copy of a declared library, with a script's source map inlined and its sources named by the checked-out files.
  *
  * Why it exists: js-debug fetches a referenced map itself, outside the browser's network, so only a map carried inside the script reaches it (Cycle 0105 E1). The map's `sources` become absolute paths, and each source whose bytes equal the checked-out file below the library folder is renamed to that file, as the pack route's devtool wrap names it. The redirect and the library seal both read through one instance, so the bytes sealed are the bytes served. Called by the run's library planning ({@link ConfiguredBrowserRun}).
@@ -228,22 +267,14 @@ export function createPackedLibraryFiles(
     if (!SCRIPT_EXTENSIONS.has(extname(absolute).toLowerCase())) return plain
     const text = body.toString('utf8')
     const reference = TRAILING_MAP_COMMENT.exec(text)?.[1]
-    // A script without a map, or with a map already inline, is served as it is.
-    if (reference === undefined || reference.startsWith('data:'))
-      return { ...plain, text }
-    let mapName: string
-    try {
-      mapName = decodeURI(reference)
-    } catch {
-      // A reference with a malformed percent-encoding names no map file: the script is served as it is.
-      return { ...plain, text }
-    }
-    const mapPath = join(dirname(absolute), mapName)
-    const mapBytes = await readInside(root, mapPath)
-    const map =
-      mapBytes === undefined
-        ? undefined
-        : await namedMap({ packed: root, libraryRoot }, mapPath, mapBytes)
+    // A script without a map is served as it is.
+    if (reference === undefined) return { ...plain, text }
+    const map = await mapOfReference(
+      { packed: root, libraryRoot },
+      absolute,
+      reference,
+    )
+    // A script whose reference names no readable map is served as it is.
     if (map === undefined) return { ...plain, text }
     const inlined = text.replace(
       TRAILING_MAP_COMMENT,

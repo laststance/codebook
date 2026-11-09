@@ -163,6 +163,19 @@ test('README, skill and help state page discovery and the contents rules of a st
   assert.deepEqual(missingFromHelp, [])
 })
 
+// Value: protects=the README and the help tell that a map a packed build already carries inline is used and that a malformed one leaves the file without a map; fails_when=either sentence leaves; no_claim=which build tools inline their map
+test('the README and the help state that an inline map of the packed build is used', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const help = JSON.stringify(staticPageHelp())
+  const sentence =
+    'a map the build already carries inline is read and renamed the same way; a malformed one leaves the file without a map'
+  // Act
+  const places = [readme.includes(sentence), help.includes(sentence)]
+  // Assert
+  assert.deepEqual(places, [true, true])
+})
+
 // Value: protects=the README tells a learner that a library stop in a minified build reads declared inspections by source name through the map names, and when it stays unavailable; fails_when=the sentence is removed; no_claim=that a given build keeps names in its map
 test('the README explains that a minified library build is read by source name through the map names', async () => {
   // Arrange

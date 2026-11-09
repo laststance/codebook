@@ -27,6 +27,7 @@ import {
   createPackedLibrary,
   LIBRARY_BUILD,
   LIBRARY_MAP,
+  LIBRARY_SOURCE,
 } from './utils/packedLibraryFixture'
 import { createStaticPageRepository } from './utils/staticPageFixture'
 
@@ -305,4 +306,89 @@ test('the generic library refusal text and the path refusal state the same facts
     assert.match(text, /no stop was sealed/)
     assert.match(text, /no input was sent/)
   }
+})
+
+/** Rewrites the packed `dist/lib.mjs` so its map is carried inline, as a build that inlines its map writes it. */
+async function writeInlineMapBuild(
+  packedRoot: string,
+  mapText: string,
+): Promise<void> {
+  const base64 = Buffer.from(mapText).toString('base64')
+  await writeFile(
+    join(packedRoot, 'dist', 'lib.mjs'),
+    LIBRARY_BUILD.replace(
+      'sourceMappingURL=lib.mjs.map',
+      `sourceMappingURL=data:application/json;base64,${base64}`,
+    ),
+  )
+}
+
+// Value: protects=a packed file that already carries its map inline is served with that map renamed to the checked-out source and returned as map; fails_when=an inline map is served as written with map undefined; no_claim=maps with sourceRoot
+test('a packed file with an inline map serves a renamed inline map', async (context) => {
+  // Arrange
+  const library = await createPackedLibrary(context)
+  await writeInlineMapBuild(library.packedRoot, LIBRARY_MAP)
+  // Act
+  const served = await library.files.read('dist/lib.mjs')
+  const inlined = /base64,([A-Za-z0-9+/=]+)\s*$/.exec(served?.text ?? '')?.[1]
+  const servedMap = JSON.parse(Buffer.from(inlined ?? '', 'base64').toString())
+  // Assert
+  assert.deepEqual(served?.map?.sources, [
+    join(library.libraryRoot, 'src', 'a.ts'),
+  ])
+  assert.deepEqual(servedMap.sources, [
+    join(library.libraryRoot, 'src', 'a.ts'),
+  ])
+  assert.equal(served?.body.toString('utf8'), served?.text)
+})
+
+// Value: protects=a library stop in a build that inlines its map is sealed instead of refused library-not-in-build; fails_when=the seal sees no map for an inline-map file; no_claim=that js-debug binds the stop
+test('a library stop in a build with an inline map is sealed', async (context) => {
+  // Arrange
+  const library = await createPackedLibrary(context)
+  await writeInlineMapBuild(library.packedRoot, LIBRARY_MAP)
+  // Act
+  const { bundle } = await sealStaticPageLibraryStop(
+    {
+      appRoot: library.libraryRoot,
+      packageRootRelative: '.',
+      packageRelativePath: 'src/a.ts',
+      source: {
+        path: 'src/a.ts',
+        hash: sha256(LIBRARY_SOURCE),
+        line: 1,
+        column: 1,
+      },
+      citationEndLine: 1,
+      ownedOrigin: 'http://127.0.0.1:4310',
+      signal: new AbortController().signal,
+      cache: new SingleBundleCache(),
+    },
+    {
+      packageName: 'lib',
+      examplePackageRoot: 'examples/page',
+      packedRoot: library.packedRoot,
+      files: library.files,
+      imports: [
+        {
+          url: 'https://unpkg.com/lib@latest/dist/lib.mjs',
+          path: 'dist/lib.mjs',
+        },
+      ],
+    },
+  )
+  // Assert
+  assert.equal(bundle.sourcePath, join(library.libraryRoot, 'src', 'a.ts'))
+})
+
+// Value: protects=a malformed inline map serves the script as written with no map, like a malformed external reference; fails_when=the decode throws out of read or invents a map; no_claim=which refusal the seal then gives
+test('a malformed inline map serves the script with no map', async (context) => {
+  // Arrange
+  const library = await createPackedLibrary(context)
+  await writeInlineMapBuild(library.packedRoot, '{not json')
+  // Act
+  const served = await library.files.read('dist/lib.mjs')
+  // Assert
+  assert.equal(served?.map, undefined)
+  assert.match(served?.text ?? '', /base64,[A-Za-z0-9+/=]+\n$/)
 })
