@@ -211,7 +211,7 @@ test('storage names, readable version and schema include format 9', () => {
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 9)
   const schemaVersion = configuredStudySchema.shape.version
   // Act
-  const acceptsTwentyFour = schemaVersion.safeParse(24).success
+  const acceptsTwentyFour = schemaVersion.safeParse(25).success
   // Assert
   assert.deepEqual(row, {
     version: 9,

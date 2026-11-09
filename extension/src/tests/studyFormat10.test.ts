@@ -236,7 +236,7 @@ test('storage names and schema keep format 10 and read nothing above format 23',
   const row = STUDY_STORAGE_FORMATS.find((format) => format.version === 10)
   const schemaVersion = configuredStudySchema.shape.version
   // Act
-  const acceptsTwentyFour = schemaVersion.safeParse(24).success
+  const acceptsTwentyFour = schemaVersion.safeParse(25).success
   // Assert
   assert.deepEqual(row, {
     version: 10,
@@ -244,7 +244,7 @@ test('storage names and schema keep format 10 and read nothing above format 23',
     archiveSuffix: '.study.v10.json',
     metadataSuffix: '.study.meta.v10.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 23)
+  assert.equal(READABLE_STUDY_VERSION, 24)
   assert.equal(VITE_PACKAGE_ROOT_STUDY_VERSION, 10)
   assert.equal(schemaVersion.safeParse(10).success, true)
   assert.equal(acceptsTwentyFour, false)

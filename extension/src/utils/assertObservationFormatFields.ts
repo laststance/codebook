@@ -6,6 +6,7 @@ import {
   MODULE_EVALUATION_STUDY_VERSION,
   NEXT_LIBRARY_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
+  HOLD_STUDY_VERSION,
   PRESS_STUDY_VERSION,
   REVERSE_PROXY_STUDY_VERSION,
   ROUTE_HANDLER_STUDY_VERSION,
@@ -381,6 +382,7 @@ function assertFormatHoldsItsFields(
     study.version === NEXT_LIBRARY_STUDY_VERSION ||
     study.version === PRESS_STUDY_VERSION ||
     study.version === REVERSE_PROXY_STUDY_VERSION ||
+    study.version === HOLD_STUDY_VERSION ||
     isApiServerStudyFormat(study.version)
   )
     return
