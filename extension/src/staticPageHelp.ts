@@ -104,7 +104,7 @@ function staticPageLibraryHelp() {
     whatRuns: [
       "The learner's editor confirmation comes first and names the build and pack, because the build runs the project's own build scripts (the Build and run consent of the pack route). A declined confirmation starts nothing.",
       "The repository's package manager runs the library's own build script in library.packageRoot, then packs the library into the run's private folder with lifecycle scripts off.",
-      "Through the run's browser, a request for either CDN URL of the declared package (the query dropped, any version) is answered with the packed build's file at that path, with the build's source map inline so a stop in the library's checked-out source pauses there. Other remote URLs load as they are.",
+      "Through the run's browser, a request for either CDN URL of the declared package (the query dropped, any version) is answered with the packed build's file at that path, with the build's source map inline so a stop in the library's checked-out source pauses there. A stop in a minified build reads each declared inspection by its source name through the build's source map names (when a name maps to one variable of the paused frame's scopes; otherwise it stays unavailable). Other remote URLs load as they are.",
       `The build and pack together are bounded at ${LIBRARY_BUILD_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s. Codebook never installs packages.`,
     ],
     refusals: {

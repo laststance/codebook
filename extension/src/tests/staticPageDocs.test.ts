@@ -160,3 +160,15 @@ test('README, skill and help state page discovery and the contents rules of a st
   assert.deepEqual(missingFromSkill, [])
   assert.deepEqual(missingFromHelp, [])
 })
+
+// Value: protects=the README tells a learner that a library stop in a minified build reads declared inspections by source name through the map names, and when it stays unavailable; fails_when=the sentence is removed; no_claim=that a given build keeps names in its map
+test('the README explains that a minified library build is read by source name through the map names', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  // Act
+  const hasSentence = readme.includes(
+    "a library stop in a minified build reads each declared inspection by its source name through the build's source map names (when a name maps to one variable of the paused frame's scopes; otherwise it stays unavailable)",
+  )
+  // Assert
+  assert.equal(hasSentence, true)
+})

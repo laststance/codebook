@@ -380,6 +380,7 @@ import {
   matchSignInPath,
   type SignInPageLocation,
 } from './utils/matchSignInPath'
+import { minifiedPathOf } from './utils/minifiedPathOf'
 import {
   nextEntryLeftMessage,
   type NextEntryLeftMoment,
@@ -16871,8 +16872,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       current,
       this.maskRunText,
       // A source name webpack renamed (an import) is read through the module object the executed text binds.
+      // A name a minifier renamed in a library build is read through the build's source map names and the paused frame's scopes.
       (path) =>
-        webpackImportPathOf(path, stop.bundle.source, executed.scriptSource),
+        webpackImportPathOf(path, stop.bundle.source, executed.scriptSource) ??
+        minifiedPathOf(
+          path,
+          executedModule.bundle.sourceMap,
+          executed.scriptSource,
+          callFrame.scopeChain,
+        ),
     )
     current()
     // A library stop pauses in the built file; the record names the library source at the translated place.

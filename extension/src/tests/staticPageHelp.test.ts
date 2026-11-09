@@ -183,3 +183,17 @@ test('the repository-browser start guide routes a plain HTML page to staticPageQ
   assert.ok(startHere.includes('staticPageQuickStart for a plain HTML page'))
   assert.ok(startHere.includes('(API 1.42 or later)'))
 })
+
+// Value: protects=the library help tells a chat that a stop in a minified build reads declared inspections by their source names through the map names; fails_when=the sentence leaves the help, so a chat declares compiled names; no_claim=that a given build keeps names in its map
+test('the static-page library help says a minified build is read by source name through the map names', async (context) => {
+  // Arrange
+  const help = await readHelp(context)
+  // Act
+  const libraryText = help.staticPageQuickStart.library.whatRuns.join('\n')
+  // Assert
+  assert.ok(
+    libraryText.includes(
+      "A stop in a minified build reads each declared inspection by its source name through the build's source map names (when a name maps to one variable of the paused frame's scopes; otherwise it stays unavailable).",
+    ),
+  )
+})
