@@ -88,7 +88,7 @@ test('the bundled skill routes a plain HTML page to static-page behind API 1.42 
     'without `library` the page loads the published copy, which is not the checked-out library',
   ].filter((phrase) => !paragraph.includes(phrase))
   // Assert
-  assert.match(skill, /metadata:\r?\n {2}version: "1\.0\.87"\r?\n/)
+  assert.match(skill, /metadata:\r?\n {2}version: "1\.0\.88"\r?\n/)
   assert.deepEqual(missing, [])
 })
 
