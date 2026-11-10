@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import type { FlatCdpConnection } from '../../chromeExtensionContracts'
 import { connectFlatCdp } from '../../runtimeSupport/flatCdpConnection'
+import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { resolveChromeExecutable } from '../../utils/resolveChromeExecutable'
 
 import { removeTestBrowserProfile } from './removeTestBrowserProfile'
@@ -39,26 +40,46 @@ type SharedHeadlessChrome = {
   connectionClosed: boolean
 }
 
+/** How long the browser-level CDP connection may take to open once Chrome published its endpoint. */
+const CDP_CONNECT_BOUND_MS = 10_000
+
+/** How long a killed Chrome may take to report its exit before its stop fails. */
+const CHROME_EXIT_BOUND_MS = 5_000
+
 /** The start of the file's Chrome, shared by every page asked for while it runs; `undefined` before the first page and after {@link closeRealHeadlessChrome}. */
 let starting: Promise<SharedHeadlessChrome> | undefined
 
+/** Set by {@link closeRealHeadlessChrome}: a page asked for after the file's Chrome was closed (late work of a test that timed out) is refused instead of starting a Chrome nothing would close. */
+let closed = false
+
 /**
- * Ends a Chrome this helper started and removes its profile folder; a Chrome that already exited is not waited for.
+ * Ends a Chrome this helper started and removes its profile folder; a Chrome that already exited, or never started (no pid), is not waited for, and a killed Chrome that does not report its exit within {@link CHROME_EXIT_BOUND_MS} fails the stop after its profile folder was removed.
  * @param child - The Chrome process.
  * @param profile - Its `--user-data-dir` folder.
+ * @throws When the killed Chrome does not exit in time.
  * @example await stopHeadlessChrome(chrome.child, chrome.profile)
  */
 async function stopHeadlessChrome(
   child: ChildProcess,
   profile: string,
 ): Promise<void> {
-  // A Chrome that already exited emits no further `exit`, so only a running one is awaited.
-  if (child.exitCode === null && child.signalCode === null) {
-    const exited = new Promise((resolve) => child.once('exit', resolve))
-    child.kill('SIGKILL')
-    await exited
+  try {
+    // Only a Chrome that started and still runs is killed and waited for.
+    if (
+      child.pid !== undefined &&
+      child.exitCode === null &&
+      child.signalCode === null
+    ) {
+      child.kill('SIGKILL')
+      await waitUntil(
+        () => child.exitCode !== null || child.signalCode !== null,
+        'the killed headless Chrome to exit',
+        CHROME_EXIT_BOUND_MS,
+      )
+    }
+  } finally {
+    await removeTestBrowserProfile(profile)
   }
-  await removeTestBrowserProfile(profile)
 }
 
 /**
@@ -85,14 +106,20 @@ async function startHeadlessChrome(
     ],
     { stdio: 'ignore' },
   )
+  // A Chrome that cannot be started (an executable that does not run) reports an error event instead of an exit.
+  let spawnFailed = false
+  child.once('error', () => {
+    spawnFailed = true
+  })
   try {
-    // A cold runner's first Chrome start gets Codebook's own start bound; a Chrome that ended fails at once.
+    // A cold runner's first Chrome start gets Codebook's own start bound; a Chrome that ended or never started fails at once.
     const endpoint = await waitForTestBrowserEndpoint(profile, {
-      hasExited: () => child.exitCode !== null || child.signalCode !== null,
+      hasExited: () =>
+        spawnFailed || child.exitCode !== null || child.signalCode !== null,
     })
     const cdp = await connectFlatCdp(
       `ws://127.0.0.1:${endpoint.port}${endpoint.path}`,
-      10_000,
+      CDP_CONNECT_BOUND_MS,
     )
     const chrome: SharedHeadlessChrome = {
       child,
@@ -114,12 +141,16 @@ async function startHeadlessChrome(
  * Gives the test file's running Chrome, starting it on the first call; pages asked for while the start runs share it, a start that failed is tried again by the next call, and a Chrome that exited or lost its connection is replaced.
  * @param executable - The Chrome to start when none runs.
  * @returns The running Chrome.
- * @throws What {@link startHeadlessChrome} throws.
+ * @throws What {@link startHeadlessChrome} throws; when {@link closeRealHeadlessChrome} already ran.
  * @example const chrome = await sharedHeadlessChrome(executable)
  */
 async function sharedHeadlessChrome(
   executable: string,
 ): Promise<SharedHeadlessChrome> {
+  if (closed)
+    throw new Error(
+      "The test file's headless Chrome was closed; no page opens after closeRealHeadlessChrome.",
+    )
   const pending = (starting ??= startHeadlessChrome(executable))
   let chrome: SharedHeadlessChrome
   try {
@@ -146,6 +177,7 @@ async function sharedHeadlessChrome(
  * @example after(closeRealHeadlessChrome)
  */
 export async function closeRealHeadlessChrome(): Promise<void> {
+  closed = true
   const pending = starting
   starting = undefined
   if (!pending) return

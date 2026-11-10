@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,7 @@ import {
   launchRealHeadlessPage,
   type RealHeadlessPage,
 } from './utils/realHeadlessPage'
+import { removeTestFolder } from './utils/removeTestFolder'
 
 /** The private temporary folder the first test points `TMPDIR` at; the file's Chrome keeps its profile there until the file ends. */
 let privateFolder: string | undefined
@@ -19,27 +20,30 @@ let privateFolder: string | undefined
 // One headless Chrome serves the whole file: it ends with the file, then the private folder that held its profile goes.
 after(async () => {
   await closeRealHeadlessChrome()
-  if (privateFolder) await rm(privateFolder, { recursive: true, force: true })
+  if (privateFolder) await removeTestFolder(privateFolder)
 })
 
 /** How long a page may take to show the local page it was sent to. */
 const PAGE_NAVIGATION_BOUND_MS = 10_000
 
 /**
- * Points this process's temporary folder at a private one for the test, so the Chrome profile folders the helper makes there are this test's alone, not those of a test file running beside it; `TMPDIR` is restored when the test ends, and the file's `after` hook removes the folder once its Chrome has ended.
- * @param context - The test, whose `after` hook restores `TMPDIR`.
+ * Points this process's temporary folder at a private one for the test, so the Chrome profile folders the helper makes there are this test's alone, not those of a test file running beside it. `os.tmpdir()` reads `TMPDIR` on Linux and macOS and `TEMP`/`TMP` on Windows, so all three are set; they are restored when the test ends, and the file's `after` hook removes the folder once its Chrome has ended.
+ * @param context - The test, whose `after` hook restores the variables.
  * @returns The private folder.
  * @example const folder = await privateTemporaryFolder(context)
  */
 async function privateTemporaryFolder(context: TestContext): Promise<string> {
   const folder = await mkdtemp(join(tmpdir(), 'codebook-headless-shared-'))
-  const previous = process.env.TMPDIR
-  process.env.TMPDIR = folder
+  const names = ['TMPDIR', 'TEMP', 'TMP'] as const
+  const previous = names.map((name) => [name, process.env[name]] as const)
+  for (const name of names) process.env[name] = folder
   privateFolder = folder
   context.after(() => {
-    // The file's Chrome keeps its profile in this folder until the file ends, so only the variable is restored here.
-    if (previous === undefined) delete process.env.TMPDIR
-    else process.env.TMPDIR = previous
+    // The file's Chrome keeps its profile in this folder until the file ends, so only the variables are restored here.
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
   })
   return folder
 }
@@ -99,7 +103,7 @@ test('two real headless pages of one test file are served by one Chrome', async 
   const second = await launchRealHeadlessPage(context)
 
   // Assert
-  assert.ok(second)
+  assert.equal(await second?.evaluate('1 + 1'), 2)
   const profiles = (await readdir(folder)).filter((name) =>
     name.startsWith('codebook-gate-chrome-'),
   )
