@@ -33,7 +33,8 @@ function finishedTest(event) {
     file: basename(event.data.file),
     name: event.data.name,
     ms: event.data.details.duration_ms,
-    failed: event.type === 'test:fail',
+    // A todo test whose body fails does not fail the runner's run (a window replay with its first divergence named), so it fails no recording either.
+    failed: event.type === 'test:fail' && !event.data.todo,
     timedOut: event.data.details.error?.failureType === 'testTimeoutFailure',
     hookTimedOut: failedForTime(event.data.details.error),
   }

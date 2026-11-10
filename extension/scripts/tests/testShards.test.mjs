@@ -4034,6 +4034,42 @@ test('the timings recording is refused with the number of failed tests and write
   )
 })
 
+// Value: protects=the timings recording of a suite that holds todo tests: a todo test whose body fails (a window replay with its first divergence named) does not fail the runner's run, so it does not refuse the recording either, and its file's time is recorded; fails_when=the recording counts a todo test's test:fail as a failed test and refuses with "1 test failed", which made `--record` impossible on the real suite from Cycle 0094's host-trace todo tests on; why_new=Cycle 0111 review round (the shard timings, last recorded in Cycle 0061, could not be recorded again); seam=test-shard.mjs --record started as a process on a fixture build with one passing test and one failing todo test; no_claim=a todo test that hangs (the time limit ends it like any other test)
+test('a todo test whose body fails does not refuse the timings recording, and its file is recorded', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'diverging.test.js': [
+        "const { test } = require('node:test')",
+        "test('passes', () => {})",
+        "test('replays the window', { todo: 'first divergence: named' }, () => { throw new Error('diverges') })",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  const timings = JSON.parse(
+    await readFile(join(root, 'test-timings.json'), 'utf8').catch(() => '{}'),
+  )
+  assert.deepEqual(
+    {
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      files: Object.keys(timings.files ?? {}),
+    },
+    {
+      code: 0,
+      stdout: 'Recorded 2 tests in test-timings.json.\n',
+      stderr: '',
+      files: ['diverging.test.js'],
+    },
+  )
+})
+
 /** Writes `contents` as a timings file in a fresh folder and answers the refusal of {@link readTestTimings} (or `undefined` when the file is accepted). @example await refusalOf(context, '{"files":{"a.test.js":{"totalMs":"x"}}}') // => '/tmp/…/test-timings.json has an entry …' */
 async function refusalOf(context, contents) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-timings-'))
