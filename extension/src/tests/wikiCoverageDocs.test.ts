@@ -13,7 +13,7 @@ import { test } from 'node:test'
  * @example
  * ```ts
  * const skill = await readBundledSkill()
- * assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
+ * assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
  * ```
  */
 const readBundledSkill = (): Promise<string> =>
@@ -39,12 +39,12 @@ const readPackagedReadme = (): Promise<string> =>
   readFile(join(__dirname, '..', '..', 'README.md'), 'utf8')
 
 // Value: protects=the Wiki route tells the chat AI that every included code file needs a citation or a coverageExceptions entry with its reason, before the renderer refuses it; fails_when=the skill (from 1.0.88) loses the coverage sentence and the chat learns of the rule only from a refusal it may answer by excepting application modules (C113-W1); why_new=skill 1.0.87 never asked for coverage, and a 6-page Wiki citing 32 of 71 sources published; seam=none; no_claim=how thoroughly a chat model explains each file
-test('the bundled skill 1.0.89 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
+test('the bundled skill 1.0.90 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
   assert.ok(
     skill.includes(
       'Every included code file must be cited by a page `sources` list, a diagram node or edge, or an inline editor source link, or be listed under optional `coverageExceptions`',
@@ -64,6 +64,63 @@ test('the README says the generator refuses a Wiki that leaves an included code 
   assert.ok(
     readme.includes(
       'The generator refuses to publish a Wiki that leaves an included code file unexplained, unless that file is listed as needing no explanation, with the reason.',
+    ),
+  )
+})
+
+// Value: protects=the Wiki route tells the chat AI how to cover a repository of several hundred code files: a chapter per package, an Examples chapter whose pages cite each family's files, a Testing page citing the tests, source lists built by a scratch script, examples and tests kept out of excludedPaths, and work that goes on until the Wiki is published; fails_when=the skill (from 1.0.90) loses the paragraph, and a large repository's Wiki again leaves examples and tests out through excludedPaths (C114-W2) or excepts learner files (C114-W1), or a chat ends its turn with an unpublished candidate (Cycle 0114 E1 run 1); why_new=Cycle 0114 H3 held in Cursor on TanStack/query, 2,498 code files; seam=none; no_claim=that a chat model follows the paragraph, which the native reruns check
+test('the bundled skill 1.0.90 tells the Wiki of a large repository to cite its examples and tests in Examples and Testing pages instead of leaving them out', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
+  assert.ok(
+    skill.includes(
+      '**Large repositories.** When the included code reaches several hundred files (a monorepo of packages, examples and tests), plan the tree from the folder layout before reading files one by one, and cover every kind of code the repository holds:',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Give each package a chapter of its own, or a child page in a chapter of closely related packages, with child pages for its main modules and flows.',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      "Give the examples an **Examples** chapter whose child pages each explain one family of examples (one framework, or one feature shown in several) and list every file of that family in the page's `sources`.",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Give the tests a **Testing** page, or one per package, that explains how the tests are organized and what they check, and lists the test files in its `sources`.',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Build these source lists, and `includedSources` with its hashes, with a script in `.codebook/scratch/` instead of by hand',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      "Examples, tests, build scripts and configuration code are code a learner reads: keep them out of `excludedPaths`, which holds only step 1's exclusions, and out of `coverageExceptions`, which stays limited to code that needs no explanation.",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Keep working until the Wiki is published. When a refusal names unexplained files or thin chapters, extend the plan and run the publisher again; do not end your turn with an unpublished candidate',
+    ),
+  )
+})
+
+// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.90) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.90; seam=none; no_claim=that a generated Wiki has those chapters
+test('the README says a large repository gets a chapter per package, an Examples chapter and a Testing page', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      'For a repository of several hundred code files, the bundled skill asks for a chapter per package (or a page in a chapter of related packages), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests; examples, tests and build code stay in the Wiki instead of being left out.',
     ),
   )
 })

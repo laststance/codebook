@@ -203,7 +203,7 @@ test('the bundled skill 1.0.71 gates packageRoot on API 1.18 and never opens a n
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
   for (const phrase of [
     'only when `codebook_status` reports API 1.18 or later',
     'refuses `packageRoot` as an unknown key',

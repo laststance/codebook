@@ -65,14 +65,14 @@ test('the README states MCP API 1.42 and saves a static-page run as study format
     'with **MCP API 1.44** (`codebook_status` reports the installed build). API 1.44 is additive:',
     'A static-page run is saved as study format 23; an older Codebook lists it as saved by a newer Codebook',
     'A run of the `static-page` adapter (MCP API 1.42) is saved as format 23 (`.study.v23.json`)',
-    'updates to **1.0.89**',
+    'updates to **1.0.90**',
   ].filter((phrase) => !readme.includes(phrase))
   // Assert
   assert.deepEqual(missing, [])
   assert.equal(readme.includes('with **MCP API 1.41**'), false)
 })
 
-// Value: protects=the bundled skill 1.0.89 routes a plain HTML page to static-page only behind API 1.42, points at staticPageQuickStart, and declares library for a CDN-imported repository library; fails_when=the version, the API gate, the help pointer or the library rule is dropped; no_claim=that a chat follows the rule
+// Value: protects=the bundled skill 1.0.90 routes a plain HTML page to static-page only behind API 1.42, points at staticPageQuickStart, and declares library for a CDN-imported repository library; fails_when=the version, the API gate, the help pointer or the library rule is dropped; no_claim=that a chat follows the rule
 test('the bundled skill routes a plain HTML page to static-page behind API 1.42 and declares library for a CDN library', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -88,7 +88,7 @@ test('the bundled skill routes a plain HTML page to static-page behind API 1.42 
     'without `library` the page loads the published copy, which is not the checked-out library',
   ].filter((phrase) => !paragraph.includes(phrase))
   // Assert
-  assert.match(skill, /metadata:\r?\n {2}version: "1\.0\.89"\r?\n/)
+  assert.match(skill, /metadata:\r?\n {2}version: "1\.0\.90"\r?\n/)
   assert.deepEqual(missing, [])
 })
 
