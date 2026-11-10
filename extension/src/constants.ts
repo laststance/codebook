@@ -1875,6 +1875,14 @@ export const NODE_TEST_READER_POSITION_VERSION = 1
 export const NODE_TEST_READER_POSITION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_DECISION_VERSION = 1
 export const NODE_TEST_LEARNING_DECISION_LIMIT_BYTES = 4_096
+/** The largest size in bytes of one saved replay's step-understanding file, for browser recordings and Node-family histories alike. */
+export const STEP_UNDERSTANDING_LIMIT_BYTES = 262_144
+/** How many step decisions one replay's step-understanding file keeps; a write beyond it drops the oldest first. */
+export const STEP_UNDERSTANDING_MAX_DECISIONS = 1_000
+/** The name of a Node-family history's step-understanding file, beside its `learning-decision.json`. */
+export const STEP_UNDERSTANDING_NODE_FILE = 'step-understanding.json'
+/** The suffix after a browser recording's study id in the library directory: its step-understanding file, a sidecar owned with the study. */
+export const STEP_UNDERSTANDING_STUDY_SUFFIX = '.steps.v1.json'
 export const NODE_TEST_LEARNING_MATERIAL_VERSION = 1
 export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes

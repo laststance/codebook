@@ -25,6 +25,8 @@ import {
   NODE_TEST_READER_POSITION_VERSION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
+  STEP_UNDERSTANDING_LIMIT_BYTES,
+  STEP_UNDERSTANDING_NODE_FILE,
 } from './constants'
 import {
   NodeLearningRevisionChangedError,
@@ -51,6 +53,10 @@ import { nodeTestStorageDescriptor } from './nodeTestStorageDescriptor'
 export { NodeTestHistoryWriter } from './nodeTestHistoryWriter'
 export type { NodeTestHistorySummary } from './nodeTestHistoryTypes'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import type {
+  StepUnderstandingDecision,
+  StepUnderstandingFile,
+} from './stepUnderstandingSchemas'
 import { saveStepLead } from './utils/assertNodeLearningCitations'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { causeRootsFor } from './utils/causeRootsFor'
@@ -70,6 +76,11 @@ import {
   type RecordingScan,
 } from './utils/recordingJournalScan'
 import { sanitizeCause } from './utils/sanitizeCause'
+import type { CurrentStepHash } from './utils/stepUnderstanding'
+import {
+  readStepUnderstandingFile,
+  updateStepUnderstandingFile,
+} from './utils/stepUnderstandingFile'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 import { writeNodeTestWriterRecord } from './utils/writeNodeTestWriterRecord'
@@ -1072,6 +1083,60 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
       NODE_TEST_LEARNING_DECISION_LIMIT_BYTES,
     )
     return decision
+  }
+
+  /**
+   * Reads the learner's per-step understanding decisions of a history when its reader opens or the selected step changes; called by the Study workspace.
+   * @param studyId - The history's study id.
+   * @param limitBytes - The largest allowed file size; tests pass a small one.
+   * @returns The file, or `undefined` when the history has none yet (no decision for any step).
+   * @throws When the file is no bounded regular file, does not match its schema or names another history; the file is left as it is.
+   * @example await store.readStepUnderstanding(studyId) // => { version: 1, studyId, decisions: [] }
+   */
+  readStepUnderstanding(
+    studyId: string,
+    limitBytes: number = STEP_UNDERSTANDING_LIMIT_BYTES,
+  ): Promise<StepUnderstandingFile | undefined> {
+    return readStepUnderstandingFile(
+      join(this.path(studyId), STEP_UNDERSTANDING_NODE_FILE),
+      studyId,
+      limitBytes,
+    )
+  }
+
+  /**
+   * Saves one per-step understanding decision of the learner: the file is read, changed and written back under the storage lock of the learning directory, the lock `saveLearningMaterial` and {@link removeHistory} also take, so a write never interleaves with another window's write or with a removal.
+   * A history being removed, or whose folder no longer exists once the lock is held, refuses the write; the write never creates the folder.
+   * @param studyId - The history's study id.
+   * @param change - The decision, its hash computed by the extension from the saved step.
+   * @param currentSteps - The steps of the material current when the learner pressed, for the cap.
+   * @param limitBytes - The largest allowed file size; tests pass a small one.
+   * @returns The file as written.
+   * @throws When the history is being removed or is gone, another window holds the storage lock (`StorageLockHeldError`), or the file cannot be read or written; the previous bytes stay.
+   * @example await store.saveStepUnderstanding(studyId, { stepId, stepHash, understood: true, at }, steps)
+   */
+  async saveStepUnderstanding(
+    studyId: string,
+    change: StepUnderstandingDecision,
+    currentSteps: readonly CurrentStepHash[],
+    limitBytes: number = STEP_UNDERSTANDING_LIMIT_BYTES,
+  ): Promise<StepUnderstandingFile> {
+    // A history being removed takes no write: the write would race the rename.
+    if (this.removing.has(studyId))
+      throw new Error('No Node history has this study id.')
+    const path = join(this.path(studyId), STEP_UNDERSTANDING_NODE_FILE)
+    return withStorageLock(this.learningDirectory, async () => {
+      // A history removed while the write waited for the lock is not written into or recreated.
+      if (!existsSync(this.path(studyId)))
+        throw new Error('No Node history has this study id.')
+      return updateStepUnderstandingFile(
+        path,
+        studyId,
+        change,
+        currentSteps,
+        limitBytes,
+      )
+    })
   }
 
   /** Restores AI-authored explanations only when every referenced stop, output or result exists in the sealed journal.

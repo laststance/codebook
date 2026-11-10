@@ -19,8 +19,11 @@ import {
   PROGRESS_V4_FILE,
   PROGRESS_REPOSITORY_FILE,
   RECORDING_STORAGE_FORMATS,
+  STEP_UNDERSTANDING_LIMIT_BYTES,
+  STEP_UNDERSTANDING_STUDY_SUFFIX,
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
+  STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
 } from './constants'
 import {
   NewerStudyFormatError,
@@ -43,6 +46,10 @@ import {
   type RetainedStudySelection,
 } from './retainedStudySchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import type {
+  StepUnderstandingDecision,
+  StepUnderstandingFile,
+} from './stepUnderstandingSchemas'
 import { type StudyCatalogEntry } from './studySchemas'
 import { assertReadableStudyFormat } from './utils/assertReadableStudyFormat'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
@@ -71,6 +78,11 @@ import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { removeWriterRecord } from './utils/removeWriterRecord'
 import { removeWriterRecordsOfSealedRecordings } from './utils/removeWriterRecordsOfSealedRecordings'
 import { savedStudyLimit } from './utils/savedStudyLimit'
+import type { CurrentStepHash } from './utils/stepUnderstanding'
+import {
+  readStepUnderstandingFile,
+  updateStepUnderstandingFile,
+} from './utils/stepUnderstandingFile'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
 import { unconfirmedWriterSentences } from './utils/unconfirmedWriterSentences'
@@ -472,9 +484,13 @@ export class LearningLibrary {
    * @example this.sidecarStudyIds(['<id>.study.meta.v3.json', 'x.study.meta.v3.json']) // => ['<id>']
    */
   private sidecarStudyIds(names: string[]): string[] {
-    const suffixes = STUDY_STORAGE_FORMATS.flatMap((format) =>
-      format.metadataSuffix ? [format.metadataSuffix] : [],
-    )
+    // A step-understanding file is a sidecar of its study too: left without an archive it is the rest of a study.
+    const suffixes = [
+      ...STUDY_STORAGE_FORMATS.flatMap((format) =>
+        format.metadataSuffix ? [format.metadataSuffix] : [],
+      ),
+      STEP_UNDERSTANDING_STUDY_SUFFIX,
+    ]
     return names.flatMap((name) => {
       const suffix = suffixes.find((candidate) => name.endsWith(candidate))
       return suffix ? this.studyIdNamed(name.slice(0, -suffix.length)) : []
@@ -1066,6 +1082,62 @@ export class LearningLibrary {
     })
   }
 
+  /**
+   * Reads the learner's per-step understanding decisions of a saved browser recording when its replay opens or the selected step changes; called by the Study workspace.
+   * @param studyId - The saved study's id.
+   * @param limitBytes - The largest allowed file size; tests pass a small one.
+   * @returns The file, or `undefined` when the study has none yet (no decision for any step).
+   * @throws When the id is no study id, or the file is no bounded regular file, does not match its schema or names another study; the file is left as it is.
+   * @example await library.readStepUnderstanding(studyId) // => { version: 1, studyId, decisions: [] }
+   */
+  readStepUnderstanding(
+    studyId: string,
+    limitBytes: number = STEP_UNDERSTANDING_LIMIT_BYTES,
+  ): Promise<StepUnderstandingFile | undefined> {
+    const identity = studyIdSchema.parse(studyId)
+    return readStepUnderstandingFile(
+      join(this.directory, `${identity}${STEP_UNDERSTANDING_STUDY_SUFFIX}`),
+      identity,
+      limitBytes,
+    )
+  }
+
+  /**
+   * Saves one per-step understanding decision of the learner for a saved browser recording: the file is read, changed and written back under the library's storage lock, the lock {@link removeStudy} takes, so a write never interleaves with a removal or another window's write.
+   * The file is written only while the study's archive exists; a study removed meanwhile refuses the write and its step file is not recreated.
+   * @param studyId - The saved study's id.
+   * @param change - The decision, its hash computed by the extension from the saved step.
+   * @param currentSteps - The steps of the material current when the learner pressed, for the cap.
+   * @param limitBytes - The largest allowed file size; tests pass a small one.
+   * @returns The file as written.
+   * @throws When the study has no archive, another window holds the storage lock (`StorageLockHeldError`), or the file cannot be read or written; the previous bytes stay.
+   * @example await library.saveStepUnderstanding(studyId, { stepId, stepHash, understood: true, at }, steps)
+   */
+  saveStepUnderstanding(
+    studyId: string,
+    change: StepUnderstandingDecision,
+    currentSteps: readonly CurrentStepHash[],
+    limitBytes: number = STEP_UNDERSTANDING_LIMIT_BYTES,
+  ): Promise<StepUnderstandingFile> {
+    const identity = studyIdSchema.parse(studyId)
+    return this.locked(async () => {
+      const archives = await this.existingPaths(
+        STUDY_STORAGE_FORMATS.map(
+          (storage) => `${identity}${storage.archiveSuffix}`,
+        ),
+      )
+      // A study whose archive is gone (removed meanwhile) takes no step file.
+      if (!archives.length) throw new Error(STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
+      return updateStepUnderstandingFile(
+        join(this.directory, `${identity}${STEP_UNDERSTANDING_STUDY_SUFFIX}`),
+        identity,
+        change,
+        currentSteps,
+        limitBytes,
+      )
+    })
+  }
+
   /** Saves reader navigation without touching learner decisions or reviving live control on reload. @example await library.select(selection) */
   select(input: RetainedStudySelection): Promise<void> {
     const selection = retainedStudySelectionSchema.parse(input)
@@ -1401,11 +1473,12 @@ export class LearningLibrary {
       ),
     )
     const recordings = await this.recordingPaths(identity)
-    const sidecars = await this.existingPaths(
-      STUDY_STORAGE_FORMATS.flatMap((storage) =>
+    const sidecars = await this.existingPaths([
+      ...STUDY_STORAGE_FORMATS.flatMap((storage) =>
         storage.metadataSuffix ? [`${identity}${storage.metadataSuffix}`] : [],
       ),
-    )
+      `${identity}${STEP_UNDERSTANDING_STUDY_SUFFIX}`,
+    ])
     const playback = await this.playbackPathsNaming(identity)
     return { recordings, playback, sidecars, archives }
   }
