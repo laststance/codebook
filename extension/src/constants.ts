@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.114'
+export const EXTENSION_VERSION = '0.2.115'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1284,6 +1284,10 @@ export const REPOSITORY_SOURCE_EXTENSIONS = [
 export const WIKI_QUESTION_LIMIT_CHARS = 2_000
 export const WIKI_SOURCE_LIMIT_BYTES = 131_072
 export const WIKI_SOURCE_MATCH_LIMIT = 6
+/** The most citation entries (repeats included) a Wiki model reply may carry before it is refused as unbounded; an answer may cite several lines of each of {@link WIKI_SOURCE_MATCH_LIMIT} excerpts. */
+export const WIKI_CITATION_LIMIT = 40
+/** Number of citations the Wiki prompt asks the model to aim for (the lines that support the answer most directly). */
+export const WIKI_PROMPT_CITATION_TARGET = 12
 export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304
 export const WIKI_CONTEXT_LINE_LIMIT = 80
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000

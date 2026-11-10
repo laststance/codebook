@@ -360,7 +360,8 @@ test('a local page without this reader’s private path token cannot read the ge
   }
 })
 
-test('a failed editor-model answer reaches the browser reader as an error instead of an empty answer', async () => {
+// Value: protects=a learner whose editor model fails reads the error once (the page adds its own "Error:"); fails_when=the endpoint sends String(error) so the page shows "Error: Error: ..."; why_new=C113-W4 native Cursor Q&A refusal; seam=the reader's real api/ask endpoint with a throwing answer function; no_claim=the page's prefix wording
+test('a failed editor-model answer reaches the browser reader as its message alone, so the page shows one Error prefix', async () => {
   // Arrange
   const projectDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-reader-model-failure-'),
@@ -401,7 +402,50 @@ test('a failed editor-model answer reaches the browser reader as an error instea
     // Assert
     assert.equal(response.status, 503)
     assert.deepEqual(await response.json(), {
-      error: 'Error: The editor model is unavailable.',
+      error: 'The editor model is unavailable.',
+    })
+  } finally {
+    await reader.close()
+    await removeTestFolder(projectDirectory)
+  }
+})
+
+// Value: protects=a learner whose browser reader hits an unexpected failure (a manifest replaced by an incomplete one) sees the failure's message alone, so the page shows one Error prefix; fails_when=the reader's 500 answer carries `String(error)` ("Error: ...") instead of the message; why_new=C113 review round; seam=startDeepWikiReader over a Wiki whose manifest is rewritten after start, then a request for an asset that reads the manifest; no_claim=which failures reach this route
+test('an unexpected failure of a reader request answers 500 with its message alone, without an Error prefix', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-reader-500-message-'),
+  )
+  const projectRoot = await realpath(projectDirectory)
+  const output = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(output, { recursive: true })
+  await writeFile(join(output, 'index.html'), '<!doctype html><body></body>')
+  const manifestPath = join(output, 'codebook-wiki.json')
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'index.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(output, projectRoot, async () => {
+    throw new Error('No question is asked in this test.')
+  })
+  try {
+    // The manifest stops identifying a complete Wiki after the reader started.
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2 }))
+
+    // Act
+    const response = await fetch(new URL('missing.css', reader.url))
+
+    // Assert
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), {
+      error:
+        'The DeepWiki manifest does not identify a complete Wiki for this opened project.',
     })
   } finally {
     await reader.close()

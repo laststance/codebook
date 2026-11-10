@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
-import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
+import { basename, extname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
@@ -113,6 +113,180 @@ function requireReadablePage(path, pageHtml) {
   return pageHtml;
 }
 
+/** The file extensions of included sources that count as application code: {@link requireCodeCoverage} refuses a Wiki that leaves such a file unexplained. Configuration, data, style and documentation files (`.json`, `.yaml`, `.css`, `.md`) are not listed, so they need no citation. */
+const CODE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.astro', '.py', '.go', '.rs', '.java', '.kt', '.kts', '.rb', '.php', '.cs', '.swift', '.c', '.cc', '.cpp', '.h', '.hpp', '.scala', '.sh']);
+/** How many uncovered paths the refusal of {@link requireCodeCoverage} names. */
+const MAX_NAMED_UNCOVERED = 40;
+/** The longest reason, in characters, a coverage exception may give. */
+const MAX_EXCEPTION_REASON = 300;
+/** The number of explained code files from which {@link requireWikiDepth} applies; a smaller repository is exempt. */
+const DEPTH_MIN_EXPLAINED_FILES = 12;
+/** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
+const DEPTH_MIN_CHILD_PAGES = 2;
+/** The Wiki needs at least this many diagrams for each page (rounded up), and a diagram on every page, once {@link requireWikiDepth} applies. */
+const DEPTH_DIAGRAMS_PER_PAGE = 1.5;
+/** The Wiki needs at least one page for this many explained code files (rounded up) once {@link requireWikiDepth} applies. */
+const DEPTH_FILES_PER_PAGE = 8;
+/** The weighted characters of article text a Wiki needs for each explained code file. */
+const DEPTH_TEXT_PER_FILE = 500;
+/** The cap, in characters, on the total article text {@link requireWikiDepth} requires. */
+const DEPTH_MAX_REQUIRED_TEXT = 120_000;
+/** The fewest weighted characters of article text any single page may have once {@link requireWikiDepth} applies. */
+const DEPTH_MIN_PAGE_TEXT = 1200;
+/** How many of the thinnest pages the depth refusal names. */
+const DEPTH_MAX_NAMED_PAGES = 10;
+/** The query of a Codebook editor source address as the editor's URI handler reads it: `vscode://` or `cursor://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
+function sourceQueryOf(address) {
+  const match = /^([A-Za-z]+):\/\/([^/?#]+)\/source\?([^#]*)/s.exec(address.trim());
+  if (!match || !['vscode', 'cursor'].includes(match[1].toLowerCase()) || match[2].toLowerCase() !== 'laststance.codebook') return undefined;
+  return match[3];
+}
+/** Reads the parameters (`root`, `path`, `line`, `sha256`) of every editor source address ({@link sourceQueryOf}) in an `href` attribute of authored HTML; a comment, escaped text and any other attribute name no link, and character references in the value are read as a browser reads them ({@link withAttributeValues}). Called by {@link verifiedInlinePathsOf}. @example inlineSourceLinksOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => [{ root: undefined, path: 'a.ts', line: '1', sha256: undefined }] */
+function inlineSourceLinksOf(contentHtml) {
+  const links = [];
+  withAttributeValues(contentHtml, (name, value) => {
+    const query = name === 'href' ? sourceQueryOf(value) : undefined;
+    if (query !== undefined) {
+      const parameters = new URLSearchParams(query);
+      links.push({ root: parameters.get('root') ?? undefined, path: parameters.get('path') ?? undefined, line: parameters.get('line') ?? undefined, sha256: parameters.get('sha256') ?? undefined });
+    }
+    return value;
+  });
+  return links;
+}
+/** Whether an inline link's `line` is a whole number from 1, written as digits. Called by {@link namesIndexedSource}. @example hasWholeLine({ line: '12' }) // => true */
+const hasWholeLine = link => /^[1-9]\d{0,15}$/.test(link.line ?? '');
+/** Whether an inline link names the project root, an indexed source with that source's hash and a whole line, as the editor's URI handler needs them to open the file; the line's range is checked by the caller. Called by {@link verifiedInlinePathsOf}. @example namesIndexedSource({ root: '/repo', path: 'a.ts', line: '1', sha256 }, { path: 'a.ts', sha256 }, '/repo') // => true */
+const namesIndexedSource = (link, source, projectRoot) => Boolean(source) && link.root === projectRoot && link.sha256 === source.sha256 && hasWholeLine(link);
+/** Collects the paths of the inline editor source links that count as citations: the link names an indexed source with that source's indexed hash, a positive integer line within the file and the project root. A link that fails one of these does not count, so the file shows as uncovered. Called by {@link renderWikiPages} before {@link requireCodeCoverage}. @param manifest - The manifest's pages. @param indexedSources - The included sources by path. @param projectRoot - The project root the page sources are validated against. @param lineCountOf - Answers a source's line count. @returns The set of paths a valid inline link cites. @example await verifiedInlinePathsOf(manifest, indexedSources, '/repo', async () => 10) // => Set { 'a.ts' } */
+async function verifiedInlinePathsOf(manifest, indexedSources, projectRoot, lineCountOf) {
+  const verified = new Set();
+  for (const page of manifest.pages) {
+    for (const link of inlineSourceLinksOf(page.contentHtml)) {
+      const source = indexedSources.get(link.path);
+      // A link counts only when it would open the indexed file at an existing line.
+      if (!namesIndexedSource(link, source, projectRoot)) continue;
+      if (Number(link.line) <= await lineCountOf(source)) verified.add(link.path);
+    }
+  }
+  return verified;
+}
+/** Collects every source path a Wiki cites: page source lists, diagram node and edge sources and the paths of verified inline links. Called by {@link requireCodeCoverage}. @example citedPathsOf(manifest, new Set(['b.ts'])) // => Set { 'src/a.ts', 'b.ts' } */
+function citedPathsOf(manifest, inlinePaths) {
+  const references = manifest.pages.flatMap(page => [
+    ...page.sources,
+    ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources)),
+  ]);
+  return new Set([...references.map(reference => reference.path), ...inlinePaths]);
+}
+/** Tells whether a coverage exception covers a file: the exception names it, or names a folder (ending with `/`) that holds it. Called by {@link requireCodeCoverage}. @example isExceptionFor({ path: 'gen/' }, 'gen/api.ts') // => true */
+const isExceptionFor = (entry, path) => entry.path.endsWith('/') ? path.startsWith(entry.path) : path === entry.path;
+/** Refuses a malformed, repeated or stale entry of the manifest's `coverageExceptions`. Called by {@link requireCodeCoverage}. @throws With a sentence that names the entry's path. @example requireValidExceptions([{ path: 'gen/', reason: 'Generated.' }], ['gen/api.ts']) */
+function requireValidExceptions(exceptions, codeFiles) {
+  if (!Array.isArray(exceptions)) throw new Error('coverageExceptions must be an array of { path, reason } entries.');
+  const seen = new Set();
+  for (const entry of exceptions) requireValidException(entry, seen, codeFiles);
+}
+/** An exception's path without the `/` that marks a folder, as {@link safePath} checks it; any other value as given. Called by {@link requireValidException}. @example folderlessPathOf({ path: 'gen/' }) // => 'gen' */
+const folderlessPathOf = entry => (typeof entry?.path === 'string' && entry.path.endsWith('/') ? entry.path.slice(0, -1) : entry?.path);
+/** Whether an exception gives a reason of 1 to {@link MAX_EXCEPTION_REASON} characters, spaces around it aside. Called by {@link requireValidException}. @example hasValidReason({ reason: 'Generated.' }) // => true */
+const hasValidReason = entry => typeof entry.reason === 'string' && Boolean(entry.reason.trim()) && entry.reason.trim().length <= MAX_EXCEPTION_REASON;
+/** Refuses one malformed, repeated or stale `coverageExceptions` entry, recording its path in `seen`. Called by {@link requireValidExceptions} for each entry in order. @throws With a sentence that names the entry's path. @example requireValidException({ path: 'gen/', reason: 'Generated.' }, new Set(), ['gen/api.ts']) */
+function requireValidException(entry, seen, codeFiles) {
+  if (!safePath(folderlessPathOf(entry))) throw new Error('A coverage exception needs a relative path of an included code file, or of a folder ending with /.');
+  if (!hasValidReason(entry)) throw new Error(`The coverage exception for ${entry.path} needs a reason of 1–${MAX_EXCEPTION_REASON} characters saying why that code needs no explanation.`);
+  if (seen.has(entry.path)) throw new Error(`The coverage exception for ${entry.path} is listed twice.`);
+  seen.add(entry.path);
+  if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
+}
+/** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
+const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
+/** Reads a page's article as plain text: comments and tags removed (a tag ends at the first `>` outside its quoted attribute values, as {@link validatePages} guarantees every quotation mark is closed), the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
+const articleTextOf = contentHtml => contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, ' ').replace(/&#(x[0-9a-f]+|\d+);/gi, (match, code) => { const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code); return point <= 0x10ffff ? String.fromCodePoint(point) : match; }).replaceAll('&nbsp;', '\u00a0').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
+/** Matches the characters that carry about twice the content of a Latin one: Han ideographs, Hiragana, Katakana (halfwidth U+FF66–U+FF9F excluded), Hangul, the content-carrying Japanese marks of the Common script (U+30FC, U+30FB, U+3001, U+3002) and the fullwidth forms U+FF01–U+FF60. */
+const DOUBLE_WEIGHT_CHARACTER = /(?![\uFF66-\uFF9F])[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u30FC\u30FB\u3001\u3002\uFF01-\uFF60]/u;
+/** Matches the invisible format characters (Unicode category Cf, such as the zero-width space U+200B), which a reader never sees. Called by {@link characterWeightOf}. */
+const FORMAT_CHARACTER = /\p{Cf}/u;
+/** The weight of one character in English-equivalent characters: 0 for a format character ({@link FORMAT_CHARACTER}), 2 for a CJK or fullwidth one ({@link DOUBLE_WEIGHT_CHARACTER}), 1 for any other. Called by {@link textWeightOf}. @example characterWeightOf('日') // => 2 */
+const characterWeightOf = character => (FORMAT_CHARACTER.test(character) ? 0 : DOUBLE_WEIGHT_CHARACTER.test(character) ? 2 : 1);
+/** Measures text in English-equivalent characters, each code point by {@link characterWeightOf}: CJK and fullwidth characters count 2, invisible format characters 0, any other 1. Called by {@link depthShortfallsOf} so a Japanese Wiki is held to the same depth as an English one. @example textWeightOf('ab日本') // => 6 */
+const textWeightOf = text => [...text].reduce((sum, character) => sum + characterWeightOf(character), 0);
+/** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their weighted lengths. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9 }]) // => 'a.html (9 characters)' */
+const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.length || a.path.localeCompare(b.path)).slice(0, DEPTH_MAX_NAMED_PAGES).map(page => `${page.path} (${page.length} characters)`).join(', ');
+/** Answers the failure sentences about the page tree and the diagrams: child pages, page count and diagrams per page and in total. Called by {@link depthShortfallsOf}. @example structureShortfallsOf(manifest.pages, 12) // => [] */
+function structureShortfallsOf(pages, explainedCount) {
+  const children = pages.filter(page => page.parent).length;
+  // A Wiki holds at most MAX_PAGES pages, so a huge repository is never asked for more.
+  const neededPages = Math.min(Math.ceil(explainedCount / DEPTH_FILES_PER_PAGE), MAX_PAGES);
+  const diagrams = pages.reduce((sum, page) => sum + (page.diagrams ?? []).length, 0);
+  const neededDiagrams = Math.ceil(pages.length * DEPTH_DIAGRAMS_PER_PAGE);
+  const bare = pages.filter(page => !(page.diagrams ?? []).length).map(page => page.path);
+  const shortfalls = [];
+  if (children < DEPTH_MIN_CHILD_PAGES) shortfalls.push(`The Wiki has ${children} pages with a parent but needs at least ${DEPTH_MIN_CHILD_PAGES}: add child pages under subsystem chapters for their modules and flows.`);
+  if (pages.length < neededPages) shortfalls.push(`The Wiki has ${pages.length} pages but needs at least ${neededPages} for ${explainedCount} explained code files (about one page per ${DEPTH_FILES_PER_PAGE} files): split the large chapters by module and flow.`);
+  if (bare.length) shortfalls.push(`${bare.length} page${bare.length === 1 ? ' has' : 's have'} no diagram but every page needs at least one: add an architecture, flow or sequence diagram to ${bare.slice(0, DEPTH_MAX_NAMED_PAGES).join(', ')}.`);
+  if (diagrams < neededDiagrams) shortfalls.push(`The Wiki has ${diagrams} diagrams but needs at least ${neededDiagrams} for ${pages.length} pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges.`);
+  return shortfalls;
+}
+/** Answers the failure sentences about the article text: the total and the stub pages, in weighted characters. Called by {@link depthShortfallsOf}. @example textShortfallsOf(measured, 12) // => [] */
+function textShortfallsOf(measured, explainedCount) {
+  const total = measured.reduce((sum, page) => sum + page.length, 0);
+  const neededText = Math.min(DEPTH_TEXT_PER_FILE * explainedCount, DEPTH_MAX_REQUIRED_TEXT);
+  const stubs = measured.filter(page => page.length < DEPTH_MIN_PAGE_TEXT);
+  const shortfalls = [];
+  if (total < neededText) shortfalls.push(`The Wiki has ${total} characters of article text (CJK characters counted twice) but needs at least ${neededText} for ${explainedCount} explained code files: write longer explanations, starting with the thinnest pages: ${thinnestPagesOf(measured)}.`);
+  if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of article text (CJK characters counted twice): deepen ${thinnestPagesOf(stubs)}.`);
+  return shortfalls;
+}
+/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12) // => [] */
+function depthShortfallsOf(pages, explainedCount) {
+  const measured = pages.map(page => ({ path: page.path, length: textWeightOf(articleTextOf(page.contentHtml)) }));
+  return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(measured, explainedCount)];
+}
+/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough explanation in total (CJK counted twice) and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+ * @throws With one sentence for each failed rule, naming the measured value, the required value and what to add. @example requireWikiDepth(manifest, indexedSources) */
+function requireWikiDepth(manifest, indexedSources) {
+  const exceptions = manifest.coverageExceptions ?? [];
+  const explained = codeFilePathsOf(indexedSources).filter(path => !exceptions.some(entry => isExceptionFor(entry, path)));
+  // A small repository is exempt from the depth rules.
+  if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return;
+  const shortfalls = depthShortfallsOf(manifest.pages, explained.length);
+  if (shortfalls.length) throw new Error(shortfalls.join(' '));
+}
+/** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
+ * @throws When an exception is malformed, repeated or matches no included code file, or when code files stay uncited and unlisted; the message names the count and the first paths. @param inlinePaths - The paths of verified inline links ({@link verifiedInlinePathsOf}). @example requireCodeCoverage(manifest, indexedSources, new Set()) */
+function requireCodeCoverage(manifest, indexedSources, inlinePaths) {
+  const codeFiles = codeFilePathsOf(indexedSources);
+  const exceptions = manifest.coverageExceptions ?? [];
+  requireValidExceptions(exceptions, codeFiles);
+  const cited = citedPathsOf(manifest, inlinePaths);
+  const uncovered = codeFiles.filter(path => !cited.has(path) && !exceptions.some(entry => isExceptionFor(entry, path))).sort();
+  if (!uncovered.length) return;
+  const more = uncovered.length > MAX_NAMED_UNCOVERED ? `, and ${uncovered.length - MAX_NAMED_UNCOVERED} more` : '';
+  throw new Error(`The Wiki leaves ${uncovered.length} included code file${uncovered.length === 1 ? '' : 's'} unexplained: ${uncovered.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Explain each in a page and cite it, or list it (or its folder ending with /) under coverageExceptions with the reason it needs no explanation.`);
+}
+/** Whether a citation's `line` is a whole number from 1 and its optional `label` is text. Called by {@link citedSourceOf}. @example isCitableReference({ path: 'a.ts', line: 3 }) // => true */
+const isCitableReference = reference => Number.isSafeInteger(reference.line) && reference.line >= 1 && (reference.label === undefined || typeof reference.label === 'string');
+/** The indexed source a page or diagram citation names, refusing an unindexed path, a line below 1 or a label that is not text. Called by the citation resolver of {@link renderWikiPages}. @throws 'Wiki references an unindexed source or invalid line.' @example citedSourceOf({ path: 'src/a.ts', line: 1 }, indexedSources) // => { path: 'src/a.ts', sha256 } */
+function citedSourceOf(reference, indexedSources) {
+  const source = reference && indexedSources.get(reference.path);
+  if (!source || !isCitableReference(reference)) throw new Error('Wiki references an unindexed source or invalid line.');
+  return source;
+}
+/** Refuses a citation whose last line is not a whole number from its first line to the file's last. Called by the citation resolver of {@link renderWikiPages}. @throws Naming the file and the cited line. @example requireLineRange(source, { line: 2 }, 2, ['a', 'b']) // returns */
+function requireLineRange(source, reference, endLine, lines) {
+  const isInRange = Number.isSafeInteger(endLine) && endLine >= reference.line && endLine <= lines.length;
+  if (!isInRange) throw new Error(`Wiki source line is out of range: ${source.path}:${reference.line}.`);
+}
+/** Whether a diagram citation's quote is the text of its cited lines, line ends and surrounding space aside. Called by {@link requireExactQuote}. @example quotesCitedLines({ line: 1, quote: 'a' }, 1, ['a']) // => true */
+const quotesCitedLines = (reference, endLine, lines) => lines.slice(reference.line - 1, endLine).join('\n').trim() === reference.quote.replace(/\r\n/g, '\n').trim();
+/** Refuses a diagram citation that quotes more than {@link MAX_SOURCE_QUOTE_LINES} lines, no text or other text than its lines: a matching file hash cannot rescue a quote attached to the wrong line range. Called by the citation resolver of {@link renderWikiPages}. @throws Naming the file and the line range. @example requireExactQuote(source, { line: 1, quote: 'a' }, 1, ['a']) // returns */
+function requireExactQuote(source, reference, endLine, lines) {
+  const hasQuote = typeof reference.quote === 'string' && Boolean(reference.quote.trim());
+  if (endLine - reference.line >= MAX_SOURCE_QUOTE_LINES || !hasQuote || !quotesCitedLines(reference, endLine, lines)) throw new Error(`Diagram source quote does not match ${source.path}:${reference.line}-${endLine}. Cite at most ${MAX_SOURCE_QUOTE_LINES} exact lines.`);
+}
+/** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
+const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
 /** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
@@ -132,10 +306,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   const sourceAddress = (source, line) => `vscode://laststance.codebook/source?${new URLSearchParams({ root: projectRoot, path: source.path, line: String(line), sha256: source.sha256 })}`;
   /** The rail's entry that opens a page's first cited source: a link that holds the approved label alone, exactly as 0.2.29.0 published it, so every reader since can name its own editor in it, and beside the link the file and line it opens. The shown target has a `<wbr>` after each slash and before the colon, so a long path wraps there and the line number stays whole; Chrome reads each `<wbr>` as a space, so the shown target is hidden from assistive technology (`aria-hidden`) and the link is described (`aria-describedby`) by a visually hidden copy of the file and line as written (`sr-only`). A page has one entry, so the description's id is fixed. @example openSourceEntry({ path: 'src/utils/a.ts', sha256 }, 12) // => '<p class="open-in-editor"><a href="vscode://…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a.ts:12</span></p>' */
   const openSourceEntry = (source, line) => `<p class="open-in-editor"><a href="${escapeHtml(sourceAddress(source, line))}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">${escapeHtml(source.path).replaceAll('/', '/<wbr>')}<wbr>:${line}</span><span class="sr-only" id="codebook-open-target">${escapeHtml(source.path)}:${line}</span></p>`;
-  /** Resolves page and graph citations through the same current-source boundary. @example await sourceLink({ path: 'src/a.ts', line: 1 }) */
-  const sourceLink = async (reference, exactQuote = false) => {
-    const source = reference && indexedSources.get(reference.path);
-    if (!source || !Number.isSafeInteger(reference.line) || reference.line < 1 || reference.label !== undefined && typeof reference.label !== 'string') throw new Error('Wiki references an unindexed source or invalid line.');
+  /** Reads an indexed source's lines once, refusing a file that resolves outside the repository or whose hash changed; shared by {@link sourceLink} and the inline-link check. @example await linesOf({ path: 'src/a.ts', sha256 }) // => ['export const a = 1;', ''] */
+  const linesOf = async source => {
     if (!sourceLines.has(source.path)) {
       const file = await realpath(join(projectRoot, source.path)), withinRoot = relative(projectRoot, file);
       if (withinRoot === '..' || withinRoot.startsWith(`..${sep}`) || isAbsolute(withinRoot)) throw new Error('A Wiki source reference resolves outside its repository.');
@@ -143,12 +315,15 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) throw new Error(`Wiki source changed: ${source.path}. Refresh its content and citations.`);
       sourceLines.set(source.path, bytes.toString('utf8').replace(/\r\n/g, '\n').split('\n'));
     }
-    const lines = sourceLines.get(source.path), endLine = exactQuote ? reference.endLine : reference.line;
-    if (!Number.isSafeInteger(endLine) || endLine < reference.line || endLine > lines.length) throw new Error(`Wiki source line is out of range: ${source.path}:${reference.line}.`);
-    // A matching file hash cannot rescue a quote attached to the wrong line range.
-    if (exactQuote && (endLine - reference.line >= MAX_SOURCE_QUOTE_LINES || typeof reference.quote !== 'string' || !reference.quote.trim() || lines.slice(reference.line - 1, endLine).join('\n').trim() !== reference.quote.replace(/\r\n/g, '\n').trim())) throw new Error(`Diagram source quote does not match ${source.path}:${reference.line}-${endLine}. Cite at most ${MAX_SOURCE_QUOTE_LINES} exact lines.`);
-    const location = `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-    return `<a href="${escapeHtml(sourceAddress(source, reference.line))}">${escapeHtml(reference.label ?? location)}</a>`;
+    return sourceLines.get(source.path);
+  };
+  /** Resolves page and graph citations through the same current-source boundary. @example await sourceLink({ path: 'src/a.ts', line: 1 }) */
+  const sourceLink = async (reference, exactQuote = false) => {
+    const source = citedSourceOf(reference, indexedSources);
+    const lines = await linesOf(source), endLine = exactQuote ? reference.endLine : reference.line;
+    requireLineRange(source, reference, endLine, lines);
+    if (exactQuote) requireExactQuote(source, reference, endLine, lines);
+    return `<a href="${escapeHtml(sourceAddress(source, reference.line))}">${escapeHtml(reference.label ?? citedLocationOf(source, reference, endLine))}</a>`;
   };
   for (const page of manifest.pages) {
     const sourceLinks = [];
@@ -181,5 +356,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     // Every page is written with LF only: its text may hold CRLF or a lone CR (an editor on Windows writes them), and a browser reads each as LF anyway. So the CRLF the publisher's refusal (lineEndRefusalOf in publish-wiki.mjs) looks for is only one that Git added at a checkout, never one the page's own text brought, and that refusal does not fire for a page that merely held CRLF.
     pages.set(page.path, requireReadablePage(page.path, pageHtml.replace(/\r\n?/g, '\n')));
   }
+  // Every citation has resolved; now no included code file may stay unexplained.
+  requireCodeCoverage(manifest, indexedSources, await verifiedInlinePathsOf(manifest, indexedSources, projectRoot, async source => (await linesOf(source)).length));
+  requireWikiDepth(manifest, indexedSources);
   return pages;
 }
