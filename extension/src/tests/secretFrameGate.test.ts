@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mock, test, type TestContext } from 'node:test'
+import { after, mock, test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { SECRET_FRAME_OBSERVER_GLOBAL } from '../constants'
@@ -11,9 +11,13 @@ import {
 } from '../runtimeSupport/secretFrameGate'
 
 import {
+  closeRealHeadlessChrome,
   launchRealHeadlessPage,
   type RealHeadlessPage,
 } from './utils/realHeadlessPage'
+
+// One headless Chrome serves the whole file (Cycle 0112); it ends with the file.
+after(closeRealHeadlessChrome)
 
 const PAGE =
   '<form><input id="pw" type="password" name="pw"></form><p id="note">hello</p>'

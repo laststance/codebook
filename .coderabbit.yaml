@@ -19,7 +19,8 @@ reviews:
   auto_review:
     # Owner, 2026-11-08: hosted review on every PR; its findings are handled with /coderabbit-resolver.
     enabled: true
-    auto_incremental_review: true
+    # Owner, 2026-11-10: review a PR once, when it opens; pushes of fix commits are not re-reviewed (rate limit).
+    auto_incremental_review: false
     auto_pause_after_reviewed_commits: 0
     drafts: false
 
