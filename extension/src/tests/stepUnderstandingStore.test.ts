@@ -89,6 +89,8 @@ type SavedReplay = {
   remove(): Promise<void>
   /** Removes the replay's folder or archive by file system, for a removal that happens while a write waits for the lock. */
   removeByFileSystem(): Promise<void>
+  /** The refusal text the family's store gives a write for a replay that is gone. */
+  removedRefusal: RegExp
   /** Paths of the replay that must never be recreated once it is removed. */
   mustStayAbsent: string[]
 }
@@ -139,6 +141,7 @@ async function openExtensionReplay(context: TestContext): Promise<SavedReplay> {
     },
     removeByFileSystem: (): Promise<void> =>
       rename(folder, join(learningDirectory, `removed-${randomUUID()}`)),
+    removedRefusal: /No Node history has this study id/,
     mustStayAbsent: [folder],
   }
 }
@@ -197,6 +200,7 @@ async function openBrowserReplay(context: TestContext): Promise<SavedReplay> {
       await rm(archive)
       await rm(join(directory, `${study.id}.study.meta.v3.json`))
     },
+    removedRefusal: /Study archive is unavailable/,
     mustStayAbsent: [filePath],
   }
 }
@@ -325,7 +329,7 @@ for (const family of families) {
     await rm(join(replay.lockDirectory, 'writer.lock'))
   })
 
-  // Value: protects=a removal that happened while a write waited for the storage lock winning; fails_when=the waiting write recreates the replay's folder or step file after the removal (red check: with the existence check under the lock removed, the browser recording's step file reappears); no_claim=the ordering of two callers that both wait for the lock (the removal here is done under the held lock, so the order is fixed)
+  // Value: protects=a removal that happened while a write waited for the storage lock winning; fails_when=the waiting write recreates the replay's folder or step file after the removal (red check: with the existence check under the lock removed, the browser recording's step file reappears); no_claim=the ordering of two callers that both wait for the lock (the removal here is done under the held lock, so the order is fixed); the removal is a plain rename or rm under the held lock, not the real removeHistory or removeStudy, so their own bookkeeping is not exercised here
   test(`${family.name}: a write waiting for the lock is refused when the replay was removed first and recreates nothing`, async (context) => {
     // Arrange
     const replay = await family.open(context)
@@ -342,7 +346,7 @@ for (const family of families) {
     const outcome = await write
 
     // Assert
-    assert.notEqual(outcome, 'saved')
+    assert.match(String(outcome), replay.removedRefusal)
     for (const path of replay.mustStayAbsent)
       assert.equal(existsSync(path), false, `${path} was recreated`)
     assert.equal(
@@ -352,7 +356,7 @@ for (const family of families) {
     )
   })
 
-  // Value: protects=a write after the family's own removal being refused; fails_when=the removed replay gets its folder or step file back; no_claim=a write that overlaps the removal (the held-lock test fixes that order)
+  // Value: protects=a write after the family's own removal being refused; fails_when=the removed replay gets its folder or step file back; no_claim=a write that overlaps the removal (the held-lock test fixes that order); the Node family's in-flight removing marker, which only a write during the real removal reaches
   test(`${family.name}: a write after the replay's removal is refused and recreates nothing`, async (context) => {
     // Arrange
     const replay = await family.open(context)
@@ -368,7 +372,7 @@ for (const family of families) {
       )
 
     // Assert
-    assert.notEqual(outcome, 'saved')
+    assert.match(String(outcome), replay.removedRefusal)
     assert.equal(existsSync(replay.filePath), false)
     for (const path of replay.mustStayAbsent)
       assert.equal(existsSync(path), false)
@@ -462,6 +466,7 @@ test(
     await replay.store.save(decisionFor('step-one', HASH_ONE))
     const before = await readFile(replay.filePath)
     const folder = join(replay.filePath, '..')
+    const listingBefore = (await readdir(folder)).sort()
     await chmod(folder, 0o500)
 
     // Act
@@ -479,6 +484,7 @@ test(
     // Assert
     assert.notEqual(failure, 'saved')
     assert.deepEqual(await readFile(replay.filePath), before)
+    assert.deepEqual((await readdir(folder)).sort(), listingBefore)
   },
 )
 

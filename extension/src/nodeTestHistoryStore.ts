@@ -1107,7 +1107,7 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
   }
 
   /**
-   * Saves one per-step understanding decision of the learner: the file is read, changed and written back under the storage lock of the learning directory, the lock `saveLearningMaterial` and {@link removeHistory} also take, so a write never interleaves with another window's write or with a removal.
+   * Saves one per-step understanding decision of the learner: the file is read, changed and written back under the storage lock of the learning directory, the lock {@link NodeHistoryStore.saveLearningMaterial} and {@link removeHistory} also take, so a write never interleaves with another window's write or with a removal.
    * A history being removed, or whose folder no longer exists once the lock is held, refuses the write; the write never creates the folder.
    * @param studyId - The history's study id.
    * @param change - The decision, its hash computed by the extension from the saved step.
