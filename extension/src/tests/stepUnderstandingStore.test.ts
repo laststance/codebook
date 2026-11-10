@@ -295,6 +295,9 @@ for (const family of families) {
     assert.equal(first?.status, 'unknown')
     assert.deepEqual(reloaded?.steps[0], {
       stepId: 'step-one',
+      // The hash of `{ id: 'step-one', label: 'One' }`, which the view carries so the page can send the step it shows.
+      stepHash:
+        '847193097d9c65f19c5feb487129c1c632e16928519cbb20e3b92ace6c8e2305',
       understood: true,
       at: '2026-11-10T09:30:00.000Z',
       reviewNeeded: false,
