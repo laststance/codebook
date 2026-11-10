@@ -142,37 +142,15 @@ export class StepUnderstandingSessions {
     shown: ShownReplaySteps | undefined,
     now: Date,
   ): Promise<void> {
-    const session = this.attach(shown)
-    if (!shown || !session || shown.studyId !== request.studyId)
-      throw new Error('This replay is not the one shown, so nothing was saved.')
-    const step = shown.steps.find((value) => value.stepId === request.stepId)
-    if (!step)
-      throw new Error(
-        'This step is not in the replay’s saved material, so nothing was saved.',
-      )
-    if (!shown.selectable.includes(step.stepId))
-      throw new Error(
-        'This step has no recorded position, so it has no understanding check.',
-      )
-    if (session.status === 'unknown')
-      throw new Error(
-        'Understanding for this replay is still being read; try again in a moment.',
-      )
-    if (session.status === 'unreadable')
-      throw new Error('Understanding for this replay could not be read.')
+    const { session, step, currentSteps } = this.pressedStep(request, shown)
     // A second press while this step saves sends no second save.
-    if (
-      session.entries.get(step.stepId) &&
-      'saving' in session.entries.get(step.stepId)!
-    )
-      return
+    if (this.isSaving(session, step.stepId)) return
     const change: StepUnderstandingDecision = {
       stepId: step.stepId,
       stepHash: step.stepHash,
       understood: request.understood,
       at: now.toISOString(),
     }
-    const currentSteps = shown.steps.map((value) => ({ ...value }))
     session.entries.set(step.stepId, { saving: true })
     this.changed()
     const saved = this.enqueue(session, async () => {
@@ -200,6 +178,59 @@ export class StepUnderstandingSessions {
     } finally {
       this.pendingSaves.delete(saved)
     }
+  }
+
+  /**
+   * Checks that a press can be saved and names what it saves; called by {@link save} before anything is written.
+   * @param request - The webview's press.
+   * @param shown - The replay shown now.
+   * @returns The attached session, the pressed step and a copy of the shown steps' hashes.
+   * @throws When the shown replay is another study, the step is not in its material or cannot be selected, or the decisions are not known yet or cannot be read.
+   * @example const { session, step } = this.pressedStep(request, shown)
+   */
+  private pressedStep(
+    request: { studyId: string; stepId: string },
+    shown: ShownReplaySteps | undefined,
+  ): {
+    session: Session
+    step: CurrentStepHash
+    currentSteps: CurrentStepHash[]
+  } {
+    const session = this.attach(shown)
+    if (!shown || !session || shown.studyId !== request.studyId)
+      throw new Error('This replay is not the one shown, so nothing was saved.')
+    const step = shown.steps.find((value) => value.stepId === request.stepId)
+    if (!step)
+      throw new Error(
+        'This step is not in the replay’s saved material, so nothing was saved.',
+      )
+    if (!shown.selectable.includes(step.stepId))
+      throw new Error(
+        'This step has no recorded position, so it has no understanding check.',
+      )
+    if (session.status === 'unknown')
+      throw new Error(
+        'Understanding for this replay is still being read; try again in a moment.',
+      )
+    if (session.status === 'unreadable')
+      throw new Error('Understanding for this replay could not be read.')
+    return {
+      session,
+      step,
+      currentSteps: shown.steps.map((value) => ({ ...value })),
+    }
+  }
+
+  /**
+   * Tells whether a step's save is still out; called by {@link save}.
+   * @param session - The attached session.
+   * @param stepId - The step.
+   * @returns `true` while the step's entry is `saving`.
+   * @example this.isSaving(session, 'a') // => false
+   */
+  private isSaving(session: Session, stepId: string): boolean {
+    const entry = session.entries.get(stepId)
+    return entry !== undefined && 'saving' in entry
   }
 
   /**

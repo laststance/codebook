@@ -10680,25 +10680,10 @@ export class StudyWorkspace {
       { type: 'step-understanding' }
     >,
   ): Promise<void> {
-    const browserReplay = this.browserReplayShown()
-    const bundle = browserReplay ? this.playback?.bundle() : undefined
-    const shown = this.shownReplaySteps(
-      browserReplay,
-      bundle?.studyId,
-      projectLearningSummary(bundle?.context?.study, bundle?.context?.phases),
-    )
+    const shown = this.shownForStepPress()
     if (message.revision !== this.revision) {
-      const stale =
-        'The displayed study changed. Inspect the current view before acting.'
-      const named =
-        shown?.studyId === message.studyId &&
-        shown.steps.some((step) => step.stepId === message.stepId)
-      if (
-        named &&
-        this.stepUnderstanding.refuse(message.studyId, message.stepId, stale)
-      )
-        return
-      throw new Error(stale)
+      this.refuseStalePress(message, shown)
+      return
     }
     if (this.message().loading)
       throw new Error('Wait for the replay to finish loading.')
@@ -10711,6 +10696,57 @@ export class StudyWorkspace {
     await this.stepUnderstanding.save(message, shown, new Date())
     // A close or a reopen while the save ran: the press answers nothing of what is shown now.
     if (this.closing || this.lifetime !== lifetime) return
+    this.retireShownRefusals(earlier)
+  }
+
+  /**
+   * Names the shown replay's steps for a step-check press; called by {@link handleStepUnderstanding}.
+   * @returns The shown replay's steps, or `undefined` when none is shown.
+   * @example const shown = this.shownForStepPress()
+   */
+  private shownForStepPress(): ShownReplaySteps | undefined {
+    const browserReplay = this.browserReplayShown()
+    const bundle = browserReplay ? this.playback?.bundle() : undefined
+    return this.shownReplaySteps(
+      browserReplay,
+      bundle?.studyId,
+      projectLearningSummary(bundle?.context?.study, bundle?.context?.phases),
+    )
+  }
+
+  /**
+   * Answers a press of an older revision: writes the refusal on the pressed step's line when the shown replay has that step, else throws; called by {@link handleStepUnderstanding}.
+   * @param message - The press.
+   * @param shown - The replay shown now.
+   * @throws When the press names no step of the shown replay or the refusal could not be recorded.
+   * @example this.refuseStalePress(message, shown)
+   */
+  private refuseStalePress(
+    message: { studyId: string; stepId: string },
+    shown: ShownReplaySteps | undefined,
+  ): void {
+    const stale =
+      'The displayed study changed. Inspect the current view before acting.'
+    const named =
+      shown?.studyId === message.studyId &&
+      shown.steps.some((step) => step.stepId === message.stepId)
+    if (
+      named &&
+      this.stepUnderstanding.refuse(message.studyId, message.stepId, stale)
+    )
+      return
+    throw new Error(stale)
+  }
+
+  /**
+   * Retires the refusal lines that were shown before a press, publishing once if any went; called by {@link handleStepUnderstanding} after the save.
+   * @param earlier - The replay and Node-history refusal texts shown before the press.
+   * @example this.retireShownRefusals({ replay: undefined, node: 'text' })
+   */
+  private retireShownRefusals(earlier: {
+    replay: string | undefined
+    node: string | undefined
+  }): void {
     let retired = false
     for (const [kind, text] of [
       ['replay-control', earlier.replay],

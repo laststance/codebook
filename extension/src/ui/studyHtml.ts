@@ -4013,6 +4013,55 @@ function studyClient(
     return ''
   }
   /**
+   * Finds the selected step's entry in the step-understanding view; called by {@link drawStepCheck} and the check's change listener.
+   * @param view - The step-understanding view, if any.
+   * @param stepId - The step, if any.
+   * @returns The step's entry, or `undefined` when there is none.
+   * @example findStepEntry(view, 'stop-1')?.understood
+   */
+  const findStepEntry = (
+    view: StudyViewMessage['stepUnderstanding'],
+    stepId: string | undefined,
+  ):
+    | NonNullable<StudyViewMessage['stepUnderstanding']>['steps'][number]
+    | undefined =>
+    stepId === undefined
+      ? undefined
+      : view?.steps.find((value) => value.stepId === stepId)
+  /**
+   * Words the progress line of the per-step checks; called by {@link drawStepCheck} when the counts are known.
+   * @param view - The ready step-understanding view.
+   * @returns The progress sentence with both counts filled in.
+   * @example stepProgressLine(view) // => '2 of 5 steps understood'
+   */
+  const stepProgressLine = (
+    view: NonNullable<StudyViewMessage['stepUnderstanding']>,
+  ): string =>
+    options.stepUnderstanding.progress
+      .replace('{n}', String(view.understoodCount))
+      .replace('{m}', String(view.selectableCount))
+  /**
+   * Sets a per-step check to the extension's state; called by {@link drawStepCheck}.
+   * @param input - The check.
+   * @param message - The current Study message.
+   * @param view - The step-understanding view, if any.
+   * @param entry - The selected step's entry, if any.
+   * @example drawStepCheckInput(input, message, view, entry)
+   */
+  const drawStepCheckInput = (
+    input: HTMLInputElement,
+    message: StudyViewMessage,
+    view: StudyViewMessage['stepUnderstanding'],
+    entry: ReturnType<typeof findStepEntry>,
+  ): void => {
+    input.checked = entry?.understood ?? false
+    input.disabled = message.loading || view?.status !== 'ready' || !entry
+    input.setAttribute(
+      'aria-disabled',
+      String(input.disabled || Boolean(entry?.saving)),
+    )
+  }
+  /**
    * Draws one per-step check: the check, its state line and the progress line, for the selected step only, so a result can never be drawn on another step. Called by {@link renderLearningStep} for a browser replay and {@link renderNodeStepCheck} for every Node family.
    * The check is disabled while the replay loads or its decisions are unknown; a pending save only sets aria-disabled, so the keyboard focus stays on the check. The progress line is hidden while the counts are unknown.
    * @param ids - The element ids of the check, its state line and its progress line.
@@ -4026,30 +4075,29 @@ function studyClient(
     stepId: string | undefined,
   ): void => {
     const view = message.stepUnderstanding
-    const entry =
-      stepId === undefined
-        ? undefined
-        : view?.steps.find((value) => value.stepId === stepId)
+    const entry = findStepEntry(view, stepId)
     shownStepChecks.set(ids.check, entry ? stepId : undefined)
-    const input = element(ids.check) as HTMLInputElement
-    input.checked = entry?.understood ?? false
-    input.disabled = message.loading || view?.status !== 'ready' || !entry
-    input.setAttribute(
-      'aria-disabled',
-      String(input.disabled || Boolean(entry?.saving)),
+    drawStepCheckInput(
+      element(ids.check) as HTMLInputElement,
+      message,
+      view,
+      entry,
     )
     text(ids.state, stepStateLine(view, entry))
     const known = !message.loading && view?.status === 'ready'
     element(ids.progress).hidden = !known
-    text(
-      ids.progress,
-      known && view
-        ? options.stepUnderstanding.progress
-            .replace('{n}', String(view.understoodCount))
-            .replace('{m}', String(view.selectableCount))
-        : '',
-    )
+    text(ids.progress, known && view ? stepProgressLine(view) : '')
   }
+  /**
+   * Tells whether a press of a per-step check must send nothing because the replay is missing, loading, or the check is already disabled; called by {@link wireStepCheck}.
+   * @param input - The pressed check.
+   * @returns `true` when nothing may be sent.
+   * @example if (stepPressBlocked(input)) return
+   */
+  const stepPressBlocked = (input: HTMLInputElement): boolean =>
+    !current ||
+    current.loading ||
+    input.getAttribute('aria-disabled') === 'true'
   /**
    * Sends the learner's press of a per-step check; the check shows the extension's state, so it goes back to it at once, and a press while that step saves, loads or is unknown sends nothing.
    * @param checkId - The check's element id.
@@ -4061,16 +4109,8 @@ function studyClient(
       const understood = event.target.checked
       const stepId = shownStepChecks.get(checkId)
       const view = current?.stepUnderstanding
-      event.target.checked =
-        view?.steps.find((value) => value.stepId === stepId)?.understood ??
-        false
-      if (
-        !current ||
-        !view ||
-        stepId === undefined ||
-        current.loading ||
-        event.target.getAttribute('aria-disabled') === 'true'
-      )
+      event.target.checked = findStepEntry(view, stepId)?.understood ?? false
+      if (!view || stepId === undefined || stepPressBlocked(event.target))
         return
       event.target.setAttribute('aria-disabled', 'true')
       send({
@@ -4084,6 +4124,35 @@ function studyClient(
   wireStepCheck('learning-step-understood')
   wireStepCheck('node-step-understood')
   /**
+   * Picks the browser replay's selected step for the step block; called by {@link renderLearningStep}.
+   * @param message - The current Study message.
+   * @param learning - The browser replay's learning summary, if any.
+   * @param recording - The browser replay's state, if any.
+   * @returns The chosen step's id, or `undefined` when no step is shown.
+   * @example pickShownLearningStep(message, recording.learningSummary, recording)
+   */
+  const pickShownLearningStep = (
+    message: StudyViewMessage,
+    learning: NonNullable<StudyViewMessage['recording']>['learningSummary'],
+    recording: StudyViewMessage['recording'],
+  ): string | undefined => {
+    if (!learning || !recording) return undefined
+    return pickLearningStep({
+      steps: learning.content.steps.map((step) => ({
+        id: step.id,
+        ...(step.reference && 'snapshotUri' in step.reference
+          ? { snapshotUri: step.reference.snapshotUri }
+          : {}),
+      })),
+      positions: learning.positions,
+      presentedSnapshotUri: message.model.observation?.snapshotUri,
+      presentedMs: recording.presentedMs,
+      chosen:
+        chosenStep?.studyId === recording.studyId ? chosenStep : undefined,
+      toleranceMs: options.operations.momentToleranceMs,
+    })
+  }
+  /**
    * Draws a browser replay's selected-step block below the sequence: `Step <n> · <label>`, the step's explanation and its check. The step is the learner's chosen one while its position is presented, else the first step with a recorded position that matches the presented observation; with none the block is hidden. Called by the Study message handler for every message.
    * @param message - The current Study message.
    * @param learning - The browser replay's learning summary, if any.
@@ -4096,25 +4165,7 @@ function studyClient(
     recording: StudyViewMessage['recording'],
   ): void => {
     const steps = learning?.content.steps ?? []
-    const stepId =
-      learning && recording
-        ? pickLearningStep({
-            steps: steps.map((step) => ({
-              id: step.id,
-              ...(step.reference && 'snapshotUri' in step.reference
-                ? { snapshotUri: step.reference.snapshotUri }
-                : {}),
-            })),
-            positions: learning.positions,
-            presentedSnapshotUri: message.model.observation?.snapshotUri,
-            presentedMs: recording.presentedMs,
-            chosen:
-              chosenStep?.studyId === recording.studyId
-                ? chosenStep
-                : undefined,
-            toleranceMs: options.operations.momentToleranceMs,
-          })
-        : undefined
+    const stepId = pickShownLearningStep(message, learning, recording)
     const index = steps.findIndex((step) => step.id === stepId)
     const step = steps[index]
     element('learning-step').hidden = !step
