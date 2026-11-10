@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.112.0] - 2026-11-10 (development candidate)
+
+Cycle 0110 ([Issue #283](https://github.com/laststance/codebook/issues/283)), a bug-fix cycle. A real-Chrome test of the reverse proxy check failed once in Cycle 0109's final check. It now reports where each probe stood when it ended. Nothing changes in the extension you install.
+
+**In Codebook's own tests, a stalled browser address check now says where it stopped.** The throwaway-Chrome check that a reverse proxy run makes before opening your saved browser profile can report each step it completes, from starting Chrome to letting its request go, to a test that asks for it. A run never asks, so the check's result and refusals are unchanged.
+- The probe tests, the one that failed in Cycle 0109 included, assert each probe's result and print its steps when it ends otherwise. Before, that failure read only as a request count.
+- A stand-in Chrome that never opens its debugging port ends the check at its bound with Chrome's start as its last step, and leaves no process or profile folder.
+- 720 probes under load and two measured coverage runs passed without a stall, so the cause of the original failure stays unknown. A recurrence now names the step where it stopped.
+
+**Compatibility.** No MCP API, bundled skill or study format change.
+
 ## [0.2.111.0] - 2026-11-10 (development candidate)
 
 Cycle 0109 ([Issue #281](https://github.com/laststance/codebook/issues/281)), a feature cycle. **Each step of a saved replay now has an I understand this step check.** You could mark a whole test, server, script or extension history as understood, and a browser recording only for its source revision; you could not record which steps of a replay you understood, and a browser recording's Learning summary showed no selected step at all. Now, in a browser recording or a test, server, script or Chrome Extension replay, the Learning summary shows the selected step's heading, its explanation and a check that you alone set.

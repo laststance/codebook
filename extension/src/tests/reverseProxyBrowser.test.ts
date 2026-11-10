@@ -24,6 +24,8 @@ import { promisify } from 'node:util'
 import {
   probeBrowserAddress,
   type BrowserAddressProbeInput,
+  type BrowserAddressProbePhase,
+  type BrowserAddressProbeResult,
 } from '../utils/probeBrowserAddress'
 import { resolveChromeExecutable } from '../utils/resolveChromeExecutable'
 
@@ -133,6 +135,57 @@ function inputOf(
   }
 }
 
+/** The phases one probe reported, with the milliseconds since its entry. */
+type TraceRecorder = {
+  /** Passed as the probe input's `onPhase`. */
+  onPhase: NonNullable<BrowserAddressProbeInput['onPhase']>
+  /** The reported phases in arrival order. */
+  phases: () => BrowserAddressProbePhase[]
+  /** The trace as `phase@<ms>` pairs, for failure messages. */
+  text: () => string
+}
+
+/**
+ * Records the phases one probe reports, so a failure names where the probe stood.
+ * @returns The recorder; give each probe its own.
+ * @example
+ * const trace = traceRecorder()
+ * await probeBrowserAddress({ ...input, onPhase: trace.onPhase }, signal)
+ * trace.text() // => 'profile-made@4 chrome-spawned@6 …'
+ */
+function traceRecorder(): TraceRecorder {
+  const entries: [BrowserAddressProbePhase, number][] = []
+  return {
+    onPhase: (phase, elapsedMs): void => {
+      entries.push([phase, elapsedMs])
+    },
+    phases: () => entries.map(([phase]) => phase),
+    text: () =>
+      entries.map(([phase, elapsedMs]) => `${phase}@${elapsedMs}`).join(' ') ||
+      '(no phase)',
+  }
+}
+
+/**
+ * Asserts that a probe passed for the address and port, naming the result and the probe's trace when it did not.
+ * @param result - What the probe answered.
+ * @param address - The expected address.
+ * @param port - The expected port.
+ * @param trace - The probe's recorder.
+ */
+function assertProbePassed(
+  result: BrowserAddressProbeResult,
+  address: string,
+  port: number,
+  trace: TraceRecorder,
+): void {
+  assert.deepEqual(
+    result,
+    { ok: true, address, port, cleanupConfirmed: true },
+    `probe ended ${JSON.stringify(result)} after ${trace.text()}`,
+  )
+}
+
 /**
  * Lists the probe profile folders in the temporary folder.
  * @returns The folder names.
@@ -182,27 +235,87 @@ async function proxiedChrome(
   return script
 }
 
-// Value: protects=the saved profile is only opened after a browser was seen reaching the proved server; fails_when=the probe cannot load a pinned host name from a loopback server or reports another address or port; no_claim=a proxy-free machine only, and not that the app behind the proxy is the right one.
+// Value: protects=the saved profile is only opened after a browser was seen reaching the proved server, and a passing probe reports each of its phases once with the start phases in order; fails_when=the probe cannot load a pinned host name from a loopback server, reports another address or port, or misses, repeats or reorders a phase; no_claim=a proxy-free machine only, not that the app behind the proxy is the right one, and not how long each phase takes.
 test('probe passes and reports the pinned address and port for a host name that resolves nowhere', async (context) => {
   // Arrange
   const chrome = await chromeOf(context)
   if (chrome === undefined) return
   const target = await listen(context, ok)
+  const trace = traceRecorder()
 
   // Act
   const result = await probeBrowserAddress(
-    inputOf(chrome, target.port),
+    inputOf(chrome, target.port, { onPhase: trace.onPhase }),
     new AbortController().signal,
   )
 
   // Assert
-  assert.deepEqual(result, {
-    ok: true,
-    address: '127.0.0.1',
-    port: target.port,
-    cleanupConfirmed: true,
-  })
+  assertProbePassed(result, '127.0.0.1', target.port, trace)
   assert.equal(target.requests[0]?.headers.host, `${HOST}:${target.port}`)
+  assert.deepEqual(
+    [...trace.phases()].sort(),
+    [
+      'attached',
+      'chrome-spawned',
+      'connected',
+      'debugging-port',
+      'fetch-enabled',
+      'network-enabled',
+      'page-target',
+      'profile-made',
+      'request-continued',
+      'request-evaluated',
+      'request-sent',
+    ],
+    trace.text(),
+  )
+  // The start phases come in order up to request-evaluated; the two request events may arrive before it.
+  assert.deepEqual(
+    trace
+      .phases()
+      .filter(
+        (phase) => phase !== 'request-sent' && phase !== 'request-continued',
+      ),
+    [
+      'profile-made',
+      'chrome-spawned',
+      'debugging-port',
+      'connected',
+      'page-target',
+      'attached',
+      'network-enabled',
+      'fetch-enabled',
+      'request-evaluated',
+    ],
+    trace.text(),
+  )
+})
+
+// Value: protects=a diagnostic onPhase that throws never changes the probe: it still passes, every phase still reaches the callback once and one request reaches the server; fails_when=phaseMarker lets the callback's exception escape (the probe then ends proof-unclassified) or stops reporting phases after the first throw; no_claim=an async callback whose promise rejects (the onPhase doc forbids it).
+test('probe passes and still reports every phase when its onPhase callback throws each time', async (context) => {
+  // Arrange
+  const chrome = await chromeOf(context)
+  if (chrome === undefined) return
+  const target = await listen(context, ok)
+  const trace = traceRecorder()
+  const throwingOnPhase: NonNullable<BrowserAddressProbeInput['onPhase']> = (
+    phase,
+    elapsedMs,
+  ): void => {
+    trace.onPhase(phase, elapsedMs)
+    throw new Error(`diagnostic callback failed at ${phase}`)
+  }
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(chrome, target.port, { onPhase: throwingOnPhase }),
+    new AbortController().signal,
+  )
+
+  // Assert
+  assertProbePassed(result, '127.0.0.1', target.port, trace)
+  assert.equal(trace.phases().length, 11, trace.text())
+  assert.equal(target.requests.length, 1)
 })
 
 // Value: protects=a system proxy cannot carry the saved profile's cookies to a server that was not proved; fails_when=a browser routed through a forward proxy on another loopback port is accepted, or the pinned server saw a request; no_claim=a PAC rule that singles out the proof path.
@@ -359,28 +472,39 @@ test('probe reports proof-wrong-server with the status when the server answers 4
   })
 })
 
-// Value: protects=a server that never answers ends the check at its bound; fails_when=the probe waits past timeoutMs or reports another reason; no_claim=the length of Chrome's own start.
+// Value: protects=a server that never answers ends the check at its bound, with a trace showing that the request was evaluated, seen and let go (so it reads apart from a fetch that never produced a request); fails_when=the probe waits past timeoutMs, reports another reason, or its trace lacks request-evaluated, request-sent or request-continued; no_claim=the length of Chrome's own start.
 test('probe reports proof-timeout when the server never answers', async (context) => {
   // Arrange
   const chrome = await chromeOf(context)
   if (chrome === undefined) return
   const target = await listen(context, () => undefined)
+  const trace = traceRecorder()
 
   // Act
   const result = await probeBrowserAddress(
-    inputOf(chrome, target.port, { timeoutMs: 3_000 }),
+    inputOf(chrome, target.port, {
+      timeoutMs: 3_000,
+      onPhase: trace.onPhase,
+    }),
     new AbortController().signal,
   )
 
   // Assert
-  assert.deepEqual(result, {
-    ok: false,
-    reason: 'proof-timeout',
-    cleanupConfirmed: true,
-  })
+  assert.deepEqual(
+    result,
+    {
+      ok: false,
+      reason: 'proof-timeout',
+      cleanupConfirmed: true,
+    },
+    trace.text(),
+  )
+  assert.ok(trace.phases().includes('request-evaluated'), trace.text())
+  assert.ok(trace.phases().includes('request-sent'), trace.text())
+  assert.ok(trace.phases().includes('request-continued'), trace.text())
 })
 
-// Value: protects=the saved profile's cookies never ride on the check; fails_when=the probe sends a cookie or authorization header, or keeps cookies from an earlier probe; no_claim=cookies of a profile the probe never opens.
+// Value: protects=the saved profile's cookies never ride on the check, and each of the two probes is seen passing before its requests are counted; fails_when=the probe sends a cookie or authorization header, keeps cookies from an earlier probe, or either probe ends in anything but a pass (its message then names the result and the phase trace); no_claim=cookies of a profile the probe never opens.
 test('probe sends no cookie or authorization header even after the server set a cookie', async (context) => {
   // Arrange
   const chrome = await chromeOf(context)
@@ -389,18 +513,22 @@ test('probe sends no cookie or authorization header even after the server set a 
     response.setHeader('set-cookie', 'session=seeded; Path=/')
     response.end('proof')
   })
+  const firstTrace = traceRecorder()
+  const secondTrace = traceRecorder()
 
   // Act
-  await probeBrowserAddress(
-    inputOf(chrome, target.port),
+  const first = await probeBrowserAddress(
+    inputOf(chrome, target.port, { onPhase: firstTrace.onPhase }),
     new AbortController().signal,
   )
-  await probeBrowserAddress(
-    inputOf(chrome, target.port),
+  const second = await probeBrowserAddress(
+    inputOf(chrome, target.port, { onPhase: secondTrace.onPhase }),
     new AbortController().signal,
   )
 
   // Assert
+  assertProbePassed(first, '127.0.0.1', target.port, firstTrace)
+  assertProbePassed(second, '127.0.0.1', target.port, secondTrace)
   assert.equal(target.requests.length, 2)
   for (const request of target.requests) {
     assert.equal(request.headers.cookie, undefined)
@@ -408,7 +536,7 @@ test('probe sends no cookie or authorization header even after the server set a 
   }
 })
 
-// Value: protects=no stray Chrome or profile folder outlives a check; fails_when=a process or folder named codebook-probe remains after a pass or an abort; no_claim=Chrome helpers of other owners.
+// Value: protects=no stray Chrome or profile folder outlives a check, and the probe after the abort is seen passing; fails_when=a process or folder named codebook-probe remains after a pass or an abort, or the later probe ends in anything but a pass (its message names the result and the trace); no_claim=Chrome helpers of other owners.
 test('probe leaves no Chrome process and no profile folder after a pass and after an abort', async (context) => {
   // Arrange
   if (process.platform === 'win32') return context.skip('uses ps')
@@ -430,13 +558,15 @@ test('probe leaves no Chrome process and no profile folder after a pass and afte
     (error: unknown) => error,
   )
   const passed = await listen(context, ok)
-  await probeBrowserAddress(
-    inputOf(chrome, passed.port),
+  const passTrace = traceRecorder()
+  const passResult = await probeBrowserAddress(
+    inputOf(chrome, passed.port, { onPhase: passTrace.onPhase }),
     new AbortController().signal,
   )
 
   // Assert
   assert.equal(outcome, reason)
+  assertProbePassed(passResult, '127.0.0.1', passed.port, passTrace)
   assert.deepEqual(await probeProcesses(), [])
   assert.deepEqual(await probeFolders(), foldersBefore)
 })
@@ -469,30 +599,27 @@ test('probe reports browser-certificate-untrusted for a self-signed https server
   })
 })
 
-// Value: protects=an IPv6 declared address is pinned with brackets and compared without them; fails_when=the rule MAP name [::1] does not load or the address keeps its brackets; no_claim=hosts without an IPv6 loopback (skipped).
+// Value: protects=an IPv6 declared address is pinned with brackets and compared without them, and the probe is seen passing; fails_when=the rule MAP name [::1] does not load, the address keeps its brackets, or the probe ends in anything but a pass (its message names the result and the trace); no_claim=hosts without an IPv6 loopback (skipped).
 test('probe passes for a host pinned to the IPv6 loopback', async (context) => {
   // Arrange
   const chrome = await chromeOf(context)
   if (chrome === undefined) return
   const target = await listen(context, ok, '::1').catch(() => undefined)
   if (target === undefined) return context.skip('no IPv6 loopback on this host')
+  const trace = traceRecorder()
 
   // Act
   const result = await probeBrowserAddress(
     inputOf(chrome, target.port, {
       hostResolverRules: `--host-resolver-rules=MAP ${HOST} [::1]`,
       expectedAddress: '::1',
+      onPhase: trace.onPhase,
     }),
     new AbortController().signal,
   )
 
   // Assert
-  assert.deepEqual(result, {
-    ok: true,
-    address: '::1',
-    port: target.port,
-    cleanupConfirmed: true,
-  })
+  assertProbePassed(result, '::1', target.port, trace)
 })
 
 /**
@@ -535,6 +662,36 @@ test('probe returns within seconds when the run is cancelled while Chrome is sti
   assert.equal(outcome, reason)
   // gstack-timing-ok: the bound is the contract; before the fix the abort waited for the probe's bound (20 s), and killing the stand-in takes milliseconds, so 3 s leaves a wide margin under load
   assert.ok(elapsedMs < 3_000, `took ${elapsedMs} ms`)
+  const pid = Number((await readFile(pidFile, 'utf8')).trim())
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  assert.deepEqual(await probeFolders(), foldersBefore)
+})
+
+// Value: protects=a probe whose Chrome never opens its debugging port ends at its bound as proof-unclassified, and its trace shows it stood after chrome-spawned (a start hang reads apart from a stall later in the probe); fails_when=the trace is empty or holds another phase, the probe ends before or long after its bound, or the stand-in process or the profile folder is left; no_claim=why a real Chrome would hang at its start (a shell script that sleeps stands in for it).
+test('probe stopped by a Chrome start hang names chrome-spawned as its last phase at the bound and leaves no process or folder', async (context) => {
+  // Arrange
+  if (process.platform === 'win32') return context.skip('POSIX wrapper script')
+  const { script, pidFile } = await stuckChrome(context)
+  const foldersBefore = await probeFolders()
+  const trace = traceRecorder()
+  const startedAt = Date.now()
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(script, 1, { timeoutMs: 1_500, onPhase: trace.onPhase }),
+    new AbortController().signal,
+  )
+  const elapsedMs = Date.now() - startedAt
+
+  // Assert
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'proof-unclassified',
+    cleanupConfirmed: true,
+  })
+  assert.deepEqual(trace.phases(), ['profile-made', 'chrome-spawned'])
+  // gstack-timing-ok: the bound is the contract; the probe polls for the port until its 1.5 s bound (100 ms below it tolerates a wall-clock step and still rejects a probe that ends early), then the cleanup (bounded at 5 s) kills the stand-in in milliseconds, and 3 s more leaves a wide margin under load
+  assert.ok(elapsedMs >= 1_400 && elapsedMs < 9_500, `took ${elapsedMs} ms`)
   const pid = Number((await readFile(pidFile, 'utf8')).trim())
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
   assert.deepEqual(await probeFolders(), foldersBefore)
