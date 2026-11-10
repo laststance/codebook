@@ -291,6 +291,33 @@ test('probe passes and reports the pinned address and port for a host name that 
   )
 })
 
+// Value: protects=a diagnostic onPhase that throws never changes the probe: it still passes, every phase still reaches the callback once and one request reaches the server; fails_when=phaseMarker lets the callback's exception escape (the probe then ends proof-unclassified) or stops reporting phases after the first throw; no_claim=an async callback whose promise rejects (the onPhase doc forbids it).
+test('probe passes and still reports every phase when its onPhase callback throws each time', async (context) => {
+  // Arrange
+  const chrome = await chromeOf(context)
+  if (chrome === undefined) return
+  const target = await listen(context, ok)
+  const trace = traceRecorder()
+  const throwingOnPhase: NonNullable<BrowserAddressProbeInput['onPhase']> = (
+    phase,
+    elapsedMs,
+  ): void => {
+    trace.onPhase(phase, elapsedMs)
+    throw new Error(`diagnostic callback failed at ${phase}`)
+  }
+
+  // Act
+  const result = await probeBrowserAddress(
+    inputOf(chrome, target.port, { onPhase: throwingOnPhase }),
+    new AbortController().signal,
+  )
+
+  // Assert
+  assertProbePassed(result, '127.0.0.1', target.port, trace)
+  assert.equal(trace.phases().length, 11, trace.text())
+  assert.equal(target.requests.length, 1)
+})
+
 // Value: protects=a system proxy cannot carry the saved profile's cookies to a server that was not proved; fails_when=a browser routed through a forward proxy on another loopback port is accepted, or the pinned server saw a request; no_claim=a PAC rule that singles out the proof path.
 test('probe refuses with browser-address-mismatch when a forward proxy answers instead of the pinned server', async (context) => {
   // Arrange
