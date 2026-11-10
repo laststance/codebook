@@ -1,4 +1,4 @@
-import { lstat, readFile } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 
 import { STEP_UNDERSTANDING_LIMIT_BYTES } from '../constants'
 import {
@@ -8,12 +8,60 @@ import {
 } from '../stepUnderstandingSchemas'
 
 import { atomicPrivateBytes } from './atomicPrivateBytes'
+import { openWithoutFollowing } from './openWithoutFollowing'
 import {
   applyStepDecision,
   serializeStepUnderstanding,
   type CurrentStepHash,
 } from './stepUnderstanding'
 import { systemErrorCode } from './systemErrorCode'
+
+/**
+ * Reads a regular file through one open handle, never following a link and never holding more than the limit; called by {@link readStepUnderstandingFile}.
+ * The size check and the read use the same handle, and the read stops one byte past the limit, so a file that grows or is replaced after the check cannot be read whole.
+ * @param path - The file.
+ * @param limitBytes - The largest allowed size.
+ * @returns The file's bytes.
+ * @throws The system's error when the path cannot be opened (`ENOENT` for a missing file, `ELOOP` for a link); an error when the file is no regular file or is over the limit.
+ * @example await readRegularFileWithin(path, 262_144) // => <Buffer ...>
+ */
+async function readRegularFileWithin(
+  path: string,
+  limitBytes: number,
+): Promise<Buffer> {
+  const handle: FileHandle = await openWithoutFollowing(path)
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size > limitBytes) throw notBoundedFile()
+    // One byte past the limit shows growth after the size check.
+    const buffer = Buffer.alloc(limitBytes + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      )
+      // End of file.
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    if (length > limitBytes) throw notBoundedFile()
+    return buffer.subarray(0, length)
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * Builds the error of a step-understanding file that is no regular file or is over the limit; called by {@link readRegularFileWithin}.
+ * @returns The error, not thrown yet.
+ * @example throw notBoundedFile()
+ */
+function notBoundedFile(): Error {
+  return new Error('The step-understanding file is not a bounded file.')
+}
 
 /**
  * Reads and checks a replay's step-understanding file; called by the stores of both replay families when a replay opens and under their lock before a write.
@@ -31,10 +79,7 @@ export async function readStepUnderstandingFile(
 ): Promise<StepUnderstandingFile | undefined> {
   let bytes: Buffer
   try {
-    const stat = await lstat(path)
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limitBytes)
-      throw new Error('The step-understanding file is not a bounded file.')
-    bytes = await readFile(path)
+    bytes = await readRegularFileWithin(path, limitBytes)
   } catch (error) {
     if (systemErrorCode(error) === 'ENOENT') return undefined
     throw error

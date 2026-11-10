@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import {
+import fsPromises, {
   chmod,
   mkdir,
   mkdtemp,
@@ -27,6 +27,7 @@ import type { StudyArchive } from '../studyModel'
 import { StepUnderstandingSessions } from '../studyWorkspace/stepUnderstandingSessions'
 import { holdsLearnerFiles } from '../utils/holdsLearnerFiles'
 import { hashSteps } from '../utils/stepUnderstanding'
+import { readStepUnderstandingFile } from '../utils/stepUnderstandingFile'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
 import { withStorageLock } from '../utils/withStorageLock'
 
@@ -567,4 +568,45 @@ test('a browser step save for a study without an archive is refused and creates 
   // Assert
   assert.match(failure, /Study archive is unavailable/)
   assert.equal(existsSync(join(directory, `${studyId}.steps.v1.json`)), false)
+})
+
+// Value: protects=a step file that grows after the size check never being read whole past the limit (memory); fails_when=the read takes the file's bytes beyond the limit once the size check passed; no_claim=a real writer racing the read (the size check is made to report a small file) and the pane's wording of the unreadable state
+test('a step file that grows past the byte limit after the size check reads as unreadable', async (context) => {
+  // Arrange: a valid file of 600 bytes, a limit of 500, and size checks that still report 100 bytes.
+  const folder = await mkdtemp(join(tmpdir(), 'step-file-growth-'))
+  context.after(() => removeTestFolder(folder))
+  const path = join(folder, 'step-understanding.json')
+  const studyId =
+    '00000000-0000-4000-8000-000000000000_00000000-0000-4000-8000-000000000001'
+  await writeFile(
+    path,
+    JSON.stringify({ version: 1, studyId, decisions: [] }).padEnd(600, ' '),
+  )
+  const lying = { isFile: () => true, isSymbolicLink: () => false, size: 100 }
+  context.mock.method(fsPromises, 'lstat', async () => lying)
+  const realOpen = fsPromises.open
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args)
+      // The handle answers a small size, as a file that grew after the check would.
+      return new Proxy(handle, {
+        get(target, key) {
+          if (key === 'stat') return async () => lying
+          const value = Reflect.get(target, key, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+    },
+  )
+
+  // Act
+  const outcome = await readStepUnderstandingFile(path, studyId, 500).then(
+    () => 'read',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(outcome, 'The step-understanding file is not a bounded file.')
 })
