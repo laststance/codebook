@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.113.0] - 2026-11-10 (development candidate)
+
+Cycle 0111 ([Issue #285](https://github.com/laststance/codebook/issues/285)), a feature cycle. **When the first Open after a window reload cannot retire the earlier window's leftover Application group in time, Codebook now says what it saw, and Output › Codebook records every such close.** After a window reload, the first **Codebook: Open Study Workspace** could fail with "Timed out waiting for leftover Application group removal" (Cursor in Cycles 0084–0087 and 0094, VS Code once in Cycle 0099), and a second Open worked. In 16 reload-then-open trials in VS Code 1.145.2 and Cursor 3.29.15, 8 of them under heavy load, every leftover group was removed within 1 ms and no Open failed. The cause of the earlier failures therefore stays unknown; a recurrence now names what the editor did.
+
+### Changed
+- After **Developer: Reload Window** or a restart, when the earlier window left its empty Application group, the first Open writes `Leftover Application group: closed column <c> of <n> groups; removal seen after <ms> ms` to Output › Codebook. When the editor has not removed the group after 5 s, the line ends `removal not seen within 5000 ms (groups now <m>)`.
+- The Open then fails with `Timed out waiting for leftover Application group removal (groups before the close: <n>, now: <m>, after 5000 ms). Run "Codebook: Open Study Workspace" again.` The refusal used to name neither count nor what to do.
+
+**Compatibility.** No MCP API, bundled skill or study format change.
+
 ## [0.2.112.0] - 2026-11-10 (development candidate)
 
 Cycle 0110 ([Issue #283](https://github.com/laststance/codebook/issues/283)), a bug-fix cycle. A real-Chrome test of the reverse proxy check failed once in Cycle 0109's final check. It now reports where each probe stood when it ended. Nothing changes in the extension you install.
