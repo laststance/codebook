@@ -18,6 +18,22 @@ import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 const pathOfPage = (index) =>
   index === 0 ? 'index.html' : `page-${index}.html`
 
+/**
+ * The letters-only tag of page `index` (`a` to `z`, then `ba`, `bb` …).
+ * Called by {@link wikiOf} to start each page's filler, because the renderer counts a sentence repeated on three or more pages once and reads digits as one placeholder: letters keep every page's filler a sentence of its own.
+ * @example tagOfPage(26) // => 'ba'
+ */
+const tagOfPage = (index) => {
+  let tag = ''
+  let rest = index
+  // Base 26 in the letters a to z, most significant letter first.
+  do {
+    tag = String.fromCharCode(97 + (rest % 26)) + tag
+    rest = Math.floor(rest / 26)
+  } while (rest > 0)
+  return tag
+}
+
 /** The text of included file `index`; every file holds one distinct line so a diagram can quote it. */
 const fileText = (index) => `export const f${index} = ${index};\n`
 
@@ -25,7 +41,7 @@ const fileText = (index) => `export const f${index} = ${index};\n`
  * Writes `fileCount` code files into a project folder and answers a Wiki manifest shaped by the options.
  * Called by every test of the renderer's depth check.
  * @param root - The project folder.
- * @param options - `fileCount` included code files `f<i>.ts`; `pageTexts` the weighted article text length of each page (the first is `index.html`); `childCount` pages after the first that have the first as parent, or `parents` the parent page index of each page (`null` for none) in its place; `diagramCounts` the number of diagrams on each page; `character` the filler character and `characterWeight` its weight (2 for a CJK one, the default for any character but `x`); `coverageExceptions` entries.
+ * @param options - `fileCount` included code files `f<i>.ts`; `pageTexts` the counted explanation of each page in weighted characters (the first is `index.html`), written as one sentence of its own: the page's tag ({@link tagOfPage}), a space and filler; `childCount` pages after the first that have the first as parent, or `parents` the parent page index of each page (`null` for none) in its place; `diagramCounts` the number of diagrams on each page; `character` the filler character and `characterWeight` its weight (2 for a CJK one, the default for any character but `x`); `coverageExceptions` entries.
  * @returns The manifest, as an agent writes it into a candidate; the index page cites every file.
  * @example await wikiOf(root, { fileCount: 12, pageTexts: [1500, 1500, 1500, 1500], childCount: 3, diagramCounts: [2, 2, 1, 1] })
  */
@@ -51,10 +67,11 @@ async function wikiOf(
     await writeFile(join(root, path), text)
   }
   const pages = pageTexts.map((length, pageIndex) => {
-    // The heading "Flow" adds 4 characters and a separating space to the article text.
-    const filler = character.repeat(
-      Math.ceil(Math.max(length - 5, 0) / characterWeight),
-    )
+    // The tag and its space count 1 each; the filler character makes up the rest.
+    const tag = tagOfPage(pageIndex)
+    const filler = `${tag} ${character.repeat(
+      Math.ceil(Math.max(length - tag.length - 1, 0) / characterWeight),
+    )}`
     const diagrams = Array.from(
       { length: diagramCounts[pageIndex] ?? 0 },
       (_, diagramIndex) => ({
@@ -93,7 +110,8 @@ async function wikiOf(
         : pageIndex >= 1 && pageIndex <= childCount
           ? { parent: 'index.html' }
           : {}),
-      contentHtml: `<h2 id="flow">Flow</h2><p>${filler}</p>${slots}`,
+      // No heading: a heading repeated on every page would count once, so each page holds only its own sentence.
+      contentHtml: `<p id="flow">${filler}</p>${slots}`,
       sources:
         pageIndex === 0
           ? Object.keys(files).map((path) => ({ path, line: 1 }))
@@ -215,15 +233,15 @@ test('a 12-file Wiki of four pages with four diagrams is refused with the diagra
   })
 })
 
-// Value: protects=the learner who gets one-sentence mentions of every code file (about 6,300 characters for 51 files in the native trial); fails_when=a 12-file Wiki whose article text is under 500 characters per file is rendered, or the refusal does not name the thinnest pages; why_new=Cycle 0113 (C113-W3); seam=none (the real renderer); no_claim=that longer text explains better
-test('a 12-file Wiki with 4,800 characters of article text is refused with the explanation sentence naming the thinnest pages', async () => {
+// Value: protects=the learner who gets one-sentence mentions of every code file (about 6,300 characters for 51 files in the native trial); fails_when=a 12-file Wiki whose counted explanation is under 400 characters per file is rendered, or the refusal does not name the thinnest pages; why_new=Cycle 0113 (C113-W3), floor 400 per file from Cycle 0115 (C114-W4); seam=none (the real renderer); no_claim=that longer text explains better
+test('a 12-file Wiki with 3,600 characters of explanation is refused with the explanation sentence naming the thinnest pages', async () => {
   await inProject(async (root) => {
     // Arrange
     const manifest = await wikiOf(root, {
       fileCount: 12,
-      pageTexts: [1200, 1200, 1200, 1200],
-      childCount: 3,
-      diagramCounts: [2, 2, 1, 1],
+      pageTexts: [1200, 1200, 1200],
+      childCount: 2,
+      diagramCounts: [2, 2, 1],
     })
 
     // Act
@@ -232,7 +250,7 @@ test('a 12-file Wiki with 4,800 characters of article text is refused with the e
     // Assert
     assert.equal(
       outcome,
-      'The Wiki has 4800 characters of article text (CJK characters counted twice) but needs at least 6000 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (1200 characters), page-1.html (1200 characters), page-2.html (1200 characters), page-3.html (1200 characters).',
+      'The Wiki has 3600 characters of explanation (CJK characters counted twice) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (1200 characters), page-1.html (1200 characters), page-2.html (1200 characters).',
     )
   })
 })
@@ -254,7 +272,7 @@ test('a 12-file Wiki with one 1,100-character page is refused with the stub page
     // Assert
     assert.equal(
       outcome,
-      '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (1100 characters).',
+      '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1100 characters).',
     )
   })
 })
@@ -276,7 +294,7 @@ test('a 12-file Wiki failing every depth rule is refused with one sentence for e
     // Assert
     assert.equal(
       outcome,
-      'The Wiki has 0 pages with a parent but needs at least 2: add child pages under subsystem chapters for their modules and flows. 2 pages have no diagram but every page needs at least one: add an architecture, flow or sequence diagram to index.html, page-1.html. The Wiki has 0 diagrams but needs at least 3 for 2 pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges. The Wiki has 200 characters of article text (CJK characters counted twice) but needs at least 6000 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (100 characters), page-1.html (100 characters). 2 pages have fewer than 1200 characters of article text (CJK characters counted twice): deepen index.html (100 characters), page-1.html (100 characters).',
+      'The Wiki has 0 pages with a parent but needs at least 2: add child pages under subsystem chapters for their modules and flows. 2 pages have no diagram but every page needs at least one: add an architecture, flow or sequence diagram to index.html, page-1.html. The Wiki has 0 diagrams but needs at least 3 for 2 pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges. The Wiki has 200 characters of explanation (CJK characters counted twice) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (100 characters), page-1.html (100 characters). 2 pages have fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen index.html (100 characters), page-1.html (100 characters).',
     )
   })
 })
@@ -321,15 +339,15 @@ test('twelve included code files with one excepted leave eleven explained files 
   })
 })
 
-// Value: protects=the owner of a very large repository from a text requirement that grows without limit; fails_when=the required article text exceeds 120,000 characters for 500 explained files, so a Wiki of exactly 120,000 characters is refused; why_new=Cycle 0113 (C113-W3); seam=none (the real renderer); no_claim=that 120,000 characters explain 500 files
-test('a 500-file Wiki with exactly 120,000 characters of article text is rendered because the requirement is capped', async () => {
+// Value: protects=the owner of a very large repository from a text requirement that grows without limit; fails_when=the required explanation exceeds 60,000 characters for 500 explained files, so a Wiki of exactly 60,000 counted characters is refused; why_new=Cycle 0113 (C113-W3), cap 60,000 from Cycle 0115 (C114-W4); seam=none (the real renderer); no_claim=that 60,000 characters explain 500 files
+test('a 500-file Wiki with exactly 60,000 characters of explanation is rendered because the requirement is capped', async () => {
   await inProject(async (root) => {
     // Arrange
     const manifest = await wikiOf(root, {
       fileCount: 500,
-      pageTexts: Array.from({ length: 64 }, () => 1875),
-      childCount: 63,
-      diagramCounts: Array.from({ length: 64 }, () => 2),
+      pageTexts: Array.from({ length: 40 }, () => 1500),
+      childCount: 39,
+      diagramCounts: Array.from({ length: 40 }, () => 2),
     })
 
     // Act
@@ -340,15 +358,15 @@ test('a 500-file Wiki with exactly 120,000 characters of article text is rendere
   })
 })
 
-// Value: protects=the cap's edge: one character below it is still refused; fails_when=a 500-file Wiki of 119,999 characters is rendered, or the refusal names the uncapped 125,000; why_new=Cycle 0113 (C113-W3); seam=none (the real renderer); no_claim=that the sentence lists every thin page
-test('a 500-file Wiki with 119,999 characters of article text is refused and the refusal requires 120,000', async () => {
+// Value: protects=the cap's edge: one character below it is still refused; fails_when=a 500-file Wiki of 59,999 counted characters is rendered, or the refusal names the uncapped 200,000; why_new=Cycle 0113 (C113-W3), cap 60,000 from Cycle 0115 (C114-W4); seam=none (the real renderer); no_claim=that the sentence lists every thin page
+test('a 500-file Wiki with 59,999 characters of explanation is refused and the refusal requires 60,000', async () => {
   await inProject(async (root) => {
     // Arrange
     const manifest = await wikiOf(root, {
       fileCount: 500,
-      pageTexts: [1874, ...Array.from({ length: 63 }, () => 1875)],
-      childCount: 63,
-      diagramCounts: Array.from({ length: 64 }, () => 2),
+      pageTexts: [1499, ...Array.from({ length: 39 }, () => 1500)],
+      childCount: 39,
+      diagramCounts: Array.from({ length: 40 }, () => 2),
     })
 
     // Act
@@ -357,7 +375,7 @@ test('a 500-file Wiki with 119,999 characters of article text is refused and the
     // Assert
     assert.equal(
       outcome,
-      'The Wiki has 119999 characters of article text (CJK characters counted twice) but needs at least 120000 for 500 explained code files: write longer explanations, starting with the thinnest pages: index.html (1874 characters), page-1.html (1875 characters), page-10.html (1875 characters), page-11.html (1875 characters), page-12.html (1875 characters), page-13.html (1875 characters), page-14.html (1875 characters), page-15.html (1875 characters), page-16.html (1875 characters), page-17.html (1875 characters).',
+      'The Wiki has 59999 characters of explanation (CJK characters counted twice) but needs at least 60000 for 500 explained code files: write longer explanations, starting with the thinnest pages: index.html (1499 characters), page-1.html (1500 characters), page-10.html (1500 characters), page-11.html (1500 characters), page-12.html (1500 characters), page-13.html (1500 characters), page-14.html (1500 characters), page-15.html (1500 characters), page-16.html (1500 characters), page-17.html (1500 characters).',
     )
   })
 })
@@ -408,7 +426,7 @@ test('a Japanese 12-file Wiki of 750 characters per page is rendered while 750 A
     assert.equal(japaneseOutcome, 'rendered')
     assert.equal(
       asciiOutcome,
-      'The Wiki has 3000 characters of article text (CJK characters counted twice) but needs at least 6000 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (750 characters), page-1.html (750 characters), page-2.html (750 characters), page-3.html (750 characters). 4 pages have fewer than 1200 characters of article text (CJK characters counted twice): deepen index.html (750 characters), page-1.html (750 characters), page-2.html (750 characters), page-3.html (750 characters).',
+      'The Wiki has 3000 characters of explanation (CJK characters counted twice) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (750 characters), page-1.html (750 characters), page-2.html (750 characters), page-3.html (750 characters). 4 pages have fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen index.html (750 characters), page-1.html (750 characters), page-2.html (750 characters), page-3.html (750 characters).',
     )
   })
 })
@@ -435,7 +453,7 @@ test('a 25-file Wiki of three pages is refused with the page count sentence', as
   })
 })
 
-// Value: protects=the Korean, Chinese, Japanese and fullwidth learner whose characters carry about twice the content; fails_when=a page of 750 Han, Katakana, Hangul, fullwidth Latin, long-vowel, middle-dot or CJK punctuation characters weighs less than 2 each, so a Wiki of them is refused as thin; why_new=C113 review round; seam=none (the real renderer); no_claim=that the text is good
+// Value: protects=the Korean, Chinese, Japanese and fullwidth learner whose characters carry about twice the content; fails_when=a page of 750 Han, Katakana, Hangul, fullwidth Latin, long-vowel, middle-dot or comma characters weighs less than 2 each, so a Wiki of them is refused as thin; why_new=C113 review round (。 moved to its own test in Cycle 0115, because a run of 。 is a run of identical sentences); seam=none (the real renderer); no_claim=that the text is good
 test('a 12-file Wiki of 750 Han, Katakana, Hangul, fullwidth or Japanese mark characters per page is rendered', async () => {
   await inProject(async (root) => {
     // Arrange
@@ -448,7 +466,7 @@ test('a 12-file Wiki of 750 Han, Katakana, Hangul, fullwidth or Japanese mark ch
     const outcomes = {}
 
     // Act
-    for (const character of ['漢', 'カ', '한', 'Ａ', 'ー', '・', '、', '。']) {
+    for (const character of ['漢', 'カ', '한', 'Ａ', 'ー', '・', '、']) {
       const manifest = await wikiOf(root, { ...options, character })
       outcomes[character] = await outcomeOf(manifest, root)
     }
@@ -462,8 +480,32 @@ test('a 12-file Wiki of 750 Han, Katakana, Hangul, fullwidth or Japanese mark ch
       ー: 'rendered',
       '・': 'rendered',
       '、': 'rendered',
-      '。': 'rendered',
     })
+  })
+})
+
+// Value: protects=the Japanese learner whose sentences end in 。, which carries the content of a CJK character; fails_when=。 weighs 1, so a page of 400 short Japanese sentences (1,574 weighted characters, 1,174 if 。 weighed 1) is refused as a stub; why_new=C113 review round, moved here in Cycle 0115 because 。 now also ends a sentence; seam=none (the real renderer); no_claim=that the text is good
+test('a page of 400 short sentences ending in 。 counts each 。 twice and is rendered', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: [1500, 1500, 1500, 1500],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    })
+    // 26 sentences of a one-letter tag and 374 of a two-letter tag, each ending in 。: 26 × 3 + 374 × 4 = 1,574.
+    const sentences = Array.from(
+      { length: 400 },
+      (_, index) => `${tagOfPage(index)}。`,
+    ).join('')
+    manifest.pages[3].contentHtml = `<p id="flow">${sentences}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
   })
 })
 
@@ -486,7 +528,7 @@ test('a 12-file Wiki of 750 half-width katakana characters per page is refused a
     // Assert
     assert.equal(
       outcome.startsWith(
-        'The Wiki has 3000 characters of article text (CJK characters counted twice) but needs at least 6000',
+        'The Wiki has 3000 characters of explanation (CJK characters counted twice) but needs at least 4800',
       ),
       true,
     )
@@ -505,7 +547,7 @@ test('a page padded with escaped &nbsp; text or numeric character references is 
     }
     const padded = async (padding) => {
       const manifest = await wikiOf(root, options)
-      manifest.pages[3].contentHtml = `<h2 id="flow">Flow</h2><p>${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+      manifest.pages[3].contentHtml = `<p id="flow">${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
       return manifest
     }
     const escapedNbsp = await padded('&amp;nbsp;'.repeat(130))
@@ -519,8 +561,8 @@ test('a page padded with escaped &nbsp; text or numeric character references is 
     assert.deepEqual(
       [escapedOutcome, numericOutcome],
       [
-        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (785 characters).',
-        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (325 characters).',
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (780 characters).',
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (320 characters).',
       ],
     )
   })
@@ -538,7 +580,7 @@ test('a page padded with an HTML comment holding > or with zero-width spaces is 
     }
     const padded = async (padding) => {
       const manifest = await wikiOf(root, options)
-      manifest.pages[3].contentHtml = `<h2 id="flow">Flow</h2><p>Stub.${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+      manifest.pages[3].contentHtml = `<p id="flow">Stub.${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
       return manifest
     }
     const comment = await padded(`<!-- Design A -> B: ${'x'.repeat(1300)} -->`)
@@ -552,8 +594,8 @@ test('a page padded with an HTML comment holding > or with zero-width spaces is 
     assert.deepEqual(
       [commentOutcome, zeroWidthOutcome],
       [
-        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
-        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (5 characters).',
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (5 characters).',
       ],
     )
   })
@@ -571,7 +613,7 @@ test('a page padded inside a quoted attribute value holding > is measured by the
     }
     const padded = async (padding) => {
       const manifest = await wikiOf(root, options)
-      manifest.pages[3].contentHtml = `<h2 id="flow">Flow</h2><p>Stub.${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+      manifest.pages[3].contentHtml = `<p id="flow">Stub.${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
       return manifest
     }
     const doubleQuoted = await padded(
@@ -589,8 +631,8 @@ test('a page padded inside a quoted attribute value holding > is measured by the
     assert.deepEqual(
       [doubleQuotedOutcome, singleQuotedOutcome],
       [
-        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
-        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (5 characters).',
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (5 characters).',
       ],
     )
   })
@@ -813,6 +855,258 @@ test('a 100-file Wiki of 12 pages is refused for needing 13', async () => {
     assert.equal(
       outcome,
       'The Wiki has 12 pages but needs at least 13 for 100 explained code files (about one page per 8 files, up to 30): split the large chapters by module and flow.',
+    )
+  })
+})
+
+// Value: protects=the learner of a 51-file repository whose honest Wiki keeps rendering under the counted-explanation measure (C113 nextjs-dashboard, VS Code: 22,262 counted characters on 8 pages, thinnest 2,042); fails_when=the measure or a floor of Cycle 0115 refuses a Wiki shaped like it; why_new=Cycle 0115 (C114-W4) regression guard; seam=none (the real renderer; per-page numbers sum to C113's measured total); no_claim=that real prose is never discounted, which the boundary tests below cover
+test("a Wiki shaped like Cycle 0113's nextjs-dashboard Wiki, 8 pages of distinct prose for 51 explained code files, is rendered", async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 51,
+      pageTexts: [2042, 2600, 2800, 2900, 3000, 3100, 2600, 3220],
+      childCount: 7,
+      diagramCounts: [2, 2, 2, 2, 2, 1, 1, 1],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=the learner who opens a large repository's Wiki and reads one sentence template per file instead of explanation (C114 Cursor runs: 58.5 to 70.9% of the text in repeated sentences); fails_when=a Wiki whose pages hold five template sentences for each of their files passes the floors, or the refusal does not say how much was repeated on each page; why_new=Cycle 0115 (C114-W4), renders on feb74a00's renderer; seam=none (the real renderer); no_claim=that every template is caught, since one with different words per use counts
+test('a Wiki padded with one sentence template per file is refused, naming the repeated characters of each page', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: [300, 300, 300, 300],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    })
+    // Page i explains files 3i to 3i + 2 with the same five sentences each (418 characters, 425 for f10 and f11).
+    for (const [pageIndex, page] of manifest.pages.entries()) {
+      const template = [0, 1, 2]
+        .map((offset) => pageIndex * 3 + offset)
+        .map(
+          (file) =>
+            `<p>The file f${file}.ts declares the constant f${file} and exports it for the modules that import it.</p>` +
+            `<p>Reading f${file}.ts starts at its first line, where the constant f${file} receives its value.</p>` +
+            `<p>Callers of f${file} read the exported value and never change it after the module loads.</p>` +
+            `<p>This page cites f${file}.ts so that the learner can open the constant in the editor.</p>` +
+            `<p>Tests and examples reach f${file} through the same export, so its value stays the same everywhere.</p>`,
+        )
+        .join('')
+      page.contentHtml = page.contentHtml.replace('</p>', `</p>${template}`)
+    }
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki has 1618 characters of explanation (CJK characters counted twice; not counted: 4612 in repeated sentences) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: page-1.html (300 characters; not counted: 1254 in repeated sentences), page-2.html (300 characters; not counted: 1254 in repeated sentences), page-3.html (300 characters; not counted: 1268 in repeated sentences), index.html (718 characters; not counted: 836 in repeated sentences). 4 pages have fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-1.html (300 characters; not counted: 1254 in repeated sentences), page-2.html (300 characters; not counted: 1254 in repeated sentences), page-3.html (300 characters; not counted: 1268 in repeated sentences), index.html (718 characters; not counted: 836 in repeated sentences).',
+    )
+  })
+})
+
+// Value: protects=the learner who reads lists of export names instead of explanation (C114 VS Code run 2: 24.3% of the text in "モジュール索引" lists); fails_when=a Wiki whose pages are mostly lists of names passes the floors, or the refusal does not say how much was listed; why_new=Cycle 0115 (C114-W4), renders on feb74a00's renderer; seam=none (the real renderer); no_claim=that a list written as a sentence of prose words is caught
+test('a Wiki padded with lists of names is refused, naming the listed characters of each page', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: [300, 300, 300, 300],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    })
+    // Twelve list items of 123 characters each on every page.
+    const lists = `<ul>${'<li>QueryClient, QueryCache, MutationCache, QueryObserver, InfiniteQueryObserver, MutationObserver, focusManager, onlineManager</li>'.repeat(12)}</ul>`
+    for (const page of manifest.pages)
+      page.contentHtml = page.contentHtml.replace('</p>', `</p>${lists}`)
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki has 1200 characters of explanation (CJK characters counted twice; not counted: 5904 in lists of names) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (300 characters; not counted: 1476 in lists of names), page-1.html (300 characters; not counted: 1476 in lists of names), page-2.html (300 characters; not counted: 1476 in lists of names), page-3.html (300 characters; not counted: 1476 in lists of names). 4 pages have fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen index.html (300 characters; not counted: 1476 in lists of names), page-1.html (300 characters; not counted: 1476 in lists of names), page-2.html (300 characters; not counted: 1476 in lists of names), page-3.html (300 characters; not counted: 1476 in lists of names).',
+    )
+  })
+})
+
+// Value: protects=the learner who reads the source's own docstrings copied into the Wiki instead of an explanation of them (C114 Cursor run 1: wrapped docstrings); fails_when=a Wiki whose pages copy their cited files' doc comments word for word passes the floors, or the refusal does not say how much was copied; why_new=Cycle 0115 (C114-W4), renders on feb74a00's renderer; seam=none (the real renderer); no_claim=that paraphrased docstrings are caught
+test('a Wiki padded with docstrings copied from its cited sources is refused, naming the copied characters of each page', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // Fifteen doc-comment sentences of 91 characters per guide file, each with its own letters so no sentence repeats.
+    const docSentences = (guide) =>
+      Array.from(
+        { length: 15 },
+        (_, step) =>
+          `In guide ${guide}, step ${tagOfPage(step)} reads the cached entry before the client asks the server for fresh data.`,
+      )
+    const guides = ['a', 'b', 'c', 'd']
+    const extraFiles = Object.fromEntries(
+      guides.map((guide) => [
+        `docs/guide-${guide}.ts`,
+        `/**\n${docSentences(guide)
+          .map((sentence) => ` * ${sentence}`)
+          .join('\n')}\n */\nexport const guide = 1;\n`,
+      ]),
+    )
+    const manifest = await wikiOf(root, {
+      fileCount: 8,
+      pageTexts: [300, 300, 300, 300],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+      extraFiles,
+    })
+    for (const [pageIndex, page] of manifest.pages.entries()) {
+      const guide = guides[pageIndex]
+      page.sources.push({ path: `docs/guide-${guide}.ts`, line: 1 })
+      page.contentHtml = page.contentHtml.replace(
+        '</p>',
+        `</p><p>${docSentences(guide).join(' ')}</p>`,
+      )
+    }
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki has 1200 characters of explanation (CJK characters counted twice; not counted: 5460 copied from cited sources) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: index.html (300 characters; not counted: 1365 copied from cited sources), page-1.html (300 characters; not counted: 1365 copied from cited sources), page-2.html (300 characters; not counted: 1365 copied from cited sources), page-3.html (300 characters; not counted: 1365 copied from cited sources). 4 pages have fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen index.html (300 characters; not counted: 1365 copied from cited sources), page-1.html (300 characters; not counted: 1365 copied from cited sources), page-2.html (300 characters; not counted: 1365 copied from cited sources), page-3.html (300 characters; not counted: 1365 copied from cited sources).',
+    )
+  })
+})
+
+// Value: protects=the honest label a Wiki repeats on two pages (the skill asks for source-derived labels), which still counts on both; fails_when=a sentence used twice is discounted, or one used three times counts on every page; why_new=Cycle 0115 (C114-W4, repeat threshold 3); seam=none (the real renderer); no_claim=that a label used three times is padding
+test('a sentence used on two pages counts on both, and on three pages counts only where it is first used', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // The label is 66 characters; pages that carry it hold 1,134 characters of filler, so they reach 1,200 only when it counts.
+    const label =
+      '<p>Relevant source files are listed in the panel beside this article.</p>'
+    const options = {
+      fileCount: 12,
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    }
+    const twice = await wikiOf(root, {
+      ...options,
+      pageTexts: [1134, 1134, 1200, 1200],
+    })
+    const thrice = await wikiOf(root, {
+      ...options,
+      pageTexts: [1134, 1134, 1134, 1200],
+    })
+    for (const page of twice.pages.slice(0, 2))
+      page.contentHtml = page.contentHtml.replace('</p>', `</p>${label}`)
+    for (const page of thrice.pages.slice(0, 3))
+      page.contentHtml = page.contentHtml.replace('</p>', `</p>${label}`)
+
+    // Act
+    const twiceOutcome = await outcomeOf(twice, root)
+    const thriceOutcome = await outcomeOf(thrice, root)
+
+    // Assert
+    assert.deepEqual(
+      [twiceOutcome, thriceOutcome],
+      [
+        'rendered',
+        'The Wiki has 4668 characters of explanation (CJK characters counted twice; not counted: 132 in repeated sentences) but needs at least 4800 for 12 explained code files: write longer explanations, starting with the thinnest pages: page-1.html (1134 characters; not counted: 66 in repeated sentences), page-2.html (1134 characters; not counted: 66 in repeated sentences), index.html (1200 characters), page-3.html (1200 characters). 2 pages have fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-1.html (1134 characters; not counted: 66 in repeated sentences), page-2.html (1134 characters; not counted: 66 in repeated sentences).',
+      ],
+    )
+  })
+})
+
+// Value: protects=the edges of a list of names: four words of which 60% are names do not count, while three names alone, or prose with half its words names, count; fails_when=the word or share limit moves, so a short name pair or ordinary prose about two functions stops counting, or a 60% list counts; why_new=Cycle 0115 (C114-W4, list limits 4 words and 60%); seam=none (the real renderer); no_claim=other ways to write a list
+test('a sentence of five words with three names does not count, while three names alone or four words with two names count', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // Page 3 holds 1,200 characters only when its last sentence counts.
+    const withSentence = async (sentence) => {
+      const manifest = await wikiOf(root, {
+        fileCount: 12,
+        pageTexts: [1500, 1500, 1500, 1200 - sentence.length],
+        childCount: 3,
+        diagramCounts: [2, 2, 1, 1],
+      })
+      manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
+        '</p>',
+        `</p><p>${sentence}</p>`,
+      )
+      return manifest
+    }
+    const sixtyPercent = await withSentence(
+      'useQuery and QueryClient call fetchQuery',
+    )
+    const threeNames = await withSentence('useQuery, QueryClient, fetchQuery')
+    const halfNames = await withSentence('useQuery reads the QueryClient')
+
+    // Act
+    const outcomes = [
+      await outcomeOf(sixtyPercent, root),
+      await outcomeOf(threeNames, root),
+      await outcomeOf(halfNames, root),
+    ]
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1160 characters; not counted: 40 in lists of names).',
+      'rendered',
+      'rendered',
+    ])
+  })
+})
+
+// Value: protects=the edge of copied text: a copied sentence of 40 characters does not count, a 39-character one (a short phrase any explanation may share with the source) counts; fails_when=the 40-character limit moves either way; why_new=Cycle 0115 (C114-W4, copied text from 40 characters); seam=none (the real renderer); no_claim=that copied text below 40 characters is explanation
+test('a sentence of 40 characters copied from a cited source does not count, and one of 39 characters counts', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // Page 3 cites docs/cache.ts and holds 1,200 characters only when its copied sentence counts.
+    const withCopied = async (sentence) => {
+      const manifest = await wikiOf(root, {
+        fileCount: 11,
+        pageTexts: [1500, 1500, 1500, 1200 - sentence.length],
+        childCount: 3,
+        diagramCounts: [2, 2, 1, 1],
+        extraFiles: {
+          'docs/cache.ts': `// ${sentence}\nexport const cache = new Map();\n`,
+        },
+      })
+      manifest.pages[3].sources.push({ path: 'docs/cache.ts', line: 1 })
+      manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
+        '</p>',
+        `</p><p>${sentence}</p>`,
+      )
+      return manifest
+    }
+    const forty = await withCopied('The cache keeps every query result here.')
+
+    // Act
+    // Each Wiki is rendered before the next one rewrites docs/cache.ts, whose hash it records.
+    const fortyOutcome = await outcomeOf(forty, root)
+    const thirtyNine = await withCopied(
+      'The cache keeps each query result here.',
+    )
+    const thirtyNineOutcome = await outcomeOf(thirtyNine, root)
+
+    // Assert
+    assert.deepEqual(
+      [fortyOutcome, thirtyNineOutcome],
+      [
+        '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1160 characters; not counted: 40 copied from cited sources).',
+        'rendered',
+      ],
     )
   })
 })

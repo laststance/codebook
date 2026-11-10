@@ -127,14 +127,22 @@ const DEPTH_MIN_CHILD_PAGES = 2;
 const DEPTH_DIAGRAMS_PER_PAGE = 1.5;
 /** The Wiki needs at least one page for this many explained code files (rounded up) once {@link requireWikiDepth} applies. */
 const DEPTH_FILES_PER_PAGE = 8;
-/** The weighted characters of article text a Wiki needs for each explained code file. */
-const DEPTH_TEXT_PER_FILE = 500;
-/** The cap, in characters, on the total article text {@link requireWikiDepth} requires. */
-const DEPTH_MAX_REQUIRED_TEXT = 120_000;
-/** The cap on the pages {@link requireWikiDepth} requires: the page floor stops growing where the text total stops ({@link DEPTH_MAX_REQUIRED_TEXT} / {@link DEPTH_TEXT_PER_FILE} = 240 explained files, / {@link DEPTH_FILES_PER_PAGE} = 30 pages), so a large repository is held to a DeepWiki-sized chapter tree (DeepWiki gives TanStack/query, 2,498 code files, 47 pages) instead of one page per 8 files up to {@link MAX_PAGES}. */
+/** The weighted characters of counted explanation ({@link countedTextOf}) a Wiki needs for each explained code file. */
+const DEPTH_TEXT_PER_FILE = 400;
+/** The cap, in characters, on the total counted explanation {@link requireWikiDepth} requires (reached at 150 explained files). */
+const DEPTH_MAX_REQUIRED_TEXT = 60_000;
+/** The cap on the pages {@link requireWikiDepth} requires: past 240 explained files the page floor stays at a DeepWiki-sized chapter tree (DeepWiki gives TanStack/query, 2,498 code files, 47 pages) instead of one page per 8 files up to {@link MAX_PAGES}. */
 const DEPTH_MAX_REQUIRED_PAGES = 30;
-/** The fewest weighted characters of article text any single page may have once {@link requireWikiDepth} applies. */
+/** The fewest weighted characters of counted explanation ({@link countedTextOf}) any single page may have once {@link requireWikiDepth} applies. */
 const DEPTH_MIN_PAGE_TEXT = 1200;
+/** A sentence form ({@link sentenceFormOf}) used this many times across a Wiki is template text: only its first use counts as explanation. */
+const DEPTH_REPEATED_SENTENCE_USES = 3;
+/** A sentence of at least this many words, nearly all of them names (identifiers, paths, file names), is a list of names, not explanation. */
+const DEPTH_LIST_MIN_WORDS = 4;
+/** The share of names among a sentence's words from which {@link isNameList} reads it as a list of names. */
+const DEPTH_LIST_NAME_SHARE = 0.6;
+/** A sentence of at least this many weighted characters that appears word for word in a source the page cites is copied text, not explanation. */
+const DEPTH_MIN_COPIED_TEXT = 40;
 /** How many of the thinnest pages the depth refusal names. */
 const DEPTH_MAX_NAMED_PAGES = 10;
 /** The query of a Codebook editor source address as the editor's URI handler reads it: `vscode://` or `cursor://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
@@ -213,8 +221,56 @@ const FORMAT_CHARACTER = /\p{Cf}/u;
 const characterWeightOf = character => (FORMAT_CHARACTER.test(character) ? 0 : DOUBLE_WEIGHT_CHARACTER.test(character) ? 2 : 1);
 /** Measures text in English-equivalent characters, each code point by {@link characterWeightOf}: CJK and fullwidth characters count 2, invisible format characters 0, any other 1. Called by {@link depthShortfallsOf} so a Japanese Wiki is held to the same depth as an English one. @example textWeightOf('ab日本') // => 6 */
 const textWeightOf = text => [...text].reduce((sum, character) => sum + characterWeightOf(character), 0);
-/** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their weighted lengths. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9 }]) // => 'a.html (9 characters)' */
-const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.length || a.path.localeCompare(b.path)).slice(0, DEPTH_MAX_NAMED_PAGES).map(page => `${page.path} (${page.length} characters)`).join(', ');
+/** A private-use character standing for the end of a block element while a page is read as sentences; no article text holds it. */
+const BLOCK_END_MARK = '';
+/** The end tags (and the line break) that end a sentence as a reader sees the page: a paragraph, list item, heading, table cell, definition, caption, summary, preformatted block or quotation. */
+const BLOCK_END = /<\/(?:p|li|h[1-6]|td|th|dt|dd|caption|figcaption|summary|pre|blockquote)\s*>|<br\s*\/?>/gi;
+/** Splits a page's article into the sentences a reader sees: a block end ({@link BLOCK_END}) or sentence punctuation (`.`, `!`, `?` before a space, or `。`) ends a sentence; comments, tags and character references are read as {@link articleTextOf} reads them. Called by {@link countedTextOf}. @example articleSentencesOf('<p>One. Two</p><li>Three</li>') // => ['One.', 'Two', 'Three'] */
+const articleSentencesOf = contentHtml => articleTextOf(contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(BLOCK_END, ` ${BLOCK_END_MARK} `)).split(new RegExp(`\\s*${BLOCK_END_MARK}\\s*|(?<=[.!?])\\s+|(?<=。)`)).map(sentence => sentence.trim()).filter(Boolean);
+/** The form of a sentence that template text repeats: paths, file names, code names (camelCase, PascalCase with a second capital, snake_case) and numbers each read as one placeholder, letters lowercased, spaces collapsed. Called by {@link countedTextOf}. @example sentenceFormOf('Reading src/a.ts as QueryClient 2.') // => 'reading P as I N.' */
+const sentenceFormOf = sentence => sentence.replace(/\S*[/\\]\S*/g, 'P').replace(/[\w.-]+\.[A-Za-z]{1,6}\b/g, 'F').replace(/\b[A-Za-z_$][\w$]*[A-Z_$][\w$]*\b/g, 'I').replace(/\d+(?:[.,]\d+)*/g, 'N').toLowerCase().replace(/\s+/g, ' ');
+/** A word that is a name rather than prose: a path or file name (it holds `/` or a `.` inside), a code name with a second capital or an underscore, or a call such as `fetch()`. Called by {@link isNameList}. */
+const NAME_WORD = /^(?:[\w$@-]*[/.][\w$@./:-]*\w|[A-Za-z_$][\w$]*[A-Z_$][\w$]*|[\w$]+\(\))$/;
+/** Whether a sentence is a list of names (identifiers, paths, file names) rather than explanation: at least {@link DEPTH_LIST_MIN_WORDS} words, of which at least {@link DEPTH_LIST_NAME_SHARE} are names ({@link NAME_WORD}). Called by {@link sentenceKindOf}. @example isNameList('IsServerValue 、 isServer 、 environmentManager 、 FocusManager') // => true */
+const isNameList = sentence => {
+  const words = sentence.split(/[\s、,，;；]+/).map(word => word.replace(/^[(["'`「]+|[)\]"'`」:：.,。]+$/g, '')).filter(Boolean);
+  return words.length >= DEPTH_LIST_MIN_WORDS && words.filter(word => NAME_WORD.test(word)).length / words.length >= DEPTH_LIST_NAME_SHARE;
+};
+/** A source file's text as prose can quote it: comment markers at line starts and backticks removed, spaces collapsed. Called by the cited-text reader of {@link renderWikiPages}. @example quotableSourceTextOf([' * A `Query` runs.', ' *\/']) // => 'A Query runs. ' */
+const quotableSourceTextOf = lines => lines.map(line => line.replace(/^\s*(?:\/\*\*?|\*\/|\*|\/\/+|#)\s?/, '')).join(' ').replace(/[`*]/g, '').replace(/\s+/g, ' ');
+/** Whether a sentence of at least {@link DEPTH_MIN_COPIED_TEXT} weighted characters appears word for word in one of the page's cited sources ({@link quotableSourceTextOf}). Called by {@link sentenceKindOf}. @example isCopiedText('A QueryObserver watches a single query in the QueryCache.', ['/** A QueryObserver watches a single query in the QueryCache. *\/']) // => true */
+const isCopiedText = (sentence, citedTexts) => textWeightOf(sentence) >= DEPTH_MIN_COPIED_TEXT && citedTexts.some(text => text.includes(sentence.replace(/[`*]/g, '').replace(/\s+/g, ' ')));
+/** Which measure a sentence adds to: `listed` for a list of names ({@link isNameList}), `repeated` for a later use of a form used {@link DEPTH_REPEATED_SENTENCE_USES} or more times (its first use counts), `copied` for text copied from a cited source ({@link isCopiedText}), else `length`, the counted explanation. Called by {@link countedTextOf} for each sentence in page order; `counted` records the repeated forms whose first use has been counted. @example sentenceKindOf('Prose.', { uses: new Map(), counted: new Set(), citedTexts: [] }) // => 'length' */
+function sentenceKindOf(sentence, { uses, counted, citedTexts }) {
+  if (isNameList(sentence)) return 'listed';
+  const form = sentenceFormOf(sentence);
+  // Template text: only the first use of a form used three or more times counts.
+  if (uses.get(form) >= DEPTH_REPEATED_SENTENCE_USES) {
+    if (counted.has(form)) return 'repeated';
+    counted.add(form);
+  }
+  return isCopiedText(sentence, citedTexts) ? 'copied' : 'length';
+}
+/** Measures each page's counted explanation in weighted characters ({@link textWeightOf}): its sentences ({@link articleSentencesOf}) except lists of names, later uses of a sentence form the Wiki repeats {@link DEPTH_REPEATED_SENTENCE_USES} or more times, and text copied from the page's cited sources; those are measured apart. Called by {@link depthShortfallsOf}. @param pages - The manifest's pages. @param citedTextsOf - Answers a page's cited sources as quotable text ({@link quotableSourceTextOf}). @returns One `{ path, length, repeated, listed, copied }` per page, `length` the counted explanation. @example countedTextOf(manifest.pages, () => []) // => [{ path: 'index.html', length: 1500, repeated: 0, listed: 0, copied: 0 }] */
+function countedTextOf(pages, citedTextsOf) {
+  const sentencesByPage = pages.map(page => articleSentencesOf(page.contentHtml));
+  const uses = new Map();
+  for (const sentence of sentencesByPage.flat()) uses.set(sentenceFormOf(sentence), (uses.get(sentenceFormOf(sentence)) ?? 0) + 1);
+  const counted = new Set();
+  return pages.map((page, index) => {
+    const measure = { path: page.path, length: 0, repeated: 0, listed: 0, copied: 0 };
+    const context = { uses, counted, citedTexts: citedTextsOf(page) };
+    for (const sentence of sentencesByPage[index]) measure[sentenceKindOf(sentence, context)] += textWeightOf(sentence);
+    return measure;
+  });
+}
+/** The text a measured page or Wiki did not count, as a clause: repeated sentences, lists of names and copied text with their weighted characters; empty when everything counted. Called by {@link thinnestPagesOf} and {@link textShortfallsOf}. @example uncountedClauseOf({ repeated: 900, listed: 0, copied: 40 }) // => '; not counted: 900 in repeated sentences, 40 copied from cited sources' */
+const uncountedClauseOf = ({ repeated, listed, copied }) => {
+  const parts = [repeated && `${repeated} in repeated sentences`, listed && `${listed} in lists of names`, copied && `${copied} copied from cited sources`].filter(Boolean);
+  return parts.length ? `; not counted: ${parts.join(', ')}` : '';
+};
+/** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their counted explanation and what did not count. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9, repeated: 0, listed: 0, copied: 0 }]) // => 'a.html (9 characters)' */
+const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.length || a.path.localeCompare(b.path)).slice(0, DEPTH_MAX_NAMED_PAGES).map(page => `${page.path} (${page.length} characters${uncountedClauseOf(page)})`).join(', ');
 /** Answers the failure sentences about the page tree and the diagrams: child pages, page count and diagrams per page and in total. Called by {@link depthShortfallsOf}. @example structureShortfallsOf(manifest.pages, 12) // => [] */
 function structureShortfallsOf(pages, explainedCount) {
   const children = pages.filter(page => page.parent).length;
@@ -230,29 +286,31 @@ function structureShortfallsOf(pages, explainedCount) {
   if (diagrams < neededDiagrams) shortfalls.push(`The Wiki has ${diagrams} diagrams but needs at least ${neededDiagrams} for ${pages.length} pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges.`);
   return shortfalls;
 }
-/** Answers the failure sentences about the article text: the total and the stub pages, in weighted characters. Called by {@link depthShortfallsOf}. @example textShortfallsOf(measured, 12) // => [] */
+/** Answers the failure sentences about the explanation: the total and the stub pages, in weighted characters of counted explanation ({@link countedTextOf}), each naming what did not count. Called by {@link depthShortfallsOf}. @example textShortfallsOf(measured, 12) // => [] */
 function textShortfallsOf(measured, explainedCount) {
-  const total = measured.reduce((sum, page) => sum + page.length, 0);
+  const sum = key => measured.reduce((total, page) => total + page[key], 0);
+  const total = sum('length');
+  const uncounted = uncountedClauseOf({ repeated: sum('repeated'), listed: sum('listed'), copied: sum('copied') });
   const neededText = Math.min(DEPTH_TEXT_PER_FILE * explainedCount, DEPTH_MAX_REQUIRED_TEXT);
   const stubs = measured.filter(page => page.length < DEPTH_MIN_PAGE_TEXT);
   const shortfalls = [];
-  if (total < neededText) shortfalls.push(`The Wiki has ${total} characters of article text (CJK characters counted twice) but needs at least ${neededText} for ${explainedCount} explained code files: write longer explanations, starting with the thinnest pages: ${thinnestPagesOf(measured)}.`);
-  if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of article text (CJK characters counted twice): deepen ${thinnestPagesOf(stubs)}.`);
+  if (total < neededText) shortfalls.push(`The Wiki has ${total} characters of explanation (CJK characters counted twice${uncounted}) but needs at least ${neededText} for ${explainedCount} explained code files: write longer explanations, starting with the thinnest pages: ${thinnestPagesOf(measured)}.`);
+  if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen ${thinnestPagesOf(stubs)}.`);
   return shortfalls;
 }
-/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12) // => [] */
-function depthShortfallsOf(pages, explainedCount) {
-  const measured = pages.map(page => ({ path: page.path, length: textWeightOf(articleTextOf(page.contentHtml)) }));
-  return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(measured, explainedCount)];
+/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @param citedTextsOf - Answers a page's cited sources as quotable text. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12, () => []) // => [] */
+function depthShortfallsOf(pages, explainedCount, citedTextsOf) {
+  return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(countedTextOf(pages, citedTextsOf), explainedCount)];
 }
-/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough explanation in total (CJK counted twice) and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
- * @throws With one sentence for each failed rule, naming the measured value, the required value and what to add. @example requireWikiDepth(manifest, indexedSources) */
-function requireWikiDepth(manifest, indexedSources) {
+/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+ * @param citedTextsOf - Answers a page's cited sources as quotable text, for the copied-text rule.
+ * @throws With one sentence for each failed rule, naming the measured value, the required value and what to add. @example requireWikiDepth(manifest, indexedSources, () => []) */
+function requireWikiDepth(manifest, indexedSources, citedTextsOf) {
   const exceptions = manifest.coverageExceptions ?? [];
   const explained = codeFilePathsOf(indexedSources).filter(path => !exceptions.some(entry => isExceptionFor(entry, path)));
   // A small repository is exempt from the depth rules.
   if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return;
-  const shortfalls = depthShortfallsOf(manifest.pages, explained.length);
+  const shortfalls = depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
 /** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
@@ -360,6 +418,13 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   // Every citation has resolved; now no included code file may stay unexplained.
   requireCodeCoverage(manifest, indexedSources, await verifiedInlinePathsOf(manifest, indexedSources, projectRoot, async source => (await linesOf(source)).length));
-  requireWikiDepth(manifest, indexedSources);
+  // A page's cited sources (its source list and diagram sources, all read above) as quotable text, read once per file.
+  const quotableTexts = new Map();
+  const quotableTextOf = path => {
+    if (!quotableTexts.has(path)) quotableTexts.set(path, quotableSourceTextOf(sourceLines.get(path) ?? []));
+    return quotableTexts.get(path);
+  };
+  const citedTextsOf = page => [...new Set([...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path))].map(quotableTextOf);
+  requireWikiDepth(manifest, indexedSources, citedTextsOf);
   return pages;
 }
