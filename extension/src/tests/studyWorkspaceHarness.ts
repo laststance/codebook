@@ -668,6 +668,10 @@ export async function workspaceHarness(
   let refusesNextGroupClose = false
   /** See `keepNextClosedGroup`. */
   let keepsNextClosedGroup = false
+  /** Called once when `keepNextClosedGroup`'s close is consumed; resolves the promise that call returned. */
+  let keptCloseConsumed: (() => void) | undefined
+  /** See `failNextGroupsReadAfterKeptClose`: the error to throw, and whether the kept close already happened. */
+  let groupsReadFailure: { error: Error; armed: boolean } | undefined
   /** See `holdNextGroupClose`. */
   let heldGroupClose: { entered: () => void; wait: Promise<void> } | undefined
   const tabCloseRequests: Tab[][] = []
@@ -5389,7 +5393,15 @@ export async function workspaceHarness(
           return reportedSourceColumn === undefined ? visible : editor
         },
         tabGroups: {
-          all: groups,
+          // In the model of `failNextGroupsReadAfterKeptClose`, the first read after the kept close throws.
+          get all() {
+            if (groupsReadFailure?.armed) {
+              const { error } = groupsReadFailure
+              groupsReadFailure = undefined
+              throw error
+            }
+            return groups
+          },
           get activeTabGroup() {
             return staleNamedGroup ?? activeTabGroup
           },
@@ -5442,6 +5454,9 @@ export async function workspaceHarness(
               // In the model of `keepNextClosedGroup`, the editor accepts the close of an empty group but never removes it.
               if (keepsNextClosedGroup && !tabs.tabs.length) {
                 keepsNextClosedGroup = false
+                if (groupsReadFailure) groupsReadFailure.armed = true
+                keptCloseConsumed?.()
+                keptCloseConsumed = undefined
                 return true
               }
               const column = tabs.viewColumn,
@@ -8173,9 +8188,24 @@ export async function workspaceHarness(
     refuseNextGroupClose(): void {
       refusesNextGroupClose = true
     },
-    /** Models an editor that accepts the close of an empty group (answering `true`) and never removes that group, so a wait for its removal runs to its bound (Cycle 0111). It applies to the next close of any empty group, then resets; unused, it stays armed for the rest of this harness. @example harness.keepNextClosedGroup() */
-    keepNextClosedGroup(): void {
+    /**
+     * Models an editor that accepts the close of an empty group (answering `true`) and never removes that group, so a wait for its removal runs to its bound (Cycle 0111). It applies to the next close of any empty group, then resets; unused, it stays armed for the rest of this harness. Called by the leftover-group removal tests before they open the reader.
+     * @returns A promise that resolves when that kept close has been answered, so a test can act while the entry waits for the removal.
+     * @example const kept = harness.keepNextClosedGroup(); const opening = harness.reader.open(); await kept
+     */
+    keepNextClosedGroup(): Promise<void> {
       keepsNextClosedGroup = true
+      return new Promise<void>((resolve) => {
+        keptCloseConsumed = resolve
+      })
+    },
+    /**
+     * Makes the first read of `vscode.window.tabGroups.all` after the close `keepNextClosedGroup` models throw `error` once, so a test can see how the wait for the group's removal treats a read that fails. Reads before that close are untouched. Called by the leftover-group removal tests after `keepNextClosedGroup`.
+     * @param error - The error the editor's group list throws.
+     * @example harness.failNextGroupsReadAfterKeptClose(new Error('group list unavailable'))
+     */
+    failNextGroupsReadAfterKeptClose(error: Error): void {
+      groupsReadFailure = { error, armed: false }
     },
     /**
      * Holds the editor's answer to the next request to close a whole group until the test releases it, before the editor acts on the request (and before `refuseNextGroupClose` refuses it), so a test can move the learner's keyboard while a close is pending.
