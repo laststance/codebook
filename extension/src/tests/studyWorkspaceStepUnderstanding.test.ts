@@ -1160,7 +1160,7 @@ async function openBrowserFamily(): Promise<OpenedReplay> {
         snapshotUri,
         sourceHash,
         valuePaths: ['value:nextTheme'],
-        key: 'explanation',
+        key: 'note',
         interpretation: 'The theme is read before the click applies it.',
         learningSummary: {
           question: 'How does the selected theme reach the interface?',

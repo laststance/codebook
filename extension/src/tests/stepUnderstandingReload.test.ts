@@ -116,7 +116,7 @@ test('browser recording: after a window reload the reopened replay shows the sav
         snapshotUri,
         sourceHash,
         valuePaths: ['value:nextTheme'],
-        key: 'explanation',
+        key: 'note',
         interpretation: 'The theme is read before the click applies it.',
         learningSummary: {
           question: 'How does the chosen theme reach the interface?',
