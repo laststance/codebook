@@ -616,3 +616,51 @@ test('a step file that grows past the byte limit after the size check reads as u
   // Assert
   assert.equal(outcome, 'The step-understanding file is not a bounded file.')
 })
+
+// Value: protects=a step file that grows after the size check, yet stays under the byte limit, being refused for that read and read again at its new size on the next; fails_when=the read buffer is sized from the limit instead of the checked size, so the grown file is read whole, or the refusal sticks for later reads; no_claim=a real writer racing the read (the size check is made to report a small file) and the pane's wording of the unreadable state
+test('a step file that grows after the size check but stays under the limit is refused once and read on the next read', async (context) => {
+  // Arrange: a valid file of 300 bytes, a limit of 500, and one size check that reports 100 bytes.
+  const folder = await mkdtemp(join(tmpdir(), 'step-file-growth-under-'))
+  context.after(() => removeTestFolder(folder))
+  const path = join(folder, 'step-understanding.json')
+  const studyId =
+    '00000000-0000-4000-8000-000000000000_00000000-0000-4000-8000-000000000001'
+  await writeFile(
+    path,
+    JSON.stringify({ version: 1, studyId, decisions: [] }).padEnd(300, ' '),
+  )
+  let sizeCheckIsStale = true
+  const realOpen = fsPromises.open
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...args: Parameters<typeof realOpen>) => {
+      const handle = await realOpen(...args)
+      return new Proxy(handle, {
+        get(target, key) {
+          // Only the first read's handle answers a small size, as a file that grew after the check would.
+          if (key === 'stat' && sizeCheckIsStale) {
+            sizeCheckIsStale = false
+            return async () => ({ isFile: () => true, size: 100 })
+          }
+          const value = Reflect.get(target, key, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+    },
+  )
+
+  // Act
+  const firstOutcome = await readStepUnderstandingFile(path, studyId, 500).then(
+    () => 'read',
+    (error: Error) => error.message,
+  )
+  const secondRead = await readStepUnderstandingFile(path, studyId, 500)
+
+  // Assert
+  assert.equal(
+    firstOutcome,
+    'The step-understanding file is not a bounded file.',
+  )
+  assert.deepEqual(secondRead, { version: 1, studyId, decisions: [] })
+})

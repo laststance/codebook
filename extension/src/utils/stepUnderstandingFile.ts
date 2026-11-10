@@ -17,8 +17,8 @@ import {
 import { systemErrorCode } from './systemErrorCode'
 
 /**
- * Reads a regular file through one open handle, never following a link and never holding more than the limit; called by {@link readStepUnderstandingFile}.
- * The size check and the read use the same handle, and the read stops one byte past the limit, so a file that grows or is replaced after the check cannot be read whole.
+ * Reads a regular file through one open handle, never following a link and never holding more than the limit; called by {@link readStepUnderstandingFile} on every replay open, play, select and node-history message.
+ * The size check and the read use the same handle, and the buffer is sized from the size that check saw (not from the limit, which would allocate the limit on every read): the read stops one byte past that size, so a file that grows or is replaced after the check is refused for this read, never read whole; the next read sees its new size.
  * @param path - The file.
  * @param limitBytes - The largest allowed size.
  * @returns The file's bytes.
@@ -33,8 +33,8 @@ async function readRegularFileWithin(
   try {
     const stat = await handle.stat()
     if (!stat.isFile() || stat.size > limitBytes) throw notBoundedFile()
-    // One byte past the limit shows growth after the size check.
-    const buffer = Buffer.alloc(limitBytes + 1)
+    // One byte past the size just checked shows growth after the check.
+    const buffer = Buffer.alloc(stat.size + 1)
     let length = 0
     while (length < buffer.length) {
       const { bytesRead } = await handle.read(
@@ -47,7 +47,8 @@ async function readRegularFileWithin(
       if (bytesRead === 0) break
       length += bytesRead
     }
-    if (length > limitBytes) throw notBoundedFile()
+    // The file grew after the size check: refused for this read.
+    if (length > stat.size) throw notBoundedFile()
     return buffer.subarray(0, length)
   } finally {
     await handle.close()
