@@ -391,7 +391,11 @@ export async function answerDeepWikiQuestionWithPrompt(
   })
   return {
     // A model may still write excerpt ids into its prose; the reader shows no ids, so name files instead.
-    answer: replaceExcerptIdsWithPaths(result.answer.trim(), excerpts),
+    answer: replaceExcerptIdsWithPaths(
+      result.answer.trim(),
+      trimmedQuestion,
+      excerpts,
+    ),
     citations,
     sourceChanged,
   }

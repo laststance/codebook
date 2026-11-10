@@ -598,12 +598,16 @@ test('Cursor browser question shows only answers citing unchanged excerpt lines'
 /**
  * Runs one Wiki question over three sources that all define `createInvoice`, with a model stub that replies as given.
  * @param reply - The model's JSON reply text.
+ * @param firstLine - First line of every source file; defaults to a comment without id-shaped words.
  * @returns The prompt the model saw and the answer the reader receives.
  */
-async function askWithThreeSources(reply: string) {
+async function askWithThreeSources(
+  reply: string,
+  firstLine = '// saves invoices',
+) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-answer-ids-'))
   const root = await realpath(directory)
-  const content = 'export function createInvoice() {\n  return "saved";\n}\n'
+  const content = `${firstLine}\nexport function createInvoice() {\n  return "saved";\n}\n`
   const sources = await Promise.all(
     ['a.ts', 'b.ts', 'c.ts'].map(async (path) => {
       await writeFile(join(root, path), content)
@@ -690,4 +694,30 @@ test('Wiki prompt asks the model to name files rather than excerpt ids', async (
     prompt,
     /In the answer text, name a source by its file path \(with line numbers when useful\), never by its excerpt id such as S1; the ids belong only in citations\./,
   )
+})
+
+// Value: protects=a real word such as the service name S3 in the source stays in a Wiki answer instead of being rewritten into a file path; fails_when=`S3` becomes `c.ts` although the excerpts mention S3 themselves; why_new=Cycle 0113 (C113-W2); seam=answerDeepWikiQuestion over a stubbed editor model; no_claim=how a model's own prose about S3 is judged
+test('Wiki answer keeps an id-shaped word the source itself uses', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'Files go to S3 (see S1).',
+    citations: [{ id: 'S1', line: 3 }],
+  })
+  // Act
+  const { answer } = await askWithThreeSources(reply, '// upload to S3')
+  // Assert
+  assert.equal(answer.answer, 'Files go to S3 (see a.ts).')
+})
+
+// Value: protects=a full-width excerpt id the model wrote is named by file too; fails_when=`Ｓ２` reaches the reader as written; why_new=Cycle 0113 (C113-W2); seam=answerDeepWikiQuestion over a stubbed editor model; no_claim=other full-width wording
+test('Wiki answer names the file for a full-width excerpt id', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: '返します（Ｓ２、2行）。',
+    citations: [{ id: 'S1', line: 2 }],
+  })
+  // Act
+  const { answer } = await askWithThreeSources(reply)
+  // Assert
+  assert.equal(answer.answer, '返します（b.ts、2行）。')
 })
