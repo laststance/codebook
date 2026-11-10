@@ -246,6 +246,28 @@ function requireCodeCoverage(manifest, indexedSources, inlinePaths) {
   const more = uncovered.length > MAX_NAMED_UNCOVERED ? `, and ${uncovered.length - MAX_NAMED_UNCOVERED} more` : '';
   throw new Error(`The Wiki leaves ${uncovered.length} included code file${uncovered.length === 1 ? '' : 's'} unexplained: ${uncovered.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Explain each in a page and cite it, or list it (or its folder ending with /) under coverageExceptions with the reason it needs no explanation.`);
 }
+/** Whether a citation's `line` is a whole number from 1 and its optional `label` is text. Called by {@link citedSourceOf}. @example isCitableReference({ path: 'a.ts', line: 3 }) // => true */
+const isCitableReference = reference => Number.isSafeInteger(reference.line) && reference.line >= 1 && (reference.label === undefined || typeof reference.label === 'string');
+/** The indexed source a page or diagram citation names, refusing an unindexed path, a line below 1 or a label that is not text. Called by the citation resolver of {@link renderWikiPages}. @throws 'Wiki references an unindexed source or invalid line.' @example citedSourceOf({ path: 'src/a.ts', line: 1 }, indexedSources) // => { path: 'src/a.ts', sha256 } */
+function citedSourceOf(reference, indexedSources) {
+  const source = reference && indexedSources.get(reference.path);
+  if (!source || !isCitableReference(reference)) throw new Error('Wiki references an unindexed source or invalid line.');
+  return source;
+}
+/** Refuses a citation whose last line is not a whole number from its first line to the file's last. Called by the citation resolver of {@link renderWikiPages}. @throws Naming the file and the cited line. @example requireLineRange(source, { line: 2 }, 2, ['a', 'b']) // returns */
+function requireLineRange(source, reference, endLine, lines) {
+  const isInRange = Number.isSafeInteger(endLine) && endLine >= reference.line && endLine <= lines.length;
+  if (!isInRange) throw new Error(`Wiki source line is out of range: ${source.path}:${reference.line}.`);
+}
+/** Whether a diagram citation's quote is the text of its cited lines, line ends and surrounding space aside. Called by {@link requireExactQuote}. @example quotesCitedLines({ line: 1, quote: 'a' }, 1, ['a']) // => true */
+const quotesCitedLines = (reference, endLine, lines) => lines.slice(reference.line - 1, endLine).join('\n').trim() === reference.quote.replace(/\r\n/g, '\n').trim();
+/** Refuses a diagram citation that quotes more than {@link MAX_SOURCE_QUOTE_LINES} lines, no text or other text than its lines: a matching file hash cannot rescue a quote attached to the wrong line range. Called by the citation resolver of {@link renderWikiPages}. @throws Naming the file and the line range. @example requireExactQuote(source, { line: 1, quote: 'a' }, 1, ['a']) // returns */
+function requireExactQuote(source, reference, endLine, lines) {
+  const hasQuote = typeof reference.quote === 'string' && Boolean(reference.quote.trim());
+  if (endLine - reference.line >= MAX_SOURCE_QUOTE_LINES || !hasQuote || !quotesCitedLines(reference, endLine, lines)) throw new Error(`Diagram source quote does not match ${source.path}:${reference.line}-${endLine}. Cite at most ${MAX_SOURCE_QUOTE_LINES} exact lines.`);
+}
+/** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
+const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
 /** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
@@ -278,14 +300,11 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   };
   /** Resolves page and graph citations through the same current-source boundary. @example await sourceLink({ path: 'src/a.ts', line: 1 }) */
   const sourceLink = async (reference, exactQuote = false) => {
-    const source = reference && indexedSources.get(reference.path);
-    if (!source || !Number.isSafeInteger(reference.line) || reference.line < 1 || reference.label !== undefined && typeof reference.label !== 'string') throw new Error('Wiki references an unindexed source or invalid line.');
+    const source = citedSourceOf(reference, indexedSources);
     const lines = await linesOf(source), endLine = exactQuote ? reference.endLine : reference.line;
-    if (!Number.isSafeInteger(endLine) || endLine < reference.line || endLine > lines.length) throw new Error(`Wiki source line is out of range: ${source.path}:${reference.line}.`);
-    // A matching file hash cannot rescue a quote attached to the wrong line range.
-    if (exactQuote && (endLine - reference.line >= MAX_SOURCE_QUOTE_LINES || typeof reference.quote !== 'string' || !reference.quote.trim() || lines.slice(reference.line - 1, endLine).join('\n').trim() !== reference.quote.replace(/\r\n/g, '\n').trim())) throw new Error(`Diagram source quote does not match ${source.path}:${reference.line}-${endLine}. Cite at most ${MAX_SOURCE_QUOTE_LINES} exact lines.`);
-    const location = `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-    return `<a href="${escapeHtml(sourceAddress(source, reference.line))}">${escapeHtml(reference.label ?? location)}</a>`;
+    requireLineRange(source, reference, endLine, lines);
+    if (exactQuote) requireExactQuote(source, reference, endLine, lines);
+    return `<a href="${escapeHtml(sourceAddress(source, reference.line))}">${escapeHtml(reference.label ?? citedLocationOf(source, reference, endLine))}</a>`;
   };
   for (const page of manifest.pages) {
     const sourceLinks = [];
