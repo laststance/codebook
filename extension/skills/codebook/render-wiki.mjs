@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
-import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
+import { basename, extname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
@@ -113,6 +113,53 @@ function requireReadablePage(path, pageHtml) {
   return pageHtml;
 }
 
+/** The file extensions of included sources that count as application code: {@link requireCodeCoverage} refuses a Wiki that leaves such a file unexplained. Configuration, data, style and documentation files (`.json`, `.yaml`, `.css`, `.md`) are not listed, so they need no citation. */
+const CODE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.astro', '.py', '.go', '.rs', '.java', '.kt', '.kts', '.rb', '.php', '.cs', '.swift', '.c', '.cc', '.cpp', '.h', '.hpp', '.scala', '.sh']);
+/** How many uncovered paths the refusal of {@link requireCodeCoverage} names. */
+const MAX_NAMED_UNCOVERED = 40;
+/** The longest reason, in characters, a coverage exception may give. */
+const MAX_EXCEPTION_REASON = 300;
+/** Reads the `path` of every inline editor source address (`vscode://` or `cursor://laststance.codebook/source?…`) in authored HTML; its parameters may be separated by `&amp;`. Called by {@link citedPathsOf}. @example inlineCitedPathsOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => ['a.ts'] */
+function inlineCitedPathsOf(contentHtml) {
+  const addresses = contentHtml.matchAll(/(?:vscode|cursor):\/\/laststance\.codebook\/source\?([^"'\s<>]*)/g);
+  return [...addresses].map(match => new URLSearchParams(match[1].replaceAll('&amp;', '&')).get('path')).filter(Boolean);
+}
+/** Collects every source path a Wiki cites: page source lists, diagram node and edge sources and inline editor source links of the authored HTML. Called by {@link requireCodeCoverage}. @example citedPathsOf(manifest) // => Set { 'src/a.ts' } */
+function citedPathsOf(manifest) {
+  const references = manifest.pages.flatMap(page => [
+    ...page.sources,
+    ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources)),
+    ...inlineCitedPathsOf(page.contentHtml).map(path => ({ path })),
+  ]);
+  return new Set(references.map(reference => reference.path));
+}
+/** Tells whether a coverage exception covers a file: the exception names it, or names a folder (ending with `/`) that holds it. Called by {@link requireCodeCoverage}. @example isExceptionFor({ path: 'gen/' }, 'gen/api.ts') // => true */
+const isExceptionFor = (entry, path) => entry.path.endsWith('/') ? path.startsWith(entry.path) : path === entry.path;
+/** Refuses a malformed, repeated or stale entry of the manifest's `coverageExceptions`. Called by {@link requireCodeCoverage}. @throws With a sentence that names the entry's path. @example requireValidExceptions([{ path: 'gen/', reason: 'Generated.' }], ['gen/api.ts']) */
+function requireValidExceptions(exceptions, codeFiles) {
+  if (!Array.isArray(exceptions)) throw new Error('coverageExceptions must be an array of { path, reason } entries.');
+  const seen = new Set();
+  for (const entry of exceptions) {
+    const folderless = typeof entry?.path === 'string' && entry.path.endsWith('/') ? entry.path.slice(0, -1) : entry?.path;
+    if (!safePath(folderless)) throw new Error('A coverage exception needs a relative path of an included code file, or of a folder ending with /.');
+    if (typeof entry.reason !== 'string' || !entry.reason.trim() || entry.reason.trim().length > MAX_EXCEPTION_REASON) throw new Error(`The coverage exception for ${entry.path} needs a reason of 1–${MAX_EXCEPTION_REASON} characters saying why that code needs no explanation.`);
+    if (seen.has(entry.path)) throw new Error(`The coverage exception for ${entry.path} is listed twice.`);
+    seen.add(entry.path);
+    if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
+  }
+}
+/** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
+ * @throws When an exception is malformed, repeated or matches no included code file, or when code files stay uncited and unlisted; the message names the count and the first paths. @example requireCodeCoverage(manifest, indexedSources) */
+function requireCodeCoverage(manifest, indexedSources) {
+  const codeFiles = [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
+  const exceptions = manifest.coverageExceptions ?? [];
+  requireValidExceptions(exceptions, codeFiles);
+  const cited = citedPathsOf(manifest);
+  const uncovered = codeFiles.filter(path => !cited.has(path) && !exceptions.some(entry => isExceptionFor(entry, path))).sort();
+  if (!uncovered.length) return;
+  const more = uncovered.length > MAX_NAMED_UNCOVERED ? `, and ${uncovered.length - MAX_NAMED_UNCOVERED} more` : '';
+  throw new Error(`The Wiki leaves ${uncovered.length} included code file${uncovered.length === 1 ? '' : 's'} unexplained: ${uncovered.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Explain each in a page and cite it, or list it (or its folder ending with /) under coverageExceptions with the reason it needs no explanation.`);
+}
 /** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
@@ -181,5 +228,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     // Every page is written with LF only: its text may hold CRLF or a lone CR (an editor on Windows writes them), and a browser reads each as LF anyway. So the CRLF the publisher's refusal (lineEndRefusalOf in publish-wiki.mjs) looks for is only one that Git added at a checkout, never one the page's own text brought, and that refusal does not fire for a page that merely held CRLF.
     pages.set(page.path, requireReadablePage(page.path, pageHtml.replace(/\r\n?/g, '\n')));
   }
+  // Every citation has resolved; now no included code file may stay unexplained.
+  requireCodeCoverage(manifest, indexedSources);
   return pages;
 }
