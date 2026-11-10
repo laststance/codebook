@@ -13,7 +13,7 @@ import { test } from 'node:test'
  * @example
  * ```ts
  * const skill = await readBundledSkill()
- * assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+ * assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
  * ```
  */
 const readBundledSkill = (): Promise<string> =>
@@ -38,13 +38,13 @@ const readBundledSkill = (): Promise<string> =>
 const readPackagedReadme = (): Promise<string> =>
   readFile(join(__dirname, '..', '..', 'README.md'), 'utf8')
 
-// Value: protects=the Wiki route tells the chat AI that every included code file needs a citation or a coverageExceptions entry with its reason, before the renderer refuses it; fails_when=skill 1.0.88 loses the coverage sentence and the chat learns of the rule only from a refusal it may answer by excepting application modules (C113-W1); why_new=skill 1.0.87 never asked for coverage, and a 6-page Wiki citing 32 of 71 sources published; seam=none; no_claim=how thoroughly a chat model explains each file
-test('the bundled skill 1.0.88 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
+// Value: protects=the Wiki route tells the chat AI that every included code file needs a citation or a coverageExceptions entry with its reason, before the renderer refuses it; fails_when=the skill (from 1.0.88) loses the coverage sentence and the chat learns of the rule only from a refusal it may answer by excepting application modules (C113-W1); why_new=skill 1.0.87 never asked for coverage, and a 6-page Wiki citing 32 of 71 sources published; seam=none; no_claim=how thoroughly a chat model explains each file
+test('the bundled skill 1.0.90 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
   assert.ok(
     skill.includes(
       'Every included code file must be cited by a page `sources` list, a diagram node or edge, or an inline editor source link, or be listed under optional `coverageExceptions`',
@@ -68,6 +68,63 @@ test('the README says the generator refuses a Wiki that leaves an included code 
   )
 })
 
+// Value: protects=the Wiki route tells the chat AI how to cover a repository of several hundred code files: a chapter per package, an Examples chapter whose pages cite each family's files, a Testing page citing the tests, source lists built by a scratch script, examples and tests kept out of excludedPaths, and work that goes on until the Wiki is published; fails_when=the skill (from 1.0.90) loses the paragraph, and a large repository's Wiki again leaves examples and tests out through excludedPaths (C114-W2) or excepts learner files (C114-W1), or a chat ends its turn with an unpublished candidate (Cycle 0114 E1 run 1); why_new=Cycle 0114 H3 held in Cursor on TanStack/query, 2,498 code files; seam=none; no_claim=that a chat model follows the paragraph, which the native reruns check
+test('the bundled skill 1.0.90 tells the Wiki of a large repository to cite its examples and tests in Examples and Testing pages instead of leaving them out', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
+  assert.ok(
+    skill.includes(
+      '**Large repositories.** When the included code reaches several hundred files (a monorepo of packages, examples and tests), plan the tree from the folder layout before reading files one by one, and cover every kind of code the repository holds:',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Give each package a chapter of its own, or a child page in a chapter of closely related packages, with child pages for its main modules and flows.',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      "Give the examples an **Examples** chapter whose child pages each explain one family of examples (one framework, or one feature shown in several) and list every file of that family in the page's `sources`.",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Give the tests a **Testing** page, or one per package, that explains how the tests are organized and what they check, and lists the test files in its `sources`.',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Build these source lists, and `includedSources` with its hashes, with a script in `.codebook/scratch/` instead of by hand',
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      "Examples, tests, build scripts and configuration code are code a learner reads: keep them out of `excludedPaths`, which holds only step 1's exclusions, and out of `coverageExceptions`, which stays limited to code that needs no explanation.",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Keep working until the Wiki is published. When a refusal names unexplained files or thin chapters, extend the plan and run the publisher again; do not end your turn with an unpublished candidate',
+    ),
+  )
+})
+
+// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.90) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.90; seam=none; no_claim=that a generated Wiki has those chapters
+test('the README says a large repository gets a chapter per package, an Examples chapter and a Testing page', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      'For a repository of several hundred code files, the bundled skill asks for a chapter per package (or a page in a chapter of related packages), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out.',
+    ),
+  )
+})
+
 // Value: protects=the Wiki route tells the chat AI the depth floors the renderer enforces (child pages, pages per file, a diagram on every page, text per page and per file with CJK counted twice) and the learner's README says the generator refuses a thin Wiki; fails_when=the skill or the README loses the depth sentence and a flat 7-page Wiki with one diagram is published (C113-W3); why_new=the renderer gained the depth refusal in Cycle 0113; seam=none; no_claim=how deep a chat model's articles really are
 test('the skill and the README say a Wiki too thin for its code is refused: no child pages, too few diagrams or too little explanation', async () => {
   // Arrange / Act
@@ -77,12 +134,12 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   // Assert
   assert.ok(
     skill.includes(
-      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to the 256-page limit), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total (the total required stops at 120,000), CJK characters counted twice; a page's characters are counted from its article text. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
+      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to 30 pages), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total (the total required stops at 120,000), CJK characters counted twice; a page's characters are counted from its article text. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
     ),
   )
   assert.ok(
     readme.includes(
-      'Once 12 or more included code files need explanation, it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
+      'Once 12 or more included code files need explanation, it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, too few pages for its code (one per 8 explained code files, up to 30 pages), a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
     ),
   )
 })
@@ -119,7 +176,7 @@ const readRenderer = (): Promise<string> =>
     'utf8',
   )
 
-// Value: protects=the skill's depth sentence and the renderer's floors stay the same numbers; fails_when=a depth constant in render-wiki.mjs changes (for example the 1,200-character page floor) while the skill still states the old value, so the chat aims at a floor the renderer no longer enforces; why_new=C113 /ship review (core docs-drift note); seam=none (reads the shipped files); no_claim=the renderer's behavior, which renderWikiDepth.test.mjs covers
+// Value: protects=the skill's depth sentence and the renderer's floors stay the same numbers; fails_when=a depth constant in render-wiki.mjs changes (for example the 1,200-character page floor or the 30-page cap) while the skill still states the old value, so the chat aims at a floor the renderer no longer enforces; why_new=C113 /ship review (core docs-drift note); seam=none (reads the shipped files); no_claim=the renderer's behavior, which renderWikiDepth.test.mjs covers
 test('the renderer enforces the same depth floors the bundled skill states', async () => {
   // Arrange
   const renderer = await readRenderer()
@@ -127,9 +184,9 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
 
   // Act
   const constants = Object.fromEntries(
-    [
-      ...renderer.matchAll(/^const (DEPTH_[A-Z_]+|MAX_PAGES) = ([\d_.]+);$/gm),
-    ].map((match) => [match[1], match[2]]),
+    [...renderer.matchAll(/^const (DEPTH_[A-Z_]+) = ([\d_.]+);$/gm)].map(
+      (match) => [match[1], match[2]],
+    ),
   )
 
   // Assert
@@ -138,7 +195,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
       DEPTH_MIN_EXPLAINED_FILES: constants.DEPTH_MIN_EXPLAINED_FILES,
       DEPTH_MIN_CHILD_PAGES: constants.DEPTH_MIN_CHILD_PAGES,
       DEPTH_FILES_PER_PAGE: constants.DEPTH_FILES_PER_PAGE,
-      MAX_PAGES: constants.MAX_PAGES,
+      DEPTH_MAX_REQUIRED_PAGES: constants.DEPTH_MAX_REQUIRED_PAGES,
       DEPTH_DIAGRAMS_PER_PAGE: constants.DEPTH_DIAGRAMS_PER_PAGE,
       DEPTH_MIN_PAGE_TEXT: constants.DEPTH_MIN_PAGE_TEXT,
       DEPTH_TEXT_PER_FILE: constants.DEPTH_TEXT_PER_FILE,
@@ -148,7 +205,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
       DEPTH_MIN_EXPLAINED_FILES: '12',
       DEPTH_MIN_CHILD_PAGES: '2',
       DEPTH_FILES_PER_PAGE: '8',
-      MAX_PAGES: '256',
+      DEPTH_MAX_REQUIRED_PAGES: '30',
       DEPTH_DIAGRAMS_PER_PAGE: '1.5',
       DEPTH_MIN_PAGE_TEXT: '1200',
       DEPTH_TEXT_PER_FILE: '500',
@@ -157,7 +214,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
   )
   assert.ok(
     skill.includes(
-      'from 12 explained code files (included code files no exception covers), at least 2 pages with a `parent`, at least one page per 8 explained code files (up to the 256-page limit)',
+      'from 12 explained code files (included code files no exception covers), at least 2 pages with a `parent`, at least one page per 8 explained code files (up to 30 pages)',
     ),
   )
 })

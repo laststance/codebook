@@ -131,6 +131,8 @@ const DEPTH_FILES_PER_PAGE = 8;
 const DEPTH_TEXT_PER_FILE = 500;
 /** The cap, in characters, on the total article text {@link requireWikiDepth} requires. */
 const DEPTH_MAX_REQUIRED_TEXT = 120_000;
+/** The cap on the pages {@link requireWikiDepth} requires: the page floor stops growing where the text total stops ({@link DEPTH_MAX_REQUIRED_TEXT} / {@link DEPTH_TEXT_PER_FILE} = 240 explained files, / {@link DEPTH_FILES_PER_PAGE} = 30 pages), so a large repository is held to a DeepWiki-sized chapter tree (DeepWiki gives TanStack/query, 2,498 code files, 47 pages) instead of one page per 8 files up to {@link MAX_PAGES}. */
+const DEPTH_MAX_REQUIRED_PAGES = 30;
 /** The fewest weighted characters of article text any single page may have once {@link requireWikiDepth} applies. */
 const DEPTH_MIN_PAGE_TEXT = 1200;
 /** How many of the thinnest pages the depth refusal names. */
@@ -216,14 +218,14 @@ const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.le
 /** Answers the failure sentences about the page tree and the diagrams: child pages, page count and diagrams per page and in total. Called by {@link depthShortfallsOf}. @example structureShortfallsOf(manifest.pages, 12) // => [] */
 function structureShortfallsOf(pages, explainedCount) {
   const children = pages.filter(page => page.parent).length;
-  // A Wiki holds at most MAX_PAGES pages, so a huge repository is never asked for more.
-  const neededPages = Math.min(Math.ceil(explainedCount / DEPTH_FILES_PER_PAGE), MAX_PAGES);
+  // Past 240 explained files the floor stays at DEPTH_MAX_REQUIRED_PAGES, as the text total stays at DEPTH_MAX_REQUIRED_TEXT.
+  const neededPages = Math.min(Math.ceil(explainedCount / DEPTH_FILES_PER_PAGE), DEPTH_MAX_REQUIRED_PAGES);
   const diagrams = pages.reduce((sum, page) => sum + (page.diagrams ?? []).length, 0);
   const neededDiagrams = Math.ceil(pages.length * DEPTH_DIAGRAMS_PER_PAGE);
   const bare = pages.filter(page => !(page.diagrams ?? []).length).map(page => page.path);
   const shortfalls = [];
   if (children < DEPTH_MIN_CHILD_PAGES) shortfalls.push(`The Wiki has ${children} pages with a parent but needs at least ${DEPTH_MIN_CHILD_PAGES}: add child pages under subsystem chapters for their modules and flows.`);
-  if (pages.length < neededPages) shortfalls.push(`The Wiki has ${pages.length} pages but needs at least ${neededPages} for ${explainedCount} explained code files (about one page per ${DEPTH_FILES_PER_PAGE} files): split the large chapters by module and flow.`);
+  if (pages.length < neededPages) shortfalls.push(`The Wiki has ${pages.length} pages but needs at least ${neededPages} for ${explainedCount} explained code files (about one page per ${DEPTH_FILES_PER_PAGE} files, up to ${DEPTH_MAX_REQUIRED_PAGES}): split the large chapters by module and flow.`);
   if (bare.length) shortfalls.push(`${bare.length} page${bare.length === 1 ? ' has' : 's have'} no diagram but every page needs at least one: add an architecture, flow or sequence diagram to ${bare.slice(0, DEPTH_MAX_NAMED_PAGES).join(', ')}.`);
   if (diagrams < neededDiagrams) shortfalls.push(`The Wiki has ${diagrams} diagrams but needs at least ${neededDiagrams} for ${pages.length} pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges.`);
   return shortfalls;

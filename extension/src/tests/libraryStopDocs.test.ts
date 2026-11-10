@@ -147,7 +147,7 @@ test('the bundled skill 1.0.74 tells the chat to name the build and never run it
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
   assert.ok(
     skill.includes(
       "A question that leads from an Example of a nested Next Pages app into the checked-out library may declare a server stop in the library's source, but only when `codebook_status` reports API 1.19 or later; on an older API tell the learner to update Codebook instead of following the `outside-package` fix. When the run refuses with `library-build-stale`, tell the learner which build to run, and never run it yourself; for `library-build-unmapped` read `details.cause` and the help section for it.",
@@ -187,7 +187,7 @@ test('the README states the library-stop rule in the nested-app section with API
     assert.ok(section.includes(phrase), phrase)
   assert.ok(readme.includes('with **MCP API 1.44**'))
   assert.ok(readme.includes('(1.0.68).**'))
-  assert.ok(readme.includes('updates to **1.0.88**'))
+  assert.ok(readme.includes('updates to **1.0.90**'))
 })
 
 // protects=the help describes every bound and deadline cause of library-build-unmapped with the real limits, and says a transpilePackages library is refused as library-build-unmapped, not outside-package; fails_when=the bound text drops the entry, byte or unfinished-scan limits, hard-codes a stale number, or the limits sentence claims outside-package for transpilePackages; no_claim=that the run emits these causes (libraryBuildStop tests)
@@ -413,7 +413,7 @@ test('the skill 1.0.73 and the README state browser library stops of a nested Ne
   const readme = await readPackaged('README.md')
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
   assert.ok(
     skill.includes(
       'With API 1.23 or later a browser stop of a nested Next App Router app may lie in a workspace library too, as for a nested Pages or Vite app, and the native debugger shows the checked-out library file there. With API 1.24 or later a server stop of a nested Next App Router app may lie in a workspace library too, and the native debugger shows the checked-out library file there; a library stop of an app with both routers keeps the `outside-package` refusal',
@@ -481,7 +481,7 @@ test('the skill 1.0.73 and the README state server library stops of a nested Nex
   const readme = await readPackaged('README.md')
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.90"\n'))
   assert.ok(
     skill.includes(
       'With API 1.24 or later a server stop of a nested Next App Router app may lie in a workspace library too, and the native debugger shows the checked-out library file there',
@@ -493,7 +493,7 @@ test('the skill 1.0.73 and the README state server library stops of a nested Nex
     'is resumed and not recorded',
     'API 1.24 is additive: it adds server stops in the checked-out source of a workspace library that a nested Next App Router app imports',
     'and a server stop there (1.0.73).**',
-    'updates to **1.0.88**',
+    'updates to **1.0.90**',
   ])
     assert.ok(readme.includes(phrase), phrase)
 })

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.116.0] - 2026-11-11 (development candidate)
+
+Cycle 0114 ([Issue #292](https://github.com/laststance/codebook/issues/292)), a feature cycle. **The LLM Wiki of a large repository is no longer refused for needing hundreds of pages, and the bundled skill tells the editor AI how to cover examples and tests in a repository of several hundred code files.** On TanStack/query (2,498 code files), a Wiki shaped like DeepWiki's own 47-page Wiki of that repository was refused because the generator asked for 256 pages. With this build, VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent (Grok 4.6 High) each published a Wiki of that repository citing every code file, examples and tests included, within the 55-minute limit, and each updated it from the page's **Update LLM Wiki** in under five minutes.
+
+### Changed
+- **A Wiki's page requirement stops at 30 pages.** Once 12 or more included code files need explanation, the generator still asks for one page per 8 explained code files, but never more than 30: that is where its total text requirement (120,000 characters) already stops growing. A refused Wiki's sentence names the limit ("about one page per 8 files, up to 30"). Before, a repository of 2,000 explained code files needed 250 pages.
+- **The bundled skill is 1.0.90.** For a repository of several hundred code files, it asks the editor AI for a chapter per package (or a page in a chapter of related packages), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out. Cursor's managed copy updates itself when Codebook starts.
+
+**Known issue.** At this scale an editor AI can meet the Wiki's text and child-page minimums with repeated per-file text and with chapters that nest unrelated pages: in Cursor's Wikis of TanStack/query, 58.5 to 70.9% of the text was in sentences repeated across pages, and 86.8 to 87.6% sat under per-file template headings. The next cycle addresses it.
+
+**Compatibility.** No MCP API or study format change. The bundled skill is 1.0.90. A Wiki that an earlier skill published stays readable. It is checked against the new rules only when it is updated or generated again.
+
 ## [0.2.115.0] - 2026-11-11 (development candidate)
 
 Cycle 0113 ([Issue #290](https://github.com/laststance/codebook/issues/290)), a feature cycle. **The LLM Wiki generator now refuses a Wiki that leaves code unexplained or is too thin for its code, and Wiki answers name files and keep all their citations.** In today's native runs, VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent (Grok 4.6 High) first published Wikis of 6 to 7 flat pages with one diagram that left 39 of 71 sources unexplained. Cursor also refused a correct answer that cited several lines. With this build, both editors' Wikis cite every included code file and have a chapter tree and a diagram on every page. Both editors answer repository questions with their citations.
