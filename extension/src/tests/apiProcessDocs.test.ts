@@ -55,14 +55,14 @@ test('the apiServer help explains details.apiProcess and forbids naming an unobs
   assert.deepEqual(missing, [])
 })
 
-// Value: protects=the bundled skill 1.0.87 tells the chat how to report a not-paused API process and the README tells the learner what details.apiProcess means, where the run resource carries it and in which order the failure text gives it; fails_when=the skill version, the skill rule, the README sentence or the README's current API mention is stale; no_claim=how the chat behaves in a host
+// Value: protects=the bundled skill 1.0.88 tells the chat how to report a not-paused API process and the README tells the learner what details.apiProcess means, where the run resource carries it and in which order the failure text gives it; fails_when=the skill version, the skill rule, the README sentence or the README's current API mention is stale; no_claim=how the chat behaves in a host
 test('the skill and the README describe details.apiProcess of an unreached API stop', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   const readme = await readPackaged('README.md')
   // Act
   const missingFromSkill = [
-    'metadata:\n  version: "1.0.87"\n',
+    'metadata:\n  version: "1.0.88"\n',
     '`details.apiProcess.state` is `not-paused`',
     'the API process was running, not stopped at a breakpoint, when the deadline ran out',
     'the request may be waiting inside the app (it may depend on a service the app calls) or may never have arrived',
@@ -76,7 +76,7 @@ test('the skill and the README describe details.apiProcess of an unreached API s
     'or no request reached the line, `paused` names the repository place where it was paused',
     '`unknown` means Codebook could not read it',
     "The run resource's operation failure carries the same `apiProcess`, and the failure text names the unreached stop first, then the measured state in one sentence, then the possibilities.",
-    'updates to **1.0.87**',
+    'updates to **1.0.88**',
   ].filter((phrase) => !readme.includes(phrase))
   // Assert
   assert.deepEqual(missingFromSkill, [])
