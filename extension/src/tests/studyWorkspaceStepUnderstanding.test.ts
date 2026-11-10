@@ -616,6 +616,114 @@ for (const family of families) {
   })
 }
 
+// Value: protects=the step progress counting only the steps a learner can select, so a step with no recorded event never holds it below full; fails_when=the progress counts an unreferenced unknown step (shows "0 of 2" or stays at "1 of 2" after the reachable step is checked), or a press for that step is saved or goes unexplained; no_claim=the webview's drawing of the progress line (Reader DOM) and the other Node families' mapping (their projections)
+test('test replay: a step with no recorded event is left out of the step progress and its check is refused', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveTwoStopNodeHistory(store)
+    await harness.service.explainNodeHistory({
+      studyId: history.studyId,
+      expectedRevision: 0,
+      content: {
+        question: 'Where does the test switch the theme?',
+        title: 'Theme switch',
+        summary: 'The test reads the next theme twice and passes.',
+        participants: [
+          { id: 'test', label: 'Theme test' },
+          { id: 'theme', label: 'applyTheme' },
+        ],
+        steps: [
+          {
+            id: 'read',
+            from: 'test',
+            to: 'theme',
+            label: 'Read the next theme',
+            explanation: 'The first stop shows nextTheme is dark.',
+            evidence: 'observed',
+            reference: {
+              type: 'stop',
+              sequence: 2,
+              sourceHash: history.configuration.source.hash,
+            },
+          },
+          {
+            id: 'unrecorded',
+            from: 'theme',
+            to: 'theme',
+            label: 'Guess the cause',
+            explanation: 'Nothing recorded shows why the theme stays.',
+            evidence: 'unknown',
+          },
+        ],
+      },
+    })
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
+        !lastView(harness)?.loading,
+      'the test replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    const opened: OpenedReplay = {
+      family: 'test replay',
+      harness,
+      studyId: history.studyId,
+      stepIds: ['read', 'unrecorded'],
+      selectableCount: 1,
+      stepFile: join(
+        store.historyDirectory(history.studyId),
+        STEP_UNDERSTANDING_NODE_FILE,
+      ),
+      reopen: (): Promise<void> => reopenNodeReplay(harness, history.studyId),
+      openAgain: (): Promise<void> =>
+        openNodeReplayAgain(harness, history.studyId),
+      moveAround: (): Promise<void> =>
+        moveNodePlayhead(harness, history.studyId),
+    }
+    await whenRead(opened)
+
+    // Assert: the unreachable step is not counted before any press.
+    assert.equal(stepView(opened)?.selectableCount, 1)
+    assert.equal(stepView(opened)?.understoodCount, 0)
+
+    // Act: the learner checks the one step that has a position.
+    press(opened, 'read', true)
+    await whenMarked(opened, 'read')
+
+    // Assert
+    assert.equal(stepView(opened)?.understoodCount, 1)
+    assert.equal(stepView(opened)?.selectableCount, 1)
+
+    // Act: a press names the step that has no recorded position.
+    const stepFileBefore = await readFile(opened.stepFile, 'utf8')
+    press(opened, 'unrecorded', true)
+    await waitUntil(
+      () =>
+        [
+          lastView(harness)?.nodeHistoryRefusal ?? '',
+          ...(lastView(harness)?.errors ?? []),
+        ].some((line) =>
+          line.includes(
+            'This step has no recorded position, so it has no understanding check.',
+          ),
+        ),
+      'the unreferenced step is refused',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(await readFile(opened.stepFile, 'utf8'), stepFileBefore)
+    assert.equal(stepView(opened)?.understoodCount, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a changed step asking for review instead of carrying an old check; fails_when=after the material is revised the changed step still reads understood or loses its time, or the unchanged step loses its check; no_claim=the browser recording, whose material is saved with its study
 test('test replay: revising a step after it was marked shows review for that step and keeps the other step’s check', async () => {
   // Arrange

@@ -10680,12 +10680,13 @@ export class StudyWorkspace {
       { type: 'step-understanding' }
     >,
   ): Promise<void> {
-    const shown = this.shownForStepPress()
+    const current = this.message()
+    const shown = this.shownForStepPress(current.nodeHistoryLearningSummary)
     if (message.revision !== this.revision) {
       this.refuseStalePress(message, shown)
       return
     }
-    if (this.message().loading)
+    if (current.loading)
       throw new Error('Wait for the replay to finish loading.')
     // The refusal lines that exist now are the only ones this press can answer; one raised while the save runs is newer.
     const lifetime = this.lifetime
@@ -10701,16 +10702,20 @@ export class StudyWorkspace {
 
   /**
    * Names the shown replay's steps for a step-check press; called by {@link handleStepUnderstanding}.
+   * @param nodeLearningSummary - The Study message's Node-family learning projection, so a press counts the steps that message offers a check for.
    * @returns The shown replay's steps, or `undefined` when none is shown.
-   * @example const shown = this.shownForStepPress()
+   * @example const shown = this.shownForStepPress(current.nodeHistoryLearningSummary)
    */
-  private shownForStepPress(): ShownReplaySteps | undefined {
+  private shownForStepPress(
+    nodeLearningSummary: StudyViewMessage['nodeHistoryLearningSummary'],
+  ): ShownReplaySteps | undefined {
     const browserReplay = this.browserReplayShown()
     const bundle = browserReplay ? this.playback?.bundle() : undefined
     return this.shownReplaySteps(
       browserReplay,
       bundle?.studyId,
       projectLearningSummary(bundle?.context?.study, bundle?.context?.phases),
+      nodeLearningSummary,
     )
   }
 
@@ -10761,17 +10766,19 @@ export class StudyWorkspace {
 
   /**
    * Names the replay whose steps the per-step checks belong to and the steps themselves, for the Study message; called by {@link message}.
-   * A browser replay offers its checks for the steps that have a recorded position; a Node-family replay offers them for every step of its saved material.
+   * A replay offers its checks for the steps that have a recorded position: a browser replay by its projected summary, a Node-family replay by the projection its Study message shows (a step with no reference, or whose event the history lacks, has none and is not counted). All saved steps stay in `steps`, so their decisions are still hashed and kept.
    * @param browserReplay - Whether a browser recording is shown.
    * @param studyId - The browser replay's study id (the loaded recording's); unused for a Node-family replay.
    * @param learningSummary - The browser replay's projected learning summary.
+   * @param nodeLearningSummary - The Node-family replay's learning projection from {@link nodeHistoryViews}, the one the Study message shows; its positions are the selectable steps.
    * @returns The shown replay's steps, or `undefined` when no replay with saved steps is shown.
-   * @example this.shownReplaySteps(false, undefined, undefined)?.selectable // => ['stop-1', 'stop-2'] for a test replay with two steps
+   * @example this.shownReplaySteps(false, undefined, undefined, summary)?.selectable // => ['stop-1'] for a test replay whose second step has no recorded position
    */
   private shownReplaySteps(
     browserReplay: boolean,
     studyId: string | undefined,
     learningSummary: ReturnType<typeof projectLearningSummary>,
+    nodeLearningSummary: StudyViewMessage['nodeHistoryLearningSummary'],
   ): ShownReplaySteps | undefined {
     if (browserReplay) {
       if (studyId === undefined || !learningSummary) return undefined
@@ -10790,7 +10797,9 @@ export class StudyWorkspace {
       studyId: historyStudyId,
       store: this.nodeHistoryStoreOf(historyStudyId),
       steps: hashSteps(material.content.steps),
-      selectable: material.content.steps.map((step) => step.id),
+      selectable: (nodeLearningSummary?.positions ?? []).map(
+        (position) => position.stepId,
+      ),
     }
   }
 
@@ -11297,6 +11306,11 @@ export class StudyWorkspace {
         ...(history.reason ? { reason: history.reason } : {}),
       })),
     ].sort((left, right) => right.savedAt.localeCompare(left.savedAt))
+    // Built once so the Node replay's step checks count the same positions its summary shows.
+    const nodeViews = this.nodeHistoryViews(
+      selectedNodeHistory,
+      selectedNodeHistoryEvent,
+    )
     return {
       type: 'study',
       revision: this.revision,
@@ -11340,7 +11354,12 @@ export class StudyWorkspace {
       ...this.extensionReplayMessage(),
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
       stepUnderstanding: this.stepUnderstanding.view(
-        this.shownReplaySteps(browserReplay, bundle?.studyId, learningSummary),
+        this.shownReplaySteps(
+          browserReplay,
+          bundle?.studyId,
+          learningSummary,
+          nodeViews.nodeHistoryLearningSummary,
+        ),
       ),
       // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
       nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries
@@ -11394,7 +11413,7 @@ export class StudyWorkspace {
                 }
               : {}),
           },
-      ...this.nodeHistoryViews(selectedNodeHistory, selectedNodeHistoryEvent),
+      ...nodeViews,
       ...(selectedNodeHistory && this.nodeHistoryOpenToken !== undefined
         ? { nodeHistoryScrollToken: this.nodeHistoryOpenToken }
         : {}),
