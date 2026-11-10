@@ -235,6 +235,10 @@ import { createPresentationReceiptsHost } from './studyWorkspace/presentationSta
 import { ReplayOpening } from './studyWorkspace/replayOpening'
 import { createReplayOpeningHost } from './studyWorkspace/replayOpeningHost'
 import {
+  StepUnderstandingSessions,
+  type ShownReplaySteps,
+} from './studyWorkspace/stepUnderstandingSessions'
+import {
   type NodeHistoryOpening,
   recordedFrameLabel,
   type LeftoverTabClose,
@@ -422,6 +426,7 @@ import {
   type SlotDeadline,
 } from './utils/slotDeadline'
 import { stackRowsAtOneHeight } from './utils/stackRowsAtOneHeight'
+import { hashSteps } from './utils/stepUnderstanding'
 import { stripNodeHistorySummaryTexts } from './utils/stripNodeHistorySummaryTexts'
 import { stripTerminalControls } from './utils/stripTerminalControls'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
@@ -580,6 +585,14 @@ const messageSchema = z.discriminatedUnion('type', [
     type: z.literal('node-history-understanding'),
     ...revisionShape,
     studyId: studyIdSchema,
+    understood: z.boolean(),
+  }),
+  // The learner's press of one step's I understand this step check; the extension hashes the saved step itself.
+  z.strictObject({
+    type: z.literal('step-understanding'),
+    ...revisionShape,
+    studyId: studyIdSchema,
+    stepId: nodeLearningStepIdSchema,
     understood: z.boolean(),
   }),
   z.strictObject({
@@ -801,6 +814,14 @@ export class StudyWorkspace {
   private selectedNodeHistory?: NodeTestHistoryIndex
   private selectedNodeHistoryLearningDecision?: NodeTestHistoryLearningDecision
   private selectedNodeHistoryLearningMaterial?: NodeLearningMaterialOfHistory
+  /** The learner's per-step understanding checks of the shown replay: their file's decisions, saves in flight and failures. */
+  private readonly stepUnderstanding = new StepUnderstandingSessions(
+    () => {
+      if (!this.closing) this.publish()
+    },
+    (error) =>
+      `Not saved: ${withoutErrorName(this.withoutPrivateRoots(String(error)))}`,
+  )
   /** The selected history as a server replay presents it, when it is one: its model and its test-shaped view, which is {@link selectedNodeHistory} itself. Every surface that words or draws a moment asks it first ({@link nodeHistoryViews}). */
   private selectedServerReplay?: ServerReplayPresentation
   /** The selected history as an Extension replay presents it, when it is one: its model and its test-shaped view, which is {@link selectedNodeHistory} itself. */
@@ -7297,6 +7318,7 @@ export class StudyWorkspace {
     // Read before anything is closed or shown: the tab outside the text editors and the Study panes that has the keyboard now (Cursor's chat), which gets it back when this close shows a side bar.
     const giveKeyboardBackToChat = this.retainForeignTabFocus(undefined)
     this.closing = true
+    this.stepUnderstanding.dispose()
     this.heldBackReplay = undefined
     this.revision++
     this.lifetime++
@@ -10621,6 +10643,82 @@ export class StudyWorkspace {
   }
 
   /**
+   * Carries out the learner's press of one step's I understand this step check; called by {@link receive} for the `step-understanding` message of either replay family.
+   * A message of an older revision writes nothing and says so on its step's state line; a message for another study or a step the shown material lacks is refused with its reason. Success, failure and the progress line reach the pane through the next Study message.
+   * @param message - The validated message.
+   * @throws When the replay is loading, is not the one named, has no such step, cannot read its decisions, or the step cannot be selected.
+   * @example await this.receiveStepUnderstanding({ type: 'step-understanding', revision, studyId, stepId: 'a', understood: true })
+   */
+  private async receiveStepUnderstanding(
+    message: Extract<
+      z.infer<typeof messageSchema>,
+      { type: 'step-understanding' }
+    >,
+  ): Promise<void> {
+    const browserReplay = this.browserReplayShown()
+    const bundle = browserReplay ? this.playback?.bundle() : undefined
+    const shown = this.shownReplaySteps(
+      browserReplay,
+      bundle,
+      projectLearningSummary(bundle?.context?.study, bundle?.context?.phases),
+    )
+    if (message.revision !== this.revision) {
+      const stale =
+        'The displayed study changed. Inspect the current view before acting.'
+      const named =
+        shown?.studyId === message.studyId &&
+        shown.steps.some((step) => step.stepId === message.stepId)
+      if (
+        named &&
+        this.stepUnderstanding.refuse(message.studyId, message.stepId, stale)
+      )
+        return
+      throw new Error(stale)
+    }
+    if (this.message().loading)
+      throw new Error('Wait for the replay to finish loading.')
+    await this.stepUnderstanding.save(message, shown, new Date())
+    // The press was accepted, so an earlier refusal of a control of this replay no longer describes it.
+    if (browserReplay) this.replayControlAccepted()
+    else if (this.errors.delete('node-history-control')) this.publish()
+  }
+
+  /**
+   * Names the replay whose steps the per-step checks belong to and the steps themselves, for the Study message; called by {@link message}.
+   * A browser replay offers its checks for the steps that have a recorded position; a Node-family replay offers them for every step of its saved material.
+   * @param browserReplay - Whether a browser recording is shown.
+   * @param bundle - The browser replay's loaded recording.
+   * @param learningSummary - The browser replay's projected learning summary.
+   * @returns The shown replay's steps, or `undefined` when no replay with saved steps is shown.
+   * @example this.shownReplaySteps(false, undefined, undefined)?.selectable // => ['stop-1', 'stop-2'] for a test replay with two steps
+   */
+  private shownReplaySteps(
+    browserReplay: boolean,
+    bundle: { studyId: string } | undefined,
+    learningSummary: ReturnType<typeof projectLearningSummary>,
+  ): ShownReplaySteps | undefined {
+    if (browserReplay) {
+      if (!bundle || !learningSummary) return undefined
+      return {
+        studyId: bundle.studyId,
+        store: this.library,
+        steps: hashSteps(learningSummary.content.steps),
+        selectable: learningSummary.positions.map((value) => value.stepId),
+      }
+    }
+    const history = this.selectedNodeHistory
+    const material = this.selectedNodeHistoryLearningMaterial
+    if (!history || !material) return undefined
+    const studyId = history.header.studyId
+    return {
+      studyId,
+      store: this.nodeHistoryStoreOf(studyId),
+      steps: hashSteps(material.content.steps),
+      selectable: material.content.steps.map((step) => step.id),
+    }
+  }
+
+  /**
    * Finds the store that holds a history by its profile, so a server replay's decision and reader position are written to the server store; an id no folder holds resolves to no store, never to the test store. A reader without a repository has only the test store.
    * @param studyId - The history's study id.
    * @returns The store, or `undefined` once the reader has none or no history has this id.
@@ -11045,6 +11143,11 @@ export class StudyWorkspace {
             contextReason: playbackState.contextReason,
           }
         : undefined
+    // Computed once: the recording's own field and the per-step checks both read it.
+    const learningSummary = projectLearningSummary(
+      bundle?.context?.study,
+      bundle?.context?.phases,
+    )
     const projectionInput = {
       selection: this.selection,
       observationId: this.selectedRepositoryObservationId(),
@@ -11139,10 +11242,7 @@ export class StudyWorkspace {
         pauseConfirmed: bundle?.projection.pauseConfirmed ?? false,
         rendererConfirmed: bundle?.projection.rendererConfirmed ?? false,
         laterInterpretations: bundle?.projection.laterInterpretations ?? [],
-        learningSummary: projectLearningSummary(
-          bundle?.context?.study,
-          bundle?.context?.phases,
-        ),
+        learningSummary,
         nativeValuesUninspected:
           bundle?.projection.debugger !== undefined &&
           bundle.projection.debugger === this.replayUninspectedSnapshot,
@@ -11163,6 +11263,9 @@ export class StudyWorkspace {
       ...this.serverReplayMessage(),
       ...this.extensionReplayMessage(),
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
+      stepUnderstanding: this.stepUnderstanding.view(
+        this.shownReplaySteps(browserReplay, bundle, learningSummary),
+      ),
       // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
       nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries
         .slice(
@@ -17545,6 +17648,8 @@ export class StudyWorkspace {
             view.onDidChangeVisibility(() => {
               // Collapsing the summary never moves the playhead or borrows a live debugger.
               if (this.isSummaryViewInState(view, true)) {
+                // The Study panel is visible again: the step decisions are read again (another window may have changed them).
+                this.stepUnderstanding.refresh()
                 this.lastPublished = undefined
                 this.publish()
               }
@@ -20489,6 +20594,11 @@ export class StudyWorkspace {
     const parsed = messageSchema.safeParse(value)
     if (!parsed.success) return 'control'
     if (parsed.data.type === 'playback') return 'replay-control'
+    // A step check's refusal belongs to the replay family that shows it, so that family's next accepted control retires it.
+    if (parsed.data.type === 'step-understanding')
+      return this.browserReplayShown()
+        ? 'replay-control'
+        : 'node-history-control'
     return parsed.data.type.startsWith('node-history')
       ? 'node-history-control'
       : 'control'
@@ -20830,10 +20940,22 @@ export class StudyWorkspace {
     }
     if (!(message.type === 'action' && message.action === 'stop'))
       this.assertPresentationIdle()
+    // A step's check names its refusal on its own step's state line, so it is handled before the generic revision refusal.
+    if (message.type === 'step-understanding') {
+      await this.receiveStepUnderstanding(message)
+      return
+    }
     if (message.revision !== this.revision)
       throw new Error(
         'The displayed study changed. Inspect the current view before acting.',
       )
+    // A move of the replay may change the selected step; the step decisions are read again, so a repaired or externally changed file shows without reopening the replay.
+    if (
+      message.type === 'playback' ||
+      message.type === 'select' ||
+      message.type.startsWith('node-history-')
+    )
+      this.stepUnderstanding.refresh()
     if (message.type === 'action') {
       if (message.action.startsWith('read-')) {
         try {

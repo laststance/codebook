@@ -18,18 +18,22 @@ import { before, test, type TestContext } from 'node:test'
 import { STEP_UNDERSTANDING_NODE_FILE } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   stepUnderstandingFileSchema,
   type StepUnderstandingDecision,
 } from '../stepUnderstandingSchemas'
 import type { StudyArchive } from '../studyModel'
+import { StepUnderstandingSessions } from '../studyWorkspace/stepUnderstandingSessions'
 import { holdsLearnerFiles } from '../utils/holdsLearnerFiles'
+import { hashSteps } from '../utils/stepUnderstanding'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import { EXTENSION_WORKSPACE_KEY } from './utils/chromeExtensionHistoryFixture'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { openServerRepository } from './utils/nodeServerHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { realProcessStart } from './utils/realProcessStart'
 import { removeTestFolder } from './utils/removeTestFolder'
 import {
@@ -242,6 +246,58 @@ for (const family of families) {
       'step-one',
       'step-two',
     ])
+  })
+
+  // Value: protects=a saved step decision coming back with its check, its time and the progress count after a window reload; fails_when=a fresh store and session on the stored files show the step unchecked, without its time or without the count; no_claim=a real window reload (native) and the webview's drawing
+  test(`${family.name}: a fresh store and session on the stored files show the saved step with its time and the progress count`, async (context) => {
+    // Arrange
+    const replay = await family.open(context)
+    const steps = [
+      { id: 'step-one', label: 'One' },
+      { id: 'step-two', label: 'Two' },
+    ]
+    const hashed = hashSteps(steps)
+    const change = {
+      stepId: 'step-one',
+      stepHash: hashed[0]!.stepHash,
+      understood: true,
+      at: '2026-11-10T09:30:00.000Z',
+    }
+    await replay.store.save(change)
+
+    // Act: a window reload builds new store objects and a new session over the same files.
+    const fresh = await replay.otherWindow()
+    const reloadedStore = {
+      readStepUnderstanding: () => fresh.read() as Promise<never>,
+      saveStepUnderstanding: () => fresh.save(change) as Promise<never>,
+    }
+    const sessions = new StepUnderstandingSessions(() => undefined, String)
+    const shown = {
+      studyId: replay.studyId,
+      store: reloadedStore,
+      steps: hashed,
+      selectable: ['step-one', 'step-two'],
+    }
+    const first = sessions.view(shown)
+    await waitUntil(
+      () => sessions.view(shown)?.status === 'ready',
+      'the reloaded decisions are read',
+      READER_RESULT_BOUND_MS,
+    )
+    const reloaded = sessions.view(shown)
+
+    // Assert
+    assert.equal(first?.status, 'unknown')
+    assert.deepEqual(reloaded?.steps[0], {
+      stepId: 'step-one',
+      understood: true,
+      at: '2026-11-10T09:30:00.000Z',
+      reviewNeeded: false,
+      saving: false,
+    })
+    assert.equal(reloaded?.steps[1]?.understood, false)
+    assert.equal(reloaded?.understoodCount, 1)
+    assert.equal(reloaded?.selectableCount, 2)
   })
 
   // Value: protects=a lock held by another writer refusing the write without touching the file; fails_when=the write waits, is retried in the background, or changes the file's bytes; no_claim=a lock of a process that has really died (its takeover has its own tests)
