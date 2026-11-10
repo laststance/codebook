@@ -1819,8 +1819,8 @@ test('a failed physical release keeps its owner and rejects starting or copying 
   }
 })
 
-// Value: protects=the one Codebook Output channel the failure texts point to, shared by the service and the Study reader, each entry naming surface, study, version, host, cause; fails_when=the service or the reader reports to no channel, a second channel appears, Show details does not reveal it or the extension's storage folder is named; why_new=the sink is built in activate() and the tests assign their own (X5, AC17); seam=none; no_claim=the host's log levels (a fake window API, Study reader and server start stand in)
-test('activation gives the service and the Study reader one sink that writes unexpected failures to the Codebook Output channel', async () => {
+// Value: protects=the one Codebook Output channel the failure texts point to, shared by the service and the Study reader, each entry naming surface, study, version, host, cause, and the reader's informational line (the leftover Application group close of Cycle 0111) written there as an info entry; fails_when=the service or the reader reports to no channel, a second channel appears, the info line is lost or written as an error, Show details does not reveal it, a disposed channel throws into the caller or the extension's storage folder is named; why_new=the sink is built in activate() and the tests assign their own (X5, AC17); seam=none; no_claim=the host's log levels (a fake window API, Study reader and server start stand in)
+test("activation gives the service and the Study reader one sink that writes unexpected failures and the reader's info lines to the Codebook Output channel", async () => {
   // Arrange
   const harness = await createHarness(),
     globalStorage = await mkdtemp(join(tmpdir(), 'codebook-global-storage-')),
@@ -1829,6 +1829,7 @@ test('activation gives the service and the Study reader one sink that writes une
       diagnostics?: {
         log: (entry: CodebookDiagnostic) => void
         show: () => void
+        info?: (line: string) => void
       }
     }[] = [],
     commands = new Map<string, () => Promise<string | void>>(),
@@ -1837,10 +1838,12 @@ test('activation gives the service and the Study reader one sink that writes une
       name: string
       log: boolean | undefined
       error: (text: string) => void
+      info: (text: string) => void
       show: (preserveFocus?: boolean) => void
       dispose(): void
     }[] = [],
     entries: string[] = [],
+    infoEntries: string[] = [],
     shows: (boolean | undefined)[] = []
   const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
@@ -1862,6 +1865,9 @@ test('activation gives the service and the Study reader one sink that writes une
               log: options.log,
               error(text: string): void {
                 entries.push(text)
+              },
+              info(text: string): void {
+                infoEntries.push(text)
               },
               show(preserveFocus?: boolean): void {
                 shows.push(preserveFocus)
@@ -1889,6 +1895,7 @@ test('activation gives the service and the Study reader one sink that writes une
           diagnostics?: {
             log: (entry: CodebookDiagnostic) => void
             show: () => void
+            info?: (line: string) => void
           }
           constructor() {
             readers.push(this)
@@ -1938,6 +1945,9 @@ test('activation gives the service and the Study reader one sink that writes une
       profile: 'node-test',
       cause: 'Sealed Node history journal is corrupt.',
     })
+    reader.diagnostics?.info?.(
+      'Leftover Application group: closed column 1 of 2 groups; removal seen after 0 ms',
+    )
     reader.diagnostics?.show()
 
     // Assert
@@ -1954,6 +1964,9 @@ test('activation gives the service and the Study reader one sink that writes une
       entries[1]!,
       /^open:test-replay · study a_b · profile node-test\n/,
     )
+    assert.deepEqual(infoEntries, [
+      'Leftover Application group: closed column 1 of 2 groups; removal seen after 0 ms',
+    ])
     assert.deepEqual(shows, [true])
     assert.equal(
       sanitizeCause(
@@ -1970,12 +1983,16 @@ test('activation gives the service and the Study reader one sink that writes une
     channels[0]!.show = (): void => {
       throw new Error('Channel has been closed')
     }
+    channels[0]!.info = (): void => {
+      throw new Error('Channel has been closed')
+    }
     assert.doesNotThrow(() => {
       service.diagnostics?.({
         surface: 'HISTORY_SEAL_FAILED',
         cause: 'EIO: i/o error',
       })
       reader.diagnostics?.log({ surface: 'open:test-replay', cause: 'x' })
+      reader.diagnostics?.info?.('x')
       reader.diagnostics?.show()
     })
   } finally {

@@ -340,6 +340,7 @@ import { isWikiGroupBesideTextEditor } from './utils/isWikiGroupBesideTextEditor
 import { isWorkspaceHostSetterFrame } from './utils/isWorkspaceHostSetterFrame'
 import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { leftoverRemovalLine } from './utils/leftoverRemovalLine'
+import { leftoverRemovalTimeoutMessage } from './utils/leftoverRemovalTimeoutMessage'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { listsEveryTabGroup } from './utils/listsEveryTabGroup'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
@@ -15229,10 +15230,11 @@ export class StudyWorkspace {
   /**
    * Closes a proven leftover group as Codebook's own issued removal and waits until the editor removed it; the close step of {@link retireProvenLeftoverGroup}.
    * The groups behind the leftover move one column to the left. The editor answers a removed group with a whole new tab model (Cursor 3.23.12 `workbench.desktop.main.js` 17269:26248 `onDidRemoveGroup` → `_createTabsModel`, sent at 17269:31858), and Cursor gives every group a new object with it, so {@link observeEditorGroups} keeps a moved group's identity only through a shift Codebook issued ({@link issuedApplicationColumnShift}). Marked so, the learner's group whose focus a cold Study select captured is still found by its identity when that select gives its focus back, instead of the refusal "The previously focused source group changed; focus was not guessed." (row 643).
+   * Each close writes one Output › Codebook line ({@link leftoverRemovalLine}): the removal's delay, or the bound and the group count when it passed.
    * @param group - The proven leftover, unlocked already.
    * @param groupsBefore - How many groups the editor named before the close.
    * @param signal - The entry's cancellation.
-   * @throws When the editor refuses the close, or the removal is not reported in time.
+   * @throws When the editor refuses the close; {@link leftoverRemovalTimeoutMessage} (cause: the {@link WaitTimeoutError}) when the removal is not reported within the bound; the entry's own reason when it was cancelled or the groups could not be read.
    * @example await this.closeLeftoverAsIssuedRemoval(group, 4, signal)
    */
   private async closeLeftoverAsIssuedRemoval(
@@ -15259,8 +15261,8 @@ export class StudyWorkspace {
           signal,
         )
       } catch (error) {
-        // A cancelled entry saw nothing to report and keeps its own reason.
-        if (signal?.aborted) throw error
+        // A cancelled entry, or a read of the groups that failed, keeps its own reason: only a bound that passed is a timeout.
+        if (signal?.aborted || !(error instanceof WaitTimeoutError)) throw error
         // A bound that passed names the count the editor showed then, in the Output line and in the refusal.
         const groupsNow = vscode.window.tabGroups.all.length
         this.diagnostics?.info?.(
@@ -15270,7 +15272,11 @@ export class StudyWorkspace {
           }),
         )
         throw new Error(
-          `Timed out waiting for leftover Application group removal (groups before the close: ${groupsBefore}, now: ${groupsNow}, after ${PRESENTATION_READY_TIMEOUT_MS} ms)`,
+          leftoverRemovalTimeoutMessage(
+            groupsBefore,
+            groupsNow,
+            PRESENTATION_READY_TIMEOUT_MS,
+          ),
           { cause: error },
         )
       }

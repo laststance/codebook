@@ -938,7 +938,7 @@ test("a reloaded window's leftover Application group retirement writes the Outpu
   }
 })
 
-// Value: protects=when the editor accepts the close of the earlier window's leftover Application group but never removes it, Open Study Workspace fails after the 5 s bound with a message naming both group counts and the bound, and the Output line says the same; fails_when=the message is the old one without counts, the counts are wrong, or no Output line is written; no_claim=which editor behaviour caused a real timeout (Cycle 0111 E1 did not reproduce one), and the fake keeps the group on purpose.
+// Value: protects=when the editor accepts the close of the earlier window's leftover Application group but never removes it, Open Study Workspace fails after the 5 s bound with a message naming both group counts and the bound, and the Output line says the same; fails_when=the message is the old one without counts, a count or the bound is wrong, the way on is missing, or no Output line is written; no_claim=which editor behaviour caused a real timeout (Cycle 0111 E1 did not reproduce one), the fake keeps the group on purpose, and both counts are 3 here, so the unit tests of the message and the line tell the two counts apart.
 test("a reloaded window's leftover Application group that the editor never removes fails Open Study Workspace with both group counts and the bound", async () => {
   // Arrange: as above, and the editor will accept the leftover's close without ever removing the group.
   const harness = await workspaceHarness(false)
@@ -976,7 +976,7 @@ test("a reloaded window's leftover Application group that the editor never remov
     // Assert: the refusal and the Output line name 3 groups before the close and 3 at the 5000 ms bound.
     assert.match(
       outcome,
-      /Timed out waiting for leftover Application group removal \(groups before the close: 3, now: 3, after 5000 ms\)/,
+      /Timed out waiting for leftover Application group removal \(groups before the close: 3, now: 3, after 5000 ms\)\. Run "Codebook: Open Study Workspace" again\./,
     )
     assert.deepEqual(infoLines, [
       'Leftover Application group: closed column 1 of 3 groups; removal not seen within 5000 ms (groups now 3)',

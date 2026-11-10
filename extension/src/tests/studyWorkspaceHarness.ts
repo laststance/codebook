@@ -8173,7 +8173,7 @@ export async function workspaceHarness(
     refuseNextGroupClose(): void {
       refusesNextGroupClose = true
     },
-    /** Makes the editor accept the next request to close a whole empty group (answering `true`) and never remove that group, so a wait for its removal runs to its bound, the editor the earlier timeouts of Cycle 0111's AC-ENTRY gap would need. @example harness.keepNextClosedGroup() */
+    /** Models an editor that accepts the close of an empty group (answering `true`) and never removes that group, so a wait for its removal runs to its bound (Cycle 0111). It applies to the next close of any empty group, then resets; unused, it stays armed for the rest of this harness. @example harness.keepNextClosedGroup() */
     keepNextClosedGroup(): void {
       keepsNextClosedGroup = true
     },
