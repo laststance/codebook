@@ -354,11 +354,11 @@ test('an inline source link without the indexed hash, with a wrong hash, a line 
   })
 })
 
-// Value: protects=an agent that writes the editor scheme in another letter case or uses the cursor scheme; fails_when=VSCODE://Laststance.Codebook, or a cursor:// link with plain & separators and no root, does not count as a citation; why_new=C113 review round; seam=none (the real renderer); no_claim=that the link opens the right line
-test('an inline source link with an upper-case scheme and authority, and a cursor link with plain ampersands and no root, cover the file', async () => {
+// Value: protects=an agent that writes the editor scheme in another letter case or uses the cursor scheme; fails_when=VSCODE://Laststance.Codebook, or a cursor:// link with plain & separators, does not count as a citation; why_new=C113 review round; seam=none (the real renderer); no_claim=that the link opens the right line
+test('an inline source link with an upper-case scheme and authority, and a cursor link with plain ampersands, cover the file', async () => {
   await inProject(async (root) => {
     // Arrange
-    const parameters = { path: 'lib/b.ts', line: '1', sha256: B_HASH }
+    const parameters = { root, path: 'lib/b.ts', line: '1', sha256: B_HASH }
     const upperCase = await manifestOf(
       root,
       { 'a.ts': A, 'lib/b.ts': B },
@@ -387,6 +387,45 @@ test('an inline source link with an upper-case scheme and authority, and a curso
       [upperCaseOutcome, cursorOutcome],
       ['rendered', 'rendered'],
     )
+  })
+})
+
+// Value: protects=the coverage gate reads an inline link as the editor's URI handler does: the #fragment is not part of the hash, the route is exactly /source and the link names the project root; fails_when=sha256=<hash>#L1 fails the hash check, or a /SOURCE link or a link without root (which the editor cannot open) counts as a citation; why_new=C113 /ship review (Codex P2); seam=none (the real renderer); no_claim=that the editor opens the line
+test('an inline source link with a fragment covers the file; one to the /SOURCE route or without the project root does not', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const valid = { root, path: 'lib/b.ts', line: '1', sha256: B_HASH }
+    const addresses = {
+      fragment: `${inlineLinkOf('vscode://laststance.codebook', valid, '&amp;')}#L1`,
+      upperRoute: inlineLinkOf(
+        'vscode://laststance.codebook',
+        valid,
+        '&amp;',
+      ).replace('/source?', '/SOURCE?'),
+      noRoot: inlineLinkOf(
+        'vscode://laststance.codebook',
+        { ...valid, root: undefined },
+        '&amp;',
+      ),
+    }
+    const outcomes = {}
+
+    // Act
+    for (const [name, address] of Object.entries(addresses)) {
+      const manifest = await manifestOf(
+        root,
+        { 'a.ts': A, 'lib/b.ts': B },
+        { contentHtml: articleWith(address) },
+      )
+      outcomes[name] = await outcomeOf(manifest, root)
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, {
+      fragment: 'rendered',
+      upperRoute: UNEXPLAINED_B,
+      noRoot: UNEXPLAINED_B,
+    })
   })
 })
 

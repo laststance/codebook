@@ -135,13 +135,19 @@ const DEPTH_MAX_REQUIRED_TEXT = 120_000;
 const DEPTH_MIN_PAGE_TEXT = 1200;
 /** How many of the thinnest pages the depth refusal names. */
 const DEPTH_MAX_NAMED_PAGES = 10;
-/** Reads the parameters (`root`, `path`, `line`, `sha256`) of every editor source address (`vscode://` or `cursor://laststance.codebook/source?…`, scheme and authority without case) in an `href` attribute of authored HTML; a comment, escaped text and any other attribute name no link, and character references in the value are read as a browser reads them ({@link withAttributeValues}). Called by {@link verifiedInlinePathsOf}. @example inlineSourceLinksOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => [{ root: undefined, path: 'a.ts', line: '1', sha256: undefined }] */
+/** The query of a Codebook editor source address as the editor's URI handler reads it: `vscode://` or `cursor://laststance.codebook` (scheme and authority without case) with the route `/source` exactly, and the query without its `#fragment`; `undefined` for any other address. Called by {@link inlineSourceLinksOf}. @example sourceQueryOf('VSCODE://laststance.codebook/source?path=a.ts#L1') // => 'path=a.ts' */
+function sourceQueryOf(address) {
+  const match = /^([A-Za-z]+):\/\/([^/?#]+)\/source\?([^#]*)/s.exec(address.trim());
+  if (!match || !['vscode', 'cursor'].includes(match[1].toLowerCase()) || match[2].toLowerCase() !== 'laststance.codebook') return undefined;
+  return match[3];
+}
+/** Reads the parameters (`root`, `path`, `line`, `sha256`) of every editor source address ({@link sourceQueryOf}) in an `href` attribute of authored HTML; a comment, escaped text and any other attribute name no link, and character references in the value are read as a browser reads them ({@link withAttributeValues}). Called by {@link verifiedInlinePathsOf}. @example inlineSourceLinksOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => [{ root: undefined, path: 'a.ts', line: '1', sha256: undefined }] */
 function inlineSourceLinksOf(contentHtml) {
   const links = [];
   withAttributeValues(contentHtml, (name, value) => {
-    const address = name === 'href' ? /^(?:vscode|cursor):\/\/laststance\.codebook\/source\?(.*)$/is.exec(value.trim()) : null;
-    if (address) {
-      const parameters = new URLSearchParams(address[1]);
+    const query = name === 'href' ? sourceQueryOf(value) : undefined;
+    if (query !== undefined) {
+      const parameters = new URLSearchParams(query);
       links.push({ root: parameters.get('root') ?? undefined, path: parameters.get('path') ?? undefined, line: parameters.get('line') ?? undefined, sha256: parameters.get('sha256') ?? undefined });
     }
     return value;
@@ -150,9 +156,9 @@ function inlineSourceLinksOf(contentHtml) {
 }
 /** Whether an inline link's `line` is a whole number from 1, written as digits. Called by {@link namesIndexedSource}. @example hasWholeLine({ line: '12' }) // => true */
 const hasWholeLine = link => /^[1-9]\d{0,15}$/.test(link.line ?? '');
-/** Whether an inline link names an indexed source with that source's hash, a whole line and, when it names a root, the project root; the line's range is checked by the caller. Called by {@link verifiedInlinePathsOf}. @example namesIndexedSource({ path: 'a.ts', line: '1', sha256 }, { path: 'a.ts', sha256 }, '/repo') // => true */
-const namesIndexedSource = (link, source, projectRoot) => Boolean(source) && link.sha256 === source.sha256 && (link.root === undefined || link.root === projectRoot) && hasWholeLine(link);
-/** Collects the paths of the inline editor source links that count as citations: the link names an indexed source with that source's indexed hash, a positive integer line within the file and, when it names a root, the project root. A link that fails one of these does not count, so the file shows as uncovered. Called by {@link renderWikiPages} before {@link requireCodeCoverage}. @param manifest - The manifest's pages. @param indexedSources - The included sources by path. @param projectRoot - The project root the page sources are validated against. @param lineCountOf - Answers a source's line count. @returns The set of paths a valid inline link cites. @example await verifiedInlinePathsOf(manifest, indexedSources, '/repo', async () => 10) // => Set { 'a.ts' } */
+/** Whether an inline link names the project root, an indexed source with that source's hash and a whole line, as the editor's URI handler needs them to open the file; the line's range is checked by the caller. Called by {@link verifiedInlinePathsOf}. @example namesIndexedSource({ root: '/repo', path: 'a.ts', line: '1', sha256 }, { path: 'a.ts', sha256 }, '/repo') // => true */
+const namesIndexedSource = (link, source, projectRoot) => Boolean(source) && link.root === projectRoot && link.sha256 === source.sha256 && hasWholeLine(link);
+/** Collects the paths of the inline editor source links that count as citations: the link names an indexed source with that source's indexed hash, a positive integer line within the file and the project root. A link that fails one of these does not count, so the file shows as uncovered. Called by {@link renderWikiPages} before {@link requireCodeCoverage}. @param manifest - The manifest's pages. @param indexedSources - The included sources by path. @param projectRoot - The project root the page sources are validated against. @param lineCountOf - Answers a source's line count. @returns The set of paths a valid inline link cites. @example await verifiedInlinePathsOf(manifest, indexedSources, '/repo', async () => 10) // => Set { 'a.ts' } */
 async function verifiedInlinePathsOf(manifest, indexedSources, projectRoot, lineCountOf) {
   const verified = new Set();
   for (const page of manifest.pages) {
@@ -195,12 +201,16 @@ function requireValidException(entry, seen, codeFiles) {
 }
 /** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
 const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
-/** Reads a page's article as plain text: tags removed, the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
-const articleTextOf = contentHtml => contentHtml.replace(/<[^>]*>/g, ' ').replace(/&#(x[0-9a-f]+|\d+);/gi, (match, code) => { const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code); return point <= 0x10ffff ? String.fromCodePoint(point) : match; }).replaceAll('&nbsp;', '\u00a0').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
+/** Reads a page's article as plain text: comments and tags removed, the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
+const articleTextOf = contentHtml => contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<[^>]*>/g, ' ').replace(/&#(x[0-9a-f]+|\d+);/gi, (match, code) => { const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code); return point <= 0x10ffff ? String.fromCodePoint(point) : match; }).replaceAll('&nbsp;', '\u00a0').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
 /** Matches the characters that carry about twice the content of a Latin one: Han ideographs, Hiragana, Katakana (halfwidth U+FF66–U+FF9F excluded), Hangul, the content-carrying Japanese marks of the Common script (U+30FC, U+30FB, U+3001, U+3002) and the fullwidth forms U+FF01–U+FF60. */
 const DOUBLE_WEIGHT_CHARACTER = /(?![\uFF66-\uFF9F])[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u30FC\u30FB\u3001\u3002\uFF01-\uFF60]/u;
-/** Measures text in English-equivalent characters: every code point counts 1, except the CJK and fullwidth characters of {@link DOUBLE_WEIGHT_CHARACTER}, which count 2. Called by {@link depthShortfallsOf} so a Japanese Wiki is held to the same depth as an English one. @example textWeightOf('ab日本') // => 6 */
-const textWeightOf = text => [...text].reduce((sum, character) => sum + (DOUBLE_WEIGHT_CHARACTER.test(character) ? 2 : 1), 0);
+/** Matches the invisible format characters (Unicode category Cf, such as the zero-width space U+200B), which a reader never sees. Called by {@link characterWeightOf}. */
+const FORMAT_CHARACTER = /\p{Cf}/u;
+/** The weight of one character in English-equivalent characters: 0 for a format character ({@link FORMAT_CHARACTER}), 2 for a CJK or fullwidth one ({@link DOUBLE_WEIGHT_CHARACTER}), 1 for any other. Called by {@link textWeightOf}. @example characterWeightOf('日') // => 2 */
+const characterWeightOf = character => (FORMAT_CHARACTER.test(character) ? 0 : DOUBLE_WEIGHT_CHARACTER.test(character) ? 2 : 1);
+/** Measures text in English-equivalent characters, each code point by {@link characterWeightOf}: CJK and fullwidth characters count 2, invisible format characters 0, any other 1. Called by {@link depthShortfallsOf} so a Japanese Wiki is held to the same depth as an English one. @example textWeightOf('ab日本') // => 6 */
+const textWeightOf = text => [...text].reduce((sum, character) => sum + characterWeightOf(character), 0);
 /** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their weighted lengths. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9 }]) // => 'a.html (9 characters)' */
 const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.length || a.path.localeCompare(b.path)).slice(0, DEPTH_MAX_NAMED_PAGES).map(page => `${page.path} (${page.length} characters)`).join(', ');
 /** Answers the failure sentences about the page tree and the diagrams: child pages, page count and diagrams per page and in total. Called by {@link depthShortfallsOf}. @example structureShortfallsOf(manifest.pages, 12) // => [] */

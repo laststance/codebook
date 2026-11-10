@@ -75,3 +75,53 @@ test('the README says an answer names files by path and its links open each cite
     ),
   )
 })
+
+/** The renderer that enforces the depth floors the skill states; tests run from `dist/tests`. */
+const readRenderer = (): Promise<string> =>
+  readFile(
+    join(__dirname, '..', '..', 'skills', 'codebook', 'render-wiki.mjs'),
+    'utf8',
+  )
+
+// Value: protects=the skill's depth sentence and the renderer's floors stay the same numbers; fails_when=a depth constant in render-wiki.mjs changes (for example the 1,200-character page floor) while the skill still states the old value, so the chat aims at a floor the renderer no longer enforces; why_new=C113 /ship review (core docs-drift note); seam=none (reads the shipped files); no_claim=the renderer's behavior, which renderWikiDepth.test.mjs covers
+test('the renderer enforces the same depth floors the bundled skill states', async () => {
+  // Arrange
+  const renderer = await readRenderer()
+  const skill = await readBundledSkill()
+
+  // Act
+  const constants = Object.fromEntries(
+    [
+      ...renderer.matchAll(/^const (DEPTH_[A-Z_]+|MAX_PAGES) = ([\d_.]+);$/gm),
+    ].map((match) => [match[1], match[2]]),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      DEPTH_MIN_EXPLAINED_FILES: constants.DEPTH_MIN_EXPLAINED_FILES,
+      DEPTH_MIN_CHILD_PAGES: constants.DEPTH_MIN_CHILD_PAGES,
+      DEPTH_FILES_PER_PAGE: constants.DEPTH_FILES_PER_PAGE,
+      MAX_PAGES: constants.MAX_PAGES,
+      DEPTH_DIAGRAMS_PER_PAGE: constants.DEPTH_DIAGRAMS_PER_PAGE,
+      DEPTH_MIN_PAGE_TEXT: constants.DEPTH_MIN_PAGE_TEXT,
+      DEPTH_TEXT_PER_FILE: constants.DEPTH_TEXT_PER_FILE,
+      DEPTH_MAX_REQUIRED_TEXT: constants.DEPTH_MAX_REQUIRED_TEXT,
+    },
+    {
+      DEPTH_MIN_EXPLAINED_FILES: '12',
+      DEPTH_MIN_CHILD_PAGES: '2',
+      DEPTH_FILES_PER_PAGE: '8',
+      MAX_PAGES: '256',
+      DEPTH_DIAGRAMS_PER_PAGE: '1.5',
+      DEPTH_MIN_PAGE_TEXT: '1200',
+      DEPTH_TEXT_PER_FILE: '500',
+      DEPTH_MAX_REQUIRED_TEXT: '120_000',
+    },
+  )
+  assert.ok(
+    skill.includes(
+      'from 12 explained code files (included code files no exception covers), at least 2 pages with a `parent`, at least one page per 8 explained code files (up to the 256-page limit)',
+    ),
+  )
+})

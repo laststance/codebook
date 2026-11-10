@@ -509,6 +509,39 @@ test('a page padded with escaped &nbsp; text or numeric character references is 
   })
 })
 
+// Value: protects=the depth floor against text a reader never sees: an HTML comment (even one holding >) and zero-width format characters do not count; fails_when=a comment's tail after its first > or 1,000 zero-width spaces count as article text, so a stub page passes the 1,200 floor; why_new=C113 /ship review (Codex P2, adversarial review); seam=none (the real renderer); no_claim=other hidden content
+test('a page padded with an HTML comment holding > or with zero-width spaces is measured by the text a reader sees', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const options = {
+      fileCount: 12,
+      pageTexts: [2000, 2000, 2000, 2000],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    }
+    const padded = async (padding) => {
+      const manifest = await wikiOf(root, options)
+      manifest.pages[3].contentHtml = `<h2 id="flow">Flow</h2><p>Stub.${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+      return manifest
+    }
+    const comment = await padded(`<!-- Design A -> B: ${'x'.repeat(1300)} -->`)
+    const zeroWidth = await padded('&#8203;'.repeat(1300))
+
+    // Act
+    const commentOutcome = await outcomeOf(comment, root)
+    const zeroWidthOutcome = await outcomeOf(zeroWidth, root)
+
+    // Assert
+    assert.deepEqual(
+      [commentOutcome, zeroWidthOutcome],
+      [
+        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
+        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
+      ],
+    )
+  })
+})
+
 // Value: protects=the diagram floor of a three-page Wiki, which rounds 4.5 up to 5; fails_when=the floor is rounded down, so three pages with four diagrams are rendered; why_new=C113 review round (Math.ceil mutant); seam=none (the real renderer); no_claim=none
 test('a 12-file Wiki of three pages with four diagrams is refused because it needs five', async () => {
   await inProject(async (root) => {
