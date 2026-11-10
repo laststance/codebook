@@ -666,6 +666,8 @@ export async function workspaceHarness(
   let rejectNextTabClose = false
   /** See `refuseNextGroupClose`. */
   let refusesNextGroupClose = false
+  /** See `keepNextClosedGroup`. */
+  let keepsNextClosedGroup = false
   /** See `holdNextGroupClose`. */
   let heldGroupClose: { entered: () => void; wait: Promise<void> } | undefined
   const tabCloseRequests: Tab[][] = []
@@ -5437,6 +5439,11 @@ export async function workspaceHarness(
                 refusesNextGroupClose = false
                 return false
               }
+              // In the model of `keepNextClosedGroup`, the editor accepts the close of an empty group but never removes it.
+              if (keepsNextClosedGroup && !tabs.tabs.length) {
+                keepsNextClosedGroup = false
+                return true
+              }
               const column = tabs.viewColumn,
                 count = groups.length,
                 closingTabs = [...tabs.tabs]
@@ -8165,6 +8172,10 @@ export async function workspaceHarness(
     /** Makes the editor answer the next request to close a whole group with `false` and keep that group, empty or not, as it does when it refuses the close (finding 598). @example harness.refuseNextGroupClose() */
     refuseNextGroupClose(): void {
       refusesNextGroupClose = true
+    },
+    /** Makes the editor accept the next request to close a whole empty group (answering `true`) and never remove that group, so a wait for its removal runs to its bound, the editor the earlier timeouts of Cycle 0111's AC-ENTRY gap would need. @example harness.keepNextClosedGroup() */
+    keepNextClosedGroup(): void {
+      keepsNextClosedGroup = true
     },
     /**
      * Holds the editor's answer to the next request to close a whole group until the test releases it, before the editor acts on the request (and before `refuseNextGroupClose` refuses it), so a test can move the learner's keyboard while a close is pending.

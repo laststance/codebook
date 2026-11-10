@@ -15259,15 +15259,20 @@ export class StudyWorkspace {
           signal,
         )
       } catch (error) {
-        // A cancelled entry saw nothing to report; a bound that passed names the count the editor showed then.
-        if (!signal?.aborted)
-          this.diagnostics?.info?.(
-            leftoverRemovalLine(column, groupsBefore, {
-              boundMs: PRESENTATION_READY_TIMEOUT_MS,
-              groupsNow: vscode.window.tabGroups.all.length,
-            }),
-          )
-        throw error
+        // A cancelled entry saw nothing to report and keeps its own reason.
+        if (signal?.aborted) throw error
+        // A bound that passed names the count the editor showed then, in the Output line and in the refusal.
+        const groupsNow = vscode.window.tabGroups.all.length
+        this.diagnostics?.info?.(
+          leftoverRemovalLine(column, groupsBefore, {
+            boundMs: PRESENTATION_READY_TIMEOUT_MS,
+            groupsNow,
+          }),
+        )
+        throw new Error(
+          `Timed out waiting for leftover Application group removal (groups before the close: ${groupsBefore}, now: ${groupsNow}, after ${PRESENTATION_READY_TIMEOUT_MS} ms)`,
+          { cause: error },
+        )
       }
       this.diagnostics?.info?.(
         leftoverRemovalLine(column, groupsBefore, {

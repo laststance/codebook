@@ -890,6 +890,102 @@ test("a reloaded window's leftover empty Application group does not refuse Retur
   }
 })
 
+// Value: protects=after a window reload, a cold Study select that retires the earlier window's leftover Application group writes one Output line naming the column, the group count before the close and the removal's delay; fails_when=no line is written, or it names another column or count; no_claim=how long a real editor takes (the fake removes the group within the close).
+test("a reloaded window's leftover Application group retirement writes the Output line of a seen removal", async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of three groups; after the reload that group stands empty and locked.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const infoLines: string[] = []
+  harness.reader.diagnostics = {
+    log: () => undefined,
+    show: () => undefined,
+    info: (line): void => {
+      infoLines.push(line)
+    },
+  }
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: one line, for column 1 of 3, with the removal seen.
+    assert.equal(infoLines.length, 1, infoLines.join(' | '))
+    assert.match(
+      infoLines[0]!,
+      /^Leftover Application group: closed column 1 of 3 groups; removal seen after \d+ ms$/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=when the editor accepts the close of the earlier window's leftover Application group but never removes it, Open Study Workspace fails after the 5 s bound with a message naming both group counts and the bound, and the Output line says the same; fails_when=the message is the old one without counts, the counts are wrong, or no Output line is written; no_claim=which editor behaviour caused a real timeout (Cycle 0111 E1 did not reproduce one), and the fake keeps the group on purpose.
+test("a reloaded window's leftover Application group that the editor never removes fails Open Study Workspace with both group counts and the bound", async () => {
+  // Arrange: as above, and the editor will accept the leftover's close without ever removing the group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const infoLines: string[] = []
+  harness.reader.diagnostics = {
+    log: () => undefined,
+    show: () => undefined,
+    info: (line): void => {
+      infoLines.push(line)
+    },
+  }
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    harness.keepNextClosedGroup()
+
+    // Act: the learner's Codebook: Open Study Workspace, the entry the earlier timeouts came through.
+    const outcome = await harness.reader.open().then(
+      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: the refusal and the Output line name 3 groups before the close and 3 at the 5000 ms bound.
+    assert.match(
+      outcome,
+      /Timed out waiting for leftover Application group removal \(groups before the close: 3, now: 3, after 5000 ms\)/,
+    )
+    assert.deepEqual(infoLines, [
+      'Leftover Application group: closed column 1 of 3 groups; removal not seen within 5000 ms (groups now 3)',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a Restore after a Return that could not confirm the Application's dedicated layout keeps the learner's groups and their tabs; fails_when=the refused Return leaves its half-claimed owner (count set, layout unset) behind, so the Restore arranges the live two-group layout over three learner groups and the editor merges the third learner group into the source group; why_new=Cycle 0046 finding 590 (C54 in Cursor 3.23.12: the Restore after the failed Return merged README.md, auth.ts and Cursor Settings into the source group and lost the learner's arrangement); seam=reactivatePreviousGroupAtNextLayoutRead
 test('a Restore that cannot confirm its layout leaves the learner’s groups as they were', async () => {
   // Arrange: the same reloaded window; the Return's native read after the Application moved into its new group finds the editor naming the old group, so the Return is refused after its group was taken.
