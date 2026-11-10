@@ -42,7 +42,8 @@ export type BrowserAddressProbeInput = {
   onUnreleased?: (release: () => Promise<boolean>) => void
   /**
    * Called synchronously each time the probe completes a phase, with the milliseconds since the probe's entry; for diagnosis only (Codebook's gate passes none).
-   * Each phase is reported at most once; an exception it throws is ignored.
+   * Each phase is reported at most once; an exception it throws is ignored. It must be synchronous and return nothing: a rejected promise it returned would go unhandled.
+   * A phase can still arrive while the probe ends (an event already in flight, or a command answered just as the run was cancelled), never after the probe returned.
    */
   onPhase?: (phase: BrowserAddressProbePhase, elapsedMs: number) => void
 }
@@ -54,7 +55,7 @@ export type BrowserAddressProbeInput = {
 export type BrowserAddressProbePhase =
   /** The empty profile folder exists and is resolved. */
   | 'profile-made'
-  /** The spawn returned a child. */
+  /** The spawn returned a child; a binary that cannot run is reported afterwards, as a spawn error, so this phase does not show that Chrome started. */
   | 'chrome-spawned'
   /** Chrome's `DevToolsActivePort` was read. */
   | 'debugging-port'

@@ -269,15 +269,12 @@ test('probe passes and reports the pinned address and port for a host name that 
     ],
     trace.text(),
   )
-  // The start phases come in order; the two request events may arrive before request-evaluated.
+  // The start phases come in order up to request-evaluated; the two request events may arrive before it.
   assert.deepEqual(
     trace
       .phases()
       .filter(
-        (phase) =>
-          phase !== 'request-sent' &&
-          phase !== 'request-continued' &&
-          phase !== 'request-evaluated',
+        (phase) => phase !== 'request-sent' && phase !== 'request-continued',
       ),
     [
       'profile-made',
@@ -288,6 +285,7 @@ test('probe passes and reports the pinned address and port for a host name that 
       'attached',
       'network-enabled',
       'fetch-enabled',
+      'request-evaluated',
     ],
     trace.text(),
   )
@@ -574,7 +572,7 @@ test('probe reports browser-certificate-untrusted for a self-signed https server
   })
 })
 
-// Value: protects=an IPv6 declared address is pinned with brackets and compared without them; fails_when=the rule MAP name [::1] does not load or the address keeps its brackets; no_claim=hosts without an IPv6 loopback (skipped).
+// Value: protects=an IPv6 declared address is pinned with brackets and compared without them, and the probe is seen passing; fails_when=the rule MAP name [::1] does not load, the address keeps its brackets, or the probe ends in anything but a pass (its message names the result and the trace); no_claim=hosts without an IPv6 loopback (skipped).
 test('probe passes for a host pinned to the IPv6 loopback', async (context) => {
   // Arrange
   const chrome = await chromeOf(context)
@@ -665,8 +663,8 @@ test('probe stopped by a Chrome start hang names chrome-spawned as its last phas
     cleanupConfirmed: true,
   })
   assert.deepEqual(trace.phases(), ['profile-made', 'chrome-spawned'])
-  // gstack-timing-ok: the bound is the contract; the probe polls for the port until its 1.5 s bound, then the cleanup (bounded at 5 s) kills the stand-in in milliseconds, and 3 s more leaves a wide margin under load
-  assert.ok(elapsedMs >= 1_500 && elapsedMs < 9_500, `took ${elapsedMs} ms`)
+  // gstack-timing-ok: the bound is the contract; the probe polls for the port until its 1.5 s bound (100 ms below it tolerates a wall-clock step and still rejects a probe that ends early), then the cleanup (bounded at 5 s) kills the stand-in in milliseconds, and 3 s more leaves a wide margin under load
+  assert.ok(elapsedMs >= 1_400 && elapsedMs < 9_500, `took ${elapsedMs} ms`)
   const pid = Number((await readFile(pidFile, 'utf8')).trim())
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
   assert.deepEqual(await probeFolders(), foldersBefore)
