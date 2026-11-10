@@ -7477,11 +7477,13 @@ export class StudyService {
    * A failed run is released by {@link StudyService.maintain} within {@link MAINTENANCE_INTERVAL_MS} of its failure, so an action usually reaches it while it reads `stopping` or `stopped`: those keep their failure in `state.error` and answer the same way (Cycle 0111: CI's coverage run reached the release first and the answer lost the state).
    * @param error - What the call threw.
    * @param input - The run named by the call.
-   * @returns The described thrown error and the run's state when the run is a repository-browser run that reads `failed`, or reads `stopping` or `stopped` with the failure it ended in as `error`; `undefined` otherwise, a run stopped without a failure included, which the caller answers as a plain error.
+   * @returns The described thrown error and the run's state when the call names this instance and the run is a repository-browser run that reads `failed`, or reads `stopping` or `stopped` with the failure it ended in as `error`; `undefined` otherwise (a call naming another instance, a run stopped without a failure), which the caller answers as a plain error.
    * @example service.failedBrowserRunState(conflict, run) // => { failure: { code: 'IDEMPOTENCY_CONFLICT', … }, state: { state: 'stopped', error: { code: 'OPERATION_AFTER_NOT_MET', … }, … } }
    */
   failedBrowserRunState(error: unknown, input: RunInput) {
-    if (!(error instanceof StudyError)) return undefined
+    // A call naming another instance is refused without this instance's run state (STALE_INSTANCE).
+    if (!(error instanceof StudyError) || input.instanceId !== this.instanceId)
+      return undefined
     const record = this.records.get(input.runId)
     if (!record || record.profile !== REPOSITORY_BROWSER_PROFILE)
       return undefined

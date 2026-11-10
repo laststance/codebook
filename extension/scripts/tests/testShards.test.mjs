@@ -4140,6 +4140,39 @@ test('a todo test whose hook fails refuses the timings recording and writes no t
   )
 })
 
+// Value: protects=the shard plan from the time of a todo test whose body never ran: a todo test aborted by its signal before the body ran refuses the recording and writes no timings file; fails_when=a todo failure other than the body's own (testAborted) is let through, so the recording succeeds with the time of a test that did not run; why_new=Cycle 0111 hosted CodeRabbit review on PR 286 (Node 24.22.1 sends it as test:fail with failureType testAborted and passes the run); seam=test-shard.mjs --record started as a process on a fixture build with one todo test whose signal is aborted; no_claim=a todo test cancelled by its parent (the same rule refuses every todo failure but the body's own)
+test('a todo test aborted before its body ran refuses the timings recording and writes no timings file', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'aborted-todo.test.js': [
+        "const { test } = require('node:test')",
+        "test('waits for a decision', { todo: 'pending', signal: AbortSignal.abort(new Error('cancel')) }, () => {})",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stderr: result.stderr,
+      timings: await readFile(join(root, 'test-timings.json'), 'utf8').catch(
+        () => 'no file',
+      ),
+    },
+    {
+      code: 1,
+      stderr:
+        '✖ 1 test failed; timings were not recorded: aborted-todo.test.js › waits for a decision.\n',
+      timings: 'no file',
+    },
+  )
+})
+
 /** Writes `contents` as a timings file in a fresh folder and answers the refusal of {@link readTestTimings} (or `undefined` when the file is accepted). @example await refusalOf(context, '{"files":{"a.test.js":{"totalMs":"x"}}}') // => '/tmp/…/test-timings.json has an entry …' */
 async function refusalOf(context, contents) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-timings-'))

@@ -33,11 +33,11 @@ function finishedTest(event) {
     file: basename(event.data.file),
     name: event.data.name,
     ms: event.data.details.duration_ms,
-    // A todo test whose body fails does not fail the runner's run (a window replay with its first divergence named), so it fails no recording either; `todo: ''` is a todo too (its event carries the empty string). A hook that failed before a todo test's body ran leaves no time of a run, so that fails the recording.
+    // A todo test whose body ran and failed (a window replay with its first divergence named) does not fail the runner's run, so it fails no recording either; `todo: ''` is a todo too (its event carries the empty string). Any other failure of a todo test (a hook that threw, an abort before the body ran) leaves no time of a run, so that fails the recording.
     failed:
       event.type === 'test:fail' &&
       (event.data.todo === undefined ||
-        event.data.details.error?.failureType === 'hookFailed'),
+        event.data.details.error?.failureType !== 'testCodeFailure'),
     timedOut: event.data.details.error?.failureType === 'testTimeoutFailure',
     hookTimedOut: failedForTime(event.data.details.error),
   }
