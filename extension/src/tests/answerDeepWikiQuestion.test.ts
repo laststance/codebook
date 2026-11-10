@@ -594,3 +594,100 @@ test('Cursor browser question shows only answers citing unchanged excerpt lines'
     await removeTestFolder(directory)
   }
 })
+
+/**
+ * Runs one Wiki question over three sources that all define `createInvoice`, with a model stub that replies as given.
+ * @param reply - The model's JSON reply text.
+ * @returns The prompt the model saw and the answer the reader receives.
+ */
+async function askWithThreeSources(reply: string) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-answer-ids-'))
+  const root = await realpath(directory)
+  const content = 'export function createInvoice() {\n  return "saved";\n}\n'
+  const sources = await Promise.all(
+    ['a.ts', 'b.ts', 'c.ts'].map(async (path) => {
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  let prompt = ''
+  const model = {
+    sendRequest: async (messages: { text: string }[]) => {
+      prompt = messages[0]!.text
+      return {
+        text: (async function* () {
+          yield reply
+        })(),
+      }
+    },
+  }
+  try {
+    const answer = await boundary.answerDeepWikiQuestion(
+      model as never,
+      root,
+      sources,
+      'Where is createInvoice saved?',
+      'vscode',
+    )
+    return { prompt, answer }
+  } finally {
+    await removeTestFolder(directory)
+  }
+}
+
+// Value: protects=a learner reading a Wiki answer sees file paths where the model wrote excerpt ids, because the reader's citation list carries no ids; fails_when=the answer reaches the reader with `S2` or `S3` still in its text; why_new=Cycle 0113 (C113-W2); seam=answerDeepWikiQuestion over a stubbed editor model; no_claim=which excerpt the editor model prefers or how the reader lays the answer out
+test('Wiki answer names files instead of the excerpt ids the model wrote', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'It returns saved (S2, line 2); S3 repeats it.',
+    citations: [{ id: 'S2', line: 2 }],
+  })
+  // Act
+  const { answer } = await askWithThreeSources(reply)
+  // Assert
+  assert.equal(
+    answer.answer,
+    'It returns saved (b.ts, line 2); c.ts repeats it.',
+  )
+  assert.equal(answer.citations[0]!.path, 'b.ts')
+})
+
+// Value: protects=an id that names no excerpt of this prompt is left as the model wrote it instead of being guessed into a file; fails_when=`S9` is replaced or removed; why_new=Cycle 0113 (C113-W2); seam=answerDeepWikiQuestion over a stubbed editor model; no_claim=how a model's own use of the letter S is read
+test('Wiki answer keeps an id that names no excerpt as written', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'See S9 and S1.',
+    citations: [{ id: 'S1', line: 2 }],
+  })
+  // Act
+  const { answer } = await askWithThreeSources(reply)
+  // Assert
+  assert.equal(answer.answer, 'See S9 and a.ts.')
+})
+
+// Value: protects=the model is told to name files in its prose, so ids rarely reach the reader at all; fails_when=the prompt drops the instruction to name sources by file path; why_new=Cycle 0113 (C113-W2); seam=the prompt answerDeepWikiQuestion sends to the editor model; no_claim=whether a given model obeys it
+test('Wiki prompt asks the model to name files rather than excerpt ids', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'It saves.',
+    citations: [{ id: 'S1', line: 2 }],
+  })
+  // Act
+  const { prompt } = await askWithThreeSources(reply)
+  // Assert
+  assert.match(
+    prompt,
+    /In the answer text, name a source by its file path \(with line numbers when useful\), never by its excerpt id such as S1; the ids belong only in citations\./,
+  )
+})
