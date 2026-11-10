@@ -4109,14 +4109,17 @@ function studyClient(
       const understood = event.target.checked
       const stepId = shownStepChecks.get(checkId)
       const view = current?.stepUnderstanding
-      event.target.checked = findStepEntry(view, stepId)?.understood ?? false
+      const entry = findStepEntry(view, stepId)
+      event.target.checked = entry?.understood ?? false
       if (!view || stepId === undefined || stepPressBlocked(event.target))
         return
+      // The hash of the step as drawn, so the extension refuses the press when the step changed before it arrived.
       event.target.setAttribute('aria-disabled', 'true')
       send({
         type: 'step-understanding',
         studyId: view.studyId,
         stepId,
+        stepHash: entry?.stepHash,
         understood,
       })
     })

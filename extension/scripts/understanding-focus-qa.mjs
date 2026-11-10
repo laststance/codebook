@@ -92,6 +92,8 @@ const stepViewOf = (ids) => ({
   status: 'ready',
   steps: ids.map((stepId, index) => ({
     stepId,
+    // The hash the Study message shows for the step; a press sends it back.
+    stepHash: 'abcdef'[index].repeat(64),
     understood: index === 0,
     ...(index === 0 ? { at: '2026-11-10T01:02:03.000Z' } : {}),
     reviewNeeded: false,
@@ -310,6 +312,7 @@ async function check(page, options, collected) {
               .map((message) => ({
                 stepId: message.stepId,
                 studyId: message.studyId,
+                stepHash: message.stepHash,
               })),
           }
         },
@@ -500,13 +503,21 @@ async function check(page, options, collected) {
           attributes.insideMoment === false,
       })
       collected.cases.push({
-        name: `${pane.name}: each save request names the step and the replay it was made for`,
+        name: `${pane.name}: each save request names the step, the replay and the hash of the step it was made for`,
         actual: repeated.identities,
         passed:
           JSON.stringify(repeated.identities) ===
           JSON.stringify([
-            { stepId: pane.stepId, studyId: pane.studyId },
-            { stepId: pane.stepId, studyId: pane.studyId },
+            {
+              stepId: pane.stepId,
+              studyId: pane.studyId,
+              stepHash: pane.stepHash,
+            },
+            {
+              stepId: pane.stepId,
+              studyId: pane.studyId,
+              stepHash: pane.stepHash,
+            },
           ]),
       })
       // Unknown, unreadable and review states: what the learner reads and whether a count is shown.
@@ -690,6 +701,7 @@ try {
           requestType: 'step-understanding',
           stepId: browserStepIds[0],
           studyId: STEP_STUDY_ID,
+          stepHash: 'a'.repeat(64),
           html: studyHtml('context'),
           message: browserStepMessage,
         },
@@ -699,6 +711,7 @@ try {
           requestType: 'step-understanding',
           stepId: nodeStepIds[0],
           studyId: STEP_STUDY_ID,
+          stepHash: 'a'.repeat(64),
           html: studyHtml('context'),
           message: nodeStepMessage,
         },

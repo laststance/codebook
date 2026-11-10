@@ -560,6 +560,7 @@ async function check(page, options, collected) {
       steps: [
         {
           stepId: 'selected',
+          stepHash: 'a'.repeat(64),
           understood: true,
           at: '2026-11-10T01:02:03.000Z',
           reviewNeeded: false,

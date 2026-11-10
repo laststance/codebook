@@ -50,6 +50,9 @@ async function markStep(
     revision: harness.postedMessages().slice(-1)[0]!.revision,
     studyId,
     stepId,
+    // The hash the Study message shows for the step, as the page sends it back.
+    stepHash: stepView(harness)!.steps.find((step) => step.stepId === stepId)!
+      .stepHash,
     understood: true,
   })
   await waitUntil(

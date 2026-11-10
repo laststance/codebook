@@ -34,8 +34,27 @@ export type ShownReplaySteps = {
 /** One step's entry in the Study message: the learner's decision on its current content, plus what is happening to its save. */
 export type StepUnderstandingStepView = StepUnderstandingState & {
   stepId: string
+  /** The hash of the step as this message shows it; the page sends it back with a press so the extension can refuse a press of a step that changed since. */
+  stepHash: string
   saving: boolean
   failure?: string
+}
+
+/**
+ * Tells whether the step a press names has a different hash now than the page showed, so an agent's material update that landed after the page drew the step is never marked understood unseen; called by `StudyWorkspace` before it saves a press.
+ * A step the shown replay lacks is not "changed": the save refuses it in its own words.
+ * @param press - The press, with the hash of the step the page showed.
+ * @param shown - The replay shown now.
+ * @returns `true` when the shown replay holds the step and its hash differs from the press's.
+ * @example stepChangedSince({ studyId, stepId: 'a', stepHash: oldHash }, shown) // => true after step "a" was revised
+ */
+export function stepChangedSince(
+  press: { studyId: string; stepId: string; stepHash: string },
+  shown: ShownReplaySteps | undefined,
+): boolean {
+  if (shown?.studyId !== press.studyId) return false
+  const step = shown.steps.find((value) => value.stepId === press.stepId)
+  return step !== undefined && step.stepHash !== press.stepHash
 }
 
 /** What the Study message carries for the per-step checks of the shown replay. */
@@ -99,6 +118,7 @@ export class StepUnderstandingSessions {
       const entry = session.entries.get(step.stepId)
       return {
         stepId: step.stepId,
+        stepHash: step.stepHash,
         ...states[index]!,
         saving: entry !== undefined && 'saving' in entry,
         ...(entry && 'failure' in entry ? { failure: entry.failure } : {}),

@@ -236,6 +236,7 @@ import { ReplayOpening } from './studyWorkspace/replayOpening'
 import { createReplayOpeningHost } from './studyWorkspace/replayOpeningHost'
 import {
   StepUnderstandingSessions,
+  stepChangedSince,
   type ShownReplaySteps,
 } from './studyWorkspace/stepUnderstandingSessions'
 import {
@@ -593,6 +594,8 @@ const messageSchema = z.discriminatedUnion('type', [
     ...revisionShape,
     studyId: studyIdSchema,
     stepId: nodeLearningStepIdSchema,
+    // The hash of the step the page shows; only compared, the saved hash is computed from the saved step.
+    stepHash: z.string().regex(/^[a-f0-9]{64}$/),
     understood: z.boolean(),
   }),
   z.strictObject({
@@ -10682,7 +10685,11 @@ export class StudyWorkspace {
   ): Promise<void> {
     const current = this.message()
     const shown = this.shownForStepPress(current.nodeHistoryLearningSummary)
-    if (message.revision !== this.revision) {
+    // A material save does not change the revision, so a press of a step that changed since the page drew it is stale too.
+    if (
+      message.revision !== this.revision ||
+      stepChangedSince(message, shown)
+    ) {
       this.refuseStalePress(message, shown)
       return
     }

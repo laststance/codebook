@@ -109,6 +109,8 @@ function press(
     revision: lastView(opened.harness)!.revision,
     studyId: opened.studyId,
     stepId,
+    // The hash the Study message shows for the step, as the page sends it back; a step the message lacks gets an unrelated hash.
+    stepHash: stepEntry(opened, stepId)?.stepHash ?? '0'.repeat(64),
     understood,
     ...overrides,
   })
@@ -721,6 +723,78 @@ test('test replay: a step with no recorded event is left out of the step progres
     assert.equal(stepView(opened)?.understoodCount, 1)
   } finally {
     await harness.close()
+  }
+})
+
+// Value: protects=an agent's material update never being marked understood unseen: a press carrying the hash of the step the page drew is refused once that step changed, though the Study revision did not; fails_when=the press is saved under the new version's hash, the step reads understood, or the refusal is not shown on that step's state line; no_claim=the page sending the hash (Reader DOM) and a press that arrives before the update (saved under the old hash, the revision tests below)
+test('test replay: a press of a step whose material was revised after the page drew it is refused and writes nothing', async () => {
+  // Arrange
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    const shownHash = stepEntry(opened, 'read')?.stepHash
+    const sourceHash = sha256('const nextTheme = "dark";\n')
+
+    // Act: the agent saves material whose first step explains something else; the page still draws the old step.
+    await opened.harness.service.explainNodeHistory({
+      studyId: opened.studyId,
+      expectedRevision: 1,
+      content: {
+        question: 'Where does the test switch the theme?',
+        title: 'Theme switch',
+        summary: 'The test reads the next theme twice and passes.',
+        participants: [
+          { id: 'test', label: 'Theme test' },
+          { id: 'theme', label: 'applyTheme' },
+        ],
+        steps: [
+          {
+            id: 'read',
+            from: 'test',
+            to: 'theme',
+            label: 'Read the next theme',
+            explanation: 'The first stop now shows a different explanation.',
+            evidence: 'observed',
+            reference: { type: 'stop', sequence: 2, sourceHash },
+          },
+          {
+            id: 'keep',
+            from: 'theme',
+            to: 'theme',
+            label: 'Keep the theme',
+            explanation: 'applyTheme keeps the theme it read.',
+            evidence: 'source-derived',
+            reference: { type: 'stop', sequence: 2, sourceHash },
+          },
+        ],
+      },
+    })
+    await waitUntil(
+      () =>
+        stepEntry(opened, 'read')?.stepHash !== undefined &&
+        stepEntry(opened, 'read')?.stepHash !== shownHash,
+      'the Study message shows the revised step',
+      READER_RESULT_BOUND_MS,
+    )
+    press(opened, 'read', true, { stepHash: shownHash })
+    await waitUntil(
+      () => Boolean(stepEntry(opened, 'read')?.failure),
+      'the press of the old step is refused on its step',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      stepEntry(opened, 'read')?.failure,
+      'The displayed study changed. Inspect the current view before acting.',
+    )
+    assert.equal(stepEntry(opened, 'read')?.understood, false)
+    assert.equal(stepEntry(opened, 'read')?.reviewNeeded, false)
+    assert.equal(stepEntry(opened, 'keep')?.failure, undefined)
+    assert.equal(stepView(opened)?.understoodCount, 0)
+    assert.equal(existsSync(opened.stepFile), false)
+  } finally {
+    await opened.harness.close()
   }
 })
 
