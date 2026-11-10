@@ -7474,18 +7474,22 @@ export class StudyService {
    * Gives a tool call that failed on a repository-browser run that has already failed its error with the run's partial state beside it (DX-2); read by the protocol for `codebook_action`.
    * Why: an action sent to a run that ended in a failure answers a plain refusal otherwise, and the agent loses where the run stood.
    * The failure is what the call threw (an `IDEMPOTENCY_CONFLICT` stays one), as {@link StudyService.failedExtensionRunState} answers; the run's own failure stays readable as `state.error`.
+   * A failed run is released by {@link StudyService.maintain} within {@link MAINTENANCE_INTERVAL_MS} of its failure, so an action usually reaches it while it reads `stopping` or `stopped`: those keep their failure in `state.error` and answer the same way (Cycle 0111: CI's coverage run reached the release first and the answer lost the state).
    * @param error - What the call threw.
    * @param input - The run named by the call.
-   * @returns The described thrown error and the run's state when the run is a repository-browser run whose state is `failed`; `undefined` otherwise, which the caller answers as a plain error.
-   * @example service.failedBrowserRunState(conflict, run) // => { failure: { code: 'IDEMPOTENCY_CONFLICT', … }, state: { state: 'failed', error: { code: 'OPERATION_AFTER_NOT_MET', … }, … } }
+   * @returns The described thrown error and the run's state when the call names this instance and the run is a repository-browser run that reads `failed`, or reads `stopping` or `stopped` with the failure it ended in as `error`; `undefined` otherwise (a call naming another instance, a run stopped without a failure), which the caller answers as a plain error.
+   * @example service.failedBrowserRunState(conflict, run) // => { failure: { code: 'IDEMPOTENCY_CONFLICT', … }, state: { state: 'stopped', error: { code: 'OPERATION_AFTER_NOT_MET', … }, … } }
    */
   failedBrowserRunState(error: unknown, input: RunInput) {
-    if (!(error instanceof StudyError)) return undefined
+    // A call naming another instance is refused without this instance's run state (STALE_INSTANCE).
+    if (!(error instanceof StudyError) || input.instanceId !== this.instanceId)
+      return undefined
     const record = this.records.get(input.runId)
     if (!record || record.profile !== REPOSITORY_BROWSER_PROFILE)
       return undefined
     const state = this.state(record)
-    return state.state === 'failed'
+    // A failed run, and one released after its failure (which keeps it in `error`), answer with the state; a run stopped without a failure does not.
+    return state.state === 'failed' || state.error
       ? { failure: this.sanitizedError(error).describe(), state }
       : undefined
   }

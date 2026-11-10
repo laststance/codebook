@@ -21,7 +21,7 @@ export type SelfSignedCertificate = {
 /**
  * Makes a self-signed certificate valid for one host name (and optionally IP addresses) with the system `openssl`.
  *
- * Why it exists: the reverse proxy proof and its callers (the proof transport, the gate, the saved-session tests) need a real TLS certificate whose trust they control; a fixed file would expire and a library would add a dependency. It writes an `openssl` config file (portable across OpenSSL and LibreSSL, unlike `-addext`), a bounded call makes the key and certificate in a private temporary folder, and the folder is removed afterwards.
+ * Why it exists: the reverse proxy proof and its callers (the proof transport, the gate, the saved-session tests) need a real TLS certificate whose trust they control; a fixed file would expire and a library would add a dependency. It writes an `openssl` config file (portable across OpenSSL and LibreSSL, unlike `-addext`), a bounded call makes the key (P-256, encoded as the named curve every TLS client reads) and certificate in a private temporary folder, and the folder is removed afterwards.
  * Called by tests only.
  * @param hostname - The DNS name placed in the subject alternative names.
  * @param ipAddresses - Optional IP literals added to the subject alternative names.
@@ -47,6 +47,9 @@ export async function createSelfSignedCertificate(
         'ec',
         '-pkeyopt',
         'ec_paramgen_curve:prime256v1',
+        // Name the curve in the key: macOS 27.2.1's LibreSSL otherwise writes its explicit parameters, and Chrome (BoringSSL) and curl end the handshake with a decode error instead of judging the certificate (Cycle 0111).
+        '-pkeyopt',
+        'ec_param_enc:named_curve',
         '-nodes',
         '-days',
         '2',

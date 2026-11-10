@@ -293,6 +293,14 @@ export function activate(
         // A disposed channel has nowhere to write; the failure is already in the run's own answer.
       }
     },
+    // A plain informational line (the leftover group removal of a first Open after a reload, Cycle 0111); a disposed channel has nowhere to write.
+    info: (line: string): void => {
+      try {
+        output?.info(line)
+      } catch {
+        // A disposed channel has nowhere to write; the line is only a diagnostic.
+      }
+    },
     // The plain request, response and failure lines of a node-server run (D10); a disposed channel has nowhere to write.
     line: (line: NodeServerOutputLine): void => {
       try {

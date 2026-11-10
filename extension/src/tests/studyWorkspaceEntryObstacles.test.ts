@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 import * as sanitizeCauseModule from '../utils/sanitizeCause'
@@ -885,6 +886,220 @@ test("a reloaded window's leftover empty Application group does not refuse Retur
       harness.groups.some((group) => group.tabs.includes(learnerReadme.tab)),
       true,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after a window reload, a cold Study select that retires the earlier window's leftover Application group writes one Output line naming the column, the group count before the close and the removal's delay; fails_when=no line is written, or it names another column or count; no_claim=how long a real editor takes (the fake removes the group within the close).
+test("a reloaded window's leftover Application group retirement writes the Output line of a seen removal", async () => {
+  // Arrange: the earlier window recorded its Application group at column 1 of three groups; after the reload that group stands empty and locked.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const infoLines: string[] = []
+  harness.reader.diagnostics = {
+    log: () => undefined,
+    show: () => undefined,
+    info: (line): void => {
+      infoLines.push(line)
+    },
+  }
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    const state = harness.reader.presentationState()
+
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert: one line, for column 1 of 3, with the removal seen.
+    assert.equal(infoLines.length, 1, infoLines.join(' | '))
+    assert.match(
+      infoLines[0]!,
+      /^Leftover Application group: closed column 1 of 3 groups; removal seen after \d+ ms$/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=when the editor accepts the close of the earlier window's leftover Application group but never removes it, Open Study Workspace fails after the 5 s bound with a message naming both group counts and the bound, and the Output line says the same; fails_when=the message is the old one without counts, a count or the bound is wrong, the way on is missing, or no Output line is written; no_claim=which editor behaviour caused a real timeout (Cycle 0111 E1 did not reproduce one), the fake keeps the group on purpose, and both counts are 3 here, so the unit tests of the message and the line tell the two counts apart; the cause assertion (the wait's WaitTimeoutError kept as the refusal's cause) came from the /ship pre-landing review.
+test("a reloaded window's leftover Application group that the editor never removes fails Open Study Workspace with both group counts and the bound", async () => {
+  // Arrange: as above, and the editor will accept the leftover's close without ever removing the group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const infoLines: string[] = []
+  harness.reader.diagnostics = {
+    log: () => undefined,
+    show: () => undefined,
+    info: (line): void => {
+      infoLines.push(line)
+    },
+  }
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    harness.keepNextClosedGroup()
+
+    // Act: the learner's Codebook: Open Study Workspace, the entry the earlier timeouts came through.
+    let refusal: unknown
+    const outcome = await harness.reader.open().then(
+      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
+      (error: unknown) => {
+        refusal = error
+        return String(error)
+      },
+    )
+
+    // Assert: the refusal and the Output line name 3 groups before the close and 3 at the 5000 ms bound, and the refusal keeps the wait's timeout as its cause.
+    assert.match(
+      outcome,
+      /Timed out waiting for leftover Application group removal \(groups before the close: 3, now: 3, after 5000 ms\)\. Run "Codebook: Open Study Workspace" again\./,
+    )
+    // The product module runs in its own realm (loadModule), so its Error is not this file's Error; the cause's class is shared.
+    assert.equal(
+      typeof refusal === 'object' &&
+        refusal !== null &&
+        'cause' in refusal &&
+        refusal.cause instanceof WaitTimeoutError,
+      true,
+    )
+    assert.deepEqual(infoLines, [
+      'Leftover Application group: closed column 1 of 3 groups; removal not seen within 5000 ms (groups now 3)',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an entry cancelled by a wait of its own that timed out, while Open waits for the leftover Application group's removal sees the cancelled entry's own outcome, not a timeout, and no "removal not seen" Output line; fails_when=the cancelled wait is reported as "Timed out waiting for leftover Application group removal" or writes the bound line; why_new=Cycle 0111 /ship coverage audit; seam=keepNextClosedGroup (returns when the kept close happened); no_claim=an ordinary cancel reason (the wait already rethrows it, so only a cancel whose reason is itself a WaitTimeoutError needs the signal guard), the cancelled entry's exact wording, which the other cancel tests own, and the 5 s bound itself
+test("a cancelled Open that waits for a leftover Application group's removal keeps its own reason, shows no timeout and writes no removal line", async () => {
+  // Arrange: as above, and the editor will accept the leftover's close without ever removing the group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const infoLines: string[] = []
+  harness.reader.diagnostics = {
+    log: () => undefined,
+    show: () => undefined,
+    info: (line): void => {
+      infoLines.push(line)
+    },
+  }
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    const keptClose = harness.keepNextClosedGroup()
+
+    // Act: the learner cancels the entry once the editor has accepted the leftover's close, before the 5 s bound.
+    const entry = new AbortController()
+    const opening = harness.reader.open(entry.signal).then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    await keptClose
+    entry.abort(
+      new WaitTimeoutError('The Study entry was abandoned by an outer wait.'),
+    )
+    const outcome = await opening
+
+    // Assert: the entry's own reason, no timeout text, and no Output line.
+    assert.equal(
+      outcome,
+      'Error: The Study entry was abandoned by an outer wait.',
+    )
+    assert.doesNotMatch(
+      outcome,
+      /Timed out waiting for leftover Application group removal/,
+    )
+    assert.deepEqual(infoLines, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a read of the editor's groups that fails while Open waits for the leftover Application group's removal reaches the learner as that failure, not as a false "after 5000 ms" timeout, and writes no removal line; fails_when=any failed read is turned into "Timed out waiting for leftover Application group removal" or the bound line; why_new=Cycle 0111 /ship coverage audit; seam=failNextGroupsReadAfterKeptClose; no_claim=how a real editor fails a group read, and the 5 s bound itself
+test("a failed read of the editor's groups while Open waits for a leftover Application group's removal shows that failure, not a timeout, and writes no removal line", async () => {
+  // Arrange: as above, and the editor will accept the leftover's close without ever removing the group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const infoLines: string[] = []
+  harness.reader.diagnostics = {
+    log: () => undefined,
+    show: () => undefined,
+    info: (line): void => {
+      infoLines.push(line)
+    },
+  }
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 0,
+        groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('learner-notes.ts', 2)
+    harness.focusMutableDraft('learner-readme.md', 3)
+    harness.keepNextClosedGroup()
+    harness.failNextGroupsReadAfterKeptClose(
+      new Error('the editor could not list its groups'),
+    )
+
+    // Act: the learner's Codebook: Open Study Workspace; the first group read after the close fails.
+    const outcome = await harness.reader.open().then(
+      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: the read failure is what the learner sees, with no timeout text and no Output line.
+    assert.match(outcome, /the editor could not list its groups/)
+    assert.doesNotMatch(
+      outcome,
+      /Timed out waiting for leftover Application group removal/,
+    )
+    assert.deepEqual(infoLines, [])
   } finally {
     await harness.close()
   }

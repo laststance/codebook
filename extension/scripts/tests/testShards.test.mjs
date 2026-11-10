@@ -4034,6 +4034,145 @@ test('the timings recording is refused with the number of failed tests and write
   )
 })
 
+// Value: protects=the timings recording of a suite that holds todo tests: a todo test whose body fails (a window replay with its first divergence named) does not fail the runner's run, so it does not refuse the recording either, and its file's time is recorded; fails_when=the recording counts a todo test's test:fail as a failed test and refuses with "1 test failed", which made `--record` impossible on the real suite from Cycle 0094's host-trace todo tests on; why_new=Cycle 0111 review round (the shard timings, last recorded in Cycle 0061, could not be recorded again); seam=test-shard.mjs --record started as a process on a fixture build with one passing test and one failing todo test; no_claim=a todo test that hangs (the time limit ends it like any other test)
+test('a todo test whose body fails does not refuse the timings recording, and its file is recorded', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'diverging.test.js': [
+        "const { test } = require('node:test')",
+        "test('passes', () => {})",
+        "test('replays the window', { todo: 'first divergence: named' }, () => { throw new Error('diverges') })",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  const timings = JSON.parse(
+    await readFile(join(root, 'test-timings.json'), 'utf8').catch(() => '{}'),
+  )
+  assert.deepEqual(
+    {
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      files: Object.keys(timings.files ?? {}),
+    },
+    {
+      code: 0,
+      stdout: 'Recorded 2 tests in test-timings.json.\n',
+      stderr: '',
+      files: ['diverging.test.js'],
+    },
+  )
+})
+
+// Value: protects=a todo test marked with an empty message (`{ todo: '' }`, whose event carries `todo: ""`) counts as a todo, as Node's runner counts it, so its failing body does not refuse the recording; fails_when=the recording tests the todo field for truthiness and refuses with "1 test failed"; why_new=Cycle 0111 hosted CodeRabbit review on PR 286 (Node 24.22.1 sends `todo: ""` and passes the run); seam=test-shard.mjs --record started as a process on a fixture build with one passing test and one failing todo test with an empty message; no_claim=`t.todo('')` inside a body (the same empty string reaches the same check)
+test('a todo test with an empty message whose body fails does not refuse the timings recording', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'unnamed-todo.test.js': [
+        "const { test } = require('node:test')",
+        "test('passes', () => {})",
+        "test('waits for a decision', { todo: '' }, () => { throw new Error('diverges') })",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  const timings = JSON.parse(
+    await readFile(join(root, 'test-timings.json'), 'utf8').catch(() => '{}'),
+  )
+  assert.deepEqual(
+    {
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      files: Object.keys(timings.files ?? {}),
+    },
+    {
+      code: 0,
+      stdout: 'Recorded 2 tests in test-timings.json.\n',
+      stderr: '',
+      files: ['unnamed-todo.test.js'],
+    },
+  )
+})
+
+// Value: protects=the shard plan from the time of a todo test whose body never ran: a hook that throws before a todo test refuses the recording and writes no timings file; fails_when=the todo exception also lets a failed hook through, so the recording succeeds with the time of a test that did not run; why_new=Cycle 0111 hosted CodeRabbit review on PR 286 (Node 24.22.1 sends a todo test's failed hook as test:fail with failureType hookFailed and passes the run); seam=test-shard.mjs --record started as a process on a fixture build whose beforeEach throws before a todo test; no_claim=a hook that does not end (the hang test above covers it)
+test('a todo test whose hook fails refuses the timings recording and writes no timings file', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'broken-hook.test.js': [
+        "const { test, beforeEach } = require('node:test')",
+        "beforeEach(() => { throw new Error('the fixture could not start') })",
+        "test('replays the window', { todo: 'first divergence: named' }, () => {})",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stderr: result.stderr,
+      timings: await readFile(join(root, 'test-timings.json'), 'utf8').catch(
+        () => 'no file',
+      ),
+    },
+    {
+      code: 1,
+      stderr:
+        '✖ 1 test failed; timings were not recorded: broken-hook.test.js › replays the window.\n',
+      timings: 'no file',
+    },
+  )
+})
+
+// Value: protects=the shard plan from the time of a todo test whose body never ran: a todo test aborted by its signal before the body ran refuses the recording and writes no timings file; fails_when=a todo failure other than the body's own (testAborted) is let through, so the recording succeeds with the time of a test that did not run; why_new=Cycle 0111 hosted CodeRabbit review on PR 286 (Node 24.22.1 sends it as test:fail with failureType testAborted and passes the run); seam=test-shard.mjs --record started as a process on a fixture build with one todo test whose signal is aborted; no_claim=a todo test cancelled by its parent (the same rule refuses every todo failure but the body's own)
+test('a todo test aborted before its body ran refuses the timings recording and writes no timings file', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'aborted-todo.test.js': [
+        "const { test } = require('node:test')",
+        "test('waits for a decision', { todo: 'pending', signal: AbortSignal.abort(new Error('cancel')) }, () => {})",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stderr: result.stderr,
+      timings: await readFile(join(root, 'test-timings.json'), 'utf8').catch(
+        () => 'no file',
+      ),
+    },
+    {
+      code: 1,
+      stderr:
+        '✖ 1 test failed; timings were not recorded: aborted-todo.test.js › waits for a decision.\n',
+      timings: 'no file',
+    },
+  )
+})
+
 /** Writes `contents` as a timings file in a fresh folder and answers the refusal of {@link readTestTimings} (or `undefined` when the file is accepted). @example await refusalOf(context, '{"files":{"a.test.js":{"totalMs":"x"}}}') // => '/tmp/…/test-timings.json has an entry …' */
 async function refusalOf(context, contents) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-timings-'))

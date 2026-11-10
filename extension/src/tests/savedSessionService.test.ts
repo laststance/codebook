@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 import { StudyError } from '../errors'
 import type { RuntimeControl } from '../runtime'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
 import { configuredServiceHarness } from './utils/configuredServiceHarness'
@@ -146,7 +147,7 @@ const SIGN_IN_DETAILS = (runUri: string, runId: string) => ({
   logId: `${runId}#start`,
 })
 
-// Value: protects=G5 and DES-3: a run that ended with SIGN_IN_REQUIRED answers isError true at the MCP boundary with the reason, the profile it used, the setup command and the fields that decide a retry; fails_when=the result is ok, the code is RUNTIME_FAILED, or details lack the reason; no_claim=the run's own detection (run tests)
+// Value: protects=G5 and DES-3: a run that ended with SIGN_IN_REQUIRED, released since by the service (within a maintenance interval, before an agent's next action as a rule), answers isError true at the MCP boundary with the reason, the profile it used, the setup command and the fields that decide a retry; fails_when=the result is ok, the code is RUNTIME_FAILED, details lack the reason, or the released run's state is missing; no_claim=the run's own detection (run tests) (Cycle 0111: the action used to race the release, and CI's coverage run lost the state)
 test('a run that ended with SIGN_IN_REQUIRED answers isError with the reason, the profile and the setup command', async (context) => {
   // Arrange
   const { service, receipt, record, runtime } = await startRun(
@@ -160,6 +161,10 @@ test('a run that ended with SIGN_IN_REQUIRED answers isError with the reason, th
   runtime.failures.push(SIGN_IN_FAILURE)
   runtime.status = 'failed'
   const client = await connectMcpClient(context, service)
+  await waitUntil(
+    () => service.state(record).state === 'stopped',
+    'the release of the failed run',
+  )
 
   // Act
   const result = await client.callTool({
@@ -182,7 +187,7 @@ test('a run that ended with SIGN_IN_REQUIRED answers isError with the reason, th
     }
   }
   assert.equal(structured.ok, false)
-  assert.equal(structured.state?.state, 'failed')
+  assert.equal(structured.state?.state, 'stopped')
   assert.equal(structured.state?.error?.code, 'SIGN_IN_REQUIRED')
   assert.deepEqual(
     structured.state?.error?.details,
