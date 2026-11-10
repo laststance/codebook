@@ -123,14 +123,16 @@ const MAX_EXCEPTION_REASON = 300;
 const DEPTH_MIN_EXPLAINED_FILES = 12;
 /** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
 const DEPTH_MIN_CHILD_PAGES = 2;
-/** One diagram per this many pages is the least a Wiki needs once {@link requireWikiDepth} applies. */
-const DEPTH_PAGES_PER_DIAGRAM = 3;
-/** The characters of article text a Wiki needs for each explained code file. */
-const DEPTH_TEXT_PER_FILE = 250;
+/** The Wiki needs at least this many diagrams for each page (rounded up), and a diagram on every page, once {@link requireWikiDepth} applies. */
+const DEPTH_DIAGRAMS_PER_PAGE = 1.5;
+/** The Wiki needs at least one page for this many explained code files (rounded up) once {@link requireWikiDepth} applies. */
+const DEPTH_FILES_PER_PAGE = 8;
+/** The weighted characters of article text a Wiki needs for each explained code file. */
+const DEPTH_TEXT_PER_FILE = 500;
 /** The cap, in characters, on the total article text {@link requireWikiDepth} requires. */
 const DEPTH_MAX_REQUIRED_TEXT = 120_000;
-/** The fewest characters of article text any single page may have once {@link requireWikiDepth} applies. */
-const DEPTH_MIN_PAGE_TEXT = 300;
+/** The fewest weighted characters of article text any single page may have once {@link requireWikiDepth} applies. */
+const DEPTH_MIN_PAGE_TEXT = 1200;
 /** How many of the thinnest pages the depth refusal names. */
 const DEPTH_MAX_NAMED_PAGES = 10;
 /** Reads the `path` of every inline editor source address (`vscode://` or `cursor://laststance.codebook/source?…`) in authored HTML; its parameters may be separated by `&amp;`. Called by {@link citedPathsOf}. @example inlineCitedPathsOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => ['a.ts'] */
@@ -164,27 +166,44 @@ function requireValidExceptions(exceptions, codeFiles) {
 }
 /** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
 const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
-/** Reads a page's article as plain text: tags removed, the common entities decoded, whitespace runs collapsed, counted in Unicode code points by the caller. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
+/** Reads a page's article as plain text: tags removed, the common entities decoded, whitespace runs collapsed. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
 const articleTextOf = contentHtml => contentHtml.replace(/<[^>]*>/g, ' ').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
-/** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their lengths. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9 }]) // => 'a.html (9 characters)' */
+/** Matches the characters that carry about twice the content of a Latin one: Han ideographs, Hiragana, Katakana (halfwidth included), Hangul and the fullwidth forms U+FF01–U+FF60. */
+const DOUBLE_WEIGHT_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\uFF01-\uFF60]/u;
+/** Measures text in English-equivalent characters: every code point counts 1, except the CJK and fullwidth characters of {@link DOUBLE_WEIGHT_CHARACTER}, which count 2. Called by {@link depthShortfallsOf} so a Japanese Wiki is held to the same depth as an English one. @example textWeightOf('ab日本') // => 6 */
+const textWeightOf = text => [...text].reduce((sum, character) => sum + (DOUBLE_WEIGHT_CHARACTER.test(character) ? 2 : 1), 0);
+/** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their weighted lengths. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9 }]) // => 'a.html (9 characters)' */
 const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.length || a.path.localeCompare(b.path)).slice(0, DEPTH_MAX_NAMED_PAGES).map(page => `${page.path} (${page.length} characters)`).join(', ');
-/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12) // => [] */
-function depthShortfallsOf(pages, explainedCount) {
-  const measured = pages.map(page => ({ path: page.path, length: [...articleTextOf(page.contentHtml)].length }));
+/** Answers the failure sentences about the page tree and the diagrams: child pages, page count and diagrams per page and in total. Called by {@link depthShortfallsOf}. @example structureShortfallsOf(manifest.pages, 12) // => [] */
+function structureShortfallsOf(pages, explainedCount) {
   const children = pages.filter(page => page.parent).length;
+  const neededPages = Math.ceil(explainedCount / DEPTH_FILES_PER_PAGE);
   const diagrams = pages.reduce((sum, page) => sum + (page.diagrams ?? []).length, 0);
-  const neededDiagrams = Math.ceil(pages.length / DEPTH_PAGES_PER_DIAGRAM);
+  const neededDiagrams = Math.ceil(pages.length * DEPTH_DIAGRAMS_PER_PAGE);
+  const bare = pages.filter(page => !(page.diagrams ?? []).length).map(page => page.path);
+  const shortfalls = [];
+  if (children < DEPTH_MIN_CHILD_PAGES) shortfalls.push(`The Wiki has ${children} pages with a parent but needs at least ${DEPTH_MIN_CHILD_PAGES}: add child pages under subsystem chapters for their modules and flows.`);
+  if (pages.length < neededPages) shortfalls.push(`The Wiki has ${pages.length} pages but needs at least ${neededPages} for ${explainedCount} explained code files (about one page per ${DEPTH_FILES_PER_PAGE} files): split the large chapters by module and flow.`);
+  if (bare.length) shortfalls.push(`${bare.length} page${bare.length === 1 ? ' has' : 's have'} no diagram but every page needs at least one: add an architecture, flow or sequence diagram to ${bare.slice(0, DEPTH_MAX_NAMED_PAGES).join(', ')}.`);
+  if (diagrams < neededDiagrams) shortfalls.push(`The Wiki has ${diagrams} diagrams but needs at least ${neededDiagrams} for ${pages.length} pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges.`);
+  return shortfalls;
+}
+/** Answers the failure sentences about the article text: the total and the stub pages, in weighted characters. Called by {@link depthShortfallsOf}. @example textShortfallsOf(measured, 12) // => [] */
+function textShortfallsOf(measured, explainedCount) {
   const total = measured.reduce((sum, page) => sum + page.length, 0);
   const neededText = Math.min(DEPTH_TEXT_PER_FILE * explainedCount, DEPTH_MAX_REQUIRED_TEXT);
   const stubs = measured.filter(page => page.length < DEPTH_MIN_PAGE_TEXT);
   const shortfalls = [];
-  if (children < DEPTH_MIN_CHILD_PAGES) shortfalls.push(`The Wiki has ${children} pages with a parent but needs at least ${DEPTH_MIN_CHILD_PAGES}: add child pages under subsystem chapters for their modules and flows.`);
-  if (diagrams < neededDiagrams) shortfalls.push(`The Wiki has ${diagrams} diagrams but needs at least ${neededDiagrams} for ${pages.length} pages: add architecture, flow or sequence diagrams with source-backed nodes and edges.`);
-  if (total < neededText) shortfalls.push(`The Wiki has ${total} characters of article text but needs at least ${neededText} for ${explainedCount} explained code files: write longer explanations, starting with the thinnest pages: ${thinnestPagesOf(measured)}.`);
-  if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of article text: deepen ${thinnestPagesOf(stubs)}.`);
+  if (total < neededText) shortfalls.push(`The Wiki has ${total} characters of article text (CJK characters counted twice) but needs at least ${neededText} for ${explainedCount} explained code files: write longer explanations, starting with the thinnest pages: ${thinnestPagesOf(measured)}.`);
+  if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of article text (CJK characters counted twice): deepen ${thinnestPagesOf(stubs)}.`);
   return shortfalls;
 }
-/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough diagrams, enough explanation in total and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12) // => [] */
+function depthShortfallsOf(pages, explainedCount) {
+  const measured = pages.map(page => ({ path: page.path, length: textWeightOf(articleTextOf(page.contentHtml)) }));
+  return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(measured, explainedCount)];
+}
+/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough explanation in total (CJK counted twice) and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
  * @throws With one sentence for each failed rule, naming the measured value, the required value and what to add. @example requireWikiDepth(manifest, indexedSources) */
 function requireWikiDepth(manifest, indexedSources) {
   const exceptions = manifest.coverageExceptions ?? [];

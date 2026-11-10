@@ -44,7 +44,7 @@ test('the README says the generator refuses a Wiki that leaves an included code 
   )
 })
 
-// Value: protects=the Wiki route tells the chat AI the depth floors the renderer enforces (child pages, diagrams, text per file, no stub page) and the learner's README says the generator refuses a thin Wiki; fails_when=the skill or the README loses the depth sentence and a flat 7-page Wiki with one diagram is published (C113-W3); why_new=the renderer gained the depth refusal in Cycle 0113; seam=none; no_claim=how deep a chat model's articles really are
+// Value: protects=the Wiki route tells the chat AI the depth floors the renderer enforces (child pages, pages per file, a diagram on every page, text per page and per file with CJK counted twice) and the learner's README says the generator refuses a thin Wiki; fails_when=the skill or the README loses the depth sentence and a flat 7-page Wiki with one diagram is published (C113-W3); why_new=the renderer gained the depth refusal in Cycle 0113; seam=none; no_claim=how deep a chat model's articles really are
 test('the skill and the README say a Wiki too thin for its code is refused: no child pages, too few diagrams or too little explanation', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
@@ -53,7 +53,7 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   // Assert
   assert.ok(
     skill.includes(
-      'at least 2 pages with a `parent`, about one diagram per three pages (architecture, flow or sequence, each with source-backed nodes and edges), at least 250 characters of article text per explained code file in total, and no page under 300 characters. These are floors, not targets, for DeepWiki density.',
+      'at least 2 pages with a `parent`, at least one page per 8 explained code files, a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total, CJK characters counted twice. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.',
     ),
   )
   assert.ok(
