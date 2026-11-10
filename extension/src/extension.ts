@@ -75,6 +75,10 @@ import {
 } from './deepWikiReader'
 import { createEnvironment, requireWorkspace } from './environment'
 import { learningItemSchema } from './identitySchemas'
+import {
+  SHOW_KEYBOARD_SHORTCUTS_COMMAND,
+  showKeyboardShortcuts,
+} from './keyboardShortcutsCommand'
 import { repositorySelectionSchema } from './learnerSchemas'
 import { RepositoryReader } from './repositoryReader'
 import { repositoryActionSchema } from './repositoryView'
@@ -2989,6 +2993,9 @@ export function activate(
         throw new Error('This command is available in Cursor only.')
       await setupAiChat()
     }),
+    registerCommand(SHOW_KEYBOARD_SHORTCUTS_COMMAND, () =>
+      showKeyboardShortcuts(vscode, process.platform),
+    ),
     registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
     registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
     registerCommand('codebook.openRepositoryWiki', async (input?: unknown) => {

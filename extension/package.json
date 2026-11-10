@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.109",
+  "version": "0.2.110",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -62,6 +62,12 @@
       }
     ],
     "commands": [
+      {
+        "command": "codebook.showKeyboardShortcuts",
+        "title": "Keyboard shortcuts",
+        "category": "Codebook",
+        "icon": "$(question)"
+      },
       {
         "command": "codebook.startAgentServer",
         "title": "Codebook: Start Agent Server"
@@ -380,8 +386,30 @@
         "contents": "Connect the application screen with its actual code.\n[Open Study workspace](command:codebook.openStudyWorkspace)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "codebook.showKeyboardShortcuts",
+        "key": "shift+/",
+        "when": "focusedView =~ /^codebook\\.(repositoryWiki|llmWiki|learningOutline)$/ && !inputFocus"
+      }
+    ],
     "menus": {
       "view/title": [
+        {
+          "command": "codebook.showKeyboardShortcuts",
+          "when": "view == codebook.repositoryWiki",
+          "group": "navigation@99"
+        },
+        {
+          "command": "codebook.showKeyboardShortcuts",
+          "when": "view == codebook.llmWiki",
+          "group": "navigation@99"
+        },
+        {
+          "command": "codebook.showKeyboardShortcuts",
+          "when": "view == codebook.learningOutline",
+          "group": "navigation@99"
+        },
         {
           "command": "codebook.showLearningSummary",
           "when": "view == codebook.learningOutline",
@@ -409,6 +437,9 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "codebook.showKeyboardShortcuts"
+        },
         {
           "command": "codebook.reviewSavedSessionOperations",
           "when": "false"

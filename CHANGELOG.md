@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.110.0] - 2026-11-10 (development candidate)
+
+Cycle 0108 ([Issue #279](https://github.com/laststance/codebook/issues/279)), a feature cycle. **You can now press ? in Codebook's own views of the Activity Bar to see every Codebook shortcut.** In the Repository Wiki, LLM Wiki and Learning outline views, ? did nothing for Codebook and no control said which keys exist; only the replay and Wiki pages had their own list. Now those three views open one searchable **Keyboard shortcuts** list, and each view's title bar has a ? control that opens the same list.
+
+### Added
+- **Keyboard shortcuts in the Activity Bar views:** ? in the Repository Wiki, LLM Wiki or Learning outline view, outside its filter box, opens a searchable native list of every Codebook shortcut in three groups (Codebook views, Learning replay, DeepWiki reader), each with where it works. ? is the default key: it works on keyboard layouts where ? is Shift with the / key; a key you add for the command opens the list as well, and ? stops opening it when you change or remove that default binding, or when a binding of ? to another command takes precedence in those views. The ? control in each of those views' title bars and the Command Palette's **Codebook: Keyboard shortcuts** open the same list on any layout and binding. Typing ? in chat, editors, terminals and filter boxes still types ?.
+- **Search, close and current key bindings:** a search that matches nothing says so and offers **Clear search**; the list has a close button; **Show current key bindings** opens the Keyboard Shortcuts editor on the command, where a key you rebound shows.
+
 ## [0.2.109.0] - 2026-11-10 (development candidate)
 
 Cycle 0107 ([Issue #276](https://github.com/laststance/codebook/issues/276)), a feature cycle. **When a declared stop in an app's own API is not reached in time, Codebook now says what it measured of the API process at that moment, so the chat can tell you whether the API was running or paused instead of guessing.** A request can wait inside the app, for example on a database that does not answer, and never reach the line; the failure used to list only possibilities. Codebook now asks the API's debugger whether it was paused, and where, before it ends the run.

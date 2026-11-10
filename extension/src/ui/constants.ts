@@ -101,6 +101,24 @@ const EXTENSION_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] =
     context: 'Focused Extension replay timeline',
     selector: EXTENSION_PLAYHEAD_SELECTOR,
   }))
+/**
+ * The DeepWiki reader's own shortcuts: the help key and its close key. The reader embeds them in its page script and the native Keyboard shortcuts list shows them, so the two cannot drift.
+ *
+ * @example JSON.stringify(DEEP_WIKI_SHORTCUTS) // embedded by the reader's page script as the entries of installShortcutHelp
+ */
+export const DEEP_WIKI_SHORTCUTS: ShortcutHelpEntry[] = [
+  {
+    action: 'Keyboard shortcuts',
+    keys: '?',
+    context: 'DeepWiki, outside text inputs',
+    selector: '[data-shortcut-help]',
+  },
+  {
+    action: 'Close keyboard shortcuts',
+    keys: 'Esc',
+    context: 'Keyboard shortcuts dialog',
+  },
+]
 export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   {
     action: 'Keyboard shortcuts',
