@@ -22,13 +22,18 @@ export type StepUnderstandingState = {
 }
 
 /**
- * Hashes a step as its schema parsed it, so any change to its label, explanation, evidence, reference or operation changes the hash; called by the Study workspace for every step of the shown material and by {@link applyStepDecision}'s callers when a decision is saved.
+ * Hashes a step as its schema parsed it, so any change to its label, explanation, evidence, reference or operation changes the hash; called by the Study workspace for every step of the shown material and by {@link hashSteps} for each step.
  * @param step - The step as parsed from the saved material (key order is the schema's).
  * @returns The SHA-256 of the step's JSON, in lowercase hex.
  * @example stepHash({ id: 'a', from: 'ui', to: 'api', label: 'A', explanation: 'x', evidence: 'observed' }) // => 64 hex digits
  */
 export function stepHash(step: unknown): string {
   return createHash('sha256').update(JSON.stringify(step)).digest('hex')
+}
+
+/** Epoch milliseconds of an ISO `at`, so values of different fractional precision compare by time, not by text. */
+function atMs(at: string): number {
+  return Date.parse(at)
 }
 
 const hashedSteps = new WeakMap<readonly unknown[], CurrentStepHash[]>()
@@ -64,7 +69,7 @@ export function normalizeStepDecisions(
     const key = pairKey(decision)
     const held = winners.get(key)
     // A later entry wins over an earlier one with the same or an older time.
-    if (held === undefined || decisions[held]!.at <= decision.at)
+    if (held === undefined || atMs(decisions[held]!.at) <= atMs(decision.at))
       winners.set(key, index)
   })
   return decisions.filter((decision, index) => {
@@ -101,19 +106,23 @@ export function stepUnderstandingState(
         reviewNeeded: false,
       }
     // No decision for this version: an earlier version marked understood asks for a review.
-    const earlier = decisions
+    const earlierDecision = decisions
       .filter(
         (decision) =>
           decision.stepId === step.stepId &&
           decision.stepHash !== step.stepHash &&
           decision.understood,
       )
-      .map((decision) => decision.at)
-      .sort()
-      .at(-1)
-    return earlier === undefined
+      .reduce<StepUnderstandingDecision | undefined>(
+        (best, decision) =>
+          best === undefined || atMs(decision.at) > atMs(best.at)
+            ? decision
+            : best,
+        undefined,
+      )
+    return earlierDecision === undefined
       ? { understood: false, reviewNeeded: false }
-      : { understood: false, reviewNeeded: true, reviewAt: earlier }
+      : { understood: false, reviewNeeded: true, reviewAt: earlierDecision.at }
   })
 }
 
@@ -148,7 +157,7 @@ export function applyStepDecision(
     )
     const pool = stale.length ? stale : candidates
     const oldest = pool.reduce((best, entry) =>
-      entry.decision.at < best.decision.at ? entry : best,
+      atMs(entry.decision.at) < atMs(best.decision.at) ? entry : best,
     )
     next.splice(oldest.index, 1)
   }

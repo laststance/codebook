@@ -261,3 +261,95 @@ test('refuses to serialize a file over the given byte limit and returns it under
     serializeStepUnderstanding({ ...file, studyId: 'not-a-study' }),
   )
 })
+
+// Value: protects=a hand-edited file with mixed fractional seconds still resolving a duplicate pair to the later time; fails_when=the text order of the times (Z after a dot) picks the older decision; no_claim=times without a valid ISO form
+test('keeps the later decision of a duplicate pair whose times differ in fractional precision', () => {
+  // Arrange
+  const later = decision('a', HASH_A1, true, '2026-11-10T01:00:03.500Z')
+  const earlier = decision('a', HASH_A1, false, '2026-11-10T01:00:03Z')
+
+  // Act
+  const normalized = normalizeStepDecisions([later, earlier])
+
+  // Assert
+  assert.deepEqual(normalized, [later])
+})
+
+// Value: protects=review naming the latest checked time when times differ in fractional precision; fails_when=reviewAt is the text-greatest time instead of the latest one; no_claim=how the pane words it
+test('names the latest checked time of other versions when times differ in fractional precision', () => {
+  // Arrange
+  const steps = [{ stepId: 'a', stepHash: HASH_A2 }]
+  const file = {
+    decisions: [
+      decision('a', 'd'.repeat(64), true, '2026-11-10T01:00:03.500Z'),
+      decision('a', 'e'.repeat(64), true, '2026-11-10T01:00:03Z'),
+    ],
+  }
+
+  // Act
+  const [state] = stepUnderstandingState(file, steps)
+
+  // Assert
+  assert.deepEqual(state, {
+    understood: false,
+    reviewNeeded: true,
+    reviewAt: '2026-11-10T01:00:03.500Z',
+  })
+})
+
+// Value: protects=the cap dropping the truly oldest decision when times differ in fractional precision; fails_when=text order drops the newer decision; no_claim=file size
+test('drops the truly oldest decision at the cap when times differ in fractional precision', () => {
+  // Arrange
+  const current = [
+    { stepId: 's1', stepHash: HASH_A1 },
+    { stepId: 's2', stepHash: HASH_B1 },
+    { stepId: 's3', stepHash: HASH_A2 },
+  ]
+  const newer = decision('s1', HASH_A1, true, '2026-11-10T01:00:03.500Z')
+  const older = decision('s2', HASH_B1, true, '2026-11-10T01:00:03Z')
+  const change = decision('s3', HASH_A2, true, '2026-11-10T02:00:00.000Z')
+
+  // Act
+  const next = applyStepDecision([newer, older], change, current, 2)
+
+  // Assert
+  assert.deepEqual(next, [newer, change])
+})
+
+// Value: protects=review needing a checked decision of another version; fails_when=unchecked decisions of other versions flag review; no_claim=none beyond protects
+test('does not flag review when other versions of the step have only unchecked decisions', () => {
+  // Arrange
+  const steps = [{ stepId: 'a', stepHash: HASH_A2 }]
+  const file = {
+    decisions: [
+      decision('a', 'd'.repeat(64), false, '2026-11-10T01:00:00.000Z'),
+      decision('a', 'e'.repeat(64), false, '2026-11-10T02:00:00.000Z'),
+    ],
+  }
+
+  // Act
+  const states = stepUnderstandingState(file, steps)
+
+  // Assert
+  assert.deepEqual(states, [{ understood: false, reviewNeeded: false }])
+})
+
+// Value: protects=the Study pane reading the learner's latest choice from a file with duplicate pairs; fails_when=the state reads the first stored entry instead of the latest; no_claim=how the file got duplicates
+test('reads the latest decision of a duplicate pair when computing step state', () => {
+  // Arrange
+  const steps = [{ stepId: 'a', stepHash: HASH_A1 }]
+  const file = {
+    decisions: [
+      decision('a', HASH_A1, false, '2026-11-10T01:00:00.000Z'),
+      decision('a', HASH_A1, true, '2026-11-10T03:00:00.000Z'),
+    ],
+  }
+
+  // Act
+  const states = stepUnderstandingState(file, steps)
+
+  // Assert
+  assert.deepEqual(states, [
+    { understood: true, at: '2026-11-10T03:00:00.000Z', reviewNeeded: false },
+  ])
+})
