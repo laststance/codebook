@@ -356,6 +356,8 @@ async function check(page, options, collected) {
     await publish(saving(pane.message))
     const whileSaving = await state()
     await page.keyboard.press('Space')
+    // The pointer press must land on the checkbox: in the narrow viewport a step check lower in the page can sit outside it, and a press at its off-screen coordinates hits nothing and takes the focus away.
+    await checkbox.scrollIntoViewIfNeeded()
     const bounds = await checkbox.boundingBox()
     await page.mouse.click(
       bounds.x + bounds.width / 2,
