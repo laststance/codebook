@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.111.0] - 2026-11-10 (development candidate)
+
+Cycle 0109 ([Issue #281](https://github.com/laststance/codebook/issues/281)), a feature cycle. **Each step of a saved replay now has an I understand this step check.** You could mark a whole test, server, script or extension history as understood, and a browser recording only for its source revision; you could not record which steps of a replay you understood, and a browser recording's Learning summary showed no selected step at all. Now, in a browser recording or a test, server, script or Chrome Extension replay, the Learning summary shows the selected step's heading, its explanation and a check that you alone set.
+
+### Added
+- **I understand this step:** the selected step's block shows `Step <n> · <label>`, its explanation and the check, below the sequence diagram. In a browser recording the selected step is the one whose recorded moment is shown, or the one you activated in the sequence while its moment is shown. Pressing the check (Space works) saves that step alone and shows `Marked understood · <time>`; `Steps understood: <n> of <m>` counts the steps you can select, the steps with a recorded moment. The check and its time return after a window reload.
+- **Review when a step changes:** when the AI later rewrites a step's saved text, the step shows unchecked with `Review: you marked an earlier version of this step understood · <time>`. A press made on a step that changed after the page showed it is refused instead of being saved for text you never saw.
+
+### Changed
+- **Understanding stays yours:** playing, seeking, saving, a Wiki update and the AI never mark or unmark a step. The whole-history check of test, server, script and extension replays and the source-revision check of browser recordings keep working as before.
+
 ## [0.2.110.0] - 2026-11-10 (development candidate)
 
 Cycle 0108 ([Issue #279](https://github.com/laststance/codebook/issues/279)), a feature cycle. **You can now press ? in Codebook's own views of the Activity Bar to see every Codebook shortcut.** In the Repository Wiki, LLM Wiki and Learning outline views, ? did nothing for Codebook and no control said which keys exist; only the replay and Wiki pages had their own list. Now those three views open one searchable **Keyboard shortcuts** list, and each view's title bar has a ? control that opens the same list.
