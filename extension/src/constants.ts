@@ -1012,6 +1012,7 @@ export const PRESENTATION_FOCUS_IDS = [
   'live-tab',
   'recording-tab',
   'understood',
+  'learning-step-understood',
   'profiles',
   'studies',
   'delete-study',

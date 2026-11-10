@@ -587,9 +587,16 @@ async function check(page, options, collected) {
         .length,
   )
   await render(stepReplay)
-  if (stepPose?.pose)
-    await publish({ ...stepPose, type: 'restore-presentation-pose' })
-  await page.waitForTimeout(200) // A settling pause after the restore; the case reads what was sent, which the restore receipt does not gate.
+  if (!stepPose?.pose)
+    throw new Error(
+      'No serializable reading pose was captured for the step block.',
+    )
+  await publish({ ...stepPose, type: 'restore-presentation-pose' })
+  await page.waitForFunction(() =>
+    window.sent.some(
+      (message) => message.type === 'presentation-pose-restored',
+    ),
+  )
   const stepReading = await page.evaluate(
     (writesBefore) => ({
       stepWrites:
@@ -598,6 +605,7 @@ async function check(page, options, collected) {
           .length,
       checked: document.getElementById('learning-step-understood').checked,
       visible: document.getElementById('learning-step').checkVisibility(),
+      activeId: document.activeElement?.id ?? '',
     }),
     stepWritesBeforeReplacement,
   )
@@ -609,7 +617,8 @@ async function check(page, options, collected) {
       stepBlock.checked === true &&
       stepReading.stepWrites === 0 &&
       stepReading.checked === true &&
-      stepReading.visible,
+      stepReading.visible &&
+      stepReading.activeId === 'learning-step-understood',
   })
 
   // Cycle 0070: the replay's operation row. A host answer to a seek is simulated by publishing the Study message that follows it.
