@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.115.0] - 2026-11-11 (development candidate)
+
+Cycle 0113 ([Issue #290](https://github.com/laststance/codebook/issues/290)), a feature cycle. **The LLM Wiki generator now refuses a Wiki that leaves code unexplained or is too thin for its code, and Wiki answers name files and keep all their citations.** In today's native runs, VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent (Grok 4.6 High) first published Wikis of 6 to 7 flat pages with one diagram that left 39 of 71 sources unexplained. Cursor also refused a correct answer that cited several lines. With this build, both editors' Wikis cite every included code file and have a chapter tree and a diagram on every page. Both editors answer repository questions with their citations.
+
+### Changed
+- **The bundled skill is 1.0.88.** Its Wiki route asks the editor AI to cite every included code file, in a page's sources, a diagram or an inline source link. The alternative is to list the file under `coverageExceptions` with a reason of at most 300 characters, and only for code that needs no explanation (generated, vendored, a trivial re-export, a test fixture). Cursor's managed copy updates itself when Codebook starts.
+- **The generator refuses a Wiki that leaves an included code file unexplained.** `--render-only` and publishing name the files and ask for them to be explained and cited. An inline source link counts only when the editor could open it: a link (`href`) to this project's included file, with that file's hash and a line within it.
+- **The generator refuses a Wiki too thin for the code it covers.** The rules apply from 12 explained code files:
+  - at least 2 child pages;
+  - one page per 8 explained code files, up to the 256-page limit;
+  - a diagram on every page, and about three diagrams per two pages in total;
+  - at least 1,200 characters of article text on every page, and 500 per explained code file in total (up to 120,000). Chinese, Japanese and Korean characters count twice; HTML comments and zero-width characters, which a reader never sees, do not count.
+- **Wiki answers name the repository files they rely on**, never an internal excerpt id such as `S1`. An id-shaped word that the question or the source itself uses, such as an `S3` bucket, stays as written.
+- **A Wiki answer may cite several lines of each file.** Up to 40 citations are accepted, each still checked against the selected source lines, and repeats are shown once. Before, more than 6 citations refused the whole answer, which in Cursor read "The editor model returned a Wiki answer without usable source citations".
+
+### Fixed
+- An error on the Wiki page now reads "Error: …" once. It used to read "Error: Error: …".
+
+**Compatibility.** No MCP API or study format change. The bundled skill is 1.0.88. A Wiki that an earlier skill published stays readable. It is checked against the new rules only when it is updated or generated again.
+
 ## [0.2.114.0] - 2026-11-10 (development candidate)
 
 Cycle 0112 ([Issue #288](https://github.com/laststance/codebook/issues/288)), a bug-fix cycle. Nothing changes in the extension you install.
