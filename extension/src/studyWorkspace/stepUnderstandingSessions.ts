@@ -55,8 +55,8 @@ type Session = {
   file: StepUnderstandingFile | undefined
   /** Per step: `saving`, or the text of the last failed save. Dropped with the session. */
   entries: Map<string, { saving: true } | { failure: string }>
-  /** Reads and writes of this replay's file run one after the other in this chain. */
-  queue: Promise<void>
+  /** Reads and writes of this replay's file run one after the other in this chain; it outlives the session, so a replacement session queues behind the dead one's operations. */
+  chain: { tail: Promise<void> }
   readWaiting: boolean
   dead: boolean
 }
@@ -68,6 +68,13 @@ type Session = {
  */
 export class StepUnderstandingSessions {
   private session: Session | undefined
+  /** One chain per replay file (store and study), shared by every session of that replay. */
+  private readonly chains = new WeakMap<
+    StepDecisionStore,
+    Map<string, { tail: Promise<void> }>
+  >()
+  /** The saves that have been queued and not yet ended, whichever session started them. */
+  private readonly pendingSaves = new Set<Promise<void>>()
 
   /**
    * @param changed - Called when a read or a save has ended and the Study message should be built again.
@@ -168,7 +175,7 @@ export class StepUnderstandingSessions {
     const currentSteps = shown.steps.map((value) => ({ ...value }))
     session.entries.set(step.stepId, { saving: true })
     this.changed()
-    await this.enqueue(session, async () => {
+    const saved = this.enqueue(session, async () => {
       try {
         const file = await session.store.saveStepUnderstanding(
           session.studyId,
@@ -187,6 +194,22 @@ export class StepUnderstandingSessions {
       }
       this.changed()
     })
+    this.pendingSaves.add(saved)
+    try {
+      await saved
+    } finally {
+      this.pendingSaves.delete(saved)
+    }
+  }
+
+  /**
+   * Waits until every save that was queued has ended (also those of a dropped session), so a close does not lose a pressed decision.
+   * @returns Once no queued save is left; never rejects.
+   * @example await sessions.settle()
+   */
+  async settle(): Promise<void> {
+    while (this.pendingSaves.size > 0)
+      await Promise.allSettled([...this.pendingSaves])
   }
 
   /**
@@ -208,7 +231,7 @@ export class StepUnderstandingSessions {
   }
 
   /**
-   * Ends the session of the shown replay, whose reads and saves in flight then change nothing; called when the Study workspace closes.
+   * Ends the session of the shown replay, whose reads and saves in flight then change nothing shown (a save still reaches the file; {@link settle} waits for it); called when the Study workspace closes.
    * @example sessions.dispose()
    */
   dispose(): void {
@@ -235,7 +258,7 @@ export class StepUnderstandingSessions {
       status: 'unknown',
       file: undefined,
       entries: new Map(),
-      queue: Promise.resolve(),
+      chain: this.chainOf(shown.store, shown.studyId),
       readWaiting: false,
       dead: false,
     }
@@ -253,9 +276,26 @@ export class StepUnderstandingSessions {
     session: Session,
     operation: () => Promise<void>,
   ): Promise<void> {
-    const next = session.queue.then(operation)
-    session.queue = next.catch(() => undefined)
+    const next = session.chain.tail.then(operation)
+    session.chain.tail = next.catch(() => undefined)
     return next
+  }
+
+  private chainOf(
+    store: StepDecisionStore,
+    studyId: string,
+  ): { tail: Promise<void> } {
+    let byStudy = this.chains.get(store)
+    if (!byStudy) {
+      byStudy = new Map()
+      this.chains.set(store, byStudy)
+    }
+    let chain = byStudy.get(studyId)
+    if (!chain) {
+      chain = { tail: Promise.resolve() }
+      byStudy.set(studyId, chain)
+    }
+    return chain
   }
 
   private enqueueRead(session: Session): void {

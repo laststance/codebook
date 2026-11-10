@@ -7407,6 +7407,8 @@ export class StudyWorkspace {
         this.nodeHistoryRepository?.settleReaderPositionWrites(),
         storageTimeLeftMs(),
       )
+      // A press of a step's check that is still being written is not lost at teardown.
+      await settledWithin(this.stepUnderstanding.settle(), storageTimeLeftMs())
       await settledWithin(this.library?.flush(), storageTimeLeftMs())
       // A Read maximized an editor group for the pane it showed; a closed workspace does not leave that maximization behind.
       const movedKeyboardToSideBar = await this.endEnlargementAtClose(
@@ -10655,11 +10657,34 @@ export class StudyWorkspace {
       { type: 'step-understanding' }
     >,
   ): Promise<void> {
+    try {
+      await this.handleStepUnderstanding(message)
+    } finally {
+      // The pane marks the check disabled while its press is out; an answer that equals the last message would be deduped and leave it disabled, so the next publish always goes out.
+      if (!this.closing) {
+        this.lastPublished = undefined
+        this.publish()
+      }
+    }
+  }
+
+  /**
+   * Does the work of {@link receiveStepUnderstanding}: refuses a stale press on its step, or saves the press and retires the refusals that were shown before it.
+   * @param message - The validated message.
+   * @throws As {@link receiveStepUnderstanding} says.
+   * @example await this.handleStepUnderstanding(message)
+   */
+  private async handleStepUnderstanding(
+    message: Extract<
+      z.infer<typeof messageSchema>,
+      { type: 'step-understanding' }
+    >,
+  ): Promise<void> {
     const browserReplay = this.browserReplayShown()
     const bundle = browserReplay ? this.playback?.bundle() : undefined
     const shown = this.shownReplaySteps(
       browserReplay,
-      bundle,
+      bundle?.studyId,
       projectLearningSummary(bundle?.context?.study, bundle?.context?.phases),
     )
     if (message.revision !== this.revision) {
@@ -10677,30 +10702,45 @@ export class StudyWorkspace {
     }
     if (this.message().loading)
       throw new Error('Wait for the replay to finish loading.')
+    // The refusal lines that exist now are the only ones this press can answer; one raised while the save runs is newer.
+    const lifetime = this.lifetime
+    const earlier = {
+      replay: this.errors.get('replay-control'),
+      node: this.errors.get('node-history-control'),
+    }
     await this.stepUnderstanding.save(message, shown, new Date())
-    // The press was accepted, so an earlier refusal of a control of this replay no longer describes it.
-    if (browserReplay) this.replayControlAccepted()
-    else if (this.errors.delete('node-history-control')) this.publish()
+    // A close or a reopen while the save ran: the press answers nothing of what is shown now.
+    if (this.closing || this.lifetime !== lifetime) return
+    let retired = false
+    for (const [kind, text] of [
+      ['replay-control', earlier.replay],
+      ['node-history-control', earlier.node],
+    ] as const) {
+      // Only the very refusal that was shown before the press is retired.
+      if (text !== undefined && this.errors.get(kind) === text)
+        retired = this.errors.delete(kind) || retired
+    }
+    if (retired) this.publish()
   }
 
   /**
    * Names the replay whose steps the per-step checks belong to and the steps themselves, for the Study message; called by {@link message}.
    * A browser replay offers its checks for the steps that have a recorded position; a Node-family replay offers them for every step of its saved material.
    * @param browserReplay - Whether a browser recording is shown.
-   * @param bundle - The browser replay's loaded recording.
+   * @param studyId - The browser replay's study id (the loaded recording's); unused for a Node-family replay.
    * @param learningSummary - The browser replay's projected learning summary.
    * @returns The shown replay's steps, or `undefined` when no replay with saved steps is shown.
    * @example this.shownReplaySteps(false, undefined, undefined)?.selectable // => ['stop-1', 'stop-2'] for a test replay with two steps
    */
   private shownReplaySteps(
     browserReplay: boolean,
-    bundle: { studyId: string } | undefined,
+    studyId: string | undefined,
     learningSummary: ReturnType<typeof projectLearningSummary>,
   ): ShownReplaySteps | undefined {
     if (browserReplay) {
-      if (!bundle || !learningSummary) return undefined
+      if (studyId === undefined || !learningSummary) return undefined
       return {
-        studyId: bundle.studyId,
+        studyId,
         store: this.library,
         steps: hashSteps(learningSummary.content.steps),
         selectable: learningSummary.positions.map((value) => value.stepId),
@@ -10709,10 +10749,10 @@ export class StudyWorkspace {
     const history = this.selectedNodeHistory
     const material = this.selectedNodeHistoryLearningMaterial
     if (!history || !material) return undefined
-    const studyId = history.header.studyId
+    const historyStudyId = history.header.studyId
     return {
-      studyId,
-      store: this.nodeHistoryStoreOf(studyId),
+      studyId: historyStudyId,
+      store: this.nodeHistoryStoreOf(historyStudyId),
       steps: hashSteps(material.content.steps),
       selectable: material.content.steps.map((step) => step.id),
     }
@@ -11264,7 +11304,7 @@ export class StudyWorkspace {
       ...this.extensionReplayMessage(),
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
       stepUnderstanding: this.stepUnderstanding.view(
-        this.shownReplaySteps(browserReplay, bundle, learningSummary),
+        this.shownReplaySteps(browserReplay, bundle?.studyId, learningSummary),
       ),
       // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
       nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries

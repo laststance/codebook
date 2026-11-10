@@ -1273,3 +1273,135 @@ test('browser recording: a damaged step file reads as unreadable and a press doe
     await opened.harness.close()
   }
 })
+
+// Value: protects=a pressed decision surviving the close of the Study workspace; fails_when=close resolves while the save is held, or the decision is missing from the file once close has resolved; no_claim=the pane after reopening
+test('test replay: closing the Study workspace while a step save is held waits for it and the decision is in the file', async (context) => {
+  // Arrange
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    const store = opened.harness.service.nodeHistoryStore!
+    const original = store.saveStepUnderstanding.bind(store)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let started = false
+    context.mock.method(
+      store,
+      'saveStepUnderstanding',
+      async (...input: Parameters<typeof original>) => {
+        started = true
+        await gate
+        return original(...input)
+      },
+    )
+    press(opened, opened.stepIds[0], true)
+    await waitUntil(() => started, 'the save started', READER_RESULT_BOUND_MS)
+
+    // Act
+    let closed = false
+    const closing = opened.harness.reader.close().then(() => {
+      closed = true
+    })
+    const closedWhileHeld = await Promise.race([
+      closing.then(() => true),
+      waitUntil(() => started, 'the save is held', READER_RESULT_BOUND_MS).then(
+        () => false,
+      ),
+    ])
+    release()
+    await closing
+
+    // Assert
+    assert.equal(closedWhileHeld, false)
+    assert.equal(closed, true)
+    assert.match(await readFile(opened.stepFile, 'utf8'), /"understood": ?true/)
+  } finally {
+    context.mock.restoreAll()
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=the pane always getting an answer to a press, so its check never stays disabled; fails_when=a refused press that changes nothing else posts no Study message; no_claim=the webview clearing aria-disabled (Reader DOM)
+test('test replay: a refused press posts a Study message even when the message is the same as the last one', async () => {
+  // Arrange
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    press(opened, 'ghost-step', true)
+    await waitUntil(
+      () => (lastView(opened.harness)?.errors ?? []).length > 0,
+      'the first refusal is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    const postedBefore = opened.harness.postedMessages().length
+
+    // Act
+    press(opened, 'ghost-step', true)
+
+    // Assert
+    await waitUntil(
+      () => opened.harness.postedMessages().length > postedBefore,
+      'the repeated refusal is answered with a message',
+      READER_RESULT_BOUND_MS,
+    )
+  } finally {
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=a refusal raised while a step save runs staying shown when the save ends; fails_when=the old save's end erases the newer refusal; no_claim=refusals that existed before the press (retired by the next handled press)
+test('test replay: a step save that ends after a newer refusal keeps that refusal shown', async (context) => {
+  // Arrange
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    const store = opened.harness.service.nodeHistoryStore!
+    const original = store.saveStepUnderstanding.bind(store)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    context.mock.method(
+      store,
+      'saveStepUnderstanding',
+      async (...input: Parameters<typeof original>) => {
+        await gate
+        return original(...input)
+      },
+    )
+    press(opened, opened.stepIds[0], true)
+    await waitUntil(
+      () => stepEntry(opened, opened.stepIds[0])?.saving === true,
+      'the step is saving',
+      READER_RESULT_BOUND_MS,
+    )
+    // A Node history control of an older revision is refused while the save waits.
+    opened.harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(opened.harness)!.revision + 1,
+      studyId: opened.studyId,
+      direction: 'next',
+      unit: 'event',
+    })
+    await waitUntil(
+      () => lastView(opened.harness)?.nodeHistoryRefusal !== undefined,
+      'the newer refusal is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    release()
+    await whenMarked(opened, opened.stepIds[0])
+
+    // Assert
+    assert.match(
+      lastView(opened.harness)?.nodeHistoryRefusal ?? '',
+      /displayed study changed/,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await opened.harness.close()
+  }
+})
