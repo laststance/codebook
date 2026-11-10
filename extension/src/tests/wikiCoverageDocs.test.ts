@@ -43,3 +43,22 @@ test('the README says the generator refuses a Wiki that leaves an included code 
     ),
   )
 })
+
+// Value: protects=the Wiki route tells the chat AI the depth floors the renderer enforces (child pages, diagrams, text per file, no stub page) and the learner's README says the generator refuses a thin Wiki; fails_when=the skill or the README loses the depth sentence and a flat 7-page Wiki with one diagram is published (C113-W3); why_new=the renderer gained the depth refusal in Cycle 0113; seam=none; no_claim=how deep a chat model's articles really are
+test('the skill and the README say a Wiki too thin for its code is refused: no child pages, too few diagrams or too little explanation', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    skill.includes(
+      'at least 2 pages with a `parent`, about one diagram per three pages (architecture, flow or sequence, each with source-backed nodes and edges), at least 250 characters of article text per explained code file in total, and no page under 300 characters. These are floors, not targets, for DeepWiki density.',
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      'It also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, too few diagrams, or too little explanation.',
+    ),
+  )
+})

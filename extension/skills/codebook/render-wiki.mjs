@@ -119,6 +119,20 @@ const CODE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.js
 const MAX_NAMED_UNCOVERED = 40;
 /** The longest reason, in characters, a coverage exception may give. */
 const MAX_EXCEPTION_REASON = 300;
+/** The number of explained code files from which {@link requireWikiDepth} applies; a smaller repository is exempt. */
+const DEPTH_MIN_EXPLAINED_FILES = 12;
+/** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
+const DEPTH_MIN_CHILD_PAGES = 2;
+/** One diagram per this many pages is the least a Wiki needs once {@link requireWikiDepth} applies. */
+const DEPTH_PAGES_PER_DIAGRAM = 3;
+/** The characters of article text a Wiki needs for each explained code file. */
+const DEPTH_TEXT_PER_FILE = 250;
+/** The cap, in characters, on the total article text {@link requireWikiDepth} requires. */
+const DEPTH_MAX_REQUIRED_TEXT = 120_000;
+/** The fewest characters of article text any single page may have once {@link requireWikiDepth} applies. */
+const DEPTH_MIN_PAGE_TEXT = 300;
+/** How many of the thinnest pages the depth refusal names. */
+const DEPTH_MAX_NAMED_PAGES = 10;
 /** Reads the `path` of every inline editor source address (`vscode://` or `cursor://laststance.codebook/source?…`) in authored HTML; its parameters may be separated by `&amp;`. Called by {@link citedPathsOf}. @example inlineCitedPathsOf('<a href="vscode://laststance.codebook/source?path=a.ts&amp;line=1">a</a>') // => ['a.ts'] */
 function inlineCitedPathsOf(contentHtml) {
   const addresses = contentHtml.matchAll(/(?:vscode|cursor):\/\/laststance\.codebook\/source\?([^"'\s<>]*)/g);
@@ -148,10 +162,42 @@ function requireValidExceptions(exceptions, codeFiles) {
     if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
   }
 }
+/** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
+const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
+/** Reads a page's article as plain text: tags removed, the common entities decoded, whitespace runs collapsed, counted in Unicode code points by the caller. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
+const articleTextOf = contentHtml => contentHtml.replace(/<[^>]*>/g, ' ').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&#39;', "'").replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
+/** Names up to {@link DEPTH_MAX_NAMED_PAGES} of the thinnest pages with their lengths. Called by {@link depthShortfallsOf}. @example thinnestPagesOf([{ path: 'a.html', length: 9 }]) // => 'a.html (9 characters)' */
+const thinnestPagesOf = measured => [...measured].sort((a, b) => a.length - b.length || a.path.localeCompare(b.path)).slice(0, DEPTH_MAX_NAMED_PAGES).map(page => `${page.path} (${page.length} characters)`).join(', ');
+/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12) // => [] */
+function depthShortfallsOf(pages, explainedCount) {
+  const measured = pages.map(page => ({ path: page.path, length: [...articleTextOf(page.contentHtml)].length }));
+  const children = pages.filter(page => page.parent).length;
+  const diagrams = pages.reduce((sum, page) => sum + (page.diagrams ?? []).length, 0);
+  const neededDiagrams = Math.ceil(pages.length / DEPTH_PAGES_PER_DIAGRAM);
+  const total = measured.reduce((sum, page) => sum + page.length, 0);
+  const neededText = Math.min(DEPTH_TEXT_PER_FILE * explainedCount, DEPTH_MAX_REQUIRED_TEXT);
+  const stubs = measured.filter(page => page.length < DEPTH_MIN_PAGE_TEXT);
+  const shortfalls = [];
+  if (children < DEPTH_MIN_CHILD_PAGES) shortfalls.push(`The Wiki has ${children} pages with a parent but needs at least ${DEPTH_MIN_CHILD_PAGES}: add child pages under subsystem chapters for their modules and flows.`);
+  if (diagrams < neededDiagrams) shortfalls.push(`The Wiki has ${diagrams} diagrams but needs at least ${neededDiagrams} for ${pages.length} pages: add architecture, flow or sequence diagrams with source-backed nodes and edges.`);
+  if (total < neededText) shortfalls.push(`The Wiki has ${total} characters of article text but needs at least ${neededText} for ${explainedCount} explained code files: write longer explanations, starting with the thinnest pages: ${thinnestPagesOf(measured)}.`);
+  if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of article text: deepen ${thinnestPagesOf(stubs)}.`);
+  return shortfalls;
+}
+/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough diagrams, enough explanation in total and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+ * @throws With one sentence for each failed rule, naming the measured value, the required value and what to add. @example requireWikiDepth(manifest, indexedSources) */
+function requireWikiDepth(manifest, indexedSources) {
+  const exceptions = manifest.coverageExceptions ?? [];
+  const explained = codeFilePathsOf(indexedSources).filter(path => !exceptions.some(entry => isExceptionFor(entry, path)));
+  // A small repository is exempt from the depth rules.
+  if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return;
+  const shortfalls = depthShortfallsOf(manifest.pages, explained.length);
+  if (shortfalls.length) throw new Error(shortfalls.join(' '));
+}
 /** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
  * @throws When an exception is malformed, repeated or matches no included code file, or when code files stay uncited and unlisted; the message names the count and the first paths. @example requireCodeCoverage(manifest, indexedSources) */
 function requireCodeCoverage(manifest, indexedSources) {
-  const codeFiles = [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
+  const codeFiles = codeFilePathsOf(indexedSources);
   const exceptions = manifest.coverageExceptions ?? [];
   requireValidExceptions(exceptions, codeFiles);
   const cited = citedPathsOf(manifest);
@@ -230,5 +276,6 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   // Every citation has resolved; now no included code file may stay unexplained.
   requireCodeCoverage(manifest, indexedSources);
+  requireWikiDepth(manifest, indexedSources);
   return pages;
 }
