@@ -40,7 +40,40 @@ export type BrowserAddressProbeInput = {
    * `release` tries the same cleanup again (same process group, same folder) and resolves `true` when both are confirmed.
    */
   onUnreleased?: (release: () => Promise<boolean>) => void
+  /**
+   * Called synchronously each time the probe completes a phase, with the milliseconds since the probe's entry; for diagnosis only (Codebook's gate passes none).
+   * Each phase is reported at most once; an exception it throws is ignored.
+   */
+  onPhase?: (phase: BrowserAddressProbePhase, elapsedMs: number) => void
 }
+
+/**
+ * The phases a browser address probe completes, reported through {@link BrowserAddressProbeInput.onPhase}.
+ * The start phases come in this order; `request-sent` and `request-continued` come from Chrome's events and can arrive before `request-evaluated`.
+ */
+export type BrowserAddressProbePhase =
+  /** The empty profile folder exists and is resolved. */
+  | 'profile-made'
+  /** The spawn returned a child. */
+  | 'chrome-spawned'
+  /** Chrome's `DevToolsActivePort` was read. */
+  | 'debugging-port'
+  /** The CDP WebSocket is open. */
+  | 'connected'
+  /** The first page target was found. */
+  | 'page-target'
+  /** `Target.attachToTarget` answered. */
+  | 'attached'
+  /** `Network.enable` answered. */
+  | 'network-enabled'
+  /** `Fetch.enable` answered. */
+  | 'fetch-enabled'
+  /** `Runtime.evaluate` of the fetch answered. */
+  | 'request-evaluated'
+  /** The first `Network.requestWillBeSent` for the probed URL arrived. */
+  | 'request-sent'
+  /** The probe issued `Fetch.continueRequest` for the probed request (before Chrome answered that command). */
+  | 'request-continued'
 
 /** The refusal reasons the probe can end in. */
 type BrowserAddressProbeFailureReason = Extract<
@@ -241,6 +274,7 @@ const PROBE_EVENT_METHODS = [
  * @param input - The probe input.
  * @param signal - The run's signal, or the probe's own when a later phase failed.
  * @param boundMs - What is left of the probe's deadline.
+ * @param mark - Reports `request-sent` once the probed URL's first request is seen.
  * @returns The verdict; `proof-timeout` when nothing arrived within `boundMs`.
  * @throws The signal's reason when it aborts.
  */
@@ -249,6 +283,7 @@ function waitForVerdict(
   input: BrowserAddressProbeInput,
   signal: AbortSignal,
   boundMs: number,
+  mark: ProbeClock['mark'],
 ): Promise<BrowserAddressVerdict> {
   return new Promise((resolve, reject) => {
     const requestIds = new Set<unknown>()
@@ -269,6 +304,8 @@ function waitForVerdict(
       off.push(
         cdp.on(method, (params) => {
           const event = eventOf(method, params, requestIds, input.url)
+          // The probed URL's first request is known once eventOf recorded its id; mark reports it once.
+          if (requestIds.size > 0) mark('request-sent')
           if (event) finish(() => resolve(verdictOf(event, input)))
         }),
       )
@@ -287,6 +324,35 @@ type ProbeClock = {
   signal: AbortSignal
   /** Milliseconds left until the probe's deadline; never negative. */
   remainingMs: () => number
+  /** Reports a completed phase to {@link BrowserAddressProbeInput.onPhase}, once per phase. */
+  mark: (phase: BrowserAddressProbePhase) => void
+}
+
+/**
+ * Builds a probe's {@link ProbeClock.mark}: each phase reaches `onPhase` once, with the milliseconds since `startedAt`; called once by {@link probeBrowserAddress} at its entry.
+ * @param onPhase - The caller's diagnostic callback, if any.
+ * @param startedAt - The probe's entry time (`Date.now()`).
+ * @returns The mark function; without `onPhase` it reports nothing.
+ * @example
+ * const mark = phaseMarker((phase, elapsedMs) => console.log(phase, elapsedMs), Date.now())
+ * mark('profile-made') // logs: profile-made 3
+ * mark('profile-made') // logs nothing: already reported
+ */
+function phaseMarker(
+  onPhase: BrowserAddressProbeInput['onPhase'],
+  startedAt: number,
+): ProbeClock['mark'] {
+  const reported = new Set<BrowserAddressProbePhase>()
+  return (phase): void => {
+    // Each phase once: the event listeners can see the probed request more than once.
+    if (reported.has(phase)) return
+    reported.add(phase)
+    try {
+      onPhase?.(phase, Date.now() - startedAt)
+    } catch {
+      // A diagnostic callback never changes the probe's verdict, phases or cleanup.
+    }
+  }
 }
 
 /**
@@ -295,17 +361,20 @@ type ProbeClock = {
  * The profile folder and the child are recorded on `browser` the moment each exists, so the caller's cleanup finds them even when a later step throws.
  * @param input - The probe input.
  * @param browser - The record to fill; the profile folder exists after this returns, the debugging port is not known yet.
+ * @param mark - Reports `profile-made` and `chrome-spawned`.
  * @throws When the folder cannot be made or resolved, or the spawn throws (an invalid binary path); the recorded folder is still removed by the caller.
  */
 async function startProbeBrowser(
   input: BrowserAddressProbeInput,
   browser: ProbeBrowser,
+  mark: ProbeClock['mark'],
 ): Promise<void> {
   const made = await mkdtemp(join(tmpdir(), PROBE_PROFILE_PREFIX))
   // Recorded before `realpath`, so a failure of the next steps still leaves the folder to remove.
   browser.profile = made
   const profile = await realpath(made)
   browser.profile = profile
+  mark('profile-made')
   const child = spawn(
     input.chromeBinary,
     ownedChromeArguments({
@@ -326,6 +395,7 @@ async function startProbeBrowser(
   child.once('error', (error) => {
     browser.spawnError = error
   })
+  mark('chrome-spawned')
 }
 
 /**
@@ -363,7 +433,7 @@ async function pollProbe<Found>(
 /**
  * Waits for Chrome's `DevToolsActivePort`, then opens the browser-level connection.
  * @param browser - The started probe browser.
- * @param clock - The probe's signal and deadline.
+ * @param clock - The probe's signal, deadline and phase marks (`debugging-port`, `connected`).
  * @returns The connection.
  * @throws When Chrome fails to start or ends first, the run is cancelled or the deadline passes.
  */
@@ -380,10 +450,13 @@ async function connectProbeBrowser(
       undefined,
     'Chrome did not become ready',
   )
-  return connectFlatCdp(
+  clock.mark('debugging-port')
+  const cdp = await connectFlatCdp(
     `ws://127.0.0.1:${endpoint.port}${endpoint.path}`,
     Math.min(REVERSE_PROXY_PROBE_CONNECT_BOUND_MS, clock.remainingMs()),
   )
+  clock.mark('connected')
+  return cdp
 }
 
 /**
@@ -426,12 +499,14 @@ function firstPageTarget(
  * @param cdp - The browser-level connection.
  * @param sessionId - The page session the Fetch domain is enabled on.
  * @param url - The probed URL.
+ * @param mark - Reports `request-continued` when the probed request is let go.
  * @returns The unsubscribe of the listener.
  */
 function interceptProbeRequests(
   cdp: FlatCdpConnection,
   sessionId: string,
   url: string,
+  mark: ProbeClock['mark'],
 ): () => void {
   let didAllowProbe = false
   return cdp.on('Fetch.requestPaused', (params) => {
@@ -439,7 +514,10 @@ function interceptProbeRequests(
     const requestId = String(params.requestId)
     // Only the first request for the exact probe URL continues; a repeat or a redirect follow-up is blocked.
     const isProbe = !didAllowProbe && request?.url === url
-    if (isProbe) didAllowProbe = true
+    if (isProbe) {
+      didAllowProbe = true
+      mark('request-continued')
+    }
     const command = isProbe
       ? cdp.request('Fetch.continueRequest', { requestId }, sessionId)
       : cdp.request(
@@ -458,7 +536,7 @@ function interceptProbeRequests(
  * Every command is bounded by what is left of the deadline, and the run's signal is checked before each.
  * @param browser - The probe browser, whose connection is open.
  * @param url - The probed URL.
- * @param clock - The probe's signal and deadline.
+ * @param clock - The probe's signal, deadline and phase marks (`page-target` through `request-evaluated`).
  * @throws When no page target appears, a command fails or times out, or the run is cancelled.
  */
 async function startProbedRequest(
@@ -468,6 +546,7 @@ async function startProbedRequest(
 ): Promise<void> {
   const cdp = browser.cdp!
   const targetId = await firstPageTarget(browser, cdp, clock)
+  clock.mark('page-target')
   clock.signal.throwIfAborted()
   const { sessionId } = await cdp.request(
     'Target.attachToTarget',
@@ -475,6 +554,7 @@ async function startProbedRequest(
     undefined,
     clock.remainingMs(),
   )
+  clock.mark('attached')
   clock.signal.throwIfAborted()
   await cdp.request(
     'Network.enable',
@@ -482,15 +562,17 @@ async function startProbedRequest(
     String(sessionId),
     clock.remainingMs(),
   )
+  clock.mark('network-enabled')
   clock.signal.throwIfAborted()
   // The listener lives as long as the connection, which the probe's cleanup closes.
-  interceptProbeRequests(cdp, String(sessionId), url)
+  interceptProbeRequests(cdp, String(sessionId), url, clock.mark)
   await cdp.request(
     'Fetch.enable',
     { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
     String(sessionId),
     clock.remainingMs(),
   )
+  clock.mark('fetch-enabled')
   clock.signal.throwIfAborted()
   await cdp.request(
     'Runtime.evaluate',
@@ -501,6 +583,7 @@ async function startProbedRequest(
     String(sessionId),
     clock.remainingMs(),
   )
+  clock.mark('request-evaluated')
 }
 
 /**
@@ -561,7 +644,7 @@ async function runProbe(
   input: BrowserAddressProbeInput,
   clock: ProbeClock,
 ): Promise<BrowserAddressVerdict> {
-  await startProbeBrowser(input, browser)
+  await startProbeBrowser(input, browser, clock.mark)
   browser.cdp = await connectProbeBrowser(browser, clock)
   // The wait ends with this call, whatever phase fails; the verdict listener and its timer never outlive it.
   const waiting = new AbortController()
@@ -572,6 +655,7 @@ async function runProbe(
       input,
       AbortSignal.any([clock.signal, waiting.signal]),
       clock.remainingMs(),
+      clock.mark,
     )
     verdict.catch(() => undefined)
     await startProbedRequest(browser, input.url, clock)
@@ -597,10 +681,12 @@ export async function probeBrowserAddress(
   signal: AbortSignal,
 ): Promise<BrowserAddressProbeResult> {
   signal.throwIfAborted()
-  const deadline = Date.now() + input.timeoutMs
+  const startedAt = Date.now()
+  const deadline = startedAt + input.timeoutMs
   const clock: ProbeClock = {
     signal,
     remainingMs: () => Math.max(0, deadline - Date.now()),
+    mark: phaseMarker(input.onPhase, startedAt),
   }
   const browser: ProbeBrowser = {}
   let verdict: BrowserAddressVerdict = {
