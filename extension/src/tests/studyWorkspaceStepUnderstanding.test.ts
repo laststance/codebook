@@ -1488,8 +1488,8 @@ test('browser recording: a save that completes after the learner moved the playh
   }
 })
 
-// Value: protects=a save that ends after the replay was closed changing nothing shown and still being in the file; fails_when=the late result is drawn or throws, or the reopened replay lacks the mark; no_claim=a window close (native)
-test('browser recording: a save that completes after the replay closed changes nothing shown and the reopened replay shows it', async (context) => {
+// Value: protects=a step save still waiting when the Study workspace closes being kept by the close's drain, nothing being drawn once the close has ended, and the reopened replay showing the mark; fails_when=the close drops the waiting save, a message is posted after the close, or the reopened replay lacks the mark; no_claim=a window close (native), a save outlasting the close's storage budget (the sessions tests cover a disposed session's late save)
+test('browser recording: closing while a step save waits keeps the save, draws nothing after the close and the reopened replay shows it', async (context) => {
   // Arrange
   const opened = await openBrowserFamily()
   try {
@@ -1516,12 +1516,13 @@ test('browser recording: a save that completes after the replay closed changes n
       READER_RESULT_BOUND_MS,
     )
 
-    // Act: the replay closes while the save waits, then the save ends.
-    await opened.harness.reader.close()
-    const postedAfterClose = opened.harness.postedMessages().length
+    // Act: the close starts while the save waits; the save is let go, so the close's drain ends with it.
+    const closing = opened.harness.reader.close()
     release()
+    await closing
+    const postedAfterClose = opened.harness.postedMessages().length
     await written
-    // The save has ended; one more turn lets a late message, if the reader were to send one, arrive.
+    // The save had ended before the close did; one more turn lets a late message, if the reader were to send one, arrive.
     await new Promise((resolve) => setImmediate(resolve))
     const postedAfterSave = opened.harness.postedMessages().length
     context.mock.restoreAll()
