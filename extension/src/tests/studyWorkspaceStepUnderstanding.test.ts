@@ -92,6 +92,11 @@ async function whenRead(opened: OpenedReplay): Promise<void> {
   )
 }
 
+/** Fixed window in which a close with a held step save must stay pending. */
+const HELD_CLOSE_OBSERVATION_WINDOW_MS = 50
+/** Fixed window in which no Study message may follow a closed workspace's step save. */
+const POST_CLOSE_OBSERVATION_WINDOW_MS = 100
+
 /** Delivers the webview's `step-understanding` message for a step, with fields overridden for a refused one. */
 function press(
   opened: OpenedReplay,
@@ -1488,7 +1493,7 @@ test('browser recording: a save that completes after the learner moved the playh
   }
 })
 
-// Value: protects=a step save still waiting when the Study workspace closes being kept by the close's drain, nothing being drawn once the close has ended, and the reopened replay showing the mark; fails_when=the close drops the waiting save, a message is posted after the close, or the reopened replay lacks the mark; no_claim=a window close (native), a save outlasting the close's storage budget (the sessions tests cover a disposed session's late save)
+// Value: protects=a step save still waiting when the Study workspace closes being kept by the close's drain, nothing being drawn once the close has ended, and the reopened replay showing the mark; fails_when=the close drops the waiting save, a message is posted within 100 ms after the close, or the reopened replay lacks the mark; no_claim=a message later than the fixed 100 ms observation window (an absence cannot be waited for any longer), a window close (native), a save outlasting the close's storage budget (the sessions tests cover a disposed session's late save)
 test('browser recording: closing while a step save waits keeps the save, draws nothing after the close and the reopened replay shows it', async (context) => {
   // Arrange
   const opened = await openBrowserFamily()
@@ -1522,9 +1527,16 @@ test('browser recording: closing while a step save waits keeps the save, draws n
     await closing
     const postedAfterClose = opened.harness.postedMessages().length
     await written
-    // The save had ended before the close did; one more turn lets a late message, if the reader were to send one, arrive.
-    await new Promise((resolve) => setImmediate(resolve))
-    const postedAfterSave = opened.harness.postedMessages().length
+    // The save had ended before the close did; a late message, if the reader were to send one, may come on any later turn or timer, so the count is sampled across a fixed window.
+    let postedAfterSave = opened.harness.postedMessages().length
+    const windowEnds = Date.now() + POST_CLOSE_OBSERVATION_WINDOW_MS
+    while (Date.now() < windowEnds) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      postedAfterSave = Math.max(
+        postedAfterSave,
+        opened.harness.postedMessages().length,
+      )
+    }
     context.mock.restoreAll()
     await opened.openAgain()
     await whenRead(opened)
@@ -1584,7 +1596,7 @@ test('browser recording: a damaged step file reads as unreadable and a press doe
   }
 })
 
-// Value: protects=a pressed decision surviving the close of the Study workspace; fails_when=close resolves while the save is held, or the decision is missing from the file once close has resolved; no_claim=the pane after reopening
+// Value: protects=a pressed decision surviving the close of the Study workspace; fails_when=close resolves within the fixed 50 ms window while the save is held (the window is the only way to observe that absence), or the decision is missing from the file once close has resolved; no_claim=the pane after reopening, a close that resolves after the window while still held
 test('test replay: closing the Study workspace while a step save is held waits for it and the decision is in the file', async (context) => {
   // Arrange
   const opened = await openTestReplay()
@@ -1614,12 +1626,11 @@ test('test replay: closing the Study workspace while a step save is held waits f
     const closing = opened.harness.reader.close().then(() => {
       closed = true
     })
-    const closedWhileHeld = await Promise.race([
-      closing.then(() => true),
-      waitUntil(() => started, 'the save is held', READER_RESULT_BOUND_MS).then(
-        () => false,
-      ),
-    ])
+    // The save is held, so the close must stay pending across a real time window, not merely one microtask order.
+    await new Promise((resolve) =>
+      setTimeout(resolve, HELD_CLOSE_OBSERVATION_WINDOW_MS),
+    )
+    const closedWhileHeld = closed
     release()
     await closing
 
@@ -1712,6 +1723,41 @@ test('test replay: a step save that ends after a newer refusal keeps that refusa
     )
   } finally {
     context.mock.restoreAll()
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=an accepted step press retiring the Node history control refusal shown before it, so a stale refusal does not outlive the learner's next successful action; fails_when=the earlier refusal text is still in the Study message after the accepted press has saved; no_claim=a refusal raised during the save (kept, see the test above), the replay-control family
+test('test replay: an accepted step press retires the Node history refusal shown before it', async () => {
+  // Arrange: a Node history control of an older revision is refused and its text is shown (the test-replay family keeps it as the node-history-control refusal).
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    opened.harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(opened.harness)!.revision + 1,
+      studyId: opened.studyId,
+      direction: 'next',
+      unit: 'event',
+    })
+    await waitUntil(
+      () => lastView(opened.harness)?.nodeHistoryRefusal !== undefined,
+      'the earlier refusal is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    press(opened, opened.stepIds[0], true)
+    await whenMarked(opened, opened.stepIds[0])
+
+    // Assert
+    await waitUntil(
+      () => lastView(opened.harness)?.nodeHistoryRefusal === undefined,
+      'the earlier refusal is retired',
+      READER_RESULT_BOUND_MS,
+    )
+    assert.equal(lastView(opened.harness)?.nodeHistoryRefusal, undefined)
+  } finally {
     await opened.harness.close()
   }
 })
