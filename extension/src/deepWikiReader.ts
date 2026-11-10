@@ -322,7 +322,9 @@ export async function startDeepWikiReader(
       await handleRequest(request, response)
     } catch (error) {
       if (!response.writableEnded && !response.headersSent)
-        sendJson(response, 500, { error: String(error) })
+        sendJson(response, 500, {
+          error: error instanceof Error ? error.message : String(error),
+        })
       else response.destroy(error instanceof Error ? error : undefined)
     }
   })
@@ -549,7 +551,9 @@ export async function startDeepWikiReader(
       )
     } catch (error) {
       if (!response.writableEnded)
-        sendJson(response, 503, { error: String(error) })
+        sendJson(response, 503, {
+          error: error instanceof Error ? error.message : String(error),
+        })
     }
   }
   /**

@@ -360,7 +360,8 @@ test('a local page without this reader’s private path token cannot read the ge
   }
 })
 
-test('a failed editor-model answer reaches the browser reader as an error instead of an empty answer', async () => {
+// Value: protects=a learner whose editor model fails reads the error once (the page adds its own "Error:"); fails_when=the endpoint sends String(error) so the page shows "Error: Error: ..."; why_new=C113-W4 native Cursor Q&A refusal; seam=the reader's real api/ask endpoint with a throwing answer function; no_claim=the page's prefix wording
+test('a failed editor-model answer reaches the browser reader as its message alone, so the page shows one Error prefix', async () => {
   // Arrange
   const projectDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-reader-model-failure-'),
@@ -401,7 +402,7 @@ test('a failed editor-model answer reaches the browser reader as an error instea
     // Assert
     assert.equal(response.status, 503)
     assert.deepEqual(await response.json(), {
-      error: 'Error: The editor model is unavailable.',
+      error: 'The editor model is unavailable.',
     })
   } finally {
     await reader.close()

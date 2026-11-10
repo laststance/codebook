@@ -721,3 +721,149 @@ test('Wiki answer names the file for a full-width excerpt id', async () => {
   // Assert
   assert.equal(answer.answer, '返します（b.ts、2行）。')
 })
+
+/**
+ * Runs one Wiki question over six small sources so a reply can cite several lines of every excerpt.
+ * @param reply - The model's JSON reply text.
+ * @returns The answer the reader receives, or the error text when the answer is refused.
+ */
+async function askWithSixSources(reply: string) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-answer-lines-'))
+  const root = await realpath(directory)
+  const content =
+    '// saves invoices\nexport function createInvoice() {\n  return "saved";\n}\n'
+  const sources = await Promise.all(
+    ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts'].map(async (path) => {
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
+  try {
+    return await boundary
+      .answerDeepWikiQuestionWithPrompt(
+        async () => reply,
+        root,
+        sources,
+        'Where is createInvoice saved?',
+        'cursor',
+      )
+      .then(
+        (answer) => ({ answer, error: '' }),
+        (error: unknown) => ({
+          answer: undefined,
+          // The module loads in its own realm, so `instanceof Error` cannot recognize its errors.
+          error:
+            typeof error === 'object' && error !== null && 'message' in error
+              ? String(error.message)
+              : String(error),
+        }),
+      )
+  } finally {
+    await removeTestFolder(directory)
+  }
+}
+
+// Value: protects=a Cursor learner whose model cites several lines of each excerpt gets the answer instead of a refusal; fails_when=a reply with more citations than excerpts (14 lines over 6 excerpts) is refused as having no usable citations; why_new=C113-W4 native Cursor Q&A refusal; seam=answerDeepWikiQuestionWithPrompt over a stubbed Cursor reply; no_claim=how many lines a real model chooses to cite
+test('answers a Cursor question whose model cites several lines of each excerpt', async () => {
+  // Arrange
+  const lineCountsPerExcerpt = [3, 3, 3, 2, 2, 1]
+  const citations = lineCountsPerExcerpt.flatMap((lineCount, index) =>
+    Array.from({ length: lineCount }, (_, lineIndex) => ({
+      id: `S${index + 1}`,
+      line: lineIndex + 1,
+    })),
+  )
+  const reply = JSON.stringify({ answer: 'It saves.', citations })
+  // Act
+  const { answer, error } = await askWithSixSources(reply)
+  // Assert
+  assert.equal(error, '')
+  assert.equal(answer?.answer, 'It saves.')
+  assert.deepEqual(
+    // Spread: the module's realm builds arrays with another prototype, which deepEqual treats as unequal.
+    [...(answer?.citations ?? [])].map(
+      (citation) => `${citation.path}:${citation.line}`,
+    ),
+    [
+      'a.ts:1',
+      'a.ts:2',
+      'a.ts:3',
+      'b.ts:1',
+      'b.ts:2',
+      'b.ts:3',
+      'c.ts:1',
+      'c.ts:2',
+      'c.ts:3',
+      'd.ts:1',
+      'd.ts:2',
+      'e.ts:1',
+      'e.ts:2',
+      'f.ts:1',
+    ],
+  )
+})
+
+// Value: protects=the reader's citation list shows each source line once; fails_when=a line the model cites twice appears twice in the list; why_new=C113-W4 native Cursor Q&A refusal; seam=answerDeepWikiQuestionWithPrompt over a stubbed Cursor reply; no_claim=the order a model prefers
+test('lists a source line once when the model cites it repeatedly', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'It saves.',
+    citations: [
+      { id: 'S2', line: 2 },
+      { id: 'S1', line: 3 },
+      { id: 'S2', line: 2 },
+      { id: 'S1', line: 3 },
+    ],
+  })
+  // Act
+  const { answer } = await askWithSixSources(reply)
+  // Assert
+  assert.deepEqual(
+    // Spread: the module's realm builds arrays with another prototype, which deepEqual treats as unequal.
+    [...(answer?.citations ?? [])].map(
+      (citation) => `${citation.path}:${citation.line}`,
+    ),
+    ['b.ts:2', 'a.ts:3'],
+  )
+})
+
+// Value: protects=a runaway model reply stays bounded; fails_when=41 citations are accepted instead of refused with the usable-citations sentence; why_new=C113-W4 native Cursor Q&A refusal; seam=answerDeepWikiQuestionWithPrompt over a stubbed Cursor reply; no_claim=that 40 is the right number for every model
+test('refuses a Cursor reply carrying 41 citations as unbounded', async () => {
+  // Arrange
+  const citations = Array.from({ length: 41 }, (_, index) => ({
+    id: 'S1',
+    line: (index % 4) + 1,
+  }))
+  const reply = JSON.stringify({ answer: 'It saves.', citations })
+  // Act
+  const { answer, error } = await askWithSixSources(reply)
+  // Assert
+  assert.equal(answer, undefined)
+  assert.equal(
+    error,
+    'The editor model returned a Wiki answer without usable source citations.',
+  )
+})
+
+// Value: protects=the prompt keeps the model's citations focused; fails_when=the prompt no longer asks for at most 12 supporting lines; why_new=C113-W4 native Cursor Q&A refusal; seam=the prompt answerDeepWikiQuestion sends to the editor model; no_claim=whether a given model obeys it
+test('Wiki prompt asks the model to cite at most 12 directly supporting lines', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'It saves.',
+    citations: [{ id: 'S1', line: 2 }],
+  })
+  // Act
+  const { prompt } = await askWithThreeSources(reply)
+  // Assert
+  assert.match(
+    prompt,
+    /only the lines that support the answer most directly \(at most 12\)/,
+  )
+})
