@@ -339,6 +339,7 @@ import { isShownRefusal } from './utils/isShownRefusal'
 import { isWikiGroupBesideTextEditor } from './utils/isWikiGroupBesideTextEditor'
 import { isWorkspaceHostSetterFrame } from './utils/isWorkspaceHostSetterFrame'
 import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
+import { leftoverRemovalLine } from './utils/leftoverRemovalLine'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { listsEveryTabGroup } from './utils/listsEveryTabGroup'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
@@ -766,8 +767,12 @@ export class StudyWorkspace {
     signature?: string
   }
   private learningSaveOperation?: Promise<void>
-  /** Where unexpected failures of a test replay's paths are reported, the Output › Codebook channel; the extension sets it at activation. */
-  diagnostics?: { log: (entry: CodebookDiagnostic) => void; show: () => void }
+  /** Where unexpected failures of a test replay's paths are reported, the Output › Codebook channel; the extension sets it at activation. `info` writes a plain informational line there (the leftover group removal, Cycle 0111). */
+  diagnostics?: {
+    log: (entry: CodebookDiagnostic) => void
+    show: () => void
+    info?: (line: string) => void
+  }
   /** Saves a test run's learning replay from the status item (EN14); this workspace only wires the item and its commands to it. */
   private readonly nodeLearningSave = new NodeLearningSave({
     service: () => this.service,
@@ -15238,17 +15243,36 @@ export class StudyWorkspace {
     const previous = this.applicationGroupChange
     const identity = this.editorGroupIdentities.get(group)
     const removal = identity && { kind: 'remove' as const, identity }
+    const column = group.viewColumn
     if (removal) this.applicationGroupChange = removal
     try {
       if (!(await vscode.window.tabGroups.close(group, true)))
         throw new Error(
           'The editor refused to retire the empty Application group an earlier window left.',
         )
-      await waitUntil(
-        () => vscode.window.tabGroups.all.length === groupsBefore - 1,
-        'leftover Application group removal',
-        PRESENTATION_READY_TIMEOUT_MS,
-        signal,
+      const closedAt = Date.now()
+      try {
+        await waitUntil(
+          () => vscode.window.tabGroups.all.length === groupsBefore - 1,
+          'leftover Application group removal',
+          PRESENTATION_READY_TIMEOUT_MS,
+          signal,
+        )
+      } catch (error) {
+        // A cancelled entry saw nothing to report; a bound that passed names the count the editor showed then.
+        if (!signal?.aborted)
+          this.diagnostics?.info?.(
+            leftoverRemovalLine(column, groupsBefore, {
+              boundMs: PRESENTATION_READY_TIMEOUT_MS,
+              groupsNow: vscode.window.tabGroups.all.length,
+            }),
+          )
+        throw error
+      }
+      this.diagnostics?.info?.(
+        leftoverRemovalLine(column, groupsBefore, {
+          seenAfterMs: Date.now() - closedAt,
+        }),
       )
     } finally {
       if (removal && this.applicationGroupChange === removal)
