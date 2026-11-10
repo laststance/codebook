@@ -604,6 +604,7 @@ test('Cursor browser question shows only answers citing unchanged excerpt lines'
 async function askWithThreeSources(
   reply: string,
   firstLine = '// saves invoices',
+  question = 'Where is createInvoice saved?',
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-answer-ids-'))
   const root = await realpath(directory)
@@ -641,7 +642,7 @@ async function askWithThreeSources(
       model as never,
       root,
       sources,
-      'Where is createInvoice saved?',
+      question,
       'vscode',
     )
     return { prompt, answer }
@@ -707,6 +708,36 @@ test('Wiki answer keeps an id-shaped word the source itself uses', async () => {
   const { answer } = await askWithThreeSources(reply, '// upload to S3')
   // Assert
   assert.equal(answer.answer, 'Files go to S3 (see a.ts).')
+})
+
+// Value: protects=an id-shaped word the learner's own question uses (a service named S3) stays in the answer instead of being rewritten into a file path; fails_when=the question is left out of the words the rewrite treats as the learner's own, so `S3` becomes `c.ts`; why_new=C113 review round; seam=answerDeepWikiQuestion over a stubbed editor model with a question naming S3; no_claim=how a model's own prose about S3 is judged
+test('Wiki answer keeps an id-shaped word the question itself uses', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'Files go to S3 (see S1).',
+    citations: [{ id: 'S1', line: 2 }],
+  })
+  // Act
+  const { answer } = await askWithThreeSources(
+    reply,
+    '// saves invoices',
+    'Does S3 hold files?',
+  )
+  // Assert
+  assert.equal(answer.answer, 'Files go to S3 (see a.ts).')
+})
+
+// Value: protects=only a whole-word excerpt id becomes a file path, so `AS1` and `S1x` stay as written; fails_when=the id pattern loses its lookaround boundaries and rewrites an id inside a longer word; why_new=C113 review round; seam=answerDeepWikiQuestion over a stubbed editor model; no_claim=other punctuation around ids
+test('Wiki answer rewrites an excerpt id only where it stands as a whole word', async () => {
+  // Arrange
+  const reply = JSON.stringify({
+    answer: 'Use AS1 and S1x and S1.',
+    citations: [{ id: 'S1', line: 2 }],
+  })
+  // Act
+  const { answer } = await askWithThreeSources(reply)
+  // Assert
+  assert.equal(answer.answer, 'Use AS1 and S1x and a.ts.')
 })
 
 // Value: protects=a full-width excerpt id the model wrote is named by file too; fails_when=`Ｓ２` reaches the reader as written; why_new=Cycle 0113 (C113-W2); seam=answerDeepWikiQuestion over a stubbed editor model; no_claim=other full-width wording
@@ -849,6 +880,27 @@ test('refuses a Cursor reply carrying 41 citations as unbounded', async () => {
   assert.equal(
     error,
     'The editor model returned a Wiki answer without usable source citations.',
+  )
+})
+
+// Value: protects=a reply at the citation limit is still answered; fails_when=the limit check refuses a reply of exactly 40 citations (the comparison turns from `>` to `>=`); why_new=C113 review round; seam=answerDeepWikiQuestionWithPrompt over a stubbed Cursor reply; no_claim=that 40 is the right number for every model
+test('answers a Cursor reply carrying exactly 40 citations', async () => {
+  // Arrange
+  const citations = Array.from({ length: 40 }, (_, index) => ({
+    id: 'S1',
+    line: (index % 4) + 1,
+  }))
+  const reply = JSON.stringify({ answer: 'It saves.', citations })
+  // Act
+  const { answer, error } = await askWithSixSources(reply)
+  // Assert
+  assert.equal(error, '')
+  assert.deepEqual(
+    // Spread: the module's realm builds arrays with another prototype, which deepEqual treats as unequal.
+    [...(answer?.citations ?? [])].map(
+      (citation) => `${citation.path}:${citation.line}`,
+    ),
+    ['a.ts:1', 'a.ts:2', 'a.ts:3', 'a.ts:4'],
   )
 })
 

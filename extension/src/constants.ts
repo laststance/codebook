@@ -1284,7 +1284,7 @@ export const REPOSITORY_SOURCE_EXTENSIONS = [
 export const WIKI_QUESTION_LIMIT_CHARS = 2_000
 export const WIKI_SOURCE_LIMIT_BYTES = 131_072
 export const WIKI_SOURCE_MATCH_LIMIT = 6
-/** Most citations (distinct source lines) a Wiki model reply may carry before it is refused as unbounded; an answer may cite several lines of each of {@link WIKI_SOURCE_MATCH_LIMIT} excerpts. */
+/** The most citation entries (repeats included) a Wiki model reply may carry before it is refused as unbounded; an answer may cite several lines of each of {@link WIKI_SOURCE_MATCH_LIMIT} excerpts. */
 export const WIKI_CITATION_LIMIT = 40
 /** Number of citations the Wiki prompt asks the model to aim for (the lines that support the answer most directly). */
 export const WIKI_PROMPT_CITATION_TARGET = 12
