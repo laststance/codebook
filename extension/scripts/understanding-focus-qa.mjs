@@ -304,6 +304,13 @@ async function check(page, options, collected) {
             requests: window.sent
               .filter((message) => message.type === type)
               .map((message) => message.understood),
+            // A per-step request names the step and the replay it was made for.
+            identities: window.sent
+              .filter((message) => message.type === type)
+              .map((message) => ({
+                stepId: message.stepId,
+                studyId: message.studyId,
+              })),
           }
         },
         { id: pane.id, type: pane.requestType ?? 'understanding' },
@@ -464,6 +471,143 @@ async function check(page, options, collected) {
         },
       )
     }
+    if (stepPane) {
+      const prefix = pane.id.replace(/-understood$/, '')
+      // The state line is announced politely and described to the check; in the Node family it stays outside the moment's own live region, so nothing is announced twice.
+      const attributes = await page.evaluate(
+        ({ prefix }) => {
+          const state = document.getElementById(`${prefix}-state`)
+          return {
+            role: state.getAttribute('role'),
+            live: state.getAttribute('aria-live'),
+            describedBy: document
+              .getElementById(`${prefix}-understood`)
+              .getAttribute('aria-describedby'),
+            insideMoment: Boolean(state.closest('#node-history-moment')),
+          }
+        },
+        { prefix },
+      )
+      collected.cases.push({
+        name: `${pane.name}: the state line is a polite status the check is described by, outside the moment's live region`,
+        actual: attributes,
+        passed:
+          attributes.role === 'status' &&
+          attributes.live === 'polite' &&
+          attributes.describedBy === `${prefix}-state` &&
+          attributes.insideMoment === false,
+      })
+      collected.cases.push({
+        name: `${pane.name}: each save request names the step and the replay it was made for`,
+        actual: repeated.identities,
+        passed:
+          JSON.stringify(repeated.identities) ===
+          JSON.stringify([
+            { stepId: pane.stepId, studyId: pane.studyId },
+            { stepId: pane.stepId, studyId: pane.studyId },
+          ]),
+      })
+      // Unknown, unreadable and review states: what the learner reads and whether a count is shown.
+      const lines = () =>
+        page.evaluate(
+          ({ prefix }) => ({
+            state: document.getElementById(`${prefix}-state`).textContent,
+            progressVisible: document
+              .getElementById(`${prefix}-progress`)
+              .checkVisibility(),
+          }),
+          { prefix },
+        )
+      await publish({
+        ...pane.message,
+        stepUnderstanding: {
+          ...pane.message.stepUnderstanding,
+          status: 'unknown',
+        },
+      })
+      const unknownLines = await lines()
+      await publish({
+        ...pane.message,
+        stepUnderstanding: {
+          ...pane.message.stepUnderstanding,
+          status: 'unreadable',
+        },
+      })
+      const unreadableLines = await lines()
+      await publish(
+        changeEntry(pane.message, {
+          understood: false,
+          reviewNeeded: true,
+          reviewAt: '2026-11-10T01:02:03.000Z',
+        }),
+      )
+      const reviewLines = await lines()
+      collected.cases.push(
+        {
+          name: `${pane.name}: an unknown state hides the progress line instead of showing 0 of 2`,
+          actual: unknownLines,
+          passed: unknownLines.progressVisible === false,
+        },
+        {
+          name: `${pane.name}: an unreadable file says so and hides the progress line`,
+          actual: unreadableLines,
+          passed:
+            unreadableLines.progressVisible === false &&
+            unreadableLines.state ===
+              'Understanding for this replay could not be read.',
+        },
+        {
+          name: `${pane.name}: a step changed after it was marked shows the review wording`,
+          actual: reviewLines,
+          passed: reviewLines.state.startsWith(
+            'Review: you marked an earlier version of this step understood · ',
+          ),
+        },
+      )
+    }
+    // The browser replay picks the step the learner activated in the sequence while its position is presented, and falls back to the first step matching the observation.
+    if (stepPane && pane.headingId) {
+      const steps = pane.message.recording.learningSummary.content.steps
+      const [first, second] = [steps[0].id, steps[1].id]
+      const atPosition = (presentedMs) => ({
+        ...pane.message,
+        recording: {
+          ...pane.message.recording,
+          presentedMs,
+          learningSummary: {
+            ...pane.message.recording.learningSummary,
+            positions: [
+              { stepId: first, elapsedMs: 2000 },
+              { stepId: second, elapsedMs: 4000 },
+            ],
+          },
+        },
+      })
+      const headingNow = () =>
+        page.evaluate((id) => {
+          const block = document.getElementById('learning-step')
+          return block.hidden ? null : document.getElementById(id).textContent
+        }, pane.headingId)
+      await render()
+      await publish(atPosition(2000))
+      const beforeClick = await headingNow()
+      await page.click(`button[data-summary-step="${second}"]`)
+      await publish(atPosition(4000))
+      const chosen = await headingNow()
+      await publish(atPosition(4000.5))
+      const nearby = await headingNow()
+      await publish(atPosition(5000))
+      const elsewhere = await headingNow()
+      collected.cases.push({
+        name: `${pane.name}: activating the second of two steps that share an observation shows that step while its position is presented, within the tolerance, and the first match elsewhere`,
+        actual: { beforeClick, chosen, nearby, elsewhere },
+        passed:
+          beforeClick === `Step 1 · Step ${first}` &&
+          chosen === `Step 2 · Step ${second}` &&
+          nearby === `Step 2 · Step ${second}` &&
+          elsewhere === `Step 1 · Step ${first}`,
+      })
+    }
     if (stepPane)
       collected.cases.push({
         name: `${pane.name}: the check is labelled I understand this step, shows when the learner marked it and how many steps are understood${pane.headingId ? ', and follows the step heading and explanation below the sequence' : ''}`,
@@ -543,6 +687,7 @@ try {
           headingId: 'learning-step-heading',
           requestType: 'step-understanding',
           stepId: browserStepIds[0],
+          studyId: STEP_STUDY_ID,
           html: studyHtml('context'),
           message: browserStepMessage,
         },
@@ -551,6 +696,7 @@ try {
           id: 'node-step-understood',
           requestType: 'step-understanding',
           stepId: nodeStepIds[0],
+          studyId: STEP_STUDY_ID,
           html: studyHtml('context'),
           message: nodeStepMessage,
         },
