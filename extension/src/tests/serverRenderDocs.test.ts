@@ -93,7 +93,7 @@ test('the bundled skill declares the stop in code that runs on every render, use
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
   for (const phrase of [
     'afterOperation: 0',
     'omitted',
@@ -223,7 +223,7 @@ test('the bundled skill allows a top-level App Router stop only on API 1.27 and 
     skill.split('\n\n').find((part) => part.startsWith('**Server renders')) ??
     ''
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
   for (const phrase of [
     'a top-level line (module scope) is allowed only when `codebook_status` reports API 1.27 or later',
     'in a workspace without a Pages folder',

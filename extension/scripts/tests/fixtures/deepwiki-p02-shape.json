@@ -1,0 +1,241 @@
+{
+  "note": "Numbers only: the page tree, diagrams and weighted prose per page of DeepWiki's own Wiki of TanStack/query (retrieved 2026-11-10), for the renderer depth tests.",
+  "explainedCodeFiles": 2498,
+  "pages": [
+    {
+      "parent": null,
+      "diagrams": 3,
+      "prose": 4167
+    },
+    {
+      "parent": 0,
+      "diagrams": 6,
+      "prose": 8203
+    },
+    {
+      "parent": 0,
+      "diagrams": 2,
+      "prose": 8241
+    },
+    {
+      "parent": null,
+      "diagrams": 5,
+      "prose": 5542
+    },
+    {
+      "parent": 3,
+      "diagrams": 3,
+      "prose": 5029
+    },
+    {
+      "parent": 3,
+      "diagrams": 5,
+      "prose": 6449
+    },
+    {
+      "parent": 3,
+      "diagrams": 5,
+      "prose": 7853
+    },
+    {
+      "parent": 3,
+      "diagrams": 2,
+      "prose": 5796
+    },
+    {
+      "parent": 3,
+      "diagrams": 3,
+      "prose": 6010
+    },
+    {
+      "parent": null,
+      "diagrams": 3,
+      "prose": 4734
+    },
+    {
+      "parent": 9,
+      "diagrams": 3,
+      "prose": 6449
+    },
+    {
+      "parent": 9,
+      "diagrams": 2,
+      "prose": 5552
+    },
+    {
+      "parent": 9,
+      "diagrams": 2,
+      "prose": 5221
+    },
+    {
+      "parent": 9,
+      "diagrams": 2,
+      "prose": 6948
+    },
+    {
+      "parent": 9,
+      "diagrams": 3,
+      "prose": 7560
+    },
+    {
+      "parent": 9,
+      "diagrams": 2,
+      "prose": 6591
+    },
+    {
+      "parent": null,
+      "diagrams": 2,
+      "prose": 4805
+    },
+    {
+      "parent": 16,
+      "diagrams": 4,
+      "prose": 6726
+    },
+    {
+      "parent": 16,
+      "diagrams": 6,
+      "prose": 7223
+    },
+    {
+      "parent": 16,
+      "diagrams": 8,
+      "prose": 3931
+    },
+    {
+      "parent": 16,
+      "diagrams": 2,
+      "prose": 7277
+    },
+    {
+      "parent": 16,
+      "diagrams": 2,
+      "prose": 6806
+    },
+    {
+      "parent": 16,
+      "diagrams": 2,
+      "prose": 5045
+    },
+    {
+      "parent": 16,
+      "diagrams": 3,
+      "prose": 6536
+    },
+    {
+      "parent": null,
+      "diagrams": 2,
+      "prose": 2486
+    },
+    {
+      "parent": 24,
+      "diagrams": 2,
+      "prose": 5479
+    },
+    {
+      "parent": 24,
+      "diagrams": 2,
+      "prose": 9329
+    },
+    {
+      "parent": null,
+      "diagrams": 2,
+      "prose": 5855
+    },
+    {
+      "parent": 27,
+      "diagrams": 4,
+      "prose": 6169
+    },
+    {
+      "parent": 27,
+      "diagrams": 8,
+      "prose": 8824
+    },
+    {
+      "parent": 27,
+      "diagrams": 2,
+      "prose": 6630
+    },
+    {
+      "parent": 27,
+      "diagrams": 4,
+      "prose": 5240
+    },
+    {
+      "parent": 27,
+      "diagrams": 2,
+      "prose": 7989
+    },
+    {
+      "parent": 27,
+      "diagrams": 3,
+      "prose": 7261
+    },
+    {
+      "parent": 27,
+      "diagrams": 2,
+      "prose": 5780
+    },
+    {
+      "parent": null,
+      "diagrams": 2,
+      "prose": 3489
+    },
+    {
+      "parent": 35,
+      "diagrams": 2,
+      "prose": 4782
+    },
+    {
+      "parent": 35,
+      "diagrams": 3,
+      "prose": 8606
+    },
+    {
+      "parent": null,
+      "diagrams": 1,
+      "prose": 5340
+    },
+    {
+      "parent": 38,
+      "diagrams": 2,
+      "prose": 4974
+    },
+    {
+      "parent": 38,
+      "diagrams": 3,
+      "prose": 4242
+    },
+    {
+      "parent": 38,
+      "diagrams": 3,
+      "prose": 7856
+    },
+    {
+      "parent": 38,
+      "diagrams": 3,
+      "prose": 5901
+    },
+    {
+      "parent": 38,
+      "diagrams": 2,
+      "prose": 5740
+    },
+    {
+      "parent": 38,
+      "diagrams": 4,
+      "prose": 6423
+    },
+    {
+      "parent": 38,
+      "diagrams": 2,
+      "prose": 5337
+    },
+    {
+      "parent": null,
+      "diagrams": 2,
+      "prose": 5742
+    }
+  ]
+}

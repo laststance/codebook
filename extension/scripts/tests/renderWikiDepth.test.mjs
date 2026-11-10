@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
+
+/** The path of page `index` in a manifest of {@link wikiOf}: the first is the index page. */
+const pathOfPage = (index) =>
+  index === 0 ? 'index.html' : `page-${index}.html`
 
 /** The text of included file `index`; every file holds one distinct line so a diagram can quote it. */
 const fileText = (index) => `export const f${index} = ${index};\n`
@@ -14,7 +25,7 @@ const fileText = (index) => `export const f${index} = ${index};\n`
  * Writes `fileCount` code files into a project folder and answers a Wiki manifest shaped by the options.
  * Called by every test of the renderer's depth check.
  * @param root - The project folder.
- * @param options - `fileCount` included code files `f<i>.ts`; `pageTexts` the weighted article text length of each page (the first is `index.html`); `childCount` pages after the first that have the first as parent; `diagramCounts` the number of diagrams on each page; `character` the filler character and `characterWeight` its weight (2 for a CJK one, the default for any character but `x`); `coverageExceptions` entries.
+ * @param options - `fileCount` included code files `f<i>.ts`; `pageTexts` the weighted article text length of each page (the first is `index.html`); `childCount` pages after the first that have the first as parent, or `parents` the parent page index of each page (`null` for none) in its place; `diagramCounts` the number of diagrams on each page; `character` the filler character and `characterWeight` its weight (2 for a CJK one, the default for any character but `x`); `coverageExceptions` entries.
  * @returns The manifest, as an agent writes it into a candidate; the index page cites every file.
  * @example await wikiOf(root, { fileCount: 12, pageTexts: [1500, 1500, 1500, 1500], childCount: 3, diagramCounts: [2, 2, 1, 1] })
  */
@@ -29,6 +40,7 @@ async function wikiOf(
     characterWeight = character === 'x' ? 1 : 2,
     coverageExceptions,
     extraFiles = {},
+    parents,
   },
 ) {
   const files = { ...extraFiles }
@@ -70,12 +82,17 @@ async function wikiOf(
       )
       .join('')
     return {
-      path: pageIndex === 0 ? 'index.html' : `page-${pageIndex}.html`,
+      path: pathOfPage(pageIndex),
       title: `Page ${pageIndex}`,
       section: 'Guide',
-      ...(pageIndex >= 1 && pageIndex <= childCount
-        ? { parent: 'index.html' }
-        : {}),
+      // A named page tree takes the place of the first page's children.
+      ...(parents
+        ? parents[pageIndex] === null
+          ? {}
+          : { parent: pathOfPage(parents[pageIndex]) }
+        : pageIndex >= 1 && pageIndex <= childCount
+          ? { parent: 'index.html' }
+          : {}),
       contentHtml: `<h2 id="flow">Flow</h2><p>${filler}</p>${slots}`,
       sources:
         pageIndex === 0
@@ -413,7 +430,7 @@ test('a 25-file Wiki of three pages is refused with the page count sentence', as
     // Assert
     assert.equal(
       outcome,
-      'The Wiki has 3 pages but needs at least 4 for 25 explained code files (about one page per 8 files): split the large chapters by module and flow.',
+      'The Wiki has 3 pages but needs at least 4 for 25 explained code files (about one page per 8 files, up to 30): split the large chapters by module and flow.',
     )
   })
 })
@@ -687,5 +704,115 @@ test('a 2,049-file Wiki of 256 pages is not refused for its page count', async (
 
     // Assert
     assert.equal(outcome, 'rendered')
+  })
+})
+
+/**
+ * Reads the numbers-only shape of DeepWiki's own Wiki of TanStack/query: the parent page index, diagrams and weighted prose of each of its 47 pages.
+ * Called by the tests below that hold the page floor to the reference product at the scale of the largest required project (Cycle 0114).
+ * @returns The fixture: `explainedCodeFiles` and `pages`.
+ * @example const shape = await readDeepWikiP02Shape() // shape.pages.length === 47
+ */
+const readDeepWikiP02Shape = async () =>
+  JSON.parse(
+    await readFile(
+      new URL('./fixtures/deepwiki-p02-shape.json', import.meta.url),
+      'utf8',
+    ),
+  )
+
+// Value: protects=the learner of TanStack/query, the largest required project, whose editor AI writes a Wiki as large as DeepWiki's own (47 pages, 142 diagrams, 288,168 characters) citing all 2,498 code files; fails_when=the page floor keeps growing one page per 8 cited files and refuses that Wiki for needing 256 pages (Cycle 0114 H1 dry run on the real clone); why_new=Cycle 0114 H1; seam=none (the real renderer; the numbers are DeepWiki's measured page tree); no_claim=that a model writes such a Wiki in time
+test("a Wiki shaped like DeepWiki's own TanStack/query Wiki, 47 pages for 2,498 explained code files, is rendered", async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const shape = await readDeepWikiP02Shape()
+    const manifest = await wikiOf(root, {
+      fileCount: shape.explainedCodeFiles,
+      pageTexts: shape.pages.map((page) => page.prose),
+      parents: shape.pages.map((page) => page.parent),
+      diagramCounts: shape.pages.map((page) => page.diagrams),
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=the learner of a small repository, held to the same floors as before the 30-page cap; fails_when=the cap or a later floor change refuses a Wiki shaped like DeepWiki's 13-page vercel/next-learn Wiki (C113 measurement); why_new=Cycle 0114 regression guard; seam=none (the real renderer); no_claim=that the floor still catches thin Wikis, which the refusal tests cover
+test("a Wiki shaped like DeepWiki's 13-page next-learn Wiki, for 104 explained code files, is rendered", async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 104,
+      pageTexts: [
+        2514, 2900, 3300, 3700, 4100, 4500, 4900, 5300, 5700, 6100, 6500, 6800,
+        6989,
+      ],
+      childCount: 12,
+      diagramCounts: [6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=a large repository's Wiki held to a 30-page tree, where the text total also stops (240 explained files); fails_when=the floor asks 256 pages for 2,498 files, or the cap is dropped so 29 pages pass; why_new=Cycle 0114 H1; seam=none (the real renderer); no_claim=none
+test('a Wiki of 2,498 explained code files is rendered with 30 pages and refused with 29, naming 30', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const thirtyPages = await wikiOf(root, {
+      fileCount: 2498,
+      pageTexts: Array.from({ length: 30 }, () => 4000),
+      childCount: 29,
+      diagramCounts: Array.from({ length: 30 }, () => 2),
+    })
+    const twentyNinePages = await wikiOf(root, {
+      fileCount: 2498,
+      pageTexts: Array.from({ length: 29 }, () => 4200),
+      childCount: 28,
+      diagramCounts: Array.from({ length: 29 }, () => 2),
+    })
+
+    // Act
+    const thirtyOutcome = await outcomeOf(thirtyPages, root)
+    const twentyNineOutcome = await outcomeOf(twentyNinePages, root)
+
+    // Assert
+    assert.deepEqual(
+      [thirtyOutcome, twentyNineOutcome],
+      [
+        'rendered',
+        'The Wiki has 29 pages but needs at least 30 for 2498 explained code files (about one page per 8 files, up to 30): split the large chapters by module and flow.',
+      ],
+    )
+  })
+})
+
+// Value: protects=the page floor below the cap, unchanged by it: one page per 8 explained files; fails_when=the cap lowers the floor for a 100-file repository, so 12 pages pass where 13 are needed; why_new=Cycle 0114 H1; seam=none (the real renderer); no_claim=none
+test('a 100-file Wiki of 12 pages is refused for needing 13', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 100,
+      pageTexts: Array.from({ length: 12 }, () => 4200),
+      childCount: 11,
+      diagramCounts: Array.from({ length: 12 }, () => 2),
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki has 12 pages but needs at least 13 for 100 explained code files (about one page per 8 files, up to 30): split the large chapters by module and flow.',
+    )
   })
 })

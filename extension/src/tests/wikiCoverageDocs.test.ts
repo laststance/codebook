@@ -13,7 +13,7 @@ import { test } from 'node:test'
  * @example
  * ```ts
  * const skill = await readBundledSkill()
- * assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+ * assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
  * ```
  */
 const readBundledSkill = (): Promise<string> =>
@@ -38,13 +38,13 @@ const readBundledSkill = (): Promise<string> =>
 const readPackagedReadme = (): Promise<string> =>
   readFile(join(__dirname, '..', '..', 'README.md'), 'utf8')
 
-// Value: protects=the Wiki route tells the chat AI that every included code file needs a citation or a coverageExceptions entry with its reason, before the renderer refuses it; fails_when=skill 1.0.88 loses the coverage sentence and the chat learns of the rule only from a refusal it may answer by excepting application modules (C113-W1); why_new=skill 1.0.87 never asked for coverage, and a 6-page Wiki citing 32 of 71 sources published; seam=none; no_claim=how thoroughly a chat model explains each file
-test('the bundled skill 1.0.88 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
+// Value: protects=the Wiki route tells the chat AI that every included code file needs a citation or a coverageExceptions entry with its reason, before the renderer refuses it; fails_when=the skill (from 1.0.88) loses the coverage sentence and the chat learns of the rule only from a refusal it may answer by excepting application modules (C113-W1); why_new=skill 1.0.87 never asked for coverage, and a 6-page Wiki citing 32 of 71 sources published; seam=none; no_claim=how thoroughly a chat model explains each file
+test('the bundled skill 1.0.89 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.89"\n'))
   assert.ok(
     skill.includes(
       'Every included code file must be cited by a page `sources` list, a diagram node or edge, or an inline editor source link, or be listed under optional `coverageExceptions`',
@@ -77,12 +77,12 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   // Assert
   assert.ok(
     skill.includes(
-      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to the 256-page limit), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total (the total required stops at 120,000), CJK characters counted twice; a page's characters are counted from its article text. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
+      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to 30 pages), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total (the total required stops at 120,000), CJK characters counted twice; a page's characters are counted from its article text. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
     ),
   )
   assert.ok(
     readme.includes(
-      'Once 12 or more included code files need explanation, it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
+      'Once 12 or more included code files need explanation, it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, too few pages for its code (one per 8 explained code files, up to 30 pages), a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
     ),
   )
 })
@@ -119,7 +119,7 @@ const readRenderer = (): Promise<string> =>
     'utf8',
   )
 
-// Value: protects=the skill's depth sentence and the renderer's floors stay the same numbers; fails_when=a depth constant in render-wiki.mjs changes (for example the 1,200-character page floor) while the skill still states the old value, so the chat aims at a floor the renderer no longer enforces; why_new=C113 /ship review (core docs-drift note); seam=none (reads the shipped files); no_claim=the renderer's behavior, which renderWikiDepth.test.mjs covers
+// Value: protects=the skill's depth sentence and the renderer's floors stay the same numbers; fails_when=a depth constant in render-wiki.mjs changes (for example the 1,200-character page floor or the 30-page cap) while the skill still states the old value, so the chat aims at a floor the renderer no longer enforces; why_new=C113 /ship review (core docs-drift note); seam=none (reads the shipped files); no_claim=the renderer's behavior, which renderWikiDepth.test.mjs covers
 test('the renderer enforces the same depth floors the bundled skill states', async () => {
   // Arrange
   const renderer = await readRenderer()
@@ -127,9 +127,9 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
 
   // Act
   const constants = Object.fromEntries(
-    [
-      ...renderer.matchAll(/^const (DEPTH_[A-Z_]+|MAX_PAGES) = ([\d_.]+);$/gm),
-    ].map((match) => [match[1], match[2]]),
+    [...renderer.matchAll(/^const (DEPTH_[A-Z_]+) = ([\d_.]+);$/gm)].map(
+      (match) => [match[1], match[2]],
+    ),
   )
 
   // Assert
@@ -138,7 +138,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
       DEPTH_MIN_EXPLAINED_FILES: constants.DEPTH_MIN_EXPLAINED_FILES,
       DEPTH_MIN_CHILD_PAGES: constants.DEPTH_MIN_CHILD_PAGES,
       DEPTH_FILES_PER_PAGE: constants.DEPTH_FILES_PER_PAGE,
-      MAX_PAGES: constants.MAX_PAGES,
+      DEPTH_MAX_REQUIRED_PAGES: constants.DEPTH_MAX_REQUIRED_PAGES,
       DEPTH_DIAGRAMS_PER_PAGE: constants.DEPTH_DIAGRAMS_PER_PAGE,
       DEPTH_MIN_PAGE_TEXT: constants.DEPTH_MIN_PAGE_TEXT,
       DEPTH_TEXT_PER_FILE: constants.DEPTH_TEXT_PER_FILE,
@@ -148,7 +148,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
       DEPTH_MIN_EXPLAINED_FILES: '12',
       DEPTH_MIN_CHILD_PAGES: '2',
       DEPTH_FILES_PER_PAGE: '8',
-      MAX_PAGES: '256',
+      DEPTH_MAX_REQUIRED_PAGES: '30',
       DEPTH_DIAGRAMS_PER_PAGE: '1.5',
       DEPTH_MIN_PAGE_TEXT: '1200',
       DEPTH_TEXT_PER_FILE: '500',
@@ -157,7 +157,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
   )
   assert.ok(
     skill.includes(
-      'from 12 explained code files (included code files no exception covers), at least 2 pages with a `parent`, at least one page per 8 explained code files (up to the 256-page limit)',
+      'from 12 explained code files (included code files no exception covers), at least 2 pages with a `parent`, at least one page per 8 explained code files (up to 30 pages)',
     ),
   )
 })
