@@ -13,6 +13,7 @@ import { RepositoryBookStore } from '../repositoryBook'
 import { RepositorySourceService } from '../repositorySource'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { hashSteps } from '../utils/stepUnderstanding'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import {
@@ -675,8 +676,8 @@ test('test replay: revising a step after it was marked shows review for that ste
   }
 })
 
-// Value: protects=a decision hashed from the step as it was when the learner pressed; fails_when=a save that waits for the storage lock while the material is revised is stored under the new text, so the revised step reads understood without the learner having seen it; no_claim=a revision that lands before the press (the review test)
-test('test replay: a press saved while the material is revised stays tied to the text the learner saw and shows review', async () => {
+// Value: protects=a press that is queued ahead of a revision on the storage lock keeping the hash of the step the learner saw, and that step then reading as review; fails_when=the stored decision carries the revised step's hash, or the revised step reads understood; no_claim=hash at arrival versus hash at write (the next test holds the write after the revision has landed)
+test('test replay: a press queued ahead of a revision on the storage lock keeps the hash of the step the learner saw and shows review', async () => {
   // Arrange
   const opened = await openTestReplay()
   try {
@@ -749,6 +750,151 @@ test('test replay: a press saved while the material is revised stays tied to the
   }
 })
 
+// Value: protects=a decision hashed from the step as it was when the learner pressed, not when the write runs; fails_when=a write that runs after the material was revised stores the revised step's hash, so the revised step reads understood without the learner having seen it; no_claim=lock ordering between a press and a revision (the test before)
+test('test replay: a press whose write runs after the material was revised keeps the hash of the step the learner saw', async (context) => {
+  // Arrange
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    const [first] = opened.stepIds
+    const store = opened.harness.service.nodeHistoryStore!
+    const original = store.saveStepUnderstanding.bind(store)
+    const materialBefore = await repositoryOf(opened.harness)
+      .resolve(opened.studyId)
+      ?.store.readLearningMaterial(opened.studyId)
+    const hashSeen = hashSteps(materialBefore!.content.steps).find(
+      (value) => value.stepId === first,
+    )!.stepHash
+    const sourceHash = sha256('const nextTheme = "dark";\n')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    context.mock.method(
+      store,
+      'saveStepUnderstanding',
+      async (...input: Parameters<typeof original>) => {
+        await gate
+        return original(...input)
+      },
+    )
+
+    // Act: the press arrives, its write is held, and the material is revised before the write runs.
+    press(opened, first, true)
+    await waitUntil(
+      () => stepEntry(opened, first)?.saving === true,
+      'the press is saving',
+      READER_RESULT_BOUND_MS,
+    )
+    await opened.harness.service.explainNodeHistory({
+      studyId: opened.studyId,
+      expectedRevision: 1,
+      content: {
+        question: 'Where does the test switch the theme?',
+        title: 'Theme switch',
+        summary: 'The test reads the next theme twice and passes.',
+        participants: [
+          { id: 'test', label: 'Theme test' },
+          { id: 'theme', label: 'applyTheme' },
+        ],
+        steps: [
+          {
+            id: 'read',
+            from: 'test',
+            to: 'theme',
+            label: 'Read the next theme',
+            explanation: 'This explanation changed before the write ran.',
+            evidence: 'observed',
+            reference: { type: 'stop', sequence: 2, sourceHash },
+          },
+          {
+            id: 'keep',
+            from: 'theme',
+            to: 'theme',
+            label: 'Keep the theme',
+            explanation: 'applyTheme keeps the theme it read.',
+            evidence: 'source-derived',
+            reference: { type: 'stop', sequence: 2, sourceHash },
+          },
+        ],
+      },
+    })
+    release()
+    await waitUntil(
+      () =>
+        stepEntry(opened, first)?.saving === false &&
+        stepEntry(opened, first)?.reviewNeeded === true,
+      'the saved press shows review for the revised step',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    const stored = JSON.parse(await readFile(opened.stepFile, 'utf8'))
+    assert.equal(stored.decisions.length, 1)
+    assert.equal(stored.decisions[0].stepHash, hashSeen)
+    assert.equal(stepEntry(opened, first)?.understood, false)
+    assert.equal(stepView(opened)?.understoodCount, 0)
+  } finally {
+    context.mock.restoreAll()
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=the AI's material save never writing a step decision, asserted on the file; fails_when=an MCP explain call creates the step file or changes a stored decision's bytes; no_claim=the tool list and result flags (service tests)
+test('test replay: an MCP explain call leaves the step file’s bytes unchanged', async () => {
+  // Arrange
+  const opened = await openTestReplay()
+  try {
+    await whenRead(opened)
+    press(opened, opened.stepIds[1], true)
+    await whenMarked(opened, opened.stepIds[1])
+    const bytesBefore = await readFile(opened.stepFile, 'utf8')
+    const sourceHash = sha256('const nextTheme = "dark";\n')
+
+    // Act: the agent revises the first step's explanation through the MCP tool.
+    const result = await opened.harness.service.explainNodeHistory({
+      studyId: opened.studyId,
+      expectedRevision: 1,
+      content: {
+        question: 'Where does the test switch the theme?',
+        title: 'Theme switch',
+        summary: 'The test reads the next theme twice and passes.',
+        participants: [
+          { id: 'test', label: 'Theme test' },
+          { id: 'theme', label: 'applyTheme' },
+        ],
+        steps: [
+          {
+            id: 'read',
+            from: 'test',
+            to: 'theme',
+            label: 'Read the next theme',
+            explanation: 'The agent explains the first stop differently.',
+            evidence: 'observed',
+            reference: { type: 'stop', sequence: 2, sourceHash },
+          },
+          {
+            id: 'keep',
+            from: 'theme',
+            to: 'theme',
+            label: 'Keep the theme',
+            explanation: 'applyTheme keeps the theme it read.',
+            evidence: 'source-derived',
+            reference: { type: 'stop', sequence: 2, sourceHash },
+          },
+        ],
+      },
+    })
+    await opened.harness.reader.action('retry')
+
+    // Assert
+    assert.equal(result.revision, 2)
+    assert.equal(await readFile(opened.stepFile, 'utf8'), bytesBefore)
+  } finally {
+    await opened.harness.close()
+  }
+})
+
 // Value: protects=a damaged step file disabling the checks instead of reading as no decisions, and a repaired file enabling them without reopening; fails_when=an unreadable file reads as ready with no decisions, a press overwrites it, or the replay needs reopening after the repair; no_claim=the pane's wording (Reader DOM)
 test('test replay: an unreadable step file reports unreadable, refuses a press and reads again once it is repaired', async () => {
   // Arrange
@@ -764,6 +910,8 @@ test('test replay: an unreadable step file reports unreadable, refuses a press a
       'the damaged file reads as unreadable',
       READER_RESULT_BOUND_MS,
     )
+    // The webview draws its progress line only for status ready, so an unreadable file must carry no decision that could read as "0 of m".
+    const unreadableView = stepView(opened)
     press(opened, opened.stepIds[0], true)
     await waitUntil(
       () =>
@@ -787,6 +935,17 @@ test('test replay: an unreadable step file reports unreadable, refuses a press a
     await whenRead(opened)
 
     // Assert
+    assert.equal(unreadableView?.status, 'unreadable')
+    assert.equal(
+      unreadableView?.steps.every(
+        (step) =>
+          !step.understood &&
+          !step.saving &&
+          !step.reviewNeeded &&
+          step.failure === undefined,
+      ),
+      true,
+    )
     assert.equal(untouched, '{broken')
     assert.equal(stepView(opened)?.status, 'ready')
   } finally {
@@ -1104,6 +1263,140 @@ test('browser recording: seeking, pausing, the source-revision check and a Wiki 
   }
 })
 
+// Value: protects=an MCP playback call never writing a step decision, asserted on the file; fails_when=an MCP seek creates the step file; no_claim=the MCP explain call in a browser recording (service tests)
+test('browser recording: an MCP playback call creates no step file', async () => {
+  // Arrange
+  const opened = await openBrowserFamily()
+  try {
+    await whenRead(opened)
+    const playback = opened.harness.service.playbackController!
+
+    // Act
+    playback.command({
+      action: 'seek',
+      studyId: opened.studyId,
+      expectedRevision: playback.state().revision,
+      positionMs: POSITION_MS,
+    })
+    await playback.settle()
+    await opened.harness.reader.action('retry')
+
+    // Assert
+    assert.equal(playback.state().presentedMs, POSITION_MS)
+    assert.equal(existsSync(opened.stepFile), false)
+  } finally {
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=a step press refused while the replay loads, writing nothing and saying why; fails_when=a press during a held presentation is saved, or is dropped without the learner's line; no_claim=the webview disabling the check while loading (Reader DOM)
+test('browser recording: a press while the replay is loading writes nothing and says to wait', async (context) => {
+  // Arrange
+  const opened = await openBrowserFamily()
+  try {
+    await whenRead(opened)
+    const held = opened.harness.holdHistoricalDebugPresentation()
+
+    // Act: a seek starts a presentation the editor is slow to load, and the learner presses meanwhile.
+    const playback = opened.harness.service.playbackController!
+    playback.command({
+      action: 'seek',
+      studyId: opened.studyId,
+      expectedRevision: playback.state().revision,
+      positionMs: POSITION_MS,
+    })
+    await waitUntil(
+      () => lastView(opened.harness)?.loading === true,
+      'the replay is loading',
+      READER_RESULT_BOUND_MS,
+    )
+    press(opened, opened.stepIds[0], true)
+    await waitUntil(
+      () =>
+        [...(lastView(opened.harness)?.errors ?? [])].some((line) =>
+          /Wait for the replay to finish loading\./.test(line),
+        ),
+      'the press is refused while loading',
+      READER_RESULT_BOUND_MS,
+    )
+    held.release()
+    await playback.settle()
+
+    // Assert
+    assert.equal(existsSync(opened.stepFile), false)
+    assert.equal(stepEntry(opened, opened.stepIds[0])?.understood, false)
+  } finally {
+    context.mock.restoreAll()
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=a repaired step file showing when the Study panel becomes visible again, without reopening the replay; fails_when=the panel coming back reads nothing, so a damaged file stays unreadable (or a repaired one stays hidden) until the replay is reopened; no_claim=a real editor's visibility events (native)
+test('browser recording: showing the Study panel again reads a damaged step file and a repaired one', async () => {
+  // Arrange
+  const opened = await openBrowserFamily()
+  try {
+    await whenRead(opened)
+    await writeFile(opened.stepFile, '{broken')
+
+    // Act: the panel is hidden and shown again; no playback or selection message is sent.
+    opened.harness.hideSummary()
+    await opened.harness.reader.showLearningSummary()
+    await waitUntil(
+      () => stepView(opened)?.status === 'unreadable',
+      'the damaged file reads as unreadable when the panel is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    await writeFile(
+      opened.stepFile,
+      JSON.stringify({ version: 1, studyId: opened.studyId, decisions: [] }),
+    )
+    opened.harness.hideSummary()
+    await opened.harness.reader.showLearningSummary()
+    await whenRead(opened)
+
+    // Assert
+    assert.equal(stepView(opened)?.status, 'ready')
+  } finally {
+    await opened.harness.close()
+  }
+})
+
+// Value: protects=a select message reading the step file again; fails_when=choosing a Learning item leaves a damaged file unseen (or a repaired one hidden) until the replay is reopened; no_claim=which item the webview offers
+test('browser recording: a select message reads a damaged step file and a repaired one', async () => {
+  // Arrange
+  const opened = await openBrowserFamily()
+  try {
+    await whenRead(opened)
+    const select = (): void =>
+      opened.harness.receiveContext({
+        type: 'select',
+        revision: lastView(opened.harness)!.revision,
+        itemId: lastView(opened.harness)!.model.selection.itemId,
+      })
+    await writeFile(opened.stepFile, '{broken')
+
+    // Act
+    select()
+    await waitUntil(
+      () => stepView(opened)?.status === 'unreadable',
+      'the damaged file reads as unreadable after a select message',
+      READER_RESULT_BOUND_MS,
+    )
+    await writeFile(
+      opened.stepFile,
+      JSON.stringify({ version: 1, studyId: opened.studyId, decisions: [] }),
+    )
+    select()
+    await whenRead(opened)
+
+    // Assert
+    assert.equal(stepView(opened)?.status, 'ready')
+  } finally {
+    await opened.harness.close()
+  }
+})
+
 // Value: protects=a failed save showing on its own step only; fails_when=the failure appears on the other step, the check keeps a mark it did not save, or the file changes; no_claim=which step the webview draws (Reader DOM draws only the selected step's entry)
 test('browser recording: a failed save shows its failure on that step alone and writes nothing', async (context) => {
   // Arrange
@@ -1147,8 +1440,8 @@ test('browser recording: a failed save shows its failure on that step alone and 
   }
 })
 
-// Value: protects=a slow save finishing for its own step after the learner went to another step; fails_when=the other step shows the save or its failure, or the first step loses its mark when it is selected again; no_claim=the learner's selection, which the webview owns
-test('browser recording: a save that completes after the learner moved to another step leaves that step alone and keeps its own mark', async (context) => {
+// Value: protects=a slow save finishing for its own step after the learner moved the playhead and so asked for a fresh read; fails_when=the other step shows the save or its failure, the read that the move queued returns decisions older than the save, or the first step loses its mark; no_claim=which step the learner selects, which the webview owns in memory (Reader DOM)
+test('browser recording: a save that completes after the learner moved the playhead leaves the other step alone and keeps its own mark', async (context) => {
   // Arrange
   const opened = await openBrowserFamily()
   try {
@@ -1168,13 +1461,14 @@ test('browser recording: a save that completes after the learner moved to anothe
       },
     )
 
-    // Act: the first step saves slowly, the learner looks at the second.
+    // Act: the first step saves slowly, the learner moves the playhead (a seek asks for a fresh read), then the save ends.
     press(opened, opened.stepIds[0], true)
     await waitUntil(
       () => stepEntry(opened, opened.stepIds[0])?.saving === true,
       'the first step is saving',
       READER_RESULT_BOUND_MS,
     )
+    await opened.moveAround()
     const secondWhileSaving = { ...stepEntry(opened, opened.stepIds[1]) }
     release()
     await whenMarked(opened, opened.stepIds[0])
@@ -1184,8 +1478,10 @@ test('browser recording: a save that completes after the learner moved to anothe
     assert.equal(secondWhileSaving.failure, undefined)
     assert.equal(secondWhileSaving.understood, false)
     assert.equal(stepEntry(opened, opened.stepIds[1])?.understood, false)
+    assert.equal(stepEntry(opened, opened.stepIds[1])?.saving, false)
     assert.equal(stepEntry(opened, opened.stepIds[1])?.failure, undefined)
     assert.equal(stepEntry(opened, opened.stepIds[0])?.understood, true)
+    assert.equal(stepView(opened)?.understoodCount, 1)
   } finally {
     context.mock.restoreAll()
     await opened.harness.close()
@@ -1257,6 +1553,8 @@ test('browser recording: a damaged step file reads as unreadable and a press doe
       'the damaged file reads as unreadable',
       READER_RESULT_BOUND_MS,
     )
+    // The webview draws its progress line only for status ready, so an unreadable file must carry no decision that could read as "0 of m".
+    const unreadableView = stepView(opened)
     press(opened, opened.stepIds[0], true)
     await waitUntil(
       () =>
@@ -1268,6 +1566,17 @@ test('browser recording: a damaged step file reads as unreadable and a press doe
     )
 
     // Assert
+    assert.equal(unreadableView?.status, 'unreadable')
+    assert.equal(
+      unreadableView?.steps.every(
+        (step) =>
+          !step.understood &&
+          !step.saving &&
+          !step.reviewNeeded &&
+          step.failure === undefined,
+      ),
+      true,
+    )
     assert.equal(await readFile(opened.stepFile, 'utf8'), '{broken')
   } finally {
     await opened.harness.close()
