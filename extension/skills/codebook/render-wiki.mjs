@@ -148,6 +148,10 @@ function inlineSourceLinksOf(contentHtml) {
   });
   return links;
 }
+/** Whether an inline link's `line` is a whole number from 1, written as digits. Called by {@link namesIndexedSource}. @example hasWholeLine({ line: '12' }) // => true */
+const hasWholeLine = link => /^[1-9]\d{0,15}$/.test(link.line ?? '');
+/** Whether an inline link names an indexed source with that source's hash, a whole line and, when it names a root, the project root; the line's range is checked by the caller. Called by {@link verifiedInlinePathsOf}. @example namesIndexedSource({ path: 'a.ts', line: '1', sha256 }, { path: 'a.ts', sha256 }, '/repo') // => true */
+const namesIndexedSource = (link, source, projectRoot) => Boolean(source) && link.sha256 === source.sha256 && (link.root === undefined || link.root === projectRoot) && hasWholeLine(link);
 /** Collects the paths of the inline editor source links that count as citations: the link names an indexed source with that source's indexed hash, a positive integer line within the file and, when it names a root, the project root. A link that fails one of these does not count, so the file shows as uncovered. Called by {@link renderWikiPages} before {@link requireCodeCoverage}. @param manifest - The manifest's pages. @param indexedSources - The included sources by path. @param projectRoot - The project root the page sources are validated against. @param lineCountOf - Answers a source's line count. @returns The set of paths a valid inline link cites. @example await verifiedInlinePathsOf(manifest, indexedSources, '/repo', async () => 10) // => Set { 'a.ts' } */
 async function verifiedInlinePathsOf(manifest, indexedSources, projectRoot, lineCountOf) {
   const verified = new Set();
@@ -155,7 +159,7 @@ async function verifiedInlinePathsOf(manifest, indexedSources, projectRoot, line
     for (const link of inlineSourceLinksOf(page.contentHtml)) {
       const source = indexedSources.get(link.path);
       // A link counts only when it would open the indexed file at an existing line.
-      if (!source || link.sha256 !== source.sha256 || (link.root !== undefined && link.root !== projectRoot) || !/^[1-9]\d{0,15}$/.test(link.line ?? '')) continue;
+      if (!namesIndexedSource(link, source, projectRoot)) continue;
       if (Number(link.line) <= await lineCountOf(source)) verified.add(link.path);
     }
   }
@@ -175,14 +179,19 @@ const isExceptionFor = (entry, path) => entry.path.endsWith('/') ? path.startsWi
 function requireValidExceptions(exceptions, codeFiles) {
   if (!Array.isArray(exceptions)) throw new Error('coverageExceptions must be an array of { path, reason } entries.');
   const seen = new Set();
-  for (const entry of exceptions) {
-    const folderless = typeof entry?.path === 'string' && entry.path.endsWith('/') ? entry.path.slice(0, -1) : entry?.path;
-    if (!safePath(folderless)) throw new Error('A coverage exception needs a relative path of an included code file, or of a folder ending with /.');
-    if (typeof entry.reason !== 'string' || !entry.reason.trim() || entry.reason.trim().length > MAX_EXCEPTION_REASON) throw new Error(`The coverage exception for ${entry.path} needs a reason of 1–${MAX_EXCEPTION_REASON} characters saying why that code needs no explanation.`);
-    if (seen.has(entry.path)) throw new Error(`The coverage exception for ${entry.path} is listed twice.`);
-    seen.add(entry.path);
-    if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
-  }
+  for (const entry of exceptions) requireValidException(entry, seen, codeFiles);
+}
+/** An exception's path without the `/` that marks a folder, as {@link safePath} checks it; any other value as given. Called by {@link requireValidException}. @example folderlessPathOf({ path: 'gen/' }) // => 'gen' */
+const folderlessPathOf = entry => (typeof entry?.path === 'string' && entry.path.endsWith('/') ? entry.path.slice(0, -1) : entry?.path);
+/** Whether an exception gives a reason of 1 to {@link MAX_EXCEPTION_REASON} characters, spaces around it aside. Called by {@link requireValidException}. @example hasValidReason({ reason: 'Generated.' }) // => true */
+const hasValidReason = entry => typeof entry.reason === 'string' && Boolean(entry.reason.trim()) && entry.reason.trim().length <= MAX_EXCEPTION_REASON;
+/** Refuses one malformed, repeated or stale `coverageExceptions` entry, recording its path in `seen`. Called by {@link requireValidExceptions} for each entry in order. @throws With a sentence that names the entry's path. @example requireValidException({ path: 'gen/', reason: 'Generated.' }, new Set(), ['gen/api.ts']) */
+function requireValidException(entry, seen, codeFiles) {
+  if (!safePath(folderlessPathOf(entry))) throw new Error('A coverage exception needs a relative path of an included code file, or of a folder ending with /.');
+  if (!hasValidReason(entry)) throw new Error(`The coverage exception for ${entry.path} needs a reason of 1–${MAX_EXCEPTION_REASON} characters saying why that code needs no explanation.`);
+  if (seen.has(entry.path)) throw new Error(`The coverage exception for ${entry.path} is listed twice.`);
+  seen.add(entry.path);
+  if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
 }
 /** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
 const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));

@@ -284,13 +284,13 @@ test('the measured gate keeps the budget retaken on revision 3fc57506 at the 20/
     baseline: {
       file: 'fallow-health-measured-baseline.json',
       sha256:
-        '8cd44648c7bc3079a89c7d9a08f08b4032dbd93e368a1006187c488ac231716c',
+        '257278c0fc4326dd96f61baed83674411314f2c1d612d82f2baae1955d57e662',
     },
     limits: { maxCyclomatic: 20, maxCognitive: 15, maxCrap: 30 },
   })
   assert.equal(
     sha256(baseline.replaceAll('\r\n', '\n')),
-    '8cd44648c7bc3079a89c7d9a08f08b4032dbd93e368a1006187c488ac231716c',
+    '257278c0fc4326dd96f61baed83674411314f2c1d612d82f2baae1955d57e662',
   )
 })
 

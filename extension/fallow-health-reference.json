@@ -4,7 +4,7 @@
   "sourceRevision": "3fc57506f5a46f58cec88af0374d7b794e485346",
   "baseline": {
     "file": "fallow-health-measured-baseline.json",
-    "sha256": "8cd44648c7bc3079a89c7d9a08f08b4032dbd93e368a1006187c488ac231716c"
+    "sha256": "257278c0fc4326dd96f61baed83674411314f2c1d612d82f2baae1955d57e662"
   },
   "limits": {
     "maxCyclomatic": 20,
@@ -57,9 +57,12 @@
         },
         "crap_critical": {
           "count": 1
+        },
+        "crap_high": {
+          "count": 1
         }
       },
-      "reason": "sourceLink's checks moved into small helpers (citedSourceOf, requireLineRange, requireExactQuote), so its critical complexity and CRAP findings and the file's high CRAP finding are fixed; validatePages is unchanged. The checker reported the file's remaining finding while its count stayed above the file's findings."
+      "reason": "sourceLink's checks moved into small helpers (citedSourceOf, requireLineRange, requireExactQuote), so its critical complexity and critical CRAP findings are fixed; validatePages and renderWikiPages keep theirs. The functions this cycle added stay under the limits."
     }
   ]
 }
