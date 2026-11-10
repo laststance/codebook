@@ -14,7 +14,7 @@ const fileText = (index) => `export const f${index} = ${index};\n`
  * Writes `fileCount` code files into a project folder and answers a Wiki manifest shaped by the options.
  * Called by every test of the renderer's depth check.
  * @param root - The project folder.
- * @param options - `fileCount` included code files `f<i>.ts`; `pageTexts` the weighted article text length of each page (the first is `index.html`); `childCount` pages after the first that have the first as parent; `diagramCounts` the number of diagrams on each page; `character` the filler character (a CJK one weighs 2); `coverageExceptions` entries.
+ * @param options - `fileCount` included code files `f<i>.ts`; `pageTexts` the weighted article text length of each page (the first is `index.html`); `childCount` pages after the first that have the first as parent; `diagramCounts` the number of diagrams on each page; `character` the filler character and `characterWeight` its weight (2 for a CJK one, the default for any character but `x`); `coverageExceptions` entries.
  * @returns The manifest, as an agent writes it into a candidate; the index page cites every file.
  * @example await wikiOf(root, { fileCount: 12, pageTexts: [1500, 1500, 1500, 1500], childCount: 3, diagramCounts: [2, 2, 1, 1] })
  */
@@ -26,6 +26,7 @@ async function wikiOf(
     childCount,
     diagramCounts,
     character = 'x',
+    characterWeight = character === 'x' ? 1 : 2,
     coverageExceptions,
     extraFiles = {},
   },
@@ -39,8 +40,9 @@ async function wikiOf(
   }
   const pages = pageTexts.map((length, pageIndex) => {
     // The heading "Flow" adds 4 characters and a separating space to the article text.
-    const weight = character === 'x' ? 1 : 2
-    const filler = character.repeat(Math.ceil(Math.max(length - 5, 0) / weight))
+    const filler = character.repeat(
+      Math.ceil(Math.max(length - 5, 0) / characterWeight),
+    )
     const diagrams = Array.from(
       { length: diagramCounts[pageIndex] ?? 0 },
       (_, diagramIndex) => ({
@@ -413,5 +415,207 @@ test('a 25-file Wiki of three pages is refused with the page count sentence', as
       outcome,
       'The Wiki has 3 pages but needs at least 4 for 25 explained code files (about one page per 8 files): split the large chapters by module and flow.',
     )
+  })
+})
+
+// Value: protects=the Korean, Chinese, Japanese and fullwidth learner whose characters carry about twice the content; fails_when=a page of 750 Han, Katakana, Hangul, fullwidth Latin, long-vowel, middle-dot or CJK punctuation characters weighs less than 2 each, so a Wiki of them is refused as thin; why_new=C113 review round; seam=none (the real renderer); no_claim=that the text is good
+test('a 12-file Wiki of 750 Han, Katakana, Hangul, fullwidth or Japanese mark characters per page is rendered', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const options = {
+      fileCount: 12,
+      pageTexts: [1500, 1500, 1500, 1500],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    }
+    const outcomes = {}
+
+    // Act
+    for (const character of ['漢', 'カ', '한', 'Ａ', 'ー', '・', '、', '。']) {
+      const manifest = await wikiOf(root, { ...options, character })
+      outcomes[character] = await outcomeOf(manifest, root)
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, {
+      漢: 'rendered',
+      カ: 'rendered',
+      한: 'rendered',
+      Ａ: 'rendered',
+      ー: 'rendered',
+      '・': 'rendered',
+      '、': 'rendered',
+      '。': 'rendered',
+    })
+  })
+})
+
+// Value: protects=the depth floor against half-width katakana padding, which carries the content of a Latin letter; fails_when=750 half-width katakana characters per page weigh 2 each and a thin Wiki of them is rendered; why_new=C113 review round; seam=none (the real renderer); no_claim=none
+test('a 12-file Wiki of 750 half-width katakana characters per page is refused as thin', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: [750, 750, 750, 750],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+      character: 'ｶ',
+      characterWeight: 1,
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome.startsWith(
+        'The Wiki has 3000 characters of article text (CJK characters counted twice) but needs at least 6000',
+      ),
+      true,
+    )
+  })
+})
+
+// Value: protects=the depth floor against entity padding: an escaped &nbsp; shown as text and numeric references each count as the one character a reader sees; fails_when=entities are measured by their source length, so 130 escaped &nbsp; (780 characters shown) or 160 numeric references of あ (320 weighted characters shown) pass the 1,200 floor; why_new=C113 review round; seam=none (the real renderer); no_claim=none
+test('a page padded with escaped &nbsp; text or numeric character references is measured by the characters a reader sees', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const options = {
+      fileCount: 12,
+      pageTexts: [2000, 2000, 2000, 2000],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    }
+    const padded = async (padding) => {
+      const manifest = await wikiOf(root, options)
+      manifest.pages[3].contentHtml = `<h2 id="flow">Flow</h2><p>${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+      return manifest
+    }
+    const escapedNbsp = await padded('&amp;nbsp;'.repeat(130))
+    const numeric = await padded('&#12354;'.repeat(80) + '&#x3042;'.repeat(80))
+
+    // Act
+    const escapedOutcome = await outcomeOf(escapedNbsp, root)
+    const numericOutcome = await outcomeOf(numeric, root)
+
+    // Assert
+    assert.deepEqual(
+      [escapedOutcome, numericOutcome],
+      [
+        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (785 characters).',
+        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (325 characters).',
+      ],
+    )
+  })
+})
+
+// Value: protects=the diagram floor of a three-page Wiki, which rounds 4.5 up to 5; fails_when=the floor is rounded down, so three pages with four diagrams are rendered; why_new=C113 review round (Math.ceil mutant); seam=none (the real renderer); no_claim=none
+test('a 12-file Wiki of three pages with four diagrams is refused because it needs five', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: [2000, 2000, 2000],
+      childCount: 2,
+      diagramCounts: [2, 1, 1],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki has 4 diagrams but needs at least 5 for 3 pages (one per page and about three per two pages in total): add architecture, flow or sequence diagrams with source-backed nodes and edges.',
+    )
+  })
+})
+
+// Value: protects=the chapter tree floor at its edge; fails_when=two pages with a parent are refused or one page with a parent is accepted; why_new=C113 review round (boundary gap); seam=none (the real renderer); no_claim=none
+test('a 12-file Wiki with two child pages is rendered and one with a single child page is refused', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const options = {
+      fileCount: 12,
+      pageTexts: [1500, 1500, 1500, 1500],
+      diagramCounts: [2, 2, 1, 1],
+    }
+    const twoChildren = await wikiOf(root, { ...options, childCount: 2 })
+    const oneChild = await wikiOf(root, { ...options, childCount: 1 })
+
+    // Act
+    const twoOutcome = await outcomeOf(twoChildren, root)
+    const oneOutcome = await outcomeOf(oneChild, root)
+
+    // Assert
+    assert.deepEqual(
+      [twoOutcome, oneOutcome],
+      [
+        'rendered',
+        'The Wiki has 1 pages with a parent but needs at least 2: add child pages under subsystem chapters for their modules and flows.',
+      ],
+    )
+  })
+})
+
+// Value: protects=the page count floor at its edge (25 files need 4 pages); fails_when=a 25-file Wiki of exactly four pages is refused; why_new=C113 review round (boundary gap); seam=none (the real renderer); no_claim=none
+test('a 25-file Wiki of exactly four pages is rendered', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 25,
+      pageTexts: [3200, 3200, 3200, 3200],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=the length of the refusal for a Wiki of many bare pages; fails_when=the sentence names more or fewer than 10 of 12 pages without a diagram; why_new=C113 review round (cap gap); seam=none (the real renderer); no_claim=none
+test('the refusal names only the first ten of twelve pages that have no diagram', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: Array.from({ length: 12 }, () => 1500),
+      childCount: 11,
+      diagramCounts: [],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome.includes(
+        '12 pages have no diagram but every page needs at least one: add an architecture, flow or sequence diagram to index.html, page-1.html, page-2.html, page-3.html, page-4.html, page-5.html, page-6.html, page-7.html, page-8.html, page-9.html. The Wiki has 0 diagrams',
+      ),
+      true,
+    )
+  })
+})
+
+// Value: protects=the owner of a repository with more than 2,048 explained code files, whose page-count floor would exceed the 256 pages a Wiki may hold; fails_when=a 2,049-file Wiki of 256 pages is refused with the page count sentence; why_new=C113 review round (CodeRabbit); seam=none (the real renderer); no_claim=none
+test('a 2,049-file Wiki of 256 pages is not refused for its page count', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 2049,
+      pageTexts: Array.from({ length: 256 }, () => 4000),
+      childCount: 255,
+      diagramCounts: Array.from({ length: 256 }, () => 2),
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
   })
 })

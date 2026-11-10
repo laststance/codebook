@@ -293,3 +293,227 @@ test('a coverage exception that matches no included code file, one without a rea
     )
   })
 })
+
+/**
+ * Builds the address of an inline editor source link, as an agent writes it into an article.
+ * Called by the inline link tests below.
+ * @param scheme - `vscode://laststance.codebook` or another spelling of the scheme and authority.
+ * @param parameters - The query parameters by name; an `undefined` value leaves the parameter out.
+ * @param separator - What separates the parameters (`&amp;` as in HTML, or a plain `&`).
+ * @returns The address.
+ * @example inlineLinkOf('vscode://laststance.codebook', { path: 'b.ts', line: '1' }, '&amp;')
+ */
+function inlineLinkOf(scheme, parameters, separator) {
+  const pairs = Object.entries(parameters)
+    .filter(([, value]) => value !== undefined)
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
+  return `${scheme}/source?${pairs.join(separator)}`
+}
+
+/** Wraps an address in the article of the overview page. */
+const articleWith = (address) =>
+  `<h2 id="flow">Flow</h2><p>See <a href="${address}">b</a>.</p>`
+
+const B_HASH = createHash('sha256').update(B).digest('hex')
+const UNEXPLAINED_B =
+  'The Wiki leaves 1 included code file unexplained: lib/b.ts. Explain each in a page and cite it, or list it (or its folder ending with /) under coverageExceptions with the reason it needs no explanation.'
+
+// Value: protects=the coverage gate against an inline link the editor cannot honor (no hash, wrong hash, line past the end, line 0, other root); fails_when=such an inline link counts as citing the file; why_new=C113 review round; seam=none (the real renderer); no_claim=that a valid link explains the file well
+test('an inline source link without the indexed hash, with a wrong hash, a line past the end, line 0 or another root does not cover the file', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const scheme = 'vscode://laststance.codebook'
+    const valid = { root, path: 'lib/b.ts', line: '1', sha256: B_HASH }
+    const variants = {
+      noHash: { ...valid, sha256: undefined },
+      wrongHash: { ...valid, sha256: 'a'.repeat(64) },
+      pastEnd: { ...valid, line: '3' },
+      lineZero: { ...valid, line: '0' },
+      otherRoot: { ...valid, root: '/elsewhere' },
+    }
+    const outcomes = {}
+
+    // Act
+    for (const [name, parameters] of Object.entries(variants)) {
+      const manifest = await manifestOf(
+        root,
+        { 'a.ts': A, 'lib/b.ts': B },
+        { contentHtml: articleWith(inlineLinkOf(scheme, parameters, '&amp;')) },
+      )
+      outcomes[name] = await outcomeOf(manifest, root)
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, {
+      noHash: UNEXPLAINED_B,
+      wrongHash: UNEXPLAINED_B,
+      pastEnd: UNEXPLAINED_B,
+      lineZero: UNEXPLAINED_B,
+      otherRoot: UNEXPLAINED_B,
+    })
+  })
+})
+
+// Value: protects=an agent that writes the editor scheme in another letter case or uses the cursor scheme; fails_when=VSCODE://Laststance.Codebook, or a cursor:// link with plain & separators and no root, does not count as a citation; why_new=C113 review round; seam=none (the real renderer); no_claim=that the link opens the right line
+test('an inline source link with an upper-case scheme and authority, and a cursor link with plain ampersands and no root, cover the file', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const parameters = { path: 'lib/b.ts', line: '1', sha256: B_HASH }
+    const upperCase = await manifestOf(
+      root,
+      { 'a.ts': A, 'lib/b.ts': B },
+      {
+        contentHtml: articleWith(
+          inlineLinkOf('VSCODE://Laststance.Codebook', parameters, '&amp;'),
+        ),
+      },
+    )
+    const cursor = await manifestOf(
+      root,
+      { 'a.ts': A, 'lib/b.ts': B },
+      {
+        contentHtml: articleWith(
+          inlineLinkOf('cursor://laststance.codebook', parameters, '&'),
+        ),
+      },
+    )
+
+    // Act
+    const upperCaseOutcome = await outcomeOf(upperCase, root)
+    const cursorOutcome = await outcomeOf(cursor, root)
+
+    // Assert
+    assert.deepEqual(
+      [upperCaseOutcome, cursorOutcome],
+      ['rendered', 'rendered'],
+    )
+  })
+})
+
+// Value: protects=the refusal text for a large repository; fails_when=the refusal names more or fewer than the first 40 sorted paths or loses the "and 2 more" tail; why_new=C113 review round (mutation gap); seam=none (the real renderer); no_claim=none
+test('the coverage refusal names the first 40 of 42 uncited files and counts the 2 more', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const many = Object.fromEntries(
+      Array.from({ length: 42 }, (_, index) => [
+        `m/f${String(index).padStart(2, '0')}.ts`,
+        B,
+      ]),
+    )
+    const manifest = await manifestOf(root, { 'a.ts': A, ...many })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    const names = Object.keys(many).slice(0, 40).join(', ')
+    assert.equal(
+      outcome,
+      `The Wiki leaves 42 included code files unexplained: ${names}, and 2 more. Explain each in a page and cite it, or list it (or its folder ending with /) under coverageExceptions with the reason it needs no explanation.`,
+    )
+  })
+})
+
+// Value: protects=the exception list's reason limit; fails_when=a 300-character reason is refused or a 301-character one is accepted; why_new=C113 review round (boundary gap); seam=none (the real renderer); no_claim=none
+test('a coverage exception reason of exactly 300 characters is accepted and one of 301 is refused', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const withReason = (length) =>
+      manifestOf(
+        root,
+        { 'a.ts': A, 'x.ts': B },
+        {},
+        { coverageExceptions: [{ path: 'x.ts', reason: 'r'.repeat(length) }] },
+      )
+
+    // Act
+    const at300 = await outcomeOf(await withReason(300), root)
+    const at301 = await outcomeOf(await withReason(301), root)
+
+    // Assert
+    assert.deepEqual(
+      [at300, at301],
+      [
+        'rendered',
+        'The coverage exception for x.ts needs a reason of 1–300 characters saying why that code needs no explanation.',
+      ],
+    )
+  })
+})
+
+// Value: protects=the exception list's shape; fails_when=a parent-relative or absolute path or a plain string is accepted as an exception, or an exception for x.ts also covers x.tsx; why_new=C113 review round (mutation gaps); seam=none (the real renderer); no_claim=none
+test('coverage exceptions with a parent-relative path, an absolute path or a string are refused, and an exception for x.ts leaves x.tsx unexplained', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const withExceptions = (coverageExceptions) =>
+      manifestOf(
+        root,
+        { 'a.ts': A, 'x.ts': B, 'x.tsx': B },
+        {},
+        { coverageExceptions },
+      )
+
+    // Act
+    const parentPath = await outcomeOf(
+      await withExceptions([{ path: '../x.ts', reason: 'Up.' }]),
+      root,
+    )
+    const absolutePath = await outcomeOf(
+      await withExceptions([{ path: '/abs.ts', reason: 'Abs.' }]),
+      root,
+    )
+    const notArray = await outcomeOf(await withExceptions('gen/'), root)
+    const exactMatch = await outcomeOf(
+      await withExceptions([{ path: 'x.ts', reason: 'Just this file.' }]),
+      root,
+    )
+
+    // Assert
+    const pathSentence =
+      'A coverage exception needs a relative path of an included code file, or of a folder ending with /.'
+    assert.deepEqual(
+      [parentPath, absolutePath, notArray, exactMatch],
+      [
+        pathSentence,
+        pathSentence,
+        'coverageExceptions must be an array of { path, reason } entries.',
+        'The Wiki leaves 1 included code file unexplained: x.tsx. Explain each in a page and cite it, or list it (or its folder ending with /) under coverageExceptions with the reason it needs no explanation.',
+      ],
+    )
+  })
+})
+
+// Value: protects=the coverage gate against an address that is no link: a commented-out one, one a code example shows as escaped text and one in an attribute other than href; fails_when=such a mention counts as citing lib/b.ts; why_new=C113 review round (CodeRabbit); seam=none (the real renderer); no_claim=none
+test('a source address only in an HTML comment, in escaped code text or in a title attribute does not cover the file', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const address = inlineLinkOf(
+      'vscode://laststance.codebook',
+      { root, path: 'lib/b.ts', line: '1', sha256: B_HASH },
+      '&amp;',
+    )
+    const bodies = {
+      comment: `<!-- <a href="${address}">b</a> -->`,
+      escapedCode: `<code>&lt;a href="${address}"&gt;b&lt;/a&gt;</code>`,
+      title: `<span title="${address}">b</span>`,
+    }
+    const outcomes = {}
+
+    // Act
+    for (const [name, body] of Object.entries(bodies)) {
+      const manifest = await manifestOf(
+        root,
+        { 'a.ts': A, 'lib/b.ts': B },
+        { contentHtml: `<h2 id="flow">Flow</h2><p>${body}</p>` },
+      )
+      outcomes[name] = await outcomeOf(manifest, root)
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, {
+      comment: UNEXPLAINED_B,
+      escapedCode: UNEXPLAINED_B,
+      title: UNEXPLAINED_B,
+    })
+  })
+})

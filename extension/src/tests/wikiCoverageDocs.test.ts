@@ -53,12 +53,25 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   // Assert
   assert.ok(
     skill.includes(
-      'at least 2 pages with a `parent`, at least one page per 8 explained code files, a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total, CJK characters counted twice. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.',
+      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to the 256-page limit), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of article text on every page and 500 per explained code file in total (the total required stops at 120,000), CJK characters counted twice; a page's characters are counted from its article text. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
     ),
   )
   assert.ok(
     readme.includes(
-      'It also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, too few diagrams, or too little explanation.',
+      'It also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
+    ),
+  )
+})
+
+// Value: protects=the learner's README telling what an answer on the Wiki page shows: files by path, never an internal excerpt id, several lines per file, one link per distinct file and line; fails_when=the README loses that sentence and a learner cannot tell what the links under an answer open; why_new=C113 review round (Q&A citations); seam=none; no_claim=that a real answer cites well
+test('the README says an answer names files by path and its links open each cited line once', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      'An answer names the repository files it relies on by path, never by an internal excerpt id such as S1, and may cite several lines of each file; the links under the answer open each cited line in your editor, once per distinct file and line.',
     ),
   )
 })
