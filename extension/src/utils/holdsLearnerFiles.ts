@@ -1,10 +1,16 @@
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { STEP_UNDERSTANDING_NODE_FILE } from '../constants'
+
 import { systemErrorCode } from './systemErrorCode'
 
-/** The files of a test history that hold what an agent saved for the learner or what the learner decided: its learning material and its understanding marks. */
-const LEARNER_FILES = ['learning-material.json', 'learning-decision.json']
+/** The files of a test history that hold what an agent saved for the learner or what the learner decided: its learning material, its understanding marks and its per-step understanding marks. */
+const LEARNER_FILES = [
+  'learning-material.json',
+  'learning-decision.json',
+  STEP_UNDERSTANDING_NODE_FILE,
+]
 
 /**
  * Tells whether a test history's folder holds learning material or understanding marks, so a history with no entry is never removed with them: such a folder keeps what was saved for the learner although its journal is empty (F274). Called by {@link isSealedEmptyHistory} for the list and the saved-study count, and by {@link NodeTestHistoryWriter.finish} before it removes a history that ends with no entry.

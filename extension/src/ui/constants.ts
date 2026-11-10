@@ -248,6 +248,16 @@ export const STUDY_UI_OPTIONS = {
     /** The announcement of a mark whose operation was never sent, so there is no moment to move to. */
     notMoved: 'Operation {n} was not sent, so there is no moment to show',
   },
+  /** The words of the per-step understanding check, the same in a browser replay and in every Node family. `{n}` and `{m}` are counts; the times are appended in the learner's locale. */
+  stepUnderstanding: {
+    stepHeading: 'Step',
+    label: 'I understand this step',
+    marked: 'Marked understood · ',
+    review: 'Review: you marked an earlier version of this step understood · ',
+    saving: 'Saving…',
+    unreadable: 'Understanding for this replay could not be read.',
+    progress: 'Steps understood: {n} of {m}',
+  },
   maxStickyFraction: 0.35,
   compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX,
   secondMs: MILLISECONDS_PER_SECOND,

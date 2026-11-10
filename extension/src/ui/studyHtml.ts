@@ -20,6 +20,7 @@ import type { RetainedStudy } from '../retainedStudySchemas'
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
 import type { LiveStudy, projectStudy } from '../studyModel'
 import type { StudyCatalogEntry } from '../studySchemas'
+import type { StepUnderstandingView } from '../studyWorkspace/stepUnderstandingSessions'
 import type { PauseNameParts } from '../utils/describePauseName'
 import type { StudyDescriptor } from '../utils/describeStudy'
 import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
@@ -32,6 +33,7 @@ import type { ShownInterpretation } from '../utils/projectRecording'
 import type { OpenRequestSettled } from '../utils/readOpenRequest'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { savedStudyLabel } from '../utils/savedStudyLabel'
+import { selectedLearningStep } from '../utils/selectedLearningStep'
 
 import { STUDY_STYLES, STUDY_UI_OPTIONS, STUDY_SHORTCUTS } from './constants'
 
@@ -142,6 +144,8 @@ export interface StudyViewMessage {
   nodeHistoryPageCount?: number
   nodeHistoryEventCount?: number
   nodeHistoryLearningDecision?: NodeTestHistoryLearningDecision
+  /** The per-step understanding checks of the shown replay (browser recording or Node family): each step's decision, review flag and save state, and the progress counts; absent without a replay that has saved steps. */
+  stepUnderstanding?: StepUnderstandingView
   /** Sequences of the shown Node stops whose captured source failed the extension's verification (path, line or text hash); they get no Inspect. */
   nodeHistoryUnverifiedStops?: number[]
   nodeHistoryPlayback?: {
@@ -237,7 +241,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 
 <div ${markupOnlyIn(kind, 'moments', 'hidden')}>
-<section id="learning-material" hidden><h2 id="learning-title"></h2><p id="learning-question" class="muted"></p><p id="learning-summary"></p><p class="muted">Saved path · links inspect recorded stops. Source-derived and unknown steps do not establish execution.</p><div id="learning-sequence"></div></section><p id="learning-unavailable" class="muted" hidden>No processing summary or sequence was saved with this recording.</p>
+<section id="learning-material" hidden><h2 id="learning-title"></h2><p id="learning-question" class="muted"></p><p id="learning-summary"></p><p class="muted">Saved path · links inspect recorded stops. Source-derived and unknown steps do not establish execution.</p><div id="learning-sequence"></div><div id="learning-step" hidden><h3 id="learning-step-heading"></h3><p id="learning-step-explanation"></p><label><input id="learning-step-understood" type="checkbox" aria-describedby="learning-step-state"><span>${STUDY_UI_OPTIONS.stepUnderstanding.label}</span></label><p id="learning-step-state" class="muted" role="status" aria-live="polite"></p><p id="learning-step-progress" class="muted"></p></div></section><p id="learning-unavailable" class="muted" hidden>No processing summary or sequence was saved with this recording.</p>
 <div id="content-tabs" role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
 <div id="loading" class="status" hidden>Loading the selected observation…</div><div id="selected"><div class="status" id="observation"></div><div id="overview" role="tabpanel" aria-labelledby="overview-tab"><h2>Source-derived overview</h2><p id="overview-text"></p><button class="link" data-action="source">Read the linked source</button></div><div id="live-content" role="tabpanel" aria-labelledby="live-tab"><section><h2>Agent interpretation</h2><div id="interpretations" role="region" aria-label="Agent interpretation" tabindex="0"></div></section></div>
 <details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>
@@ -246,12 +250,12 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">${STUDY_RESTORE_CONTROL_LABEL}</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-library" class="muted"></p><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary id="node-learning-steps-summary">${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span><span id="node-history-understanding-label">${STUDY_UI_OPTIONS.testReplay.understanding}</span> <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2 id="node-history-heading">${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-library" class="muted"></p><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3></section><p id="node-history-status" class="status" role="status"></p><div class="clamped-text"><p id="node-history-capture-reason" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-history-capture-reason" aria-controls="node-history-capture-reason" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-history-material" hidden><div class="clamped-text"><p id="node-learning-question" class="muted clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-question" aria-controls="node-learning-question" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div class="clamped-text"><p id="node-learning-summary" class="clamp"></p><button type="button" class="link show-more" data-show-more="node-learning-summary" aria-controls="node-learning-summary" aria-expanded="false" hidden>${STUDY_UI_OPTIONS.testReplay.showMore}</button></div><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary id="node-learning-steps-summary">${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></div><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><div id="node-history-moment" role="status" aria-live="polite"><h3 id="node-history-step-heading" tabindex="-1" data-focus-fallback hidden></h3><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><div id="node-step" hidden><label><input id="node-step-understood" type="checkbox" aria-describedby="node-step-state"><span>${STUDY_UI_OPTIONS.stepUnderstanding.label}</span></label><p id="node-step-state" class="muted" role="status" aria-live="polite"></p><p id="node-step-progress" class="muted"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><label><input id="node-history-understood" type="checkbox"><span><span id="node-history-understanding-label">${STUDY_UI_OPTIONS.testReplay.understanding}</span> <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><div id="operation-row" class="operation-row" role="group" aria-label="${STUDY_UI_OPTIONS.operations.groupName}" hidden></div><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button><button id="previous-operation" type="button" title="${STUDY_UI_OPTIONS.operations.previous}" hidden disabled>${STUDY_UI_OPTIONS.operations.previous}</button><button id="next-operation" type="button" title="${STUDY_UI_OPTIONS.operations.next}" hidden disabled>${STUDY_UI_OPTIONS.operations.next}</button></span></div><p id="operation-caption" class="muted" hidden></p><div id="first-execution-note" class="first-execution-note" hidden><span id="first-execution-text">${STUDY_UI_OPTIONS.pauses.firstExecutionNote}</span> <details id="first-execution-details"><summary>${STUDY_UI_OPTIONS.pauses.firstExecutionDetailsSummary}</summary><p>${STUDY_UI_OPTIONS.pauses.firstExecutionDetails}</p></details></div><span id="pause-announcement" class="visually-hidden" role="status" aria-live="polite"></span><span id="operation-status" class="visually-hidden" role="status" aria-live="polite"></span><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
-<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()})</script></body></html>`
+<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()}, ${selectedLearningStep.toString()})</script></body></html>`
 }
 
 /** Keeps control DOM stable on state updates so native webview messages do not discard keyboard focus. @example studyClient() */
@@ -261,6 +265,7 @@ function studyClient(
   studyLabel: typeof savedStudyLabel,
   savedNote: typeof savedLaterNote,
   installFocusMemory: typeof installPaneFocusMemory,
+  pickLearningStep: typeof selectedLearningStep,
 ): void {
   const api = acquireVsCodeApi(),
     visited = new Set(api.getState()?.visited ?? [])
@@ -486,6 +491,10 @@ function studyClient(
       coverage.append(mark)
     }
   }
+  // The summary step the learner last activated in the sequence and the position its seek went to; in memory only. The selected-step block counts it while that position is presented, and a reopened replay or another replay starts with none.
+  let chosenStep:
+    | { stepId: string; positionMs: number; studyId: string | undefined }
+    | undefined
   // The operation the learner last moved to from the operation row, Previous or Next operation, or a summary step; any other playback control forgets it, so the caption never outlives its moment.
   // It belongs to the replay it was set in: opening another saved replay in the same page forgets it.
   let soughtOperation:
@@ -507,6 +516,9 @@ function studyClient(
     // A sought operation of another replay is dropped as soon as the page shows a different one.
     if (soughtOperation?.studyId !== message.recording?.studyId)
       soughtOperation = undefined
+    // The chosen summary step belongs to its replay in the same way.
+    if (chosenStep?.studyId !== message.recording?.studyId)
+      chosenStep = undefined
   }
   /**
    * The sought operation while the replay still presents its moment, read by {@link captionedOperation} and {@link operationStep}; a move made elsewhere (another pane's Learning summary) leaves this page's sought operation set but presents another moment, so it no longer counts.
@@ -592,7 +604,13 @@ function studyClient(
       return
     }
     const position = readySummaryStepPosition(target.dataset.summaryStep)
-    if (position !== undefined) playback('seek', position)
+    if (position === undefined) return
+    chosenStep = {
+      stepId: target.dataset.summaryStep ?? '',
+      positionMs: position,
+      studyId: current?.recording?.studyId,
+    }
+    playback('seek', position)
   }
   /**
    * Finds the sent operation before or after the replay's position, for Previous and Next operation.
@@ -3756,6 +3774,7 @@ function studyClient(
     element('node-history-no-material').hidden =
       suppressed || !message.nodeHistory || Boolean(learning)
     renderTestReplayStepHeading(message, section, learning)
+    renderNodeStepCheck(message, section, learning)
     if (!learning) {
       // A message without material keeps no earlier replay's diagram or steps in the page, hidden or not.
       renderKeys.delete('node-learning-sequence')
@@ -3964,6 +3983,237 @@ function studyClient(
           ? `Learner marked understood · ${decision.at}`
           : `Learner marked for review · ${decision.at}`
         : replayWords.understandingNote,
+    )
+  }
+  // The step each per-step check shows now, by the check's id; the check's change handler reads it.
+  const shownStepChecks = new Map<string, string | undefined>()
+  /**
+   * Words the state line under a per-step check: a failed or running save first, then an unreadable file, the learner's mark with its time, and the review flag for a step that changed after it was marked; empty otherwise. Called by {@link drawStepCheck}.
+   * @param view - The Study message's per-step view.
+   * @param entry - The selected step's entry in it.
+   * @returns The line, empty when nothing is to be said.
+   * @example stepStateLine(view, entry) // => 'Marked understood · 11/10/2026, 9:00:00 AM'
+   */
+  const stepStateLine = (
+    view: NonNullable<StudyViewMessage['stepUnderstanding']> | undefined,
+    entry:
+      | NonNullable<StudyViewMessage['stepUnderstanding']>['steps'][number]
+      | undefined,
+  ): string => {
+    const words = options.stepUnderstanding
+    const time = (value: string | undefined): string =>
+      value ? new Date(value).toLocaleString() : ''
+    if (!view || !entry) return ''
+    // A failure stays on its own step until that step's next press.
+    if (entry.failure) return entry.failure
+    if (entry.saving) return words.saving
+    if (view.status === 'unreadable') return words.unreadable
+    if (entry.understood) return `${words.marked}${time(entry.at)}`
+    if (entry.reviewNeeded) return `${words.review}${time(entry.reviewAt)}`
+    return ''
+  }
+  /**
+   * Finds the selected step's entry in the step-understanding view; called by {@link drawStepCheck} and the check's change listener.
+   * @param view - The step-understanding view, if any.
+   * @param stepId - The step, if any.
+   * @returns The step's entry, or `undefined` when there is none.
+   * @example findStepEntry(view, 'stop-1')?.understood
+   */
+  const findStepEntry = (
+    view: StudyViewMessage['stepUnderstanding'],
+    stepId: string | undefined,
+  ):
+    | NonNullable<StudyViewMessage['stepUnderstanding']>['steps'][number]
+    | undefined =>
+    stepId === undefined
+      ? undefined
+      : view?.steps.find((value) => value.stepId === stepId)
+  /**
+   * Words the progress line of the per-step checks; called by {@link drawStepCheck} when the counts are known.
+   * @param view - The ready step-understanding view.
+   * @returns The progress sentence with both counts filled in.
+   * @example stepProgressLine(view) // => 'Steps understood: 2 of 5'
+   */
+  const stepProgressLine = (
+    view: NonNullable<StudyViewMessage['stepUnderstanding']>,
+  ): string =>
+    options.stepUnderstanding.progress
+      .replace('{n}', String(view.understoodCount))
+      .replace('{m}', String(view.selectableCount))
+  /**
+   * Sets a per-step check to the extension's state; called by {@link drawStepCheck}.
+   * @param input - The check.
+   * @param message - The current Study message.
+   * @param view - The step-understanding view, if any.
+   * @param entry - The selected step's entry, if any.
+   * @example drawStepCheckInput(input, message, view, entry)
+   */
+  const drawStepCheckInput = (
+    input: HTMLInputElement,
+    message: StudyViewMessage,
+    view: StudyViewMessage['stepUnderstanding'],
+    entry: ReturnType<typeof findStepEntry>,
+  ): void => {
+    input.checked = entry?.understood ?? false
+    input.disabled = message.loading || view?.status !== 'ready' || !entry
+    input.setAttribute(
+      'aria-disabled',
+      String(input.disabled || Boolean(entry?.saving)),
+    )
+  }
+  /**
+   * Draws one per-step check: the check, its state line and the progress line, for the selected step only, so a result can never be drawn on another step. Called by {@link renderLearningStep} for a browser replay and {@link renderNodeStepCheck} for every Node family.
+   * The check is disabled while the replay loads or its decisions are unknown; a pending save only sets aria-disabled, so the keyboard focus stays on the check. The progress line is hidden while the counts are unknown.
+   * @param ids - The element ids of the check, its state line and its progress line.
+   * @param message - The current Study message.
+   * @param stepId - The selected step, if any.
+   * @example drawStepCheck({ check: 'node-step-understood', state: 'node-step-state', progress: 'node-step-progress' }, message, 'stop-1')
+   */
+  const drawStepCheck = (
+    ids: { check: string; state: string; progress: string },
+    message: StudyViewMessage,
+    stepId: string | undefined,
+  ): void => {
+    const view = message.stepUnderstanding
+    const entry = findStepEntry(view, stepId)
+    shownStepChecks.set(ids.check, entry ? stepId : undefined)
+    drawStepCheckInput(
+      element(ids.check) as HTMLInputElement,
+      message,
+      view,
+      entry,
+    )
+    text(ids.state, stepStateLine(view, entry))
+    const known = !message.loading && view?.status === 'ready'
+    element(ids.progress).hidden = !known
+    text(ids.progress, known && view ? stepProgressLine(view) : '')
+  }
+  /**
+   * Tells whether a press of a per-step check must send nothing because the replay is missing, loading, or the check is already disabled; called by {@link wireStepCheck}.
+   * @param input - The pressed check.
+   * @returns `true` when nothing may be sent.
+   * @example if (stepPressBlocked(input)) return
+   */
+  const stepPressBlocked = (input: HTMLInputElement): boolean =>
+    !current ||
+    current.loading ||
+    input.getAttribute('aria-disabled') === 'true'
+  /**
+   * Sends the learner's press of a per-step check; the check shows the extension's state, so it goes back to it at once, and a press while that step saves, loads or is unknown sends nothing.
+   * @param checkId - The check's element id.
+   * @example wireStepCheck('learning-step-understood')
+   */
+  const wireStepCheck = (checkId: string): void => {
+    element(checkId).addEventListener('change', (event) => {
+      if (!(event.target instanceof HTMLInputElement)) return
+      const understood = event.target.checked
+      const stepId = shownStepChecks.get(checkId)
+      const view = current?.stepUnderstanding
+      const entry = findStepEntry(view, stepId)
+      event.target.checked = entry?.understood ?? false
+      if (!view || stepId === undefined || stepPressBlocked(event.target))
+        return
+      // The hash of the step as drawn, so the extension refuses the press when the step changed before it arrived.
+      event.target.setAttribute('aria-disabled', 'true')
+      send({
+        type: 'step-understanding',
+        studyId: view.studyId,
+        stepId,
+        stepHash: entry?.stepHash,
+        understood,
+      })
+    })
+  }
+  wireStepCheck('learning-step-understood')
+  wireStepCheck('node-step-understood')
+  /**
+   * Picks the browser replay's selected step for the step block; called by {@link renderLearningStep}.
+   * @param message - The current Study message.
+   * @param learning - The browser replay's learning summary, if any.
+   * @param recording - The browser replay's state, if any.
+   * @returns The chosen step's id, or `undefined` when no step is shown.
+   * @example pickShownLearningStep(message, recording.learningSummary, recording)
+   */
+  const pickShownLearningStep = (
+    message: StudyViewMessage,
+    learning: NonNullable<StudyViewMessage['recording']>['learningSummary'],
+    recording: StudyViewMessage['recording'],
+  ): string | undefined => {
+    if (!learning || !recording) return undefined
+    return pickLearningStep({
+      steps: learning.content.steps.map((step) => ({
+        id: step.id,
+        ...(step.reference && 'snapshotUri' in step.reference
+          ? { snapshotUri: step.reference.snapshotUri }
+          : {}),
+      })),
+      positions: learning.positions,
+      presentedSnapshotUri: message.model.observation?.snapshotUri,
+      presentedMs: recording.presentedMs,
+      chosen:
+        chosenStep?.studyId === recording.studyId ? chosenStep : undefined,
+      toleranceMs: options.operations.momentToleranceMs,
+    })
+  }
+  /**
+   * Draws a browser replay's selected-step block below the sequence: `Step <n> · <label>`, the step's explanation and its check. The step is the learner's chosen one while its position is presented, else the first step with a recorded position that matches the presented observation; with none the block is hidden. Called by the Study message handler for every message.
+   * @param message - The current Study message.
+   * @param learning - The browser replay's learning summary, if any.
+   * @param recording - The browser replay's state, if any.
+   * @example renderLearningStep(message, recording.learningSummary, recording)
+   */
+  const renderLearningStep = (
+    message: StudyViewMessage,
+    learning: NonNullable<StudyViewMessage['recording']>['learningSummary'],
+    recording: StudyViewMessage['recording'],
+  ): void => {
+    const steps = learning?.content.steps ?? []
+    const stepId = pickShownLearningStep(message, learning, recording)
+    const index = steps.findIndex((step) => step.id === stepId)
+    const step = steps[index]
+    element('learning-step').hidden = !step
+    text(
+      'learning-step-heading',
+      step
+        ? `${options.stepUnderstanding.stepHeading} ${index + 1} · ${step.label}`
+        : '',
+    )
+    text('learning-step-explanation', step?.explanation ?? '')
+    drawStepCheck(
+      {
+        check: 'learning-step-understood',
+        state: 'learning-step-state',
+        progress: 'learning-step-progress',
+      },
+      message,
+      step?.id,
+    )
+  }
+  /**
+   * Draws a Node family replay's per-step check below the moment block: the check, its state line and the progress line for the selected step; hidden while no step is selected or a moment is pending. Called by {@link renderTestReplayLearning} for every Study message.
+   * @param message - The current Study message.
+   * @param section - The section's worded view, which names the selected step.
+   * @param learning - The replay's learning material, if any.
+   * @example renderNodeStepCheck(message, message.nodeHistorySection, message.nodeHistoryLearningSummary)
+   */
+  const renderNodeStepCheck = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    learning: StudyViewMessage['nodeHistoryLearningSummary'],
+  ): void => {
+    const steps = learning?.content.steps ?? []
+    const step = message.nodeHistoryPosition?.pending
+      ? undefined
+      : steps.find((value) => value.id === section?.selectedStepId)
+    element('node-step').hidden = !step
+    drawStepCheck(
+      {
+        check: 'node-step-understood',
+        state: 'node-step-state',
+        progress: 'node-step-progress',
+      },
+      message,
+      step?.id,
     )
   }
   /**
@@ -4940,6 +5190,7 @@ function studyClient(
         )
       }
     }
+    renderLearningStep(message, learning, recording)
     const focusedListControl = keyboardControl()
     const focusedItem = focusedListControl?.dataset.item
     const focusedRegion = focusedListControl?.parentElement?.id

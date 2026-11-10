@@ -161,8 +161,8 @@ async function check(page, options, collected) {
       restored: window.sent.filter(
         (message) => message.type === 'presentation-pose-restored',
       ).length,
-      understandingWrites: window.sent.filter(
-        (message) => message.type === 'understanding',
+      understandingWrites: window.sent.filter((message) =>
+        ['understanding', 'step-understanding'].includes(message.type),
       ).length,
       actionWrites: window.sent.filter((message) => message.type === 'action')
         .length,
@@ -511,7 +511,9 @@ async function check(page, options, collected) {
       .getElementById('recording-transport')
       .getBoundingClientRect().top,
     writes: window.sent.filter((message) =>
-      ['playback', 'action', 'understanding'].includes(message.type),
+      ['playback', 'action', 'understanding', 'step-understanding'].includes(
+        message.type,
+      ),
     ).length,
   }))
   cases.push({
@@ -526,6 +528,98 @@ async function check(page, options, collected) {
   })
   await page.screenshot({
     path: `${options.output}/sequence-focus-restored.png`,
+  })
+
+  // The selected-step block of a replay with per-step checks: reading it, with the check focused through a capture, a document replacement and a restore, writes no step decision and leaves the check as it was.
+  const stepReplay = {
+    ...replay,
+    recording: {
+      ...replay.recording,
+      studyId:
+        '11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222',
+      learningSummary: {
+        ...replay.recording.learningSummary,
+        content: {
+          ...replay.recording.learningSummary.content,
+          steps: replay.recording.learningSummary.content.steps.map((step) => ({
+            ...step,
+            reference: {
+              ...step.reference,
+              snapshotUri:
+                options.message.model.observation?.snapshotUri ??
+                step.reference.snapshotUri,
+            },
+          })),
+        },
+      },
+    },
+    stepUnderstanding: {
+      studyId:
+        '11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222',
+      status: 'ready',
+      steps: [
+        {
+          stepId: 'selected',
+          stepHash: 'a'.repeat(64),
+          understood: true,
+          at: '2026-11-10T01:02:03.000Z',
+          reviewNeeded: false,
+          saving: false,
+        },
+      ],
+      understoodCount: 1,
+      selectableCount: 1,
+    },
+  }
+  await render(stepReplay)
+  const stepBlock = await page.evaluate(() => ({
+    visible: document.getElementById('learning-step').checkVisibility(),
+    checked: document.getElementById('learning-step-understood').checked,
+  }))
+  await page.locator('#learning-step-understood').focus()
+  await publish({ ...request, contentTab: 'recording' })
+  const stepPose = await page.evaluate(() =>
+    window.sent.findLast((message) => message.type === 'presentation-pose'),
+  )
+  // The replacement document starts a new list of sent messages, so what the first document sent is counted before it goes.
+  const stepWritesBeforeReplacement = await page.evaluate(
+    () =>
+      window.sent.filter((message) => message.type === 'step-understanding')
+        .length,
+  )
+  await render(stepReplay)
+  if (!stepPose?.pose)
+    throw new Error(
+      'No serializable reading pose was captured for the step block.',
+    )
+  await publish({ ...stepPose, type: 'restore-presentation-pose' })
+  await page.waitForFunction(() =>
+    window.sent.some(
+      (message) => message.type === 'presentation-pose-restored',
+    ),
+  )
+  const stepReading = await page.evaluate(
+    (writesBefore) => ({
+      stepWrites:
+        writesBefore +
+        window.sent.filter((message) => message.type === 'step-understanding')
+          .length,
+      checked: document.getElementById('learning-step-understood').checked,
+      visible: document.getElementById('learning-step').checkVisibility(),
+      activeId: document.activeElement?.id ?? '',
+    }),
+    stepWritesBeforeReplacement,
+  )
+  cases.push({
+    name: 'reading the selected-step block (focus on its check, capture, replacement, restore) sends no step-understanding write and leaves the check as it was',
+    actual: { stepBlock, stepReading },
+    passed:
+      stepBlock.visible &&
+      stepBlock.checked === true &&
+      stepReading.stepWrites === 0 &&
+      stepReading.checked === true &&
+      stepReading.visible &&
+      stepReading.activeId === 'learning-step-understood',
   })
 
   // Cycle 0070: the replay's operation row. A host answer to a seek is simulated by publishing the Study message that follows it.

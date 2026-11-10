@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.110'
+export const EXTENSION_VERSION = '0.2.111'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1012,6 +1012,7 @@ export const PRESENTATION_FOCUS_IDS = [
   'live-tab',
   'recording-tab',
   'understood',
+  'learning-step-understood',
   'profiles',
   'studies',
   'delete-study',
@@ -1875,6 +1876,14 @@ export const NODE_TEST_READER_POSITION_VERSION = 1
 export const NODE_TEST_READER_POSITION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_DECISION_VERSION = 1
 export const NODE_TEST_LEARNING_DECISION_LIMIT_BYTES = 4_096
+/** The largest size in bytes of one saved replay's step-understanding file, for browser recordings and Node-family histories alike. */
+export const STEP_UNDERSTANDING_LIMIT_BYTES = 262_144
+/** How many step decisions one replay's step-understanding file keeps; a write beyond it drops the oldest first. */
+export const STEP_UNDERSTANDING_MAX_DECISIONS = 1_000
+/** The name of a Node-family history's step-understanding file, beside its `learning-decision.json`. */
+export const STEP_UNDERSTANDING_NODE_FILE = 'step-understanding.json'
+/** The suffix after a browser recording's study id in the library directory: its step-understanding file, a sidecar owned with the study. */
+export const STEP_UNDERSTANDING_STUDY_SUFFIX = '.steps.v1.json'
 export const NODE_TEST_LEARNING_MATERIAL_VERSION = 1
 export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes
