@@ -211,8 +211,10 @@ function requireValidException(entry, seen, codeFiles) {
 }
 /** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
 const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
-/** Reads a page's article as plain text: comments and tags removed (a tag ends at the first `>` outside its quoted attribute values, as {@link validatePages} guarantees every quotation mark is closed), the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link depthShortfallsOf}. @example articleTextOf('<p>a &amp; b</p>') // => 'a & b' */
-const articleTextOf = contentHtml => contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, ' ').replace(/&#(x[0-9a-f]+|\d+);/gi, (match, code) => { const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code); return point <= 0x10ffff ? String.fromCodePoint(point) : match; }).replaceAll('&nbsp;', '\u00a0').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
+/** The tags of inline elements, which a reader sees joined to the text beside them: `<code>QueryCache</code>.` reads `QueryCache.`. A tag ends at the first `>` outside its quoted attribute values. */
+const INLINE_TAG = /<\/?(?:a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time|u|var)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+/** Reads a page's article as plain text: comments removed, inline tags ({@link INLINE_TAG}) removed with nothing in their place and other tags replaced by a space (a tag ends at the first `>` outside its quoted attribute values, as {@link validatePages} guarantees every quotation mark is closed), the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link articleSentencesOf}. @example articleTextOf('<p>a &amp; <code>b</code>.</p>') // => 'a & b.' */
+const articleTextOf = contentHtml => contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(INLINE_TAG, '').replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, ' ').replace(/&#(x[0-9a-f]+|\d+);/gi, (match, code) => { const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code); return point <= 0x10ffff ? String.fromCodePoint(point) : match; }).replaceAll('&nbsp;', '\u00a0').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&amp;', '&').replace(/\s+/g, ' ').trim();
 /** Matches the characters that carry about twice the content of a Latin one: Han ideographs, Hiragana, Katakana (halfwidth U+FF66–U+FF9F excluded), Hangul, the content-carrying Japanese marks of the Common script (U+30FC, U+30FB, U+3001, U+3002) and the fullwidth forms U+FF01–U+FF60. */
 const DOUBLE_WEIGHT_CHARACTER = /(?![\uFF66-\uFF9F])[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u30FC\u30FB\u3001\u3002\uFF01-\uFF60]/u;
 /** Matches the invisible format characters (Unicode category Cf, such as the zero-width space U+200B), which a reader never sees. Called by {@link characterWeightOf}. */
@@ -223,12 +225,12 @@ const characterWeightOf = character => (FORMAT_CHARACTER.test(character) ? 0 : D
 const textWeightOf = text => [...text].reduce((sum, character) => sum + characterWeightOf(character), 0);
 /** A private-use character standing for the end of a block element while a page is read as sentences; no article text holds it. */
 const BLOCK_END_MARK = '';
-/** The end tags (and the line break) that end a sentence as a reader sees the page: a paragraph, list item, heading, table cell, definition, caption, summary, preformatted block or quotation. */
-const BLOCK_END = /<\/(?:p|li|h[1-6]|td|th|dt|dd|caption|figcaption|summary|pre|blockquote)\s*>|<br\s*\/?>/gi;
+/** The end tags (and the line break) that end a sentence as a reader sees the page: a paragraph, list item or list, heading, table cell, row or table, definition, caption, summary, preformatted block, quotation, or a division or section. */
+const BLOCK_END = /<\/(?:p|li|ul|ol|dl|h[1-6]|td|th|tr|table|dt|dd|caption|figcaption|summary|details|pre|blockquote|div|section|article|aside|header|footer|nav|figure)\s*>|<br\s*\/?>/gi;
 /** Splits a page's article into the sentences a reader sees: a block end ({@link BLOCK_END}) or sentence punctuation (`.`, `!`, `?` before a space, or `。`) ends a sentence; comments, tags and character references are read as {@link articleTextOf} reads them. Called by {@link countedTextOf}. @example articleSentencesOf('<p>One. Two</p><li>Three</li>') // => ['One.', 'Two', 'Three'] */
 const articleSentencesOf = contentHtml => articleTextOf(contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(BLOCK_END, ` ${BLOCK_END_MARK} `)).split(new RegExp(`\\s*${BLOCK_END_MARK}\\s*|(?<=[.!?])\\s+|(?<=。)`)).map(sentence => sentence.trim()).filter(Boolean);
-/** The form of a sentence that template text repeats: paths, file names, code names (camelCase, PascalCase with a second capital, snake_case) and numbers each read as one placeholder, letters lowercased, spaces collapsed. Called by {@link countedTextOf}. @example sentenceFormOf('Reading src/a.ts as QueryClient 2.') // => 'reading P as I N.' */
-const sentenceFormOf = sentence => sentence.replace(/\S*[/\\]\S*/g, 'P').replace(/[\w.-]+\.[A-Za-z]{1,6}\b/g, 'F').replace(/\b[A-Za-z_$][\w$]*[A-Z_$][\w$]*\b/g, 'I').replace(/\d+(?:[.,]\d+)*/g, 'N').toLowerCase().replace(/\s+/g, ' ');
+/** The form of a sentence that template text repeats: paths, file names, code names (camelCase, PascalCase with a second capital, snake_case) and numbers each read as one placeholder, letters lowercased, spaces collapsed. A path or file name is a run of ASCII name characters, so a Japanese sentence that names a path keeps its own words; each pattern starts only where its run starts, so a long run is read once. Called by {@link countedTextOf}. @example sentenceFormOf('Reading src/a.ts as QueryClient 2.') // => 'reading p as i n.' */
+const sentenceFormOf = sentence => sentence.replace(/(?<![\w.@$~:-])[\w.@$~:-]*[/\\][\w./\\@$~:-]*/g, 'P').replace(/(?<![\w.-])[\w.-]+\.[A-Za-z]{1,6}\b/g, 'F').replace(/\b[A-Za-z_$][\w$]*[A-Z_$][\w$]*\b/g, 'I').replace(/\d+(?:[.,]\d+)*/g, 'N').toLowerCase().replace(/\s+/g, ' ');
 /** A word that is a name rather than prose: a path or file name (it holds `/` or a `.` inside), a code name with a second capital or an underscore, or a call such as `fetch()`. Called by {@link isNameList}. */
 const NAME_WORD = /^(?:[\w$@-]*[/.][\w$@./:-]*\w|[A-Za-z_$][\w$]*[A-Z_$][\w$]*|[\w$]+\(\))$/;
 /** Whether a sentence is a list of names (identifiers, paths, file names) rather than explanation: at least {@link DEPTH_LIST_MIN_WORDS} words, of which at least {@link DEPTH_LIST_NAME_SHARE} are names ({@link NAME_WORD}). Called by {@link sentenceKindOf}. @example isNameList('IsServerValue 、 isServer 、 environmentManager 、 FocusManager') // => true */
@@ -240,10 +242,9 @@ const isNameList = sentence => {
 const quotableSourceTextOf = lines => lines.map(line => line.replace(/^\s*(?:\/\*\*?|\*\/|\*|\/\/+|#)\s?/, '')).join(' ').replace(/[`*]/g, '').replace(/\s+/g, ' ');
 /** Whether a sentence of at least {@link DEPTH_MIN_COPIED_TEXT} weighted characters appears word for word in one of the page's cited sources ({@link quotableSourceTextOf}). Called by {@link sentenceKindOf}. @example isCopiedText('A QueryObserver watches a single query in the QueryCache.', ['/** A QueryObserver watches a single query in the QueryCache. *\/']) // => true */
 const isCopiedText = (sentence, citedTexts) => textWeightOf(sentence) >= DEPTH_MIN_COPIED_TEXT && citedTexts.some(text => text.includes(sentence.replace(/[`*]/g, '').replace(/\s+/g, ' ')));
-/** Which measure a sentence adds to: `listed` for a list of names ({@link isNameList}), `repeated` for a later use of a form used {@link DEPTH_REPEATED_SENTENCE_USES} or more times (its first use counts), `copied` for text copied from a cited source ({@link isCopiedText}), else `length`, the counted explanation. Called by {@link countedTextOf} for each sentence in page order; `counted` records the repeated forms whose first use has been counted. @example sentenceKindOf('Prose.', { uses: new Map(), counted: new Set(), citedTexts: [] }) // => 'length' */
-function sentenceKindOf(sentence, { uses, counted, citedTexts }) {
+/** Which measure a sentence adds to: `listed` for a list of names ({@link isNameList}), `repeated` for a later use of a form used {@link DEPTH_REPEATED_SENTENCE_USES} or more times (its first use counts), `copied` for text copied from a cited source ({@link isCopiedText}), else `length`, the counted explanation. Called by {@link countedTextOf} for each sentence in page order; `counted` records the repeated forms whose first use has been counted. @param form - The sentence's form ({@link sentenceFormOf}). @example sentenceKindOf('Prose.', 'prose.', { uses: new Map(), counted: new Set(), citedTexts: [] }) // => 'length' */
+function sentenceKindOf(sentence, form, { uses, counted, citedTexts }) {
   if (isNameList(sentence)) return 'listed';
-  const form = sentenceFormOf(sentence);
   // Template text: only the first use of a form used three or more times counts.
   if (uses.get(form) >= DEPTH_REPEATED_SENTENCE_USES) {
     if (counted.has(form)) return 'repeated';
@@ -253,14 +254,15 @@ function sentenceKindOf(sentence, { uses, counted, citedTexts }) {
 }
 /** Measures each page's counted explanation in weighted characters ({@link textWeightOf}): its sentences ({@link articleSentencesOf}) except lists of names, later uses of a sentence form the Wiki repeats {@link DEPTH_REPEATED_SENTENCE_USES} or more times, and text copied from the page's cited sources; those are measured apart. Called by {@link depthShortfallsOf}. @param pages - The manifest's pages. @param citedTextsOf - Answers a page's cited sources as quotable text ({@link quotableSourceTextOf}). @returns One `{ path, length, repeated, listed, copied }` per page, `length` the counted explanation. @example countedTextOf(manifest.pages, () => []) // => [{ path: 'index.html', length: 1500, repeated: 0, listed: 0, copied: 0 }] */
 function countedTextOf(pages, citedTextsOf) {
-  const sentencesByPage = pages.map(page => articleSentencesOf(page.contentHtml));
+  // Each sentence with its form, read once.
+  const sentencesByPage = pages.map(page => articleSentencesOf(page.contentHtml).map(sentence => ({ sentence, form: sentenceFormOf(sentence) })));
   const uses = new Map();
-  for (const sentence of sentencesByPage.flat()) uses.set(sentenceFormOf(sentence), (uses.get(sentenceFormOf(sentence)) ?? 0) + 1);
+  for (const { form } of sentencesByPage.flat()) uses.set(form, (uses.get(form) ?? 0) + 1);
   const counted = new Set();
   return pages.map((page, index) => {
     const measure = { path: page.path, length: 0, repeated: 0, listed: 0, copied: 0 };
     const context = { uses, counted, citedTexts: citedTextsOf(page) };
-    for (const sentence of sentencesByPage[index]) measure[sentenceKindOf(sentence, context)] += textWeightOf(sentence);
+    for (const { sentence, form } of sentencesByPage[index]) measure[sentenceKindOf(sentence, form, context)] += textWeightOf(sentence);
     return measure;
   });
 }

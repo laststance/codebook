@@ -126,7 +126,7 @@ test('the bundled skill 1.0.91 gives a page a parent only when it details part o
   assert.ok(skill.includes('metadata:\n  version: "1.0.91"\n'))
   assert.ok(
     skill.includes(
-      "An optional `parent` names a page in the same section to make a chapter tree: give a page a `parent` only when it details part of that parent's subject (one of its modules, flows, example families or test areas); peers, such as several packages, adapters or example families, stay without a `parent` in one `section`, which the reader lists together.",
+      "An optional `parent` names a page in the same section to make a chapter tree: give a page a `parent` only when it details part of that parent's subject (one of its modules, flows, example families or test areas); peers, such as several packages, adapters or example families, stay without a `parent` in one `section`, which the reader lists together; the child pages the depth floor asks for are the module, flow, example-family or test-area pages under the page they detail.",
     ),
   )
   assert.ok(
@@ -156,7 +156,7 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   // Assert
   assert.ok(
     skill.includes(
-      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to 30 pages), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of explanation on every page and 400 per explained code file in total (the total required stops at 60,000), CJK characters counted twice. Explanation is article text written for this page: a sentence the Wiki repeats on three or more pages (a template written for every file) counts only where it is first used, and a list of names or paths (four or more words, most of them identifiers) or a sentence copied from a source the page cites does not count; a refusal names each thin page with what did not count. Write each page's own explanation instead of templates, export lists or copied doc comments. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
+      "at least 2 pages with a `parent`, at least one page per 8 explained code files (up to 30 pages), a diagram on every page and about three diagrams per two pages in total (architecture, flow or sequence, each with source-backed nodes and edges), and at least 1,200 characters of explanation on every page and 400 per explained code file in total (the total required stops at 60,000), CJK characters counted twice. Explanation is article text written for this page: a sentence the Wiki uses three or more times, counting sentences that differ only in file names, code names or numbers (a template written for every file), counts only where it is first used, and a list of names or paths (four or more words, most of them identifiers) or a sentence copied from a source the page cites does not count; a refusal names the thinnest pages with what did not count. Write each page's own explanation instead of templates, export lists or copied doc comments. These are floors, not targets: DeepWiki itself typically gives each page several diagrams and 2,500–7,000 characters, so aim above them.",
     ),
   )
   assert.ok(
@@ -166,7 +166,7 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   )
   assert.ok(
     readme.includes(
-      'Explanation is what a page writes for itself: a sentence repeated on three or more pages counts once, and lists of names or paths and text copied from the cited source files do not count; the refusal names each thin page with what did not count.',
+      'Explanation is what a page writes for itself: a sentence used three or more times, counting sentences that differ only in file names, code names or numbers, counts once, and lists of names or paths and text copied from the cited source files do not count; the refusal names the thinnest pages with what did not count.',
     ),
   )
 })
@@ -249,7 +249,7 @@ test('the renderer enforces the same depth floors the bundled skill states', asy
   )
   assert.ok(
     skill.includes(
-      'a sentence the Wiki repeats on three or more pages (a template written for every file) counts only where it is first used, and a list of names or paths (four or more words, most of them identifiers)',
+      'a sentence the Wiki uses three or more times, counting sentences that differ only in file names, code names or numbers (a template written for every file), counts only where it is first used, and a list of names or paths (four or more words, most of them identifiers)',
     ),
   )
   assert.ok(

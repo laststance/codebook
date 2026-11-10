@@ -1028,8 +1028,8 @@ test('a sentence used on two pages counts on both, and on three pages counts onl
   })
 })
 
-// Value: protects=the edges of a list of names: four words of which 60% are names do not count, while three names alone, or prose with half its words names, count; fails_when=the word or share limit moves, so a short name pair or ordinary prose about two functions stops counting, or a 60% list counts; why_new=Cycle 0115 (C114-W4, list limits 4 words and 60%); seam=none (the real renderer); no_claim=other ways to write a list
-test('a sentence of five words with three names does not count, while three names alone or four words with two names count', async () => {
+// Value: protects=the edges of a list of names: a sentence of four or more words of which at least 60% are names does not count, while three names alone, prose with half its words names, or nine words with five names (56%) count; fails_when=the word limit moves from 4 or the share limit from 60%, so ordinary prose about two functions stops counting or a short list counts; why_new=Cycle 0115 (C114-W4, list limits 4 words and 60%), review round (two limit mutations survived); seam=none (the real renderer); no_claim=other ways to write a list
+test('a sentence of four or more words with at least 60% names does not count, while three names alone or prose with fewer names counts', async () => {
   await inProject(async (root) => {
     // Arrange
     // Page 3 holds 1,200 characters only when its last sentence counts.
@@ -1049,31 +1049,39 @@ test('a sentence of five words with three names does not count, while three name
     const sixtyPercent = await withSentence(
       'useQuery and QueryClient call fetchQuery',
     )
+    const fourWords = await withSentence('useQuery, QueryClient and fetchQuery')
     const threeNames = await withSentence('useQuery, QueryClient, fetchQuery')
     const halfNames = await withSentence('useQuery reads the QueryClient')
+    const fiftySixPercent = await withSentence(
+      'useQuery and QueryClient call fetchQuery with QueryCache in onlineManager',
+    )
 
     // Act
     const outcomes = [
       await outcomeOf(sixtyPercent, root),
+      await outcomeOf(fourWords, root),
       await outcomeOf(threeNames, root),
       await outcomeOf(halfNames, root),
+      await outcomeOf(fiftySixPercent, root),
     ]
 
     // Assert
     assert.deepEqual(outcomes, [
       '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1160 characters; not counted: 40 in lists of names).',
+      '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1164 characters; not counted: 36 in lists of names).',
+      'rendered',
       'rendered',
       'rendered',
     ])
   })
 })
 
-// Value: protects=the edge of copied text: a copied sentence of 40 characters does not count, a 39-character one (a short phrase any explanation may share with the source) counts; fails_when=the 40-character limit moves either way; why_new=Cycle 0115 (C114-W4, copied text from 40 characters); seam=none (the real renderer); no_claim=that copied text below 40 characters is explanation
-test('a sentence of 40 characters copied from a cited source does not count, and one of 39 characters counts', async () => {
+// Value: protects=the edge of copied text: a copied sentence of 40 characters does not count, a 39-character one (a short phrase any explanation may share with the source) counts, and text matching a file the page does not cite counts; fails_when=the 40-character limit moves either way, or a page is matched against files other pages cite; why_new=Cycle 0115 (C114-W4, copied text from 40 characters), review round (cited-by-this-page gap); seam=none (the real renderer); no_claim=that copied text below 40 characters is explanation
+test('a sentence of 40 characters copied from a cited source does not count, while one of 39 characters or one matching an uncited file counts', async () => {
   await inProject(async (root) => {
     // Arrange
     // Page 3 cites docs/cache.ts and holds 1,200 characters only when its copied sentence counts.
-    const withCopied = async (sentence) => {
+    const withCopied = async (sentence, { cited = true } = {}) => {
       const manifest = await wikiOf(root, {
         fileCount: 11,
         pageTexts: [1500, 1500, 1500, 1200 - sentence.length],
@@ -1083,7 +1091,9 @@ test('a sentence of 40 characters copied from a cited source does not count, and
           'docs/cache.ts': `// ${sentence}\nexport const cache = new Map();\n`,
         },
       })
-      manifest.pages[3].sources.push({ path: 'docs/cache.ts', line: 1 })
+      // Every file is cited by the index page; page 3 cites docs/cache.ts only when asked.
+      if (cited)
+        manifest.pages[3].sources.push({ path: 'docs/cache.ts', line: 1 })
       manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
         '</p>',
         `</p><p>${sentence}</p>`,
@@ -1099,14 +1109,169 @@ test('a sentence of 40 characters copied from a cited source does not count, and
       'The cache keeps each query result here.',
     )
     const thirtyNineOutcome = await outcomeOf(thirtyNine, root)
+    const uncited = await withCopied(
+      'The cache keeps every query result here.',
+      { cited: false },
+    )
+    const uncitedOutcome = await outcomeOf(uncited, root)
 
     // Assert
     assert.deepEqual(
-      [fortyOutcome, thirtyNineOutcome],
+      [fortyOutcome, thirtyNineOutcome, uncitedOutcome],
       [
         '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1160 characters; not counted: 40 copied from cited sources).',
         'rendered',
+        'rendered',
       ],
     )
+  })
+})
+
+// Value: protects=the sentence a reader sees: 。, ! and ? before a space, a line break, a list item, a table cell, a heading and a division each end one, so a sentence repeated three times inside one block is still a repeat; fails_when=a splitter is dropped, so three uses read as one unique sentence and template text counts in full; why_new=Cycle 0115 review round (no test covered the splitters; div and tr added); seam=none (the real renderer); no_claim=every way HTML can separate text
+test('three uses of a sentence count once whether 。, !, ?, a line break, list items, table cells, headings or divisions separate them', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // Page 3 holds 1,100 characters of filler and three uses of one short sentence, so it is a stub either way and its refusal shows what counted.
+    const separated = {
+      '。': '<p>データを読む。データを読む。データを読む。</p>',
+      '!': '<p>Data moves on! Data moves on! Data moves on!</p>',
+      '?': '<p>Who reads it? Who reads it? Who reads it?</p>',
+      '<br>': '<p>Data moves on<br>Data moves on<br>Data moves on</p>',
+      '</li>':
+        '<ul><li>Data moves on</li><li>Data moves on</li><li>Data moves on</li></ul>',
+      '</td>':
+        '<table><tr><td>Data moves on</td><td>Data moves on</td><td>Data moves on</td></tr></table>',
+      '</h3>':
+        '<h3>Data moves on</h3><h3>Data moves on</h3><h3>Data moves on</h3>',
+      '</div>':
+        '<div>Data moves on</div><div>Data moves on</div><div>Data moves on</div>',
+    }
+    const outcomes = {}
+
+    // Act
+    for (const [separator, content] of Object.entries(separated)) {
+      const manifest = await wikiOf(root, {
+        fileCount: 12,
+        pageTexts: [1500, 1500, 1500, 1100],
+        childCount: 3,
+        diagramCounts: [2, 2, 1, 1],
+      })
+      manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
+        '</p>',
+        `</p>${content}`,
+      )
+      outcomes[separator] = await outcomeOf(manifest, root)
+    }
+
+    // Assert
+    const stub =
+      '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen '
+    assert.deepEqual(outcomes, {
+      '。': `${stub}page-3.html (1114 characters; not counted: 28 in repeated sentences).`,
+      '!': `${stub}page-3.html (1114 characters; not counted: 28 in repeated sentences).`,
+      '?': `${stub}page-3.html (1113 characters; not counted: 26 in repeated sentences).`,
+      '<br>': `${stub}page-3.html (1113 characters; not counted: 26 in repeated sentences).`,
+      '</li>': `${stub}page-3.html (1113 characters; not counted: 26 in repeated sentences).`,
+      '</td>': `${stub}page-3.html (1113 characters; not counted: 26 in repeated sentences).`,
+      '</h3>': `${stub}page-3.html (1113 characters; not counted: 26 in repeated sentences).`,
+      '</div>': `${stub}page-3.html (1113 characters; not counted: 26 in repeated sentences).`,
+    })
+  })
+})
+
+// Value: protects=the template a Wiki writes for every module, path or file, which differs only in that name; fails_when=the code-name, path or file-name placeholder of the sentence form is dropped, so a template that varies only names counts in full; why_new=Cycle 0115 review round (only the number placeholder was tested); seam=none (the real renderer); no_claim=templates that vary their wording
+test('a template used three times that differs only in a code name, a path or a file name counts once', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // Page 3 holds 1,100 characters of filler and three template sentences.
+    const templates = {
+      codeNames:
+        '<p>The QueryClient keeps its state for the observers.</p><p>The QueryCache keeps its state for the observers.</p><p>The MutationCache keeps its state for the observers.</p>',
+      paths:
+        '<p>Read packages/alpha before the rest.</p><p>Read packages/beta before the rest.</p><p>Read packages/gamma before the rest.</p>',
+      fileNames:
+        '<p>The file hydration.ts holds this step.</p><p>The file retryer.ts holds this step.</p><p>The file notify.ts holds this step.</p>',
+    }
+    const outcomes = {}
+
+    // Act
+    for (const [kind, content] of Object.entries(templates)) {
+      const manifest = await wikiOf(root, {
+        fileCount: 12,
+        pageTexts: [1500, 1500, 1500, 1100],
+        childCount: 3,
+        diagramCounts: [2, 2, 1, 1],
+      })
+      manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
+        '</p>',
+        `</p>${content}`,
+      )
+      outcomes[kind] = await outcomeOf(manifest, root)
+    }
+
+    // Assert
+    const stub =
+      '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen '
+    assert.deepEqual(outcomes, {
+      codeNames: `${stub}page-3.html (1150 characters; not counted: 101 in repeated sentences).`,
+      paths: `${stub}page-3.html (1136 characters; not counted: 71 in repeated sentences).`,
+      fileNames: `${stub}page-3.html (1138 characters; not counted: 71 in repeated sentences).`,
+    })
+  })
+})
+
+// Value: protects=the docstring copied into a page with its names set in <code>, which a reader sees as the source's own words; fails_when=an inline tag reads as a space, so "QueryCache ." no longer matches the source's "QueryCache." and the copy counts; why_new=Cycle 0115 review round (inline tags defeated the copied-text rule); seam=none (the real renderer); no_claim=copies that change words
+test('a docstring copied with its names in <code> is copied text and does not count', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // The 52-character sentence is copied from docs/observer.ts, which page 3 cites.
+    const manifest = await wikiOf(root, {
+      fileCount: 11,
+      pageTexts: [1500, 1500, 1500, 1148],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+      extraFiles: {
+        'docs/observer.ts':
+          '/**\n * A `QueryObserver` watches one query in the `QueryCache`.\n */\nexport const observer = 1;\n',
+      },
+    })
+    manifest.pages[3].sources.push({ path: 'docs/observer.ts', line: 1 })
+    manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
+      '</p>',
+      '</p><p>A <code>QueryObserver</code> watches one query in the <code>QueryCache</code>.</p>',
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      '1 page has fewer than 1200 characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen page-3.html (1148 characters; not counted: 52 copied from cited sources).',
+    )
+  })
+})
+
+// Value: protects=the Japanese learner whose Wiki names a file inside a sentence with no spaces; fails_when=a path swallows the rest of the sentence, so three different Japanese sentences that each name a path read as one repeated form and two of them stop counting; why_new=Cycle 0115 review round (Japanese path collapse); seam=none (the real renderer); no_claim=that Japanese template text is caught as well as English
+test('three different Japanese sentences that each name a path all count', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    // The paths are written into the Japanese text with no space around them; the three sentences weigh 32, 34 and 41, and page 3 holds 1,200 characters only when all three count.
+    const manifest = await wikiOf(root, {
+      fileCount: 12,
+      pageTexts: [1500, 1500, 1500, 1093],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    })
+    manifest.pages[3].contentHtml = manifest.pages[3].contentHtml.replace(
+      '</p>',
+      '</p><p>src/a.tsはキャッシュを管理する。lib/c/d.tsを読み込んで状態を返す。packages/x/y.tsが購読者に変更を知らせる。</p>',
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
   })
 })
