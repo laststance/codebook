@@ -3,14 +3,38 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-/** The skill the extension ships and Cursor's setup copies; tests run from `dist/tests`. */
+/**
+ * Reads the bundled `SKILL.md`, the skill the extension ships and Cursor's setup copies, so a test can pin a sentence of its Wiki route.
+ *
+ * Tests run from `dist/tests`, so the path climbs two folders to the extension root. Called by the skill tests of this file.
+ *
+ * @returns The skill's text.
+ *
+ * @example
+ * ```ts
+ * const skill = await readBundledSkill()
+ * assert.ok(skill.includes('metadata:\n  version: "1.0.88"\n'))
+ * ```
+ */
 const readBundledSkill = (): Promise<string> =>
   readFile(
     join(__dirname, '..', '..', 'skills', 'codebook', 'SKILL.md'),
     'utf8',
   )
 
-/** The packaged README, the learner's documentation; tests run from `dist/tests`. */
+/**
+ * Reads the packaged `README.md`, the learner's documentation, so a test can pin the sentence that describes a Wiki rule.
+ *
+ * Tests run from `dist/tests`, so the path climbs two folders to the extension root. Called by the README tests of this file.
+ *
+ * @returns The README's text.
+ *
+ * @example
+ * ```ts
+ * const readme = await readPackagedReadme()
+ * assert.ok(readme.includes('An answer names the repository files it relies on by path'))
+ * ```
+ */
 const readPackagedReadme = (): Promise<string> =>
   readFile(join(__dirname, '..', '..', 'README.md'), 'utf8')
 
@@ -58,25 +82,37 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   )
   assert.ok(
     readme.includes(
-      'It also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
+      'Once 12 or more included code files need explanation, it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
     ),
   )
 })
 
-// Value: protects=the learner's README telling what an answer on the Wiki page shows: files by path, never an internal excerpt id, several lines per file, one link per distinct file and line; fails_when=the README loses that sentence and a learner cannot tell what the links under an answer open; why_new=C113 review round (Q&A citations); seam=none; no_claim=that a real answer cites well
-test('the README says an answer names files by path and its links open each cited line once', async () => {
+// Value: protects=the learner's README telling what an answer on the Wiki page shows: files by path, never an internal excerpt id, several lines per file up to the 40-citation limit, one link per distinct file and line; fails_when=the README loses that sentence or its limit and a learner cannot tell what the links under an answer open; why_new=C113 review round (Q&A citations); seam=none; no_claim=that a real answer cites well
+test('the README says an answer names files by path, cites at most 40 lines, and its links open each cited line once', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
 
   // Assert
   assert.ok(
     readme.includes(
-      'An answer names the repository files it relies on by path, never by an internal excerpt id such as S1, and may cite several lines of each file; the links under the answer open each cited line in your editor, once per distinct file and line.',
+      'An answer names the repository files it relies on by path, never by an internal excerpt id such as S1, and may cite several lines of each file, up to 40 citations in all (repeats counted); an answer with more is refused as one without usable source citations. The links under the answer open each cited line in your editor, once per distinct file and line.',
     ),
   )
 })
 
-/** The renderer that enforces the depth floors the skill states; tests run from `dist/tests`. */
+/**
+ * Reads the bundled `render-wiki.mjs`, the renderer that enforces the depth floors the skill states, so a test can compare its constants with the skill's sentence.
+ *
+ * Tests run from `dist/tests`, so the path climbs two folders to the extension root. Called by the depth-floor test of this file.
+ *
+ * @returns The renderer's source text.
+ *
+ * @example
+ * ```ts
+ * const renderer = await readRenderer()
+ * assert.match(renderer, /const DEPTH_MIN_PAGE_TEXT = 1200;/)
+ * ```
+ */
 const readRenderer = (): Promise<string> =>
   readFile(
     join(__dirname, '..', '..', 'skills', 'codebook', 'render-wiki.mjs'),

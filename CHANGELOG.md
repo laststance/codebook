@@ -11,7 +11,7 @@ Cycle 0113 ([Issue #290](https://github.com/laststance/codebook/issues/290)), a 
   - at least 2 child pages;
   - one page per 8 explained code files, up to the 256-page limit;
   - a diagram on every page, and about three diagrams per two pages in total;
-  - at least 1,200 characters of article text on every page, and 500 per explained code file in total (up to 120,000). Chinese, Japanese and Korean characters count twice; HTML comments and zero-width characters, which a reader never sees, do not count.
+  - at least 1,200 characters of article text on every page, and 500 per explained code file in total (up to 120,000). Chinese, Japanese and Korean characters count twice; HTML comments, attribute values and zero-width characters, which a reader never sees, do not count.
 - **Wiki answers name the repository files they rely on**, never an internal excerpt id such as `S1`. An id-shaped word that the question or the source itself uses, such as an `S3` bucket, stays as written.
 - **A Wiki answer may cite several lines of each file.** Up to 40 citations are accepted, each still checked against the selected source lines, and repeats are shown once. Before, more than 6 citations refused the whole answer, which in Cursor read "The editor model returned a Wiki answer without usable source citations".
 

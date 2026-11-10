@@ -542,6 +542,43 @@ test('a page padded with an HTML comment holding > or with zero-width spaces is 
   })
 })
 
+// Value: protects=the depth floor against text held in an attribute value: a > inside a double- or single-quoted value does not end the tag, so the value never counts as article text; fails_when=a tag is cut at the first > even inside its quoted value, so title="A -> B: …" padding passes the 1,200 floor with a stub page; why_new=C113 hosted CodeRabbit review on PR 291; seam=none (the real renderer); no_claim=unquoted attribute values, which the renderer's markup check refuses when they hold >
+test('a page padded inside a quoted attribute value holding > is measured by the text a reader sees', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const options = {
+      fileCount: 12,
+      pageTexts: [2000, 2000, 2000, 2000],
+      childCount: 3,
+      diagramCounts: [2, 2, 1, 1],
+    }
+    const padded = async (padding) => {
+      const manifest = await wikiOf(root, options)
+      manifest.pages[3].contentHtml = `<h2 id="flow">Flow</h2><p>Stub.${padding}</p>${manifest.pages[3].contentHtml.slice(manifest.pages[3].contentHtml.indexOf('<figure'))}`
+      return manifest
+    }
+    const doubleQuoted = await padded(
+      `<span title="A -> B: ${'x'.repeat(1300)}"></span>`,
+    )
+    const singleQuoted = await padded(
+      `<span title='A -> "B": ${'x'.repeat(1300)}'></span>`,
+    )
+
+    // Act
+    const doubleQuotedOutcome = await outcomeOf(doubleQuoted, root)
+    const singleQuotedOutcome = await outcomeOf(singleQuoted, root)
+
+    // Assert
+    assert.deepEqual(
+      [doubleQuotedOutcome, singleQuotedOutcome],
+      [
+        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
+        '1 page has fewer than 1200 characters of article text (CJK characters counted twice): deepen page-3.html (10 characters).',
+      ],
+    )
+  })
+})
+
 // Value: protects=the diagram floor of a three-page Wiki, which rounds 4.5 up to 5; fails_when=the floor is rounded down, so three pages with four diagrams are rendered; why_new=C113 review round (Math.ceil mutant); seam=none (the real renderer); no_claim=none
 test('a 12-file Wiki of three pages with four diagrams is refused because it needs five', async () => {
   await inProject(async (root) => {
