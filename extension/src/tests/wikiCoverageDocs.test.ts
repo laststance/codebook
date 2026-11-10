@@ -120,7 +120,7 @@ test('the README says a large repository gets a chapter per package, an Examples
   // Assert
   assert.ok(
     readme.includes(
-      'For a repository of several hundred code files, the bundled skill asks for a chapter per package (or a page in a chapter of related packages), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests; examples, tests and build code stay in the Wiki instead of being left out.',
+      'For a repository of several hundred code files, the bundled skill asks for a chapter per package (or a page in a chapter of related packages), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out.',
     ),
   )
 })
