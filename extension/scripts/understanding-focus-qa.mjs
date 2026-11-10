@@ -16,7 +16,7 @@ import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
 import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
 import { readerDomSessionName } from './utils/readerDomSessionName.mjs'
 
-// Real Chromium verifies focus and default checkbox activation of the understanding checkbox in the Study pane and in the Repository Wiki pane; the serialized host bridge is intentionally simulated.
+// Real Chromium verifies focus and default checkbox activation of the understanding checkbox in the Study pane and in the Repository Wiki pane, and of the per-step check (I understand this step) in a browser replay's selected-step block and in a Node family's replay section; the serialized host bridge is intentionally simulated.
 const [mode = 'verify', outputPath = 'artifacts/understanding-dom'] =
   process.argv.slice(2)
 assert.ok(['red', 'verify'].includes(mode))
@@ -83,6 +83,101 @@ const studyMessage = {
     preference: { status: 'default' },
     panes: {},
   },
+}
+// The per-step checks: a browser replay's selected-step block and a Node family's replay section, each with two steps whose first is marked understood.
+const STEP_STUDY_ID =
+  '11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222'
+const stepViewOf = (ids) => ({
+  studyId: STEP_STUDY_ID,
+  status: 'ready',
+  steps: ids.map((stepId, index) => ({
+    stepId,
+    understood: index === 0,
+    ...(index === 0 ? { at: '2026-11-10T01:02:03.000Z' } : {}),
+    reviewNeeded: false,
+    saving: false,
+  })),
+  understoodCount: 1,
+  selectableCount: ids.length,
+})
+const stepContent = (ids) => ({
+  question: 'How does the theme change?',
+  title: 'Theme change',
+  summary: 'The control applies the theme.',
+  participants: [
+    { id: 'control', label: 'Control' },
+    { id: 'interface', label: 'Interface' },
+  ],
+  steps: ids.map((id) => ({
+    id,
+    from: 'control',
+    to: 'interface',
+    label: `Step ${id}`,
+    explanation: `Explains ${id}.`,
+    evidence: 'observed',
+  })),
+})
+const browserStepIds = ['select', 'apply']
+const observedSnapshotUri =
+  studyMessage.model.observation?.snapshotUri ?? 'codebook://recorded-stop'
+const browserStepMessage = {
+  ...studyMessage,
+  contentTab: 'recording',
+  recording: {
+    revision: 1,
+    studyId: STEP_STUDY_ID,
+    mode: 'paused',
+    readiness: 'ready',
+    presentedMs: 2000,
+    range: { startMs: 0, endMs: 8000, endKnown: true },
+    recordingStatus: 'finalized',
+    learningSummary: {
+      explanationId: '44444444-4444-4444-8444-444444444444',
+      createdAt: '2026-11-10T00:00:00.000Z',
+      content: {
+        ...stepContent(browserStepIds),
+        steps: stepContent(browserStepIds).steps.map((step) => ({
+          ...step,
+          reference: {
+            snapshotUri: observedSnapshotUri,
+            sourceHash: study.configuration.source.hash,
+          },
+        })),
+      },
+      positions: browserStepIds.map((stepId) => ({ stepId, elapsedMs: 2000 })),
+    },
+  },
+  stepUnderstanding: stepViewOf(browserStepIds),
+}
+const nodeStepIds = ['read', 'keep']
+const nodeStepMessage = {
+  ...studyMessage,
+  replayFamily: 'test',
+  nodeHistoryEventCount: 0,
+  nodeHistory: {
+    header: { studyId: STEP_STUDY_ID },
+    status: 'complete',
+    entries: [],
+  },
+  nodeHistoryLearningSummary: {
+    content: stepContent(nodeStepIds),
+    positions: [],
+  },
+  nodeHistoryPosition: { sequence: 2, eventIndex: 0 },
+  nodeHistorySection: {
+    status: 'Test passed · exit code 0 · capture complete',
+    position: 'Stop 1 of 1 · 1.20 s',
+    pointer: 'Output up to this moment is in the Application pane.',
+    applicationClosed: false,
+    sameMomentStepIds: [],
+    stepActions: {},
+    events: 'Events (0)',
+    verdict: 'Test passed · exit code 0',
+    previousStop: false,
+    nextStop: false,
+    selectedStepId: 'read',
+  },
+  stepUnderstanding: stepViewOf(nodeStepIds),
 }
 const repositoryMessage = {
   type: 'repository',
@@ -186,35 +281,63 @@ async function check(page, options, collected) {
           window.dispatchEvent(new MessageEvent('message', { data: value })),
         message,
       )
+    // A per-step pane carries its state in the selected step's entry of the Study message; the other panes carry it in the model or the repository state.
+    const stepPane = pane.requestType === 'step-understanding'
+    const changeEntry = (message, change) => ({
+      ...message,
+      stepUnderstanding: {
+        ...message.stepUnderstanding,
+        steps: message.stepUnderstanding.steps.map((step) =>
+          step.stepId === pane.stepId ? { ...step, ...change } : step,
+        ),
+      },
+    })
     const state = () =>
-      page.evaluate((id) => {
-        const checkbox = document.getElementById(id)
-        return {
-          focus: document.activeElement.id,
-          disabled: checkbox.disabled,
-          ariaDisabled: checkbox.getAttribute('aria-disabled'),
-          checked: checkbox.checked,
-          requests: window.sent
-            .filter((message) => message.type === 'understanding')
-            .map((message) => message.understood),
-        }
-      }, pane.id)
+      page.evaluate(
+        ({ id, type }) => {
+          const checkbox = document.getElementById(id)
+          return {
+            focus: document.activeElement.id,
+            disabled: checkbox.disabled,
+            ariaDisabled: checkbox.getAttribute('aria-disabled'),
+            checked: checkbox.checked,
+            requests: window.sent
+              .filter((message) => message.type === type)
+              .map((message) => message.understood),
+          }
+        },
+        { id: pane.id, type: pane.requestType ?? 'understanding' },
+      )
+    const saving = (message) =>
+      stepPane
+        ? changeEntry(message, { saving: true })
+        : { ...message, saving: true }
+    const failedSave = (message) =>
+      stepPane
+        ? changeEntry(message, { saving: false, failure: 'Not saved' })
+        : { ...message, error: 'Not saved', errors: ['Not saved'] }
     const settled = (understood) =>
-      pane.message.type === 'study'
-        ? {
-            ...pane.message,
-            model: {
-              ...pane.message.model,
-              selectedUnderstanding: {
-                ...pane.message.model.selectedUnderstanding,
-                understood,
+      stepPane
+        ? changeEntry(pane.message, {
+            understood,
+            saving: false,
+            ...(understood ? { at: '2026-11-10T01:02:03.000Z' } : {}),
+          })
+        : pane.message.type === 'study'
+          ? {
+              ...pane.message,
+              model: {
+                ...pane.message.model,
+                selectedUnderstanding: {
+                  ...pane.message.model.selectedUnderstanding,
+                  understood,
+                },
               },
-            },
-          }
-        : {
-            ...pane.message,
-            understanding: { ...pane.message.understanding, understood },
-          }
+            }
+          : {
+              ...pane.message,
+              understanding: { ...pane.message.understanding, understood },
+            }
     await page.setViewportSize({ width: 390, height: 640 })
     await render()
     const checkbox = page.locator(`#${pane.id}`)
@@ -223,8 +346,8 @@ async function check(page, options, collected) {
     await page.keyboard.press('Space')
     await page.keyboard.press('Space')
     const immediate = await state()
-    await publish({ ...pane.message, saving: true })
-    const saving = await state()
+    await publish(saving(pane.message))
+    const whileSaving = await state()
     await page.keyboard.press('Space')
     const bounds = await checkbox.boundingBox()
     await page.mouse.click(
@@ -240,9 +363,9 @@ async function check(page, options, collected) {
     // Assert: acknowledgement preserves focus, never optimistically changes checked state, and admits the next explicit choice.
     const success =
       immediate.requests.length === 1 &&
-      saving.focus === pane.id &&
-      !saving.disabled &&
-      saving.ariaDisabled === 'true' &&
+      whileSaving.focus === pane.id &&
+      !whileSaving.disabled &&
+      whileSaving.ariaDisabled === 'true' &&
       blocked.requests.length === 1 &&
       blocked.checked === true &&
       completed.focus === pane.id &&
@@ -251,12 +374,8 @@ async function check(page, options, collected) {
     await render()
     await checkbox.focus()
     await page.keyboard.press('Space')
-    await publish({ ...pane.message, saving: true })
-    await publish({
-      ...pane.message,
-      error: 'Not saved',
-      errors: ['Not saved'],
-    })
+    await publish(saving(pane.message))
+    await publish(failedSave(pane.message))
     const failed = await state()
     await page.keyboard.press('Space')
     const retried = await state()
@@ -267,7 +386,7 @@ async function check(page, options, collected) {
     await render()
     await checkbox.focus()
     await page.keyboard.press('Space')
-    await publish({ ...pane.message, saving: true })
+    await publish(saving(pane.message))
     await page.keyboard.press('Tab')
     const moved = await state()
     await publish(settled(false))
@@ -277,8 +396,15 @@ async function check(page, options, collected) {
     await render()
     await publish({ ...pane.message, loading: true })
     const loading = await state()
-    const unknown =
-      pane.message.type === 'study'
+    const unknown = stepPane
+      ? {
+          ...pane.message,
+          stepUnderstanding: {
+            ...pane.message.stepUnderstanding,
+            status: 'unknown',
+          },
+        }
+      : pane.message.type === 'study'
         ? {
             ...pane.message,
             model: {
@@ -296,10 +422,67 @@ async function check(page, options, collected) {
     await publish(unknown)
     const unavailable = await state()
     const unavailableInert = loading.disabled && unavailable.disabled
+    // A per-step check shows its state line, its progress line and, in a browser replay, the step's heading and explanation in order below the sequence.
+    let drawn
+    if (stepPane) {
+      await render()
+      drawn = await page.evaluate(
+        ({ prefix, headingId }) => {
+          const get = (suffix) => document.getElementById(`${prefix}-${suffix}`)
+          const inOrder = (first, second) =>
+            Boolean(
+              first.compareDocumentPosition(second) &
+              Node.DOCUMENT_POSITION_FOLLOWING,
+            )
+          const check = get('understood')
+          const label = check.closest('label')
+          const heading = headingId ? document.getElementById(headingId) : null
+          const sequence = document.getElementById('learning-sequence')
+          return {
+            checkVisible: check.checkVisibility(),
+            labelText: label.textContent.trim(),
+            state: get('state').textContent,
+            progress: get('progress').textContent,
+            progressVisible: get('progress').checkVisibility(),
+            heading: heading?.textContent ?? null,
+            explanation: heading
+              ? document.getElementById(`${prefix}-explanation`).textContent
+              : null,
+            belowSequence: heading
+              ? inOrder(sequence, heading) &&
+                inOrder(
+                  heading,
+                  document.getElementById(`${prefix}-explanation`),
+                ) &&
+                inOrder(document.getElementById(`${prefix}-explanation`), label)
+              : null,
+          }
+        },
+        {
+          prefix: pane.id.replace(/-understood$/, ''),
+          headingId: pane.headingId ?? null,
+        },
+      )
+    }
+    if (stepPane)
+      collected.cases.push({
+        name: `${pane.name}: the check is labelled I understand this step, shows when the learner marked it and how many steps are understood${pane.headingId ? ', and follows the step heading and explanation below the sequence' : ''}`,
+        actual: drawn,
+        passed:
+          drawn.checkVisible &&
+          drawn.labelText === 'I understand this step' &&
+          /^Marked understood · /.test(drawn.state) &&
+          drawn.progressVisible &&
+          drawn.progress === 'Steps understood: 1 of 2' &&
+          (!pane.headingId ||
+            (drawn.heading === 'Step 1 · Step select' &&
+              drawn.explanation === 'Explains select.' &&
+              drawn.belowSequence === true)),
+      })
     collected.cases.push(
       {
         name: `${pane.name}: two immediate Space presses ask for one save, the checkbox keeps the focus while the save is pending and takes no further press, and the first press after the answer asks again`,
-        actual: { immediate, saving, blocked, completed, repeated },
+        actual: { immediate, whileSaving, blocked, completed, repeated },
         passed: success,
       },
       {
@@ -353,6 +536,23 @@ try {
           id: 'understand',
           html: repositoryHtml(),
           message: repositoryMessage,
+        },
+        {
+          name: "a browser replay's selected-step check",
+          id: 'learning-step-understood',
+          headingId: 'learning-step-heading',
+          requestType: 'step-understanding',
+          stepId: browserStepIds[0],
+          html: studyHtml('context'),
+          message: browserStepMessage,
+        },
+        {
+          name: "a Node family's step check",
+          id: 'node-step-understood',
+          requestType: 'step-understanding',
+          stepId: nodeStepIds[0],
+          html: studyHtml('context'),
+          message: nodeStepMessage,
         },
       ],
       output,

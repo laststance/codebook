@@ -1093,6 +1093,8 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    * @throws When the file is no bounded regular file, does not match its schema or names another history; the file is left as it is.
    * @example await store.readStepUnderstanding(studyId) // => { version: 1, studyId, decisions: [] }
    */
+  // Called through the Study workspace's per-step session for whichever store holds the shown history, which static analysis cannot trace to this class.
+  // fallow-ignore-next-line unused-class-member
   readStepUnderstanding(
     studyId: string,
     limitBytes: number = STEP_UNDERSTANDING_LIMIT_BYTES,
@@ -1115,6 +1117,8 @@ export class NodeHistoryStore<Types extends HistoryTypes> {
    * @throws When the history is being removed or is gone, another window holds the storage lock (`StorageLockHeldError`), or the file cannot be read or written; the previous bytes stay.
    * @example await store.saveStepUnderstanding(studyId, { stepId, stepHash, understood: true, at }, steps)
    */
+  // Called through the Study workspace's per-step session for whichever store holds the shown history, which static analysis cannot trace to this class.
+  // fallow-ignore-next-line unused-class-member
   async saveStepUnderstanding(
     studyId: string,
     change: StepUnderstandingDecision,

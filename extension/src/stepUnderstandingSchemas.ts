@@ -5,7 +5,7 @@ import { learningStepIdSchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 
 /** One decision of the learner about one step of one version of a saved replay's material: the step's id, the hash of the step as it was saved, whether the learner marked it understood, and when. */
-export const stepUnderstandingDecisionSchema = z.strictObject({
+const stepUnderstandingDecisionSchema = z.strictObject({
   stepId: learningStepIdSchema,
   stepHash: z.string().regex(/^[a-f0-9]{64}$/),
   understood: z.boolean(),

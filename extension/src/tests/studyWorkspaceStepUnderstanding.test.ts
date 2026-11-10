@@ -966,8 +966,17 @@ test('browser recording: pressing a step’s check saves that step alone, counts
   try {
     await whenRead(opened)
     const [first, second] = opened.stepIds
+    const library = await opened.harness.reader.learningStorage()
     const revisionCheckBefore = JSON.stringify(
       lastView(opened.harness)?.model.selectedUnderstanding,
+    )
+    const outlineBefore = JSON.stringify([
+      lastView(opened.harness)?.model.understoodCount,
+      lastView(opened.harness)?.model.reviewCount,
+      lastView(opened.harness)?.model.progressByItem,
+    ])
+    const ledgerBefore = JSON.stringify(
+      (await library.readProgress()).decisions,
     )
 
     // Act
@@ -983,6 +992,19 @@ test('browser recording: pressing a step’s check saves that step alone, counts
     assert.equal(
       JSON.stringify(lastView(opened.harness)?.model.selectedUnderstanding),
       revisionCheckBefore,
+    )
+    // The Learning outline's counts and the v4 ledger the Repository Wiki reader's check writes to are unchanged by a step save.
+    assert.equal(
+      JSON.stringify([
+        lastView(opened.harness)?.model.understoodCount,
+        lastView(opened.harness)?.model.reviewCount,
+        lastView(opened.harness)?.model.progressByItem,
+      ]),
+      outlineBefore,
+    )
+    assert.equal(
+      JSON.stringify((await library.readProgress()).decisions),
+      ledgerBefore,
     )
 
     // Act: a step with no recorded position has no check.
