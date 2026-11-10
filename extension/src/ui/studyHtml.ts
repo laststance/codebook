@@ -4032,7 +4032,7 @@ function studyClient(
    * Words the progress line of the per-step checks; called by {@link drawStepCheck} when the counts are known.
    * @param view - The ready step-understanding view.
    * @returns The progress sentence with both counts filled in.
-   * @example stepProgressLine(view) // => '2 of 5 steps understood'
+   * @example stepProgressLine(view) // => 'Steps understood: 2 of 5'
    */
   const stepProgressLine = (
     view: NonNullable<StudyViewMessage['stepUnderstanding']>,

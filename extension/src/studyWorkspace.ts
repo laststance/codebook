@@ -217,6 +217,7 @@ import type {
   StudyRemovalExclusion,
   StudyService,
 } from './service'
+import { repositoryHashSchema } from './sourceSchemas'
 import {
   projectStudy,
   studyIdSchema,
@@ -595,7 +596,7 @@ const messageSchema = z.discriminatedUnion('type', [
     studyId: studyIdSchema,
     stepId: nodeLearningStepIdSchema,
     // The hash of the step the page shows; only compared, the saved hash is computed from the saved step.
-    stepHash: z.string().regex(/^[a-f0-9]{64}$/),
+    stepHash: repositoryHashSchema,
     understood: z.boolean(),
   }),
   z.strictObject({
