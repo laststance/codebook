@@ -8,6 +8,9 @@ Cycle 0111 ([Issue #285](https://github.com/laststance/codebook/issues/285)), a 
 - After **Developer: Reload Window** or a restart, when the earlier window left its empty Application group, the first Open writes `Leftover Application group: closed column <c> of <n> groups; removal seen after <ms> ms` to Output › Codebook. When the editor has not removed the group after 5 s, the line ends `removal not seen within 5000 ms (groups now <m>)`.
 - The Open then fails with `Timed out waiting for leftover Application group removal (groups before the close: <n>, now: <m>, after 5000 ms). Run "Codebook: Open Study Workspace" again.` The refusal used to name neither count nor what to do.
 
+### Fixed
+- An action sent to a web app run that has failed answers `isError` with the run's state also after Codebook released the run, which it does within a quarter second of the failure. The state then reads `stopped` and keeps the failure as its `error`. Before, the answer left the state out once the release had begun, so the chat lost where the run stood.
+
 **Compatibility.** No MCP API, bundled skill or study format change.
 
 ## [0.2.112.0] - 2026-11-10 (development candidate)

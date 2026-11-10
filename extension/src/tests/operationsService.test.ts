@@ -469,16 +469,20 @@ test('a single-action run that fails after a continuation answers isError with t
   assert.equal(structured.state.state, 'failed')
 })
 
-// protects=DX-2 for codebook_action: an action sent to a repository-browser run that already failed answers isError true with the error and the run state; fails_when=the result carries no run state; no_claim=none beyond protects
+// protects=DX-2 for codebook_action: an action sent to a repository-browser run that already failed, and that the service has released since (it does so within a maintenance interval, before an agent's next action as a rule), answers isError true with the error and the run state; fails_when=the result carries no run state; no_claim=none beyond protects (Cycle 0111: the action used to race the release, and CI's coverage run lost the state)
 test('an action sent to a failed run answers isError with the error and the run state', async (context) => {
   // Arrange
-  const { service, receipt, runtime } = await startOperationsRun(
+  const { service, receipt, record, runtime } = await startOperationsRun(
     context,
     'dx2-action',
   )
   runtime.failures.push('Repository setup deadline exceeded')
   runtime.status = 'failed'
   const client = await connectMcpClient(context, service)
+  await waitUntil(
+    () => service.state(record).state === 'stopped',
+    'the release of the failed run',
+  )
   // Act
   const result = await client.callTool({
     name: 'codebook_action',
@@ -496,13 +500,13 @@ test('an action sent to a failed run answers isError with the error and the run 
     state?: { state: string }
   }
   assert.equal(structured.ok, false)
-  assert.equal(structured.state?.state, 'failed')
+  assert.equal(structured.state?.state, 'stopped')
 })
 
-// protects=DX-2 for codebook_action: a used key resent with another action to a failed run answers why that request was refused (IDEMPOTENCY_CONFLICT), with the run's own failure kept in the state beside it; fails_when=the answer's error is the run's failure (OPERATION_AFTER_NOT_MET) instead of the refusal, or the state loses the run's failure; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so
+// protects=DX-2 for codebook_action: a used key resent with another action to a failed run, released since by the service, answers why that request was refused (IDEMPOTENCY_CONFLICT), with the run's own failure kept in the state beside it; fails_when=the answer's error is the run's failure (OPERATION_AFTER_NOT_MET) instead of the refusal, or the state loses the run's failure; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so
 test('a used key resent with another action to a failed run answers IDEMPOTENCY_CONFLICT with the run failure in its state', async (context) => {
   // Arrange
-  const { service, receipt, runtime } = await startOperationsRun(
+  const { service, receipt, record, runtime } = await startOperationsRun(
     context,
     'dx2-conflict',
     [{ kind: 'click', title: 'Create Invoice', selector: '#submit' }],
@@ -526,6 +530,10 @@ test('a used key resent with another action to a failed run answers IDEMPOTENCY_
   )
   runtime.status = 'failed'
   const client = await connectMcpClient(context, service)
+  await waitUntil(
+    () => service.state(record).state === 'stopped',
+    'the release of the failed run',
+  )
   // Act
   const result = await client.callTool({
     name: 'codebook_action',
@@ -549,7 +557,7 @@ test('a used key resent with another action to a failed run answers IDEMPOTENCY_
     structured.error.message,
     'Action key already names different arguments.',
   )
-  assert.equal(structured.state?.state, 'failed')
+  assert.equal(structured.state?.state, 'stopped')
   assert.equal(structured.state?.error?.code, 'OPERATION_AFTER_NOT_MET')
 })
 
