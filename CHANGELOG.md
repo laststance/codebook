@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.114.0] - 2026-11-10 (development candidate)
+
+Cycle 0112 ([Issue #288](https://github.com/laststance/codebook/issues/288)), a bug-fix cycle. Nothing changes in the extension you install.
+
+**Codebook's own real-Chrome tests start one browser per test file.** A slow Chrome start under load failed CI's coverage run in Cycle 0111. The secret frame gate tests now share one headless Chrome per file, about 2 starts per suite run instead of about 31, and each test still gets its own browser context, so no cookies or storage carry over between tests.
+
+**Compatibility.** No MCP API, bundled skill or study format change.
+
 ## [0.2.113.0] - 2026-11-10 (development candidate)
 
 Cycle 0111 ([Issue #285](https://github.com/laststance/codebook/issues/285)), a feature cycle. **When the first Open after a window reload cannot retire the earlier window's leftover Application group in time, Codebook now says what it saw, and Output › Codebook records every such close.** After a window reload, the first **Codebook: Open Study Workspace** could fail with "Timed out waiting for leftover Application group removal" (Cursor in Cycles 0084–0087 and 0094, VS Code once in Cycle 0099), and a second Open worked. In 16 reload-then-open trials in VS Code 1.145.2 and Cursor 3.29.15, 8 of them under heavy load, every leftover group was removed within 1 ms and no Open failed. The cause of the earlier failures therefore stays unknown; a recurrence now names what the editor did.
