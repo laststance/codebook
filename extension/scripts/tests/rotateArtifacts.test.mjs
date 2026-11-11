@@ -108,6 +108,12 @@ function createFakeGh(options = {}) {
     uploaded: [],
     corruptPattern: options.corruptPattern ?? null,
     omitDigest: options.omitDigest ?? false,
+    // `gh auth token` fails, as when the archive account is not logged in.
+    authFails: options.authFails ?? false,
+    // A `gh release download` whose asset pattern contains this text fails, as a dropped connection would.
+    failDownloadFor: options.failDownloadFor ?? null,
+    // A `gh release upload` of a file whose name ends with this text fails with an error that is no name conflict.
+    failUploadFor: options.failUploadFor ?? null,
     nextId: 1,
   }
   const result = (stdout) => ({ status: 0, stdout, stderr: '' })
@@ -132,7 +138,8 @@ function createFakeGh(options = {}) {
   async function handle(args, callOptions) {
     state.calls.push({ args, token: callOptions?.env?.GH_TOKEN })
     const [first, second] = args
-    if (first === 'auth') return result(`${TOKEN}\n`)
+    if (first === 'auth')
+      return state.authFails ? failure('no token found') : result(`${TOKEN}\n`)
     if (first === 'repo' && second === 'view')
       return state.exists
         ? result(JSON.stringify({ visibility: state.visibility }))
@@ -151,6 +158,8 @@ function createFakeGh(options = {}) {
     }
     if (first === 'release' && second === 'upload') {
       if (state.uploadsLeft <= 0) return failure('connection reset')
+      if (state.failUploadFor !== null && args[3].endsWith(state.failUploadFor))
+        return failure('HTTP 502 bad gateway')
       state.uploadsLeft -= 1
       const name = args[3].split('/').at(-1)
       if (state.releases.get(args[2]).assets.has(name))
@@ -161,6 +170,11 @@ function createFakeGh(options = {}) {
     }
     if (first === 'release' && second === 'download') {
       const pattern = args[args.indexOf('--pattern') + 1]
+      if (
+        state.failDownloadFor !== null &&
+        pattern.includes(state.failDownloadFor)
+      )
+        return failure('connection reset')
       const matching = [
         ...(state.releases.get(args[2])?.assets.values() ?? []),
       ].filter((asset) => matchesPattern(pattern, asset.name))
@@ -2290,4 +2304,159 @@ test('keeps a restored folder and exits nonzero when its release asset is corrup
     await readFile(join(root, 'artifacts', 'c1', 'a.txt'), 'utf8'),
     'original',
   )
+})
+
+test('keeps a folder whose archive cannot be downloaded or uploaded, reports E_DOWNLOAD and E_UPLOAD, and still rotates the folder between them', async (t) => {
+  // protects=a folder is deleted only after its archive reached the release and came back intact; fails_when=a failed download or an upload error other than a name conflict lets c1 or c3 be deleted, stops the run before c2, or exits 0; why_new=no test made the download or the upload itself fail, only a changed folder or a differing file; seam=none; no_claim=says nothing about a partial download that leaves a corrupt file
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  await putFile(root, 'c2/b.txt', 'two')
+  await putFile(root, 'c3/c.txt', 'three')
+  const fake = createFakeGh({
+    failDownloadFor: 'c1.',
+    failUploadFor: 'c3.tar.gz',
+  })
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '6',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(lines.some((line) => line.startsWith('FAILED c1 E_DOWNLOAD')))
+  assert.ok(lines.some((line) => line.startsWith('FAILED c3 E_UPLOAD')))
+  assert.ok(
+    lines.includes(
+      'ROTATE: archived=1 deleted=0 kept=0 skipped=0 failed=2 freed_bytes=3',
+    ),
+  )
+  assert.deepEqual(
+    (await readdir(join(root, 'artifacts'))).filter((name) =>
+      name.startsWith('c'),
+    ),
+    ['c1', 'c3'],
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c1')), {
+    'a.txt': sha256('one'),
+  })
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c3')), {
+    'c.txt': sha256('three'),
+  })
+  assert.deepEqual(Object.keys(JSON.parse(fake.state.index).folders), ['c2'])
+})
+
+test('keeps the folder of an entry that fails with an unexpected error, reports E_INTERNAL and still rotates the next entry', async (t) => {
+  // protects=an unexpected exception in one entry never deletes its folder and never stops the run; fails_when=the error is not reported as E_INTERNAL, c1 is deleted, c2 is not rotated or the exit code is not 3; why_new=only refusals the tool raises itself were tested; seam=none (existing afterRecord override throws); no_claim=says nothing about which exceptions can occur
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  await putFile(root, 'c2/b.txt', 'two')
+  const fake = createFakeGh()
+  // Act
+  const { code, lines } = await rotate(
+    root,
+    fake,
+    ['--current', '5', '--apply'],
+    {
+      afterRecord: async (name) => {
+        if (name === 'c1') throw new Error('disk hiccup')
+      },
+    },
+  )
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(lines.includes('FAILED c1 E_INTERNAL: disk hiccup (kept)'))
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c1')), {
+    'a.txt': sha256('one'),
+  })
+  assert.equal((await readdir(join(root, 'artifacts'))).includes('c2'), false)
+})
+
+test('refuses two modes together, --restore with --init and an unknown option as usage errors that point at --help and change nothing', async (t) => {
+  // protects=a mistyped command never runs a half-understood mode; fails_when=--apply --init, --restore x --init or an unknown option is accepted, exits with another code or names no --help; why_new=only a bad --keep was tested as usage error; seam=none; no_claim=does not cover the --current checks
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const before = await snapshot(join(root, 'artifacts'))
+  const fake = createFakeGh()
+  const argvs = [
+    ['--apply', '--init'],
+    ['--restore', 'x', '--init'],
+    ['--current', '4', '--bogus'],
+  ]
+  // Act
+  const refusals = []
+  for (const argv of argvs)
+    refusals.push(await rotate(root, fake, argv).catch((error) => error))
+  // Assert
+  assert.deepEqual(
+    refusals.map((error) => [error.code, error.exitCode, error.fix]),
+    argvs.map(() => [
+      'E_USAGE',
+      64,
+      'node extension/scripts/rotate-artifacts.mjs --help',
+    ]),
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts')), before)
+  assert.deepEqual(fake.state.calls, [])
+})
+
+test('refuses --apply without creating a release or deleting anything when the archive account has no token or the repository cannot be read', async (t) => {
+  // protects=no deletion without a working archive account and repository; fails_when=a missing token or repository lets --apply go on, creates a release or removes c1; why_new=only a public repository and a missing index.json were refused; seam=none; no_claim=does not cover a token that stops working mid-run
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const before = await snapshot(join(root, 'artifacts'))
+  const noAccount = createFakeGh({ authFails: true })
+  const noRepository = createFakeGh({ exists: false })
+  // Act
+  const accountRefusal = await rotate(root, noAccount, [
+    '--current',
+    '4',
+    '--apply',
+  ]).catch((error) => error)
+  const repositoryRefusal = await rotate(root, noRepository, [
+    '--current',
+    '4',
+    '--apply',
+  ]).catch((error) => error)
+  // Assert
+  assert.equal(accountRefusal.code, 'E_NO_ACCOUNT')
+  assert.equal(repositoryRefusal.code, 'E_REPO_MISSING')
+  assert.deepEqual(await snapshot(join(root, 'artifacts')), before)
+  for (const fake of [noAccount, noRepository]) {
+    assert.equal(fake.state.releases.size, 0)
+    assert.equal(
+      fake.state.calls.some(
+        ({ args }) => args[0] === 'release' || args.includes('DELETE'),
+      ),
+      false,
+    )
+  }
+})
+
+test('refuses to restore qa-builds or an unsafe name and writes nothing under artifacts', async (t) => {
+  // protects=--restore never rebuilds QA builds automatically nor accepts a name that could leave artifacts/; fails_when=qa-builds is restored, ../x is accepted or a file appears under artifacts/; why_new=only unknown, existing and unsafe archive members were refused; seam=none; no_claim=does not cover other unsafe spellings
+  // Arrange
+  const root = await makeRoot(t)
+  const fake = createFakeGh()
+  // Act
+  const qaRefusal = await rotate(root, fake, ['--restore', 'qa-builds']).catch(
+    (error) => error,
+  )
+  const unsafeRefusal = await rotate(root, fake, ['--restore', '../x']).catch(
+    (error) => error,
+  )
+  // Assert
+  assert.equal(qaRefusal.code, 'E_RESTORE_UNSUPPORTED')
+  assert.equal(unsafeRefusal.code, 'E_USAGE')
+  assert.equal(unsafeRefusal.exitCode, 64)
+  assert.equal(
+    unsafeRefusal.fix,
+    'node extension/scripts/rotate-artifacts.mjs --help',
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts')), {})
+  assert.deepEqual(fake.state.calls, [])
 })
