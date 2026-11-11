@@ -119,6 +119,8 @@ const CODE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.js
 const MAX_NAMED_UNCOVERED = 40;
 /** The longest reason, in characters, a coverage exception may give. */
 const MAX_EXCEPTION_REASON = 300;
+/** Base names of files that can hold credentials, which a Wiki never indexes ({@link requireNoCredentialSources}), compared case-insensitively: an environment file (`.env`, or `.env.` and any name, such as `.env.test` or `.env.sample`), a private key or key store (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, never the `.pub` half), and the npm, netrc and PostgreSQL password files. */
+const CREDENTIAL_FILE_NAME = /^(?:\.env(?:\..+)?|.+\.(?:pem|key|p12|pfx|jks|keystore)|id_(?:rsa|dsa|ecdsa|ed25519)|\.npmrc|\.netrc|\.pgpass)$/i;
 /** The number of explained code files from which {@link requireWikiDepth} applies; a smaller repository is exempt. */
 const DEPTH_MIN_EXPLAINED_FILES = 12;
 /** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
@@ -318,6 +320,21 @@ function requireWikiDepth(manifest, indexedSources, citedTextsOf) {
   const shortfalls = depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
+/**
+ * Refuses a Wiki whose source index holds a file that can hold credentials ({@link CREDENTIAL_FILE_NAME}), so a published Wiki never indexes, hashes or cites one.
+ * Why: Cycle 0116 found an editor agent that excluded `.env` but indexed the tracked `.env.e2e` and `.env.test` of the repository it documented.
+ * Called by {@link renderWikiPages} once the index is read and before any source is opened, so a refusal comes before anything is written.
+ * @param includedSources - The manifest's source index, already checked for valid relative paths.
+ * @throws When an included source's base name is credential-shaped; the message names the files, sorted, up to {@link MAX_NAMED_UNCOVERED}.
+ * @example requireNoCredentialSources([{ path: 'src/env.ts' }]) // => undefined (a code file named env is no environment file)
+ * @example requireNoCredentialSources([{ path: '.env.test' }]) // throws "The Wiki's source index holds 1 file that can hold credentials: .env.test. …"
+ */
+function requireNoCredentialSources(includedSources) {
+  const credentialPaths = includedSources.map(source => source.path).filter(path => CREDENTIAL_FILE_NAME.test(basename(path))).sort();
+  if (!credentialPaths.length) return;
+  const more = credentialPaths.length > MAX_NAMED_UNCOVERED ? `, and ${credentialPaths.length - MAX_NAMED_UNCOVERED} more` : '';
+  throw new Error(`The Wiki's source index holds ${credentialPaths.length} file${credentialPaths.length === 1 ? '' : 's'} that can hold credentials: ${credentialPaths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`);
+}
 /** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
  * @throws When an exception is malformed, repeated or matches no included code file, or when code files stay uncited and unlisted; the message names the count and the first paths. @param inlinePaths - The paths of verified inline links ({@link verifiedInlinePathsOf}). @example requireCodeCoverage(manifest, indexedSources, new Set()) */
 function requireCodeCoverage(manifest, indexedSources, inlinePaths) {
@@ -352,7 +369,7 @@ function requireExactQuote(source, reference, endLine, lines) {
 }
 /** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
 const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the source index holds a file that can hold credentials ({@link requireNoCredentialSources}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
   if (!Array.isArray(manifest.includedSources)) throw new Error('The Wiki needs an included-source index.');
@@ -361,6 +378,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     if (!source || !safePath(source.path) || !/^[a-f0-9]{64}$/.test(source.sha256) || indexedSources.has(source.path)) throw new Error('The Wiki source index has an invalid path, hash or duplicate.');
     indexedSources.set(source.path, source);
   }
+  requireNoCredentialSources(manifest.includedSources);
   // A Windows checkout with core.autocrlf (and a VSIX packaged from one) holds the shell with CRLF line endings; a browser reads every CRLF and lone CR as LF before it hashes an inline script, so the pages are written, and their script hashed, with LF line endings.
   const template = (await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8')).replace(/\r\n?/g, '\n'), shellScriptHash = shellScriptHashOf(template);
   const sourceLines = new Map(), pages = new Map();

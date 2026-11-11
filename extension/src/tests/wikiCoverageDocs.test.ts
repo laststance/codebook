@@ -68,6 +68,19 @@ test('the README says the generator refuses a Wiki that leaves an included code 
   )
 })
 
+// Value: protects=the learner's README names the credential-file refusal the generator enforces and every file shape it refuses, so an owner knows which tracked files a Wiki never indexes; fails_when=the README loses the sentence or one of the shapes the renderer refuses (Cycle 0116 found an agent that indexed the tracked .env.e2e and .env.test of P07 nsx); why_new=the renderer gained the refusal in Cycle 0116; seam=none; no_claim=that the agent never reads such a file while it explores the repository
+test('the README says the generator refuses a Wiki that indexes environment files, private keys or password files', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      'It also refuses a Wiki whose source index holds a file that can hold credentials, and names each one: an environment file (`.env`, or `.env.` and any name, such as `.env.test`), a private key or key store (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`) or an `.npmrc`, `.netrc` or `.pgpass` file. The editor AI then lists those files under the excluded paths, so the published Wiki never indexes or cites them.',
+    ),
+  )
+})
+
 // Value: protects=the Wiki route tells the chat AI how to cover a repository of several hundred code files: a chapter per package, an Examples chapter whose pages cite each family's files, a Testing page citing the tests, source lists built by a scratch script, examples and tests kept out of excludedPaths, and work that goes on until the Wiki is published; fails_when=the skill (from 1.0.91) loses the paragraph, and a large repository's Wiki again leaves examples and tests out through excludedPaths (C114-W2) or excepts learner files (C114-W1), or a chat ends its turn with an unpublished candidate (Cycle 0114 E1 run 1); why_new=Cycle 0114 H3 held in Cursor on TanStack/query, 2,498 code files; seam=none; no_claim=that a chat model follows the paragraph, which the native reruns check
 test('the bundled skill 1.0.91 tells the Wiki of a large repository to cite its examples and tests in Examples and Testing pages instead of leaving them out', async () => {
   // Arrange / Act
