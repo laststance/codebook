@@ -903,8 +903,90 @@ async function restoreFinalizedFiles(finalized, stage) {
   return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, every file and folder of the candidate before the last check of the learner's files and the swap ({@link syncCandidate}; a failed sync keeps the journal), the folder of the Wiki again after it ({@link syncFolder}), and the learner's files in the prior Wiki are compared with their copies after it ({@link manualFilesChangedSince}; the answer names a file saved late as `manualFilesSavedAfterCheck`), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
-export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
+/** The folder name {@link citedFolderCountsOf} gives a cited file at the repository root. */
+const ROOT_FOLDER = '(root)';
+/**
+ * The chapter tree a `--render-only` preview answers: one line per section, then one line per page indented under its `parent`, with the page's title, path and the top-level folders its `sources` cite ({@link citedFolderCountsOf}).
+ * Why: Cycle 0117 found editor agents that hung the parts of a unit under a page about one part, or a shared library under one of the units that import it; the printed tree lets the agent check its tree against the skill's step 5 before it publishes. The publisher judges nothing.
+ * Called by {@link publishWiki} for a `--render-only` run, after {@link renderWikiPages} validated every `parent`.
+ * @param manifest - The candidate's manifest, its pages already validated (parents exist, lie in the same section and form no cycle).
+ * @returns The lines, sections in the order their first page appears and pages in manifest order.
+ * @example chapterTreeOf({ pages: [{ path: 'app.html', title: 'App', section: 'Web', sources: [{ path: 'src/main.ts', line: 1 }] }] }) // => ['Section: Web', '  App (app.html): src 1']
+ */
+export function chapterTreeOf(manifest) {
+  const lines = [];
+  for (const section of new Set(manifest.pages.map(page => page.section))) {
+    lines.push(`Section: ${section}`);
+    appendChapterLines(manifest.pages.filter(page => page.section === section), undefined, 1, lines);
+  }
+  return lines;
+}
+/** Appends the pages whose `parent` is the given path (undefined for the section's top pages), each followed by its own children one level deeper. Called by {@link chapterTreeOf}. @example appendChapterLines(pages, undefined, 1, lines) */
+function appendChapterLines(sectionPages, parent, depth, lines) {
+  for (const page of sectionPages.filter(candidate => (candidate.parent ?? undefined) === parent)) {
+    lines.push(`${'  '.repeat(depth)}${page.title} (${page.path}): ${citedFolderCountsOf(page)}`);
+    appendChapterLines(sectionPages, page.path, depth + 1, lines);
+  }
+}
+/** How many distinct files a page's `sources` cite in each top-level folder, most first, a file at the root counting as {@link ROOT_FOLDER}. Called by {@link appendChapterLines}. @example citedFolderCountsOf({ sources: [{ path: 'lib/a.ts' }, { path: 'lib/b.ts' }, { path: 'src/c.ts' }] }) // => 'lib 2, src 1' */
+function citedFolderCountsOf(page) {
+  const counts = new Map();
+  for (const path of new Set((page.sources ?? []).map(source => source.path))) {
+    const folder = path.includes('/') ? path.slice(0, path.indexOf('/')) : ROOT_FOLDER;
+    counts.set(folder, (counts.get(folder) ?? 0) + 1);
+  }
+  return [...counts].sort(([first, firstCount], [second, secondCount]) => secondCount - firstCount || first.localeCompare(second)).map(([folder, count]) => `${folder} ${count}`).join(', ') || 'no cited sources';
+}
+
+/**
+ * The digest of a candidate's chapter tree that a command-line publish names with `--checked-tree`: the first 12 hex digits of the SHA-256 of {@link chapterTreeOf}'s lines.
+ * Why: Cycle 0117 found that editor agents act on a refusal but not on the tree a successful preview answers. The refusal of {@link uncheckedTreeRefusalOf} is the only place this digest appears, so the agent publishes only after the tree was in front of it, and a later change to that tree (a page's title, path, section or `parent`, or the folders its sources cite and their counts) asks again. The digest covers only what the tree shows: citing another file in the same folder, which the tree does not show, keeps it, and an agent that saw the tree is not refused again for a change it would not see.
+ * Called by {@link requireTreeChecked} and by tests.
+ * @param manifest - The candidate's manifest, its pages already validated.
+ * @returns Twelve lowercase hex digits.
+ * @example chapterTreeDigestOf(manifest) // => '3f2a9c0d81be'
+ */
+export function chapterTreeDigestOf(manifest) {
+  return createHash('sha256').update(chapterTreeOf(manifest).join('\n')).digest('hex').slice(0, 12);
+}
+/** The rule of the skill's step 5 as a refusal of {@link uncheckedTreeRefusalOf} restates it, one line each, under the tree it applies to. */
+const TREE_RULE_LINES = [
+  '- A page whose title names one part of a unit (one group of components, one flow, one kind of tool or test) holds no other part of that unit: make the page about the whole unit the parent of every part, the former holder included, and add that page when the unit has none.',
+  '- A child that cites mostly folders its parent does not, such as a shared library that several units import, is a unit of its own: give it no parent.',
+  '- Peer units, such as several packages, adapters or example families, stay side by side without a parent.',
+  '- After any change to the pages or their parent fields, run --render-only again; the digest changes with the tree.',
+];
+/**
+ * The refusal of a command-line publish whose `--checked-tree` is missing or names another tree: the chapter tree, the rule it is checked against and the digest that lets the publish through once every child passes. Nothing is written before it.
+ * Called by {@link requireTreeChecked}.
+ * @param manifest - The candidate's manifest.
+ * @param checkedTree - The digest the command line named, or undefined.
+ * @returns The error the command line prints.
+ * @example uncheckedTreeRefusalOf(manifest, undefined).message // => 'Publication waits for the chapter tree check of skill step 6; nothing was written.\nCheck this chapter tree against skill step 5:\nSection: Web\n…'
+ */
+function uncheckedTreeRefusalOf(manifest, checkedTree) {
+  // A missing digest is the first publish of the candidate; another digest means the tree changed after its check, or was never checked.
+  const opening = checkedTree === undefined
+    ? 'Publication waits for the chapter tree check of skill step 6; nothing was written.'
+    : `Publication refuses --checked-tree ${checkedTree}: it is not the digest of this candidate's chapter tree, which changed after its check or was not checked; nothing was written.`;
+  return new Error([opening, 'Check this chapter tree against skill step 5:', ...chapterTreeOf(manifest), ...TREE_RULE_LINES, `When every child passes, publish again with --checked-tree ${chapterTreeDigestOf(manifest)}.`].join('\n'));
+}
+/**
+ * Refuses a publish that needs the agent's check of the chapter tree (the command line's, never a `--render-only` preview) unless it names the digest of the candidate's current tree ({@link chapterTreeDigestOf}).
+ * Called by {@link publishWiki} after every other check and before the publish lock, so a refused publish writes nothing.
+ * @param manifest - The candidate's manifest, validated.
+ * @param options.renderOnly - True for a preview, which needs no check.
+ * @param options.requireCheckedTree - True when the command line runs the publish.
+ * @param options.checkedTree - The digest it named, or undefined.
+ * @throws The refusal of {@link uncheckedTreeRefusalOf}.
+ * @example requireTreeChecked(manifest, { renderOnly: false, requireCheckedTree: true, checkedTree: chapterTreeDigestOf(manifest) }) // passes
+ */
+function requireTreeChecked(manifest, { renderOnly, requireCheckedTree, checkedTree }) {
+  if (renderOnly || !requireCheckedTree || checkedTree === chapterTreeDigestOf(manifest)) return;
+  throw uncheckedTreeRefusalOf(manifest, checkedTree);
+}
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview and answers their chapter tree ({@link chapterTreeOf}). A publish the command line runs (`requireCheckedTree`) is refused, before anything is written, until `checkedTree` names the digest of the candidate's current chapter tree, which only that refusal shows ({@link requireTreeChecked}). Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, every file and folder of the candidate before the last check of the learner's files and the swap ({@link syncCandidate}; a failed sync keeps the journal), the folder of the Wiki again after it ({@link syncFolder}), and the learner's files in the prior Wiki are compared with their copies after it ({@link manualFilesChangedSince}; the answer names a file saved late as `manualFilesSavedAfterCheck`), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, requireCheckedTree = false, checkedTree, system = SYSTEM_HERE }) {
   // The read of the owner the lock and the journal name (PowerShell and reg.exe on Windows, sysctl, ps and ioreg on macOS) starts now and runs beside the rendering.
   ownerHere(system);
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
@@ -921,12 +1003,15 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const inspectPrior = () => inspectOutput(output, root, { allowLegacy: receipt.baseline?.legacy === true });
   let prior = await inspectPrior();
   assertBaseline(receipt.baseline, prior);
+  // A command-line publish waits for the agent's check of the chapter tree (skill step 6): its refusal shows the tree and the digest that lets the publish through.
+  requireTreeChecked(manifest, { renderOnly, requireCheckedTree, checkedTree });
   return underPublishLock(paths, requireParentHeld, system, async lock => {
     await requireCandidateHere(stage, isFolderWhereItWas);
     // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: every refusal before the swap removes what is still its own ({@link removeWritten}), so no copy of a learner's file is left to refuse the next publish as a file outside the manifest.
     const written = [], made = [], writeHeld = heldWriterOf(requirePathHeld, isFolderWhereItWas, written, made);
     await writePagesHeld(rendered, stage, writeHeld, written, made);
-    if (renderOnly) return { stage, renderedPages: rendered.size };
+    // The preview answers the chapter tree so the editor AI can check it before publishing (skill step 6).
+    if (renderOnly) return { stage, renderedPages: rendered.size, chapterTree: chapterTreeOf(manifest) };
     const manifestText = await finalizedManifestTextOf(manifest, owned, stage);
     const { record, backup, finalizedReceiptText, preparedText } = await publishJournalOf(paths, prior, receipt, manifestText, bytes, receiptBytes, system, lock.id);
     const journalNow = publishJournalWriterOf(record, preparedText, journal, requirePathHeld);
@@ -2225,12 +2310,12 @@ async function restorePriorWiki(record, paths, requirePathHeld) {
 }
 
 /** What the command line prints for arguments it refuses ({@link commandOf}), with exit code 2. Read by the command line at the end of this file. */
-const USAGE = 'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...';
+const USAGE = 'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only | --checked-tree DIGEST]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...';
 
-/** The options each step of the command line takes, as `node:util`'s `parseArgs` reads them: the project, the output and the stage, each once; a flag of the step's own (`--adopt-existing` for `--prepare`, `--render-only` for a publish); and for `--recover` alone the places the learner confirmed gone, one `--gone-host` and `--gone-space` pair for each place. Read by {@link commandOf}. */
+/** The options each step of the command line takes, as `node:util`'s `parseArgs` reads them: the project, the output and the stage, each once; a flag of the step's own (`--adopt-existing` for `--prepare`, `--render-only` for a publish), a publish's `--checked-tree` digest ({@link chapterTreeDigestOf}); and for `--recover` alone the places the learner confirmed gone, one `--gone-host` and `--gone-space` pair for each place. Read by {@link commandOf}. */
 const COMMAND_OPTIONS = {
   '--prepare': { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'adopt-existing': { type: 'boolean' } },
-  publish: { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'render-only': { type: 'boolean' } },
+  publish: { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'render-only': { type: 'boolean' }, 'checked-tree': { type: 'string' } },
   '--recover': { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'gone-host': { type: 'string', multiple: true }, 'gone-space': { type: 'string', multiple: true } },
 };
 
@@ -2269,7 +2354,7 @@ function commandOf(args) {
   if (values === undefined || !hasRequiredOptions(mode, values)) return undefined;
   const goneOwners = goneOwnersOf(values);
   if (goneOwners === undefined) return undefined;
-  return { operation: COMMAND_OPERATIONS[mode], options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true, goneOwners, system: SYSTEM_HERE } };
+  return { operation: COMMAND_OPERATIONS[mode], options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true, requireCheckedTree: mode === 'publish', checkedTree: values['checked-tree'], goneOwners, system: SYSTEM_HERE } };
 }
 
 /** Tells whether this file is the script Node was started with. Node runs a main script by its real path (it resolves links, Windows junctions included), so `import.meta.url` names the target while the path given on the command line may pass through a link; comparing the two as written made the command line do nothing, with exit 0, when started through a linked folder. Both sides are compared by their real paths. Called once by the command line at the end of this file; importing the module (a test, the renderer) starts nothing. @param startedPath - The script path as given to Node (`process.argv[1]`); undefined when Node has none (a REPL, `-e`). @param moduleUrl - The `file:` URL of this module. @returns True when the two name the same file; false when either path cannot be resolved (a missing file counts as no start of the script). @example isStartedAsScript('/linked/skills/publish-wiki.mjs', import.meta.url) // => true when /linked/skills links to this file's folder */

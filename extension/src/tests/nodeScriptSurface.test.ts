@@ -489,7 +489,7 @@ test('the bundled skill 1.0.78 routes a Node script question to node-script with
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.97"\n'))
   for (const phrase of [
     '**Script runs (API 1.26).**',
     'uses the `node-script` profile, only when `codebook_status` lists it and reports API 1.26 or later',
@@ -525,7 +525,7 @@ test('the README documents the Node script run, its confirmation, its end and it
     'saved through `codebook_explain_node_history` as a Script replay',
     'with **MCP API 1.44**',
     '`SCRIPT_NOT_CONFIRMED`',
-    "so Cursor's managed skill updates to **1.0.92**",
+    "so Cursor's managed skill updates to **1.0.97**",
   ])
     assert.ok(readme.includes(phrase), phrase)
 })
