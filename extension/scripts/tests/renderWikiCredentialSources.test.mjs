@@ -277,6 +277,51 @@ test('a cited code path that is a link to an environment file is refused by the 
   })
 })
 
+// Value: protects=the owner's secrets when an indexed path that no page cites is a link to an environment file: Wiki answers read every indexed file, so the file it resolves to is checked too; fails_when=config/runtime.json, a link to .env.test, is indexed but uncited and the Wiki renders; why_new=Cycle 0116 /ship outside voice (High); seam=none (the real renderer and a real symbolic link); no_claim=links to files with other names
+test('an indexed path that no page cites but that links to an environment file is refused', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await writeFile(join(root, '.env.test'), ENVIRONMENT)
+    await mkdir(join(root, 'config'), { recursive: true })
+    await symlink('../.env.test', join(root, 'config/runtime.json'))
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.includedSources.push({
+      path: 'config/runtime.json',
+      sha256: createHash('sha256').update(ENVIRONMENT).digest('hex'),
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      `The Wiki's source index holds 1 file that can hold credentials: config/runtime.json (it resolves to .env.test). ${REFUSAL_TAIL}`,
+    )
+  })
+})
+
+// Value: protects=the owner's secrets when an update moves an environment file to excludedPaths but a page's text still links to it: the link would publish its path and hash; fails_when=a page keeps an editor link to the excluded .env.test and the Wiki renders; why_new=Cycle 0116 /ship outside voice and Codex structured review, reproduced by QA probe 004; seam=none (the real renderer); no_claim=links to files with other names
+test('a page whose text links to an excluded environment file is refused, naming the page and the file', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await writeFile(join(root, '.env.test'), ENVIRONMENT)
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.excludedPaths = ['.env.test']
+    manifest.pages[0].contentHtml +=
+      '<p>Settings come from <a href="vscode://laststance.codebook/source?path=.env.test&amp;line=1">the test environment</a>.</p>'
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'A page links to 1 file that can hold credentials: index.html → .env.test. Remove each link; a Wiki never cites environment files, private keys or password files.',
+    )
+  })
+})
+
 // Value: protects=a learner whose repository holds code and documents named like configuration (P07 nsx has env.ts files that read the environment): they stay in the Wiki and are explained; fails_when=the credential check refuses a code file named env.ts, environment.ts, envelope.ts, pem.ts, key.ts, credentialsForm.tsx or vite-env.d.ts, a document named keys.md, a dotfile named .envelope, or an SSH public key; why_new=Cycle 0116; seam=none (the real renderer); no_claim=that these files hold no secret value
 test('code and documents whose names only resemble credential files stay indexed, and the Wiki renders', async () => {
   await inProject(async (root) => {
