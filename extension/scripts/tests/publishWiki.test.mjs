@@ -6,6 +6,7 @@ import {
   constants,
   existsSync,
   openSync,
+  readFileSync,
   renameSync,
   writeFileSync,
 } from 'node:fs'
@@ -33,6 +34,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
+  chapterTreeDigestOf,
   prepareWikiStage,
   publishWiki,
   recoverWikiPublication,
@@ -212,7 +214,13 @@ test('the shared CLI prepares, previews, publishes and recovers using its report
     const published = JSON.parse(
       execFileSync(
         process.execPath,
-        [command, ...scope, '--stage', prepared.stage],
+        [
+          command,
+          ...scope,
+          '--stage',
+          prepared.stage,
+          ...checkedTreeOf(prepared.stage),
+        ],
         { encoding: 'utf8' },
       ),
     )
@@ -239,6 +247,197 @@ test('the shared CLI prepares, previews, publishes and recovers using its report
     assert.equal(
       await readFile(recovered.modifiedManifestBackup, 'utf8'),
       '{accidental CLI edit',
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Prepares a candidate with the publisher's command line and writes a two-page Wiki into it, the second page in the same section as the first, as an editor agent does before its first publish.
+ * Called by the tests of the chapter tree check below.
+ * @param {string} root - The project folder.
+ * @param {string} command - The publisher's script.
+ * @returns {Promise<{ scope: string[], stage: string, output: string }>} The command line's project and output options, the candidate and the Wiki folder.
+ * @example const { scope, stage } = await twoPageCandidateFromTheCommandLine(root, command)
+ */
+async function twoPageCandidateFromTheCommandLine(root, command) {
+  const output = join(root, '.codebook/wiki')
+  const scope = ['--project', root, '--output', output]
+  const prepared = JSON.parse(
+    execFileSync(process.execPath, [command, '--prepare', ...scope], {
+      encoding: 'utf8',
+    }),
+  )
+  await writeStage(prepared.stage, root, '<h1>Guide</h1>', 'details.html')
+  return { scope, stage: prepared.stage, output }
+}
+
+/**
+ * Runs the publisher's command line and answers its exit code with what it printed: its answer, parsed, or its error.
+ * Called by the tests of the chapter tree check below.
+ * @param {string[]} commandArguments - The script and its arguments.
+ * @returns {{ code: number | null, stdout: string, stderr: string }} The exit code and both streams.
+ * @example commandLineRun([command, ...scope, '--stage', stage]) // => { code: 1, stdout: '', stderr: 'Error: Publication waits …' }
+ */
+function commandLineRun(commandArguments) {
+  const result = spawnSync(process.execPath, commandArguments, {
+    encoding: 'utf8',
+  })
+  return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+// Value: protects=the learner whose editor agent publishes a Wiki whose chapter tree it never checked (Cycle 0117 run B: Cursor's agent ran --render-only three times and published "Build tooling" holding the infrastructure's CI and hosting pages); fails_when=a command-line publish without --checked-tree publishes, writes the Wiki folder, or is refused without the tree, the rule and the digest it needs; why_new=Cycle 0117 (C117-E2-2, hypothesis C); seam=none (the real command line on a prepared candidate); no_claim=that the agent reads the refusal or fixes its tree
+test('a command-line publish without --checked-tree is refused before it writes, with the chapter tree, the rule and the digest to publish with', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-tree-check-')),
+  )
+  const command = fileURLToPath(
+    new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
+  )
+  try {
+    const { scope, stage, output } = await twoPageCandidateFromTheCommandLine(
+      root,
+      command,
+    )
+    const digest = checkedTreeOf(stage)[1]
+
+    // Act
+    const refused = commandLineRun([command, ...scope, '--stage', stage])
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: refused.code,
+        stdout: refused.stdout,
+        stderr: refused.stderr,
+        wikiWritten: existsSync(output),
+      },
+      {
+        code: 1,
+        stdout: '',
+        stderr: [
+          'Error: Publication waits for the chapter tree check of skill step 6; nothing was written.',
+          'Check this chapter tree against skill step 5:',
+          'Section: Guide',
+          '  Overview (index.html): (root) 1',
+          '  details.html (pages/details.html): (root) 1',
+          '- A page whose title names one part of a unit (one group of components, one flow, one kind of tool or test) holds no other part of that unit: make the page about the whole unit the parent of every part, the former holder included, and add that page when the unit has none.',
+          '- A child that cites mostly folders its parent does not, such as a shared library that several units import, is a unit of its own: give it no parent.',
+          '- Peer units, such as several packages, adapters or example families, stay side by side without a parent.',
+          '- After any change to the pages or their parent fields, run --render-only again; the digest changes with the tree.',
+          `When every child passes, publish again with --checked-tree ${digest}.`,
+          '',
+        ].join('\n'),
+        wikiWritten: false,
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner whose agent checked the tree the refusal showed and publishes with its digest; fails_when=the digest the refusal names does not let the same candidate publish; why_new=Cycle 0117 (hypothesis C); seam=none (the real command line); no_claim=that the checked tree is a good tree
+test('a command-line publish with the digest its refusal named publishes the Wiki', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-tree-check-')),
+  )
+  const command = fileURLToPath(
+    new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
+  )
+  try {
+    const { scope, stage, output } = await twoPageCandidateFromTheCommandLine(
+      root,
+      command,
+    )
+    const refused = commandLineRun([command, ...scope, '--stage', stage])
+    const named = refused.stderr.match(/--checked-tree ([0-9a-f]{12})\.\n$/)[1]
+
+    // Act
+    const published = commandLineRun([
+      command,
+      ...scope,
+      '--stage',
+      stage,
+      '--checked-tree',
+      named,
+    ])
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: published.code,
+        answer: JSON.parse(published.stdout).publishedFiles,
+        pages: JSON.parse(
+          await readFile(join(output, 'codebook-wiki.json'), 'utf8'),
+        ).pages.map((page) => page.path),
+      },
+      {
+        code: 0,
+        answer: 2,
+        pages: ['index.html', 'pages/details.html'],
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner whose agent changes the tree after its check (a page moved under another) and must check the new tree before it publishes; fails_when=the digest of the tree before the change still publishes, or the refusal shows the old tree; why_new=Cycle 0117 (hypothesis C); seam=none (the real command line; the manifest edited as the agent edits it); no_claim=which tree the agent should choose
+test('a command-line publish with the digest of the tree before a parent change is refused with the new tree and its digest', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-tree-check-')),
+  )
+  const command = fileURLToPath(
+    new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
+  )
+  try {
+    const { scope, stage, output } = await twoPageCandidateFromTheCommandLine(
+      root,
+      command,
+    )
+    const before = checkedTreeOf(stage)[1]
+    const manifestPath = join(stage, 'codebook-wiki.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.pages[1].parent = 'index.html'
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+    const after = checkedTreeOf(stage)[1]
+
+    // Act
+    const refused = commandLineRun([
+      command,
+      ...scope,
+      '--stage',
+      stage,
+      '--checked-tree',
+      before,
+    ])
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: refused.code,
+        digestsDiffer: before !== after,
+        opening: refused.stderr.split('\n').slice(0, 5),
+        closing: refused.stderr.split('\n').at(-2),
+        wikiWritten: existsSync(output),
+      },
+      {
+        code: 1,
+        digestsDiffer: true,
+        opening: [
+          `Error: Publication refuses --checked-tree ${before}: it is not the digest of this candidate's chapter tree, which changed after its check or was not checked; nothing was written.`,
+          'Check this chapter tree against skill step 5:',
+          'Section: Guide',
+          '  Overview (index.html): (root) 1',
+          '    details.html (pages/details.html): (root) 1',
+        ],
+        closing: `When every child passes, publish again with --checked-tree ${after}.`,
+        wikiWritten: false,
+      },
     )
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -9661,7 +9860,23 @@ const PUBLISHER_COMMAND = fileURLToPath(
 
 /** What the shipped publisher prints to stderr, whole, when its command line is refused with the usage: the three forms of the command and a line end. Written out here, not read from the publisher, so a changed or lost option of the usage fails the tests that expect it. */
 const PUBLISHER_USAGE_STDERR =
-  'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...\n'
+  'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only | --checked-tree DIGEST]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...\n'
+
+/**
+ * The `--checked-tree` option a command-line publish of a candidate names once the editor agent checked its chapter tree: the digest of the tree ({@link chapterTreeDigestOf}) of the candidate's manifest as it stands.
+ * Why: from Cycle 0117 the command line refuses a publish without it (skill step 6); the tests of other publish behavior (locks, journals, syncs) name it as an agent does after its check.
+ * @param {string} stage - The candidate folder, holding its `codebook-wiki.json`.
+ * @returns {string[]} The option and its value.
+ * @example checkedTreeOf(wiki.next) // => ['--checked-tree', '3f2a9c0d81be']
+ */
+function checkedTreeOf(stage) {
+  return [
+    '--checked-tree',
+    chapterTreeDigestOf(
+      JSON.parse(readFileSync(join(stage, 'codebook-wiki.json'), 'utf8')),
+    ),
+  ]
+}
 
 for (const { when, rewrite, named, outcome, ended } of [
   {
@@ -15421,7 +15636,7 @@ function runWhereTheLockIsHeld(wiki, { renderOnly, modules }) {
       wiki.output,
       '--stage',
       wiki.next,
-      ...(renderOnly ? ['--render-only'] : []),
+      ...(renderOnly ? ['--render-only'] : checkedTreeOf(wiki.next)),
     ],
     { encoding: 'utf8', timeout: 10_000 },
   )
@@ -16278,7 +16493,15 @@ test('a publish on a mount that gives the names of its publish lock and journal 
     // Act
     const { code, answer } = runPublisherWith(
       recordNamesWithFileIdsOfTheirOwn,
-      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+      [
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        '--stage',
+        wiki.next,
+        ...checkedTreeOf(wiki.next),
+      ],
     )
 
     // Assert
@@ -16627,7 +16850,15 @@ test('a publish whose first removal of its journal after the swap fails with EBU
     // Act
     const { code, answer } = runPublisherWith(
       removalsFailing(PUBLISH_JOURNAL_NAME, 1),
-      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+      [
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        '--stage',
+        wiki.next,
+        ...checkedTreeOf(wiki.next),
+      ],
     )
 
     // Assert
@@ -16666,7 +16897,15 @@ test('a publish whose journal cannot be removed for good after the swap answers 
     // Act: the publish, then the recovery the note asks for.
     const { code, answer } = runPublisherWith(
       removalsFailing(PUBLISH_JOURNAL_NAME, Infinity),
-      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+      [
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        '--stage',
+        wiki.next,
+        ...checkedTreeOf(wiki.next),
+      ],
     )
     const keptByThePublish = await publisherFilesBeside(wiki.output)
     const recovery = await recoverWikiPublication({
@@ -16916,6 +17155,7 @@ test('a publish syncs each file it writes before its close, the journal’s fold
       wiki.output,
       '--stage',
       wiki.next,
+      ...checkedTreeOf(wiki.next),
     ])
 
     // Assert: each call beside the Wiki or in it, its path relative to the folder that holds the Wiki, each run's id and each digest hidden.
@@ -19732,6 +19972,7 @@ function publishWhereTheLockIsHeld(wiki, failures) {
       wiki.output,
       '--stage',
       wiki.next,
+      ...checkedTreeOf(wiki.next),
     ],
     { encoding: 'utf8', timeout: 10_000 },
   )
@@ -20884,6 +21125,7 @@ test('a publish syncs an asset the agent wrote while it prepared the candidate a
       wiki.output,
       '--stage',
       wiki.next,
+      ...checkedTreeOf(wiki.next),
     ])
 
     // Assert: what the publish synced between the move of the finalized record and the swap.
@@ -20930,7 +21172,15 @@ test('a publish whose sync of the candidate fails moves nothing, keeps its journ
     // Act
     const { code, answer } = runPublisherWith(
       syncChangedFor('/next/assets/flow\\.png$'),
-      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+      [
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        '--stage',
+        wiki.next,
+        ...checkedTreeOf(wiki.next),
+      ],
     )
 
     const besideAfterTheFailure = (await publisherFilesBeside(wiki.output)).map(
@@ -20982,7 +21232,15 @@ test('a publish refuses a learner’s file saved while it syncs the candidate, a
     // Act
     const { code, answer } = runPublisherWith(
       syncChangedFor('/next$', { saveToFile: manual }),
-      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+      [
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        '--stage',
+        wiki.next,
+        ...checkedTreeOf(wiki.next),
+      ],
     )
 
     // Assert

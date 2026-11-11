@@ -104,7 +104,7 @@ test('the bundled skill gates route-handler stops by API 1.28 and afterOperation
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.94"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.95"\n'))
   assert.ok(
     skill.includes(
       'A route handler (`route.ts` under `app/`) takes a `participant: "server"` stop only when `codebook_status` reports API 1.28 or later',
