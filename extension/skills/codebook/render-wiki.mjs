@@ -133,21 +133,21 @@ const credentialRefusal = paths => {
   const more = paths.length > MAX_NAMED_UNCOVERED ? `, and ${paths.length - MAX_NAMED_UNCOVERED} more` : '';
   return `The Wiki's source index holds ${paths.length} file${paths.length === 1 ? '' : 's'} that can hold credentials: ${paths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`;
 };
-/** The number of explained code files from which {@link requireWikiDepth} applies; a smaller repository is exempt. */
+/** The number of explained code files from which {@link wikiDepthShortfallsOf} applies; a smaller repository is exempt. */
 const DEPTH_MIN_EXPLAINED_FILES = 12;
-/** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
+/** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link wikiDepthShortfallsOf} applies. */
 const DEPTH_MIN_CHILD_PAGES = 2;
-/** The Wiki needs at least this many diagrams for each page (rounded up), and a diagram on every page, once {@link requireWikiDepth} applies. */
+/** The Wiki needs at least this many diagrams for each page (rounded up), and a diagram on every page, once {@link wikiDepthShortfallsOf} applies. */
 const DEPTH_DIAGRAMS_PER_PAGE = 1.5;
-/** The Wiki needs at least one page for this many explained code files (rounded up) once {@link requireWikiDepth} applies. */
+/** The Wiki needs at least one page for this many explained code files (rounded up) once {@link wikiDepthShortfallsOf} applies. */
 const DEPTH_FILES_PER_PAGE = 8;
 /** The weighted characters of counted explanation ({@link countedTextOf}) a Wiki needs for each explained code file. */
 const DEPTH_TEXT_PER_FILE = 400;
-/** The cap, in characters, on the total counted explanation {@link requireWikiDepth} requires (reached at 150 explained files). */
+/** The cap, in characters, on the total counted explanation {@link wikiDepthShortfallsOf} requires (reached at 150 explained files). */
 const DEPTH_MAX_REQUIRED_TEXT = 60_000;
-/** The cap on the pages {@link requireWikiDepth} requires: past 240 explained files the page floor stays at a DeepWiki-sized chapter tree (DeepWiki gives TanStack/query, 2,498 code files, 47 pages) instead of one page per 8 files up to {@link MAX_PAGES}. */
+/** The cap on the pages {@link wikiDepthShortfallsOf} requires: past 240 explained files the page floor stays at a DeepWiki-sized chapter tree (DeepWiki gives TanStack/query, 2,498 code files, 47 pages) instead of one page per 8 files up to {@link MAX_PAGES}. */
 const DEPTH_MAX_REQUIRED_PAGES = 30;
-/** The fewest weighted characters of counted explanation ({@link countedTextOf}) any single page may have once {@link requireWikiDepth} applies. */
+/** The fewest weighted characters of counted explanation ({@link countedTextOf}) any single page may have once {@link wikiDepthShortfallsOf} applies. */
 const DEPTH_MIN_PAGE_TEXT = 1200;
 /** A sentence form ({@link sentenceFormOf}) used this many times across a Wiki is template text: only its first use counts as explanation. */
 const DEPTH_REPEATED_SENTENCE_USES = 3;
@@ -223,8 +223,10 @@ function requireValidException(entry, seen, codeFiles) {
   seen.add(entry.path);
   if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
 }
-/** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link requireWikiDepth}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
+/** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link explainedCodeFilesOf}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
 const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
+/** The explained code files of a Wiki: included code files ({@link codeFilePathsOf}) that no entry of the manifest's `coverageExceptions` covers. Called by {@link wikiDepthShortfallsOf} and {@link workspaceShortfallsOf}, so a file the Wiki explicitly leaves unexplained owes neither depth nor a sentence about its imports. @example explainedCodeFilesOf({ coverageExceptions: [{ path: 'gen/', reason: 'generated' }] }, new Map([['gen/a.ts', {}], ['b.ts', {}]])) // => ['b.ts'] */
+const explainedCodeFilesOf = (manifest, indexedSources) => codeFilePathsOf(indexedSources).filter(path => !(manifest.coverageExceptions ?? []).some(entry => isExceptionFor(entry, path)));
 /** The tags of inline elements, which a reader sees joined to the text beside them: `<code>QueryCache</code>.` reads `QueryCache.`. A tag ends at the first `>` outside its quoted attribute values. */
 const INLINE_TAG = /<\/?(?:a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time|u|var)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 /** Reads a page's article as plain text: comments removed, inline tags ({@link INLINE_TAG}) removed with nothing in their place and other tags replaced by a space (a tag ends at the first `>` outside its quoted attribute values, as {@link validatePages} guarantees every quotation mark is closed), the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link articleSentencesOf}. @example articleTextOf('<p>a &amp; <code>b</code>.</p>') // => 'a & b.' */
@@ -317,19 +319,169 @@ function textShortfallsOf(measured, explainedCount) {
   if (stubs.length) shortfalls.push(`${stubs.length} page${stubs.length === 1 ? ' has' : 's have'} fewer than ${DEPTH_MIN_PAGE_TEXT} characters of explanation (CJK characters counted twice; repeated sentences count once, lists of names and text copied from cited sources do not count): deepen ${thinnestPagesOf(stubs)}.`);
   return shortfalls;
 }
-/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link requireWikiDepth}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @param citedTextsOf - Answers a page's cited sources as quotable text. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12, () => []) // => [] */
+/** Measures a Wiki against the depth rules and answers one sentence for each rule it fails. Called by {@link wikiDepthShortfallsOf}. @param pages - The manifest's pages. @param explainedCount - The number of explained code files. @param citedTextsOf - Answers a page's cited sources as quotable text. @returns The failure sentences; empty when the Wiki is deep enough. @example depthShortfallsOf(manifest.pages, 12, () => []) // => [] */
 function depthShortfallsOf(pages, explainedCount, citedTextsOf) {
   return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(countedTextOf(pages, citedTextsOf), explainedCount)];
 }
-/** Refuses a Wiki too thin for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link renderWikiPages} right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+/** Measures a Wiki against the depth rules for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link requireWikiDepthAndWorkspace}, which {@link renderWikiPages} calls right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
  * @param citedTextsOf - Answers a page's cited sources as quotable text, for the copied-text rule.
- * @throws With one sentence for each failed rule, naming the measured value, the required value and what to add. @example requireWikiDepth(manifest, indexedSources, () => []) */
-function requireWikiDepth(manifest, indexedSources, citedTextsOf) {
-  const exceptions = manifest.coverageExceptions ?? [];
-  const explained = codeFilePathsOf(indexedSources).filter(path => !exceptions.some(entry => isExceptionFor(entry, path)));
+ * @returns One sentence for each failed rule, naming the measured value, the required value and what to add; empty for a deep enough Wiki or a small repository. @example wikiDepthShortfallsOf(manifest, indexedSources, () => []) // => [] */
+function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf) {
+  const explained = explainedCodeFilesOf(manifest, indexedSources);
   // A small repository is exempt from the depth rules.
-  if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return;
-  const shortfalls = depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
+  if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return [];
+  return depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
+}
+/** How many imported names, and how many of a package's pages, one sentence of {@link workspaceShortfallOf} names. */
+const WORKSPACE_MAX_NAMED = 3;
+/** A string literal (group 1, kept), a regular-expression literal or a comment (both blanked) of JavaScript or TypeScript text, so {@link moduleTextOf} drops comments without reading into strings or patterns: a commented-out import is no import, a comment inside an import's braces hides none of its names, and a pattern such as `/[/*]/` opens no comment. A regular-expression literal is recognised after an operator (an arrow's `=>` and a comparison's `>` included), a bracket, `return` or a line start. Every match always succeeds and moves on: an unclosed string runs to the end of its line, an unclosed template or block comment to the end of the text, so the scan is linear however many quotes a line holds. */
+const COMMENT_OR_STRING = /("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|`(?:\\.|[^`\\])*`?)|\/(?<=(?:^|\n|[=(,:;!&|?{}[\]>]|\breturn)[ \t]*\/)(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+/** A code file's text as {@link MODULE_STATEMENT}, {@link BOUND_LOAD} and {@link LOAD_EXPRESSION} read it: comments removed ({@link COMMENT_OR_STRING}), each string literal replaced by a numbered token `'N'` whose text `literals[N]` keeps, and every whitespace run one space. A statement written across lines reads as one line, a long run of spaces costs one step, and import text inside a string (a code sample, a generator's template) is no statement. Called by {@link moduleStatementsOf}. @example moduleTextOf("import {\n  a, // note\n  b\n} from 'x'") // => { code: "import { a, b } from '0'", literals: ['x'] } */
+function moduleTextOf(text) {
+  const literals = [];
+  const code = text.replace(COMMENT_OR_STRING, (comment, literal) => (literal === undefined ? ' ' : `'${literals.push(literal.slice(1, literal.length > 1 && literal.at(-1) === literal[0] ? -1 : undefined)) - 1}'`)).replace(/\s+/g, ' ');
+  return { code, literals };
+}
+/** A static `import` or `export … from` statement in {@link moduleTextOf} text: group 1 is `type ` for a type-only statement, group 2 the clause (default name, `{ … }` names, `* as` name), group 3 the string token of the module specifier. The clause holds only names, spaces, commas, braces and `*`, never another `import` or `export` keyword, and at most 2,000 characters: a declaration (`export function f() {…}`) or an `export { … }` without `from` never reaches a later statement's `from`, and a clause that never meets `from` stops after a bounded number of steps. A side-effect import (`import 'x'`) and a dynamic `import()` have no clause and do not match; {@link BOUND_LOAD} and {@link LOAD_EXPRESSION} read dynamic imports. */
+const MODULE_STATEMENT = /\b(?:import|export) ?(type )?((?:(?!\b(?:import|export)\b)[\w$ ,{}*]){1,2000}?) ?\bfrom ?'(\d+)'/g;
+/** A CommonJS `require` or a dynamic `import()` of a module, bound to a name or destructured, in {@link moduleTextOf} text (`const { a } = require('x')`, `const { a } = await import('x')`): group 1 the binding (`shared`, or `{ a, b: c }`), group 2 the string token of the module specifier. */
+const BOUND_LOAD = /\b(?:const|let|var) (\{[\w$ ,:]{0,2000}\}|[\w$]+) ?= ?(?:require|(?:await )?import) ?\( ?'(\d+)' ?\)/g;
+/** A load of a module written as an expression in {@link moduleTextOf} text, once {@link BOUND_LOAD} has taken the bound ones: any CommonJS `require('…')` call, with group 1 its string token and group 2 the property read from it (`require('x').localDay`), and a dynamic `import('…')` that is awaited (group 3) or followed by `.then` (group 4). A bare `import('…')` is left out, because TypeScript writes a type the same way (`import('x').Day`). */
+const LOAD_EXPRESSION = /\brequire ?\( ?'(\d+)' ?\)(?: ?\. ?([A-Za-z_$][\w$]*))?|\bawait import ?\( ?'(\d+)' ?\)|\bimport ?\( ?'(\d+)' ?\) ?\. ?then\b/g;
+/** Whether an imported name can stand in an article as a function or schema a package uses: an identifier other than `default`, and not a constant written in capitals only (`DAY_ROWS_MAX`). Called by {@link importedNamesOf}. @example isUsableImportName('localDay') // => true @example isUsableImportName('REFUSAL') // => false */
+const isUsableImportName = name => /^[A-Za-z_$][\w$]*$/.test(name) && name !== 'default' && !/^[A-Z0-9_$]+$/.test(name);
+/** What one statement's clause ({@link MODULE_STATEMENT}) brings in: `names`, each `{ … }` entry by its exported name (`a as b` gives `a`; an inline `type` entry gives nothing) kept when {@link isUsableImportName}, and `wholeModule`, true when the clause also has a default import or a `* as` namespace, whose local name is the importer's own choice. Called by {@link workspaceImportsOf}. @example importedNamesOf('Base, { localDay, type DayRow, dayBounds as bounds }') // => { names: ['localDay', 'dayBounds'], wholeModule: true } */
+function importedNamesOf(clause) {
+  const braced = /\{([^}]*)\}/.exec(clause)?.[1] ?? '';
+  const exported = braced.split(',').map(entry => entry.trim()).filter(entry => entry && !entry.startsWith('type ')).map(entry => entry.split(/ as /)[0]);
+  const names = exported.filter(isUsableImportName);
+  // A default import, a `* as` namespace or a `{ default as x }` entry takes the whole module under the importer's own name.
+  const wholeModule = exported.includes('default') || clause.replace(/\{[^}]*\}/, '').split(',').some(part => part.trim());
+  return { names, wholeModule };
+}
+/** The `name` of a `package.json` text, or undefined for unreadable JSON or a missing or empty name. Called by {@link workspacePackagesOf}. @example packageNameOf('{"name":"@acme/shared"}') // => '@acme/shared' */
+function packageNameOf(text) {
+  try {
+    const name = JSON.parse(text.replace(/^\uFEFF/, ''))?.name;
+    return typeof name === 'string' && name ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** The workspace packages of a Wiki's source index: every included `package.json` below the repository root that names its package, with the folder (ending with `/`) that holds it. Called by {@link workspaceShortfallsOf}. @param textOf - Reads an included source's text by path. @example await workspacePackagesOf(indexedSources, textOf) // => [{ name: '@acme/shared', folder: 'packages/shared/' }] */
+async function workspacePackagesOf(indexedSources, textOf) {
+  const packages = [];
+  for (const path of indexedSources.keys()) {
+    const name = path.endsWith('/package.json') && !TEST_OR_FIXTURE_PATH.test(path) ? packageNameOf(await textOf(path)) : undefined;
+    if (name) packages.push({ name, folder: path.slice(0, -'package.json'.length) });
+  }
+  return packages;
+}
+/** The workspace package that holds a path: the one whose folder holds it and is the deepest, so a package nested in another owns its own files. Called by {@link workspaceImportsOf} and {@link isMostlyAbout}. @example ownerOf('apps/app/src/a.ts', packages) // => { name: '@acme/app', folder: 'apps/app/' } */
+const ownerOf = (path, packages) => packages.filter(candidate => path.startsWith(candidate.folder)).sort((first, second) => second.folder.length - first.folder.length)[0];
+/** The workspace package a module specifier names: its package name alone or followed by a subpath (`@acme/shared/time`). Called by {@link workspaceImportsOf}. @example packageOfSpecifier('@acme/shared/time', packages) // => { name: '@acme/shared', folder: 'packages/shared/' } */
+const packageOfSpecifier = (specifier, packages) => packages.find(candidate => specifier === candidate.name || specifier.startsWith(`${candidate.name}/`));
+/** The import statements of one code file, ES modules ({@link MODULE_STATEMENT}), bound requires and dynamic imports ({@link BOUND_LOAD}) and loads written as expressions ({@link LOAD_EXPRESSION}): `{ typeOnly, clause, specifier }`, a binding's `{ a: b }` rename read as `a as b`, a property read from a `require` call as `{ a }`, and any other expression load as `*`, the whole module. Called by {@link workspaceImportsOf}. @example moduleStatementsOf("const { localDay } = require('@acme/shared')") // => [{ typeOnly: false, clause: '{ localDay }', specifier: '@acme/shared' }] @example moduleStatementsOf("const day = (await import('@acme/shared')).localDay") // => [{ typeOnly: false, clause: '*', specifier: '@acme/shared' }] */
+function moduleStatementsOf(text) {
+  const { code, literals } = moduleTextOf(text);
+  const modules = [...code.matchAll(MODULE_STATEMENT)].map(match => ({ typeOnly: Boolean(match[1]), clause: match[2], specifier: literals[match[3]] }));
+  const bound = [...code.matchAll(BOUND_LOAD)].map(match => ({ typeOnly: false, clause: match[1].replace(/ ?: ?/g, ' as '), specifier: literals[match[2]] }));
+  // The bound loads are taken out first, so each load counts once: a bound require keeps the names it destructures instead of also counting as the whole module.
+  const expressions = [...code.replace(BOUND_LOAD, ' ').matchAll(LOAD_EXPRESSION)].map(match => ({ typeOnly: false, clause: match[2] ? `{ ${match[2]} }` : '*', specifier: literals[match[1] ?? match[3] ?? match[4]] }));
+  return [...modules, ...bound, ...expressions];
+}
+/** The workspace package a statement of one file imports from: the package its specifier names ({@link packageOfSpecifier}), or for a relative specifier (`../../packages/shared/src/day`) the package that holds the path it resolves to ({@link ownerOf}). Called by {@link workspaceImportsOf}. @example importedPackageOf('../../packages/shared/src/day', 'apps/app/src/today.ts', packages) // => { name: '@acme/shared', folder: 'packages/shared/' } */
+const importedPackageOf = (specifier, path, packages) => (specifier.startsWith('.') ? ownerOf(`${posix.join(posix.dirname(path), specifier)}/`, packages) : packageOfSpecifier(specifier, packages));
+/** A test, a mock or a fixture: a file below a `__tests__`, `__mocks__`, `__fixtures__`, `__testfixtures__`, `fixture(s)`, `test(s)` or `e2e` folder, or named `*.test.*`, `*.spec.*`, `*.test-d.*` or `*.bench.*`. Its imports say how a package is tested, not what its code uses, so {@link workspaceImportsOf} skips it. */
+const TEST_OR_FIXTURE_PATH = /(?:^|\/)(?:__tests__|__mocks__|__fixtures__|__testfixtures__|fixtures?|tests?|e2e)\/|\.(?:test|spec|test-d|bench)\.[cm]?[jt]sx?$/;
+/** A Vue or Svelte single-file component, whose code runs only from its `<script>` elements: its template and styles are markup, so import text there (a code sample in the template) is no import. */
+const COMPONENT_FILE = /\.(?:vue|svelte)$/i;
+/** The text of a code file that runs, as {@link moduleStatementsOf} reads it: for a component ({@link COMPONENT_FILE}) the text of its `<script>` elements one after another, each up to its `</script>` or, without one, to the end of the file; for any other file the whole text. The scan only moves forward, so it stays linear however many tags a file holds. Called by {@link workspaceImportsOf}. @example scriptTextOf('Today.vue', '<template><code>import { a } from "x"</code></template><script setup>import { b } from "y"</script>') // => 'import { b } from "y"' */
+function scriptTextOf(path, text) {
+  if (!COMPONENT_FILE.test(path)) return text;
+  const scripts = [], scriptTag = /<script\b[^>]{0,2000}>/gi, endTag = /<\/script/gi;
+  for (let tag = scriptTag.exec(text); tag; tag = scriptTag.exec(text)) {
+    endTag.lastIndex = scriptTag.lastIndex;
+    const end = endTag.exec(text)?.index ?? text.length;
+    scripts.push(text.slice(scriptTag.lastIndex, end));
+    // The next search starts after this element; an element without its end tag runs to the end of the file.
+    scriptTag.lastIndex = end;
+  }
+  return scripts.join('\n');
+}
+/** Every value a workspace package's code imports from another workspace package, by name or by a relative path into its folder ({@link importedPackageOf}), read from each statement ({@link moduleStatementsOf}) of an explained code file: one `{ path, owner, target, name }` per imported name, and one with no `name` for a default or `* as` import of the whole module ({@link importedNamesOf}). A type-only statement imports nothing that runs, a package's own name points back into it, and tests and fixtures ({@link TEST_OR_FIXTURE_PATH}) are no part of what the package's code uses, so none of them counts. Called by {@link workspaceShortfallsOf}. @param codeFiles - The explained code files: included code files no coverage exception covers. @example await workspaceImportsOf(packages, ['apps/app/src/day.ts'], textOf) // => [{ path: 'apps/app/src/day.ts', owner: app, target: shared, name: 'localDay' }] */
+async function workspaceImportsOf(packages, codeFiles, textOf) {
+  const imports = [];
+  for (const path of codeFiles.filter(file => !TEST_OR_FIXTURE_PATH.test(file))) {
+    const owner = ownerOf(path, packages);
+    if (!owner) continue;
+    for (const statement of moduleStatementsOf(scriptTextOf(path, await textOf(path)))) {
+      const target = importedPackageOf(statement.specifier, path, packages);
+      if (statement.typeOnly || !target || target === owner) continue;
+      const { names, wholeModule } = importedNamesOf(statement.clause);
+      imports.push(...names.map(name => ({ path, owner, target, name })), ...(wholeModule ? [{ path, owner, target }] : []));
+    }
+  }
+  return imports;
+}
+/** Escapes a name for a regular expression. Called by {@link mentions} and {@link mentionsName}. @example escapedPattern('a.b') // => 'a\\.b' */
+const escapedPattern = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Whether an article's text names a package or folder as a word of its own: no name character (`\w`, `$`, `@`, `-`, `.`, `/`) right before it, and no word character, `$` or `-` right after it, so `packages/shared` is named in `packages/shared/src` but not in `packages/shared-ui`. Called by {@link explainsImport}. @example mentions('It imports @acme/shared.', '@acme/shared') // => true */
+const mentions = (text, name) => new RegExp(`(?<![\\w$@./-])${escapedPattern(name)}(?![\\w$-])`).test(text);
+/** Whether an article's text names an imported identifier as a word of its own: no word character or `$` on either side, so a call written through its module (`shared.localDay()`) names `localDay` too. Called by {@link explainsImport}. @example mentionsName('It calls shared.localDay() first.', 'localDay') // => true */
+const mentionsName = (text, name) => new RegExp(`(?<![\\w$])${escapedPattern(name)}(?![\\w$])`).test(text);
+/** Whether a page is mostly about one workspace package: more than half of its `sources` entries lie in files that package owns ({@link ownerOf}). Called by {@link workspaceShortfallsOf}. @example isMostlyAbout({ sources: [{ path: 'apps/app/a.ts' }] }, app, packages) // => true */
+const isMostlyAbout = (page, owner, packages) => page.sources.filter(reference => ownerOf(reference.path, packages) === owner).length * 2 > page.sources.length;
+/** A page's article split at its block ends ({@link BLOCK_END}) into the paragraphs, list items and table cells a reader sees, without code blocks: an import line pasted into a `<pre>` says nothing about what the code uses it for. Called by {@link explainsImport}. @example articleBlocksOf('<p>One. Two.</p><pre>import x</pre><li>Three</li>') // => ['One. Two.', 'Three'] */
+const articleBlocksOf = contentHtml => articleTextOf(contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<pre\b[\s\S]*?<\/pre\s*>/gi, ' ').replace(/<br\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, ' ').replace(BLOCK_END, ` ${BLOCK_END_MARK} `)).split(BLOCK_END_MARK).map(block => block.trim()).filter(Boolean);
+/** Whether a block of text names a workspace package, by its name or its folder. Called by {@link explainsImport}. @example namesPackage('It reads packages/shared.', shared) // => true */
+const namesPackage = (text, target) => mentions(text, target.name) || mentions(text, target.folder.slice(0, -1));
+/** Whether a page says what its package uses from another one: one paragraph, list item or table cell of its article ({@link articleBlocksOf}) names the target package (by name or folder) and a function or schema that a file the page cites imports from it, so the two names stand in one statement rather than in unrelated sentences; for a default or `* as` import of the whole module, naming the package is enough, since the local name is the importer's own. Called by {@link workspaceShortfallsOf}. @param used - The owner's imports from the target ({@link workspaceImportsOf}). @param citedPaths - The paths the page cites. @example explainsImport(page, shared, used, new Set(['apps/app/src/day.ts'])) // => true */
+function explainsImport(page, target, used, citedPaths) {
+  const cited = used.filter(entry => citedPaths.has(entry.path));
+  return articleBlocksOf(page.contentHtml).some(block => namesPackage(block, target) && cited.some(entry => entry.name === undefined || mentionsName(block, entry.name)));
+}
+/** The refusal sentence for one package whose pages never say what it uses from another workspace package, naming up to {@link WORKSPACE_MAX_NAMED} imported names and pages (no names when it imports only the whole module). Called by {@link workspaceShortfallsOf}. @example workspaceShortfallOf(app, shared, used, [appPage]) // => 'apps/app imports @acme/shared (localDay), but …' */
+function workspaceShortfallOf(owner, target, used, ownPages) {
+  const ownerFolder = owner.folder.slice(0, -1), targetFolder = target.folder.slice(0, -1);
+  const names = [...new Set(used.map(entry => entry.name).filter(Boolean))].slice(0, WORKSPACE_MAX_NAMED).join(', ');
+  const pages = ownPages.slice(0, WORKSPACE_MAX_NAMED).map(page => page.path).join(', ');
+  return `${ownerFolder} imports ${target.name}${names ? ` (${names})` : ''}, but none of its pages (${pages}) names ${target.name} or ${targetFolder} together with a function or schema that a file the page cites imports from it: on one of those pages, say what ${ownerFolder} uses from ${target.name} and for what, naming that function or schema and citing a file that imports it.`;
+}
+/**
+ * Measures how a Wiki of a workspace explains the packages' use of each other: for each workspace package ({@link workspacePackagesOf}) with a page mostly about it ({@link isMostlyAbout}) and each other package its code imports values from ({@link workspaceImportsOf}), one of those pages must name the imported package and a function or schema it uses from it ({@link explainsImport}).
+ * Why: Cycle 0118 found a Wiki of P08 (an Expo app and a Hono API that both import a shared package) whose app and API pages never said that their code imports the shared package or what they take from it, so a learner could not see the parts' connection from either app's pages.
+ * Called by {@link requireWikiDepthAndWorkspace} beside {@link wikiDepthShortfallsOf}, so both refusals come together and before anything is written. A package without a page of its own owes no sentence here; one package alone is no workspace.
+ * @param textOf - Reads an included source's text by path.
+ * @param citedPathsOf - Answers the paths a page cites.
+ * @returns One sentence for each package and imported package left unexplained; empty otherwise.
+ * @example await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf) // => []
+ */
+async function workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf) {
+  const packages = await workspacePackagesOf(indexedSources, textOf);
+  if (packages.length < 2) return [];
+  const imports = await workspaceImportsOf(packages, explainedCodeFilesOf(manifest, indexedSources), textOf);
+  const shortfalls = [];
+  for (const owner of packages) {
+    const ownPages = manifest.pages.filter(page => isMostlyAbout(page, owner, packages));
+    for (const target of packages) {
+      const used = imports.filter(entry => entry.owner === owner && entry.target === target);
+      // A package without a page of its own, or that takes nothing from this one, owes no sentence about it.
+      if (!ownPages.length || !used.length) continue;
+      if (!ownPages.some(page => explainsImport(page, target, used, citedPathsOf(page)))) shortfalls.push(workspaceShortfallOf(owner, target, used, ownPages));
+    }
+  }
+  return shortfalls;
+}
+/**
+ * Refuses a Wiki that fails the depth rules ({@link wikiDepthShortfallsOf}) or the workspace rule ({@link workspaceShortfallsOf}), with one refusal that names everything the Wiki still lacks, so the editor AI fixes both in one pass.
+ * Called by {@link renderWikiPages} once every citation has resolved and the code coverage holds, so a refusal comes before anything is written.
+ * @param readers - `citedTextsOf` answers a page's cited sources as quotable text, `citedPathsOf` the paths a page cites, `textOf` an included source's text by path.
+ * @throws With the depth sentences first, then the workspace sentences.
+ * @example await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf })
+ */
+async function requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf }) {
+  const shortfalls = [...wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf)];
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
 /**
@@ -511,14 +663,17 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   // Every citation has resolved; now no included code file may stay unexplained.
   requireCodeCoverage(manifest, indexedSources, await verifiedInlinePathsOf(manifest, indexedSources, projectRoot, async source => (await linesOf(source)).length));
-  // A page's cited sources (its source list, diagram sources and inline links that name an indexed source, all read above) as quotable text, read once per file.
+  // A page's cited sources (its source list, diagram sources and inline links that name an indexed source at a line inside it, all read above) as quotable text, read once per file.
   const quotableTexts = new Map();
   const quotableTextOf = path => {
     if (!quotableTexts.has(path)) quotableTexts.set(path, quotableSourceTextOf(sourceLines.get(path) ?? []));
     return quotableTexts.get(path);
   };
-  const inlinePathsOf = page => inlineSourceLinksOf(page.contentHtml).filter(link => namesIndexedSource(link, indexedSources.get(link.path), projectRoot)).map(link => link.path);
-  const citedTextsOf = page => [...new Set([...[...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path), ...inlinePathsOf(page)])].map(quotableTextOf);
-  requireWikiDepth(manifest, indexedSources, citedTextsOf);
+  // An inline link counts for its page only as the coverage rule counts it (verifiedInlinePathsOf): a line past the end of the file cites nothing.
+  const inlinePathsOf = page => inlineSourceLinksOf(page.contentHtml).filter(link => namesIndexedSource(link, indexedSources.get(link.path), projectRoot) && Number(link.line) <= (sourceLines.get(link.path) ?? []).length).map(link => link.path);
+  const citedPathsOfPage = page => new Set([...[...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path), ...inlinePathsOf(page)]);
+  const citedTextsOf = page => [...citedPathsOfPage(page)].map(quotableTextOf);
+  const textOf = async path => (await linesOf(indexedSources.get(path))).join('\n');
+  await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf: citedPathsOfPage, textOf });
   return pages;
 }

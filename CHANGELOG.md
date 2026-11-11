@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.121.0] - 2026-11-12 (development candidate)
+
+Cycle 0118 ([Issue #304](https://github.com/laststance/codebook/issues/304)), a feature cycle. **In a workspace of several packages, the LLM Wiki generator refuses a Wiki whose package pages never say what each package uses from the other packages it imports, and the bundled skill's updates correct every page that describes a changed rule.** On laststance/switch-time (an Expo app, a Hono API and a shared package in one pnpm workspace), VS Code's Copilot Chat and Cursor's agent each generated, read, answered questions on and updated a passing Wiki within Codebook's bounds.
+
+### Changed
+- **Package pages say what they import.** In a workspace whose packages each have a named `package.json` among the included sources, a package's own pages (pages whose listed sources lie mostly in that package) must name, in one paragraph, list item or table cell, each other workspace package its code imports and a function or schema a file the page cites imports from it. `--render-only` and publishing refuse a Wiki that leaves this out, naming the package, what it imports and its pages.
+  - An import counts when it names the other package or a relative path into its folder, whether a static `import`, a `require()` call or an awaited dynamic `import()` makes it; in a Vue or Svelte component, only its `<script>` elements are read. A type-only import, a constant written in capitals, an import made only by tests, mocks or fixtures, and a file the Wiki lists as a coverage exception owe no sentence.
+  - For a default or `* as` import, or a module loaded whole by `require()` or an awaited `import()`, naming the package is enough. An import line pasted into a code block does not count as an explanation.
+- **The bundled skill is 1.0.99.**
+  - Step 4 asks the editor AI to write that sentence on the importing package's own page.
+  - On an update, the skill corrects every page that describes a changed rule, the overview and architecture pages included, whether or not the page cites the changed file, and cites the changed lines themselves beside each corrected statement.
+
+**Compatibility.** No MCP API or study format change. A workspace Wiki whose package pages leave these sentences out is refused on its next publish or update.
+
 ## [0.2.120.0] - 2026-11-11 (development candidate)
 
 A contributor tooling release ([Issue #301](https://github.com/laststance/codebook/issues/301)): the extension behaves as 0.2.119.0 for learners (no feature, no fix of product behavior). One new repository command moves old native-trial evidence out of the checkout's ignored `artifacts/` folder into private GitHub Releases, so the evidence stays reachable while the disk stops filling.
