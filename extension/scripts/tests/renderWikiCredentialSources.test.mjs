@@ -340,6 +340,69 @@ test('a page whose text links to an excluded environment file is refused, naming
   })
 })
 
+// Value: protects=the owner's secrets when a page spells its link to an environment file so that its last name is not the file's: the editor's source handler opens realpath(join(root, path)), so .env.test/x/.. opens .env.test; fails_when=a page links to .env.test/x/.. and the Wiki renders; why_new=Cycle 0116 /ship pass 2 Red Team (unnormalized link spellings); seam=none (the real renderer); no_claim=spellings the editor's handler does not open, such as a trailing slash after a file
+test('a page link spelled to end in a parent folder step that opens an environment file is refused, naming the file it opens', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await writeFile(join(root, '.env.test'), ENVIRONMENT)
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.excludedPaths = ['.env.test']
+    manifest.pages[0].contentHtml +=
+      '<p>Settings come from <a href="vscode://laststance.codebook/source?path=.env.test/x/..&amp;line=1">the test environment</a>.</p>'
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'A page links to 1 file that can hold credentials: index.html → .env.test/x/.. (it resolves to .env.test). Remove each link; a Wiki never cites environment files, private keys or password files.',
+    )
+  })
+})
+
+// Value: protects=the owner's secrets when a page links to a code-looking path that is not indexed but is a link to an environment file: the editor would open the environment file from the published page; fails_when=a page links to config/runtime.json, an unindexed link to .env.test, and the Wiki renders; why_new=Cycle 0116 /ship pass 2 security specialist (unindexed page links were not resolved); seam=none (the real renderer and a real symbolic link); no_claim=links to files with other names
+test('a page link to an unindexed path that is a link to an environment file is refused, naming the file it reaches', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await writeFile(join(root, '.env.test'), ENVIRONMENT)
+    await mkdir(join(root, 'config'), { recursive: true })
+    await symlink('../.env.test', join(root, 'config/runtime.json'))
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.pages[0].contentHtml +=
+      '<p>Runtime settings live in <a href="vscode://laststance.codebook/source?path=config/runtime.json&amp;line=1">the runtime file</a>.</p>'
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'A page links to 1 file that can hold credentials: index.html → config/runtime.json (it resolves to .env.test). Remove each link; a Wiki never cites environment files, private keys or password files.',
+    )
+  })
+})
+
+// Value: protects=an update of a Wiki whose index names a symbolic link that loops back on itself: such a path opens no file in the editor or in the Wiki's answers, so the credential check skips it instead of failing the render with the system's ELOOP error; fails_when=the looping index entry makes the renderer throw; why_new=Cycle 0116 /ship pass 2 API-contract specialist (raw fs errors from the credential pre-pass); seam=none (the real renderer and a real symbolic link); no_claim=how the Wiki's freshness shows the broken entry
+test('an indexed path that is a link looping back on itself does not stop the render', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    await mkdir(join(root, 'docs'), { recursive: true })
+    await symlink('loop.md', join(root, 'docs/loop.md'))
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.includedSources.push({
+      path: 'docs/loop.md',
+      sha256: createHash('sha256').update('# Loop\n').digest('hex'),
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
 // Value: protects=a learner whose repository holds code and documents named like configuration (P07 nsx has env.ts files that read the environment): they stay in the Wiki and are explained; fails_when=the credential check refuses a code file named env.ts, environment.ts, envelope.ts, pem.ts, key.ts, credentialsForm.tsx or vite-env.d.ts, a document named keys.md, a dotfile named .envelope, or an SSH public key; why_new=Cycle 0116; seam=none (the real renderer); no_claim=that these files hold no secret value
 test('code and documents whose names only resemble credential files stay indexed, and the Wiki renders', async () => {
   await inProject(async (root) => {

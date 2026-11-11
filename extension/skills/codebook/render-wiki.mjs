@@ -355,22 +355,49 @@ async function requireNoCredentialSources(includedSources, projectRoot) {
   }
   if (credentialPaths.length) throw new Error(credentialRefusal(credentialPaths.sort()));
 }
-/** The path, relative to the repository root and with `/` separators, of the file an included path resolves to through any link; undefined for a path that names no file. Called by {@link requireNoCredentialSources}. @param root - The repository root, already resolved. @example await resolvedPathOf('/repo', 'config/runtime.json') // => '.env.test' */
+/** The errors of `realpath` that mean a path reaches no file this user can open: missing, under a file, a link loop, too long, or behind a folder the user may not enter. The editor and the Wiki's answers resolve the path the same way and fail the same way, so such a path exposes nothing. */
+const UNREACHABLE_PATH_ERRORS = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG', 'EACCES', 'EPERM']);
+/** The path, relative to the repository root and with `/` separators, of the file a repository path resolves to through any link, as the editor's source handler opens it (`realpath` of the joined path); undefined for a path that reaches no file ({@link UNREACHABLE_PATH_ERRORS}). Called by {@link requireNoCredentialSources} and {@link credentialLinkTargetOf}. @param root - The repository root, already resolved. @example await resolvedPathOf('/repo', 'config/runtime.json') // => '.env.test' @example await resolvedPathOf('/repo', 'docs/removed.md') // => undefined */
 async function resolvedPathOf(root, path) {
   const file = await realpath(join(root, path)).catch(error => {
-    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined;
+    if (UNREACHABLE_PATH_ERRORS.has(error.code)) return undefined;
     throw error;
   });
   return file === undefined ? undefined : relative(root, file).split(sep).join('/');
 }
 /**
- * Refuses a page whose text links to a file that can hold credentials ({@link isCredentialPath}), indexed or not, so an update that moves such a file to `excludedPaths` cannot keep an old inline citation of it, with its path and hash.
- * Called by {@link renderWikiPages} after {@link requireNoCredentialSources} and before any source is read.
- * @throws When an editor source link in a page's text ({@link inlineSourceLinksOf}) names a credential-shaped path; the message names each page and path, up to {@link MAX_NAMED_UNCOVERED}.
- * @example requireNoCredentialLinks({ pages: [{ path: 'index.html', contentHtml: '<a href="vscode://laststance.codebook/source?path=.env.test&amp;line=1">x</a>' }] }) // throws "A page links to 1 file that can hold credentials: index.html → .env.test. …"
+ * The credential-shaped path ({@link isCredentialPath}) an editor link's path reaches: the path as written, or the file the editor's source handler would open for it ({@link resolvedPathOf}), which folds `.` and `..` and follows links.
+ * Called by {@link requireNoCredentialLinks} for each inline link of a page.
+ * @param root - The repository root, already resolved.
+ * @param path - The link's `path` parameter, as the page wrote it.
+ * @returns
+ * - the path itself, when its own name is credential-shaped (even when no such file exists);
+ * - the file it opens, when that one is (`.env.test/x/..` or a link `config/runtime.json` reaches `.env.test`);
+ * - undefined, when neither names a file that can hold credentials.
+ * @example await credentialLinkTargetOf('/repo', '.env.test') // => '.env.test'
+ * @example await credentialLinkTargetOf('/repo', '.env.test/x/..') // => '.env.test'
+ * @example await credentialLinkTargetOf('/repo', 'src/a.ts') // => undefined
  */
-function requireNoCredentialLinks(manifest) {
-  const links = manifest.pages.flatMap(page => inlineSourceLinksOf(page.contentHtml).filter(link => typeof link.path === 'string' && isCredentialPath(link.path)).map(link => `${page.path} → ${link.path}`));
+async function credentialLinkTargetOf(root, path) {
+  if (isCredentialPath(path)) return path;
+  const target = await resolvedPathOf(root, path);
+  return target !== undefined && isCredentialPath(target) ? target : undefined;
+}
+/** How the refusal of {@link requireNoCredentialLinks} names one refused link: the page and the path it wrote, and the file it opens when the page spelled it otherwise, so the agent sees why the link is refused. @example credentialLinkLabel({ page: 'index.html', path: 'config/runtime.json' }, '.env.test') // => 'index.html → config/runtime.json (it resolves to .env.test)' */
+const credentialLinkLabel = (link, target) => target === link.path ? `${link.page} → ${link.path}` : `${link.page} → ${link.path} (it resolves to ${target})`;
+/**
+ * Refuses a page whose text links to a file that can hold credentials, indexed or not, by the link's own name or the file it opens in the editor ({@link credentialLinkTargetOf}), so an update that moves such a file to `excludedPaths` cannot keep an old inline citation of it, with its path and hash, and no spelling or link opens one in the editor.
+ * Called by {@link renderWikiPages} after {@link requireNoCredentialSources} and before any source is read.
+ * @param manifest - The manifest's pages.
+ * @param projectRoot - The repository root the links are opened in.
+ * @throws When an editor source link in a page's text ({@link inlineSourceLinksOf}) reaches a credential-shaped path; the message names each page and path, and the file it reaches when that differs, up to {@link MAX_NAMED_UNCOVERED}.
+ * @example await requireNoCredentialLinks({ pages: [{ path: 'index.html', contentHtml: '<a href="vscode://laststance.codebook/source?path=.env.test&amp;line=1">x</a>' }] }, '/repo') // throws "A page links to 1 file that can hold credentials: index.html → .env.test. …"
+ */
+async function requireNoCredentialLinks(manifest, projectRoot) {
+  const root = await realpath(projectRoot);
+  const pageLinks = manifest.pages.flatMap(page => inlineSourceLinksOf(page.contentHtml).filter(link => typeof link.path === 'string').map(link => ({ page: page.path, path: link.path })));
+  const targets = await Promise.all(pageLinks.map(link => credentialLinkTargetOf(root, link.path)));
+  const links = pageLinks.flatMap((link, index) => targets[index] === undefined ? [] : [credentialLinkLabel(link, targets[index])]);
   if (!links.length) return;
   const more = links.length > MAX_NAMED_UNCOVERED ? `, and ${links.length - MAX_NAMED_UNCOVERED} more` : '';
   throw new Error(`A page links to ${links.length} file${links.length === 1 ? '' : 's'} that can hold credentials: ${links.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each link; a Wiki never cites environment files, private keys or password files.`);
@@ -419,7 +446,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     indexedSources.set(source.path, source);
   }
   await requireNoCredentialSources(manifest.includedSources, projectRoot);
-  requireNoCredentialLinks(manifest);
+  await requireNoCredentialLinks(manifest, projectRoot);
   // A Windows checkout with core.autocrlf (and a VSIX packaged from one) holds the shell with CRLF line endings; a browser reads every CRLF and lone CR as LF before it hashes an inline script, so the pages are written, and their script hashed, with LF line endings.
   const template = (await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8')).replace(/\r\n?/g, '\n'), shellScriptHash = shellScriptHashOf(template);
   const sourceLines = new Map(), pages = new Map();
