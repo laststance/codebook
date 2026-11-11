@@ -119,8 +119,20 @@ const CODE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.js
 const MAX_NAMED_UNCOVERED = 40;
 /** The longest reason, in characters, a coverage exception may give. */
 const MAX_EXCEPTION_REASON = 300;
-/** Base names of files that can hold credentials, which a Wiki never indexes ({@link requireNoCredentialSources}), compared case-insensitively: an environment file (`.env`, or `.env.` and any name, such as `.env.test` or `.env.sample`), a private key or key store (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, never the `.pub` half), and the npm, netrc and PostgreSQL password files. */
-const CREDENTIAL_FILE_NAME = /^(?:\.env(?:\..+)?|.+\.(?:pem|key|p12|pfx|jks|keystore)|id_(?:rsa|dsa|ecdsa|ed25519)|\.npmrc|\.netrc|\.pgpass)$/i;
+/** Base names of files that can hold credentials, which a Wiki never indexes ({@link isCredentialPath}), compared case-insensitively. It is a list of names, not a proof that another file holds no secret: an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, such as `.env.test`, `.env.sample` or `.env-local`, a name that ends with `.env`, `.envrc` and `.dev.vars`), a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`, the extension alone included), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519` and their `_sk` forms, never the `.pub` half), and the `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` and `credentials.json` files. */
+const CREDENTIAL_FILE_NAME = /^(?:\.env(?:[._-].*)?|.+\.env|\.envrc|\.dev\.vars|.*\.(?:pem|key|p12|pfx|jks|keystore|p8|ppk|tfvars)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?|\.npmrc|\.netrc|\.pgpass|\.pypirc|\.htpasswd|\.git-credentials|credentials(?:\.json)?)$/i;
+/** A folder name whose files a Wiki never indexes ({@link isCredentialPath}): an environment folder (`.env/`), compared case-insensitively. */
+const CREDENTIAL_FOLDER_NAME = /^\.env$/i;
+/** Whether a repository-relative path names a file that can hold credentials: its base name matches {@link CREDENTIAL_FILE_NAME} or one of its folders matches {@link CREDENTIAL_FOLDER_NAME}. Called by {@link requireNoCredentialSources} for the index and by the source reader of {@link renderWikiPages} for the file a cited path resolves to. @example isCredentialPath('config/.env/db.ts') // => true @example isCredentialPath('src/env.ts') // => false */
+const isCredentialPath = path => {
+  const segments = path.split(/[\\/]/);
+  return CREDENTIAL_FILE_NAME.test(segments.at(-1)) || segments.slice(0, -1).some(segment => CREDENTIAL_FOLDER_NAME.test(segment));
+};
+/** The refusal of a Wiki that indexes or cites files that can hold credentials, naming them sorted, up to {@link MAX_NAMED_UNCOVERED}. Called by {@link requireNoCredentialSources} and the source reader of {@link renderWikiPages}. @example credentialRefusal(['.env.test']) // => "The Wiki's source index holds 1 file that can hold credentials: .env.test. …" */
+const credentialRefusal = paths => {
+  const more = paths.length > MAX_NAMED_UNCOVERED ? `, and ${paths.length - MAX_NAMED_UNCOVERED} more` : '';
+  return `The Wiki's source index holds ${paths.length} file${paths.length === 1 ? '' : 's'} that can hold credentials: ${paths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`;
+};
 /** The number of explained code files from which {@link requireWikiDepth} applies; a smaller repository is exempt. */
 const DEPTH_MIN_EXPLAINED_FILES = 12;
 /** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
@@ -325,15 +337,13 @@ function requireWikiDepth(manifest, indexedSources, citedTextsOf) {
  * Why: Cycle 0116 found an editor agent that excluded `.env` but indexed the tracked `.env.e2e` and `.env.test` of the repository it documented.
  * Called by {@link renderWikiPages} once the index is read and before any source is opened, so a refusal comes before anything is written.
  * @param includedSources - The manifest's source index, already checked for valid relative paths.
- * @throws When an included source's base name is credential-shaped; the message names the files, sorted, up to {@link MAX_NAMED_UNCOVERED}.
+ * @throws When an included source's path is credential-shaped ({@link isCredentialPath}); the message names the files, sorted, up to {@link MAX_NAMED_UNCOVERED}.
  * @example requireNoCredentialSources([{ path: 'src/env.ts' }]) // => undefined (a code file named env is no environment file)
  * @example requireNoCredentialSources([{ path: '.env.test' }]) // throws "The Wiki's source index holds 1 file that can hold credentials: .env.test. …"
  */
 function requireNoCredentialSources(includedSources) {
-  const credentialPaths = includedSources.map(source => source.path).filter(path => CREDENTIAL_FILE_NAME.test(basename(path))).sort();
-  if (!credentialPaths.length) return;
-  const more = credentialPaths.length > MAX_NAMED_UNCOVERED ? `, and ${credentialPaths.length - MAX_NAMED_UNCOVERED} more` : '';
-  throw new Error(`The Wiki's source index holds ${credentialPaths.length} file${credentialPaths.length === 1 ? '' : 's'} that can hold credentials: ${credentialPaths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`);
+  const credentialPaths = includedSources.map(source => source.path).filter(isCredentialPath).sort();
+  if (credentialPaths.length) throw new Error(credentialRefusal(credentialPaths));
 }
 /** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
  * @throws When an exception is malformed, repeated or matches no included code file, or when code files stay uncited and unlisted; the message names the count and the first paths. @param inlinePaths - The paths of verified inline links ({@link verifiedInlinePathsOf}). @example requireCodeCoverage(manifest, indexedSources, new Set()) */
@@ -394,6 +404,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     if (!sourceLines.has(source.path)) {
       const file = await realpath(join(projectRoot, source.path)), withinRoot = relative(projectRoot, file);
       if (withinRoot === '..' || withinRoot.startsWith(`..${sep}`) || isAbsolute(withinRoot)) throw new Error('A Wiki source reference resolves outside its repository.');
+      // A cited path that is a link to a credential file (config/prod.ts pointing at .env.test) is refused by the file it resolves to.
+      if (isCredentialPath(withinRoot)) throw new Error(credentialRefusal([`${source.path} (it resolves to ${withinRoot.split(sep).join('/')})`]));
       const bytes = await readFile(file);
       if (createHash('sha256').update(bytes).digest('hex') !== source.sha256) throw new Error(`Wiki source changed: ${source.path}. Refresh its content and citations.`);
       sourceLines.set(source.path, bytes.toString('utf8').replace(/\r\n/g, '\n').split('\n'));

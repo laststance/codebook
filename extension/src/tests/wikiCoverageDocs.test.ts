@@ -76,7 +76,21 @@ test('the README says the generator refuses a Wiki that indexes environment file
   // Assert
   assert.ok(
     readme.includes(
-      'It also refuses a Wiki whose source index holds a file that can hold credentials, and names each one: an environment file (`.env`, or `.env.` and any name, such as `.env.test`), a private key or key store (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`) or an `.npmrc`, `.netrc` or `.pgpass` file. The editor AI then lists those files under the excluded paths, so the published Wiki never indexes or cites them.',
+      "A source link written in an article counts toward that only when it points to this project's included file with that file's hash and a line within it. The generator also refuses a Wiki whose source index holds a file that can hold credentials, and names them: an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, such as `.env.test`, a name that ends with `.env`, `.envrc` or `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`) or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file, also when a cited path is a link to one. This is a list of names, not a check of the contents. The editor AI then lists those files under the excluded paths, so the published Wiki never indexes or cites them.",
+    ),
+  )
+})
+
+// Value: protects=the Wiki route tells the chat AI every credential file name the renderer refuses, so it keeps them out of includedSources at the start instead of meeting the refusal; fails_when=the skill (from 1.0.92) loses the sentence or a name the renderer refuses (Cycle 0116: Cursor's agent indexed the tracked .env.e2e and .env.test of P07 nsx); why_new=Cycle 0116 review round (CodeRabbit: the skill named no credential file); seam=none; no_claim=that a chat model follows the sentence, which the native credential check covers
+test('the bundled skill 1.0.92 names every credential file the renderer refuses and asks for them under excludedPaths', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
+  assert.ok(
+    skill.includes(
+      'Never index a file that can hold credentials, whatever it is used for: an environment file (`.env`, `.env.*`, `.env-*`, `.env_*`, `*.env`, `.envrc`, `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`), or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file; list each under `excludedPaths`, because the renderer refuses a Wiki whose `includedSources` holds one.',
     ),
   )
 })
@@ -147,7 +161,7 @@ test('the bundled skill 1.0.92 gives a page a parent only when it details part o
   )
 })
 
-// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.92) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.91; seam=none; no_claim=that a generated Wiki has those chapters
+// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.92) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.91, and Cycle 0116 skill 1.0.92 for the shared library; seam=none; no_claim=that a generated Wiki has those chapters
 test('the README says a large repository gets a chapter per package, an Examples chapter and a Testing page', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
