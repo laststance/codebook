@@ -96,7 +96,8 @@ Rules of the plan:
   cycle folders (c59, cycle-0052, c62-n62: first number after "c" or "cycle-")
                   kept above N - k, archived at or below
   gate/<sha8>     the current HEAD's folder is kept, the others are deleted without archiving
-  qa/             the newest ${QA_BUILDS_KEPT} builds (codebook-<sha>.vsix + .json) are kept, older ones go to release "${QA_RELEASE_TAG}"
+  qa/             a build is every file named codebook-<sha>.vsix, .json or -<note>; the newest ${QA_BUILDS_KEPT} builds
+                  holding a vsix are kept, the others go to release "${QA_RELEASE_TAG}"; other files are listed and kept
   packages/       kept
   other entries   archived when their newest file is older than 30 days, else kept
   skipped         a folder with a file modified within 10 minutes, with a symbolic link, a hard link or a
@@ -328,32 +329,50 @@ export function classifyInventory(
       })
     else plan.push(guard({ ...info, name }, { action: 'delete', kind: 'gate' }))
   }
-  // A QA build is the vsix/json pair sharing a stem; the newest ones stay.
+  // A QA build is every file sharing its `codebook-<sha>` stem: the vsix/json pair and any notes named after it.
   const builds = new Map()
   for (const info of inventory.qa) {
-    const match = /^(codebook-[0-9a-f]+)\.(vsix|json)$/.exec(info.name)
-    if (match === null) continue
+    const match =
+      /^(codebook-[0-9a-f]+)(?:\.(?:vsix|json)|-[A-Za-z0-9._-]+)$/.exec(
+        info.name,
+      )
+    // A file of no build is listed, so nothing in qa/ goes unmentioned, and never moved.
+    if (match === null) {
+      plan.push({
+        action: 'keep',
+        name: `qa/${info.name}`,
+        bytes: info.bytes,
+        kind: 'qa-other',
+        reason: 'not a QA build',
+      })
+      continue
+    }
     const build = builds.get(match[1]) ?? {
       stem: match[1],
       files: [],
       bytes: 0,
       newestMs: 0,
       special: [],
+      hasVsix: false,
     }
     build.files.push(info.name)
     build.bytes += info.bytes
     build.newestMs = Math.max(build.newestMs, info.newestMs)
     build.special.push(...info.special)
+    build.hasVsix ||= info.name.endsWith('.vsix')
     builds.set(match[1], build)
   }
   const ordered = [...builds.values()].sort(
     (a, b) => b.newestMs - a.newestMs || (a.stem < b.stem ? -1 : 1),
   )
-  ordered.forEach((build, index) => {
+  // Only builds holding a vsix count toward the newest ten; notes whose build already left follow it to the release.
+  let keptBuilds = 0
+  for (const build of ordered) {
     const name = `qa/${build.stem}`
-    if (index < QA_BUILDS_KEPT)
+    if (build.hasVsix && keptBuilds < QA_BUILDS_KEPT) {
+      keptBuilds += 1
       plan.push({ action: 'keep', name, bytes: build.bytes, kind: 'qa-build' })
-    else
+    } else
       plan.push(
         guard(
           { ...build, name },
@@ -361,7 +380,7 @@ export function classifyInventory(
           { files: build.files.sort() },
         ),
       )
-  })
+  }
   return plan
 }
 

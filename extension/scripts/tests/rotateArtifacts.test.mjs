@@ -436,6 +436,75 @@ test('deletes other gate folders, keeps the current HEAD gate folder and the new
   )
 })
 
+test('archives review notes with their QA build, archives notes whose build already left, and lists a file of no build', () => {
+  // protects=notes named codebook-<sha>-… leave with their build and nothing in qa/ is left out of the plan silently; fails_when=notes stay behind forever, a notes-only group takes one of the ten kept places, or a file of no build is missing from the plan; no_claim=the upload of the notes is not exercised here
+  // Arrange
+  const info = (name, newestMs) => ({
+    name,
+    bytes: 10,
+    newestMs,
+    special: [],
+    fileCount: 1,
+  })
+  const qa = []
+  for (let build = 0; build < 11; build += 1) {
+    const stem = `codebook-${String(build).padStart(7, '0')}`
+    qa.push(
+      info(`${stem}.vsix`, NOW - DAY - build * 1000),
+      info(`${stem}.json`, NOW - DAY - build * 1000),
+    )
+  }
+  qa.push(
+    info(
+      'codebook-0000010-20261102T185302Z-f92aa6-codex-review.txt',
+      NOW - DAY - 20000,
+    ),
+    info(
+      'codebook-00ffaa1-20261102T183139Z-e0d1e4-review-state.txt',
+      NOW - 3600 * 1000,
+    ),
+    info('c68-datapoint-0ac1b411-codex-review.txt', NOW - DAY),
+  )
+  const inventory = { entries: [], gate: [], qa }
+  // Act
+  const plan = classifyInventory(inventory, {
+    current: 117,
+    keep: 3,
+    headShort: 'abcdef01',
+    now: NOW,
+  })
+  // Assert
+  const lines = plan.map((item) => `${item.action} ${item.name}`)
+  assert.equal(
+    lines.filter((line) => line.startsWith('keep qa/codebook-')).length,
+    10,
+  )
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith('archive')),
+    ['archive qa/codebook-00ffaa1', 'archive qa/codebook-0000010'],
+  )
+  assert.deepEqual(
+    plan.find((item) => item.name === 'qa/codebook-0000010').files,
+    [
+      'codebook-0000010-20261102T185302Z-f92aa6-codex-review.txt',
+      'codebook-0000010.json',
+      'codebook-0000010.vsix',
+    ],
+  )
+  assert.deepEqual(
+    plan.find(
+      (item) => item.name === 'qa/c68-datapoint-0ac1b411-codex-review.txt',
+    ),
+    {
+      action: 'keep',
+      name: 'qa/c68-datapoint-0ac1b411-codex-review.txt',
+      bytes: 10,
+      kind: 'qa-other',
+      reason: 'not a QA build',
+    },
+  )
+})
+
 test('skips a busy folder, a folder with a link and a young or oddly named loose entry', () => {
   // protects=a run still writing, a symbolic link and a recent loose log are never archived or deleted; fails_when=any of them gets action archive; no_claim=old well-named loose entries are archived (asserted last)
   // Arrange
