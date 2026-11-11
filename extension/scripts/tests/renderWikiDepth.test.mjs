@@ -805,7 +805,7 @@ test("a Wiki shaped like DeepWiki's 13-page next-learn Wiki, for 104 explained c
   })
 })
 
-// Value: protects=a large repository's Wiki held to a 30-page tree, where the text total also stops (240 explained files); fails_when=the floor asks 256 pages for 2,498 files, or the cap is dropped so 29 pages pass; why_new=Cycle 0114 H1; seam=none (the real renderer); no_claim=none
+// Value: protects=a large repository's Wiki held to a 30-page tree once it has 240 explained files (the text total stops earlier, at 150); fails_when=the floor asks 256 pages for 2,498 files, or the cap is dropped so 29 pages pass; why_new=Cycle 0114 H1; seam=none (the real renderer); no_claim=none
 test('a Wiki of 2,498 explained code files is rendered with 30 pages and refused with 29, naming 30', async () => {
   await inProject(async (root) => {
     // Arrange

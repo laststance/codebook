@@ -142,7 +142,7 @@ test('the README says a large repository gets a chapter per package, an Examples
   // Assert
   assert.ok(
     readme.includes(
-      'For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out.',
+      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out.",
     ),
   )
 })
@@ -167,6 +167,11 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   assert.ok(
     readme.includes(
       'Explanation is what a page writes for itself: a sentence used three or more times, counting sentences that differ only in file names, code names or numbers, counts once, and lists of names or paths and text copied from the cited source files do not count; the refusal names the thinnest pages with what did not count.',
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      "A list of names or paths is a sentence of four or more words, at least 60% of them names, and a copied sentence is one of 40 or more characters that a page's cited source holds word for word. Every page needs at least 1,200 characters of explanation, and the Wiki 400 per explained code file, up to 60,000.",
     ),
   )
 })
