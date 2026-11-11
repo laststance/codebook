@@ -165,7 +165,7 @@ test('the bundled skill 1.0.73 chooses an app below the root from the readiness 
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.97"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.98"\n'))
   for (const phrase of [
     'choose the app from the readiness `packages` of the adapter that lists it',
     'declare it as `packageRoot`',
@@ -314,7 +314,7 @@ test('the bundled skill 1.0.71 allows a library browser stop under a nested Vite
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.97"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.98"\n'))
   for (const phrase of [
     'Under `vite-dev` with a nested `packageRoot` (API 1.21 or later), a browser stop may lie in a workspace library the app imports',
     'when the run is refused as `library-build-stale`, tell the learner to build the library themselves and never build it yourself',
@@ -348,5 +348,5 @@ test('the README documents Vite library stops, their refusals and replay with AP
   assert.ok(readme.includes('with **MCP API 1.44**'))
   assert.ok(readme.includes('API 1.21 is additive: it adds browser stops'))
   assert.ok(readme.includes('(1.0.70).**'))
-  assert.ok(readme.includes('updates to **1.0.97**'))
+  assert.ok(readme.includes('updates to **1.0.98**'))
 })
