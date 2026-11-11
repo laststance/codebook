@@ -2167,3 +2167,127 @@ test('accepts any --current when no cycle folder exists, and refuses a number be
   assert.equal(plain.code, 0)
   assert.equal(huge.code, 'E_CURRENT_REQUIRED')
 })
+
+/** Archives c1, restores it, and returns what the archive held, so a test can rotate the restored folder again. */
+async function archiveAndRestoreC1(t, files) {
+  const root = await makeRoot(t)
+  for (const [path, content] of Object.entries(files))
+    await putFile(root, `c1/${path}`, content)
+  const fake = createFakeGh()
+  await rotate(root, fake, ['--current', '4', '--apply'])
+  const restored = await rotate(root, fake, ['--restore', 'c1'])
+  assert.equal(restored.code, 0)
+  return {
+    root,
+    fake,
+    indexBefore: fake.state.index,
+    assetsBefore: fake.assetNames('c1'),
+    uploadsBefore: fake.uploadedNames().length,
+    putsBefore: fake.state.putBodies.length,
+  }
+}
+
+test('removes a restored, unchanged folder again without packing or uploading it a second time', async (t) => {
+  // protects=a restored folder is rotated out again instead of failing every later --apply with E_ASSET_CONFLICT; fails_when=the folder stays, anything is uploaded, index.json changes, ARCHIVED.json loses the tag, or the exit is not 0; no_claim=does not show that a changed folder is refused (next tests)
+  // Arrange
+  const { root, fake, indexBefore, assetsBefore, uploadsBefore, putsBefore } =
+    await archiveAndRestoreC1(t, {
+      'native/run.bin': incompressible(3000),
+      'notes/a.txt': 'note a',
+    })
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 0)
+  assert.equal((await readdir(join(root, 'artifacts'))).includes('c1'), false)
+  assert.equal(fake.uploadedNames().length, uploadsBefore)
+  assert.deepEqual(fake.assetNames('c1'), assetsBefore)
+  assert.equal(fake.state.index, indexBefore)
+  assert.equal(fake.state.putBodies.length, putsBefore)
+  assert.ok(
+    lines.includes(
+      'archived c1 (already in the archive; local copy verified and removed)',
+    ),
+  )
+  assert.equal(
+    summaryOf(lines),
+    'ROTATE: archived=1 deleted=0 kept=0 skipped=0 failed=0 freed_bytes=3006',
+  )
+  assert.equal(
+    JSON.parse(await readFile(join(root, 'artifacts', 'ARCHIVED.json'), 'utf8'))
+      .folders.c1.tag,
+    'c1',
+  )
+})
+
+test('keeps a restored folder whose file was edited and fails the entry with E_ARCHIVED_DIFFERS without uploading', async (t) => {
+  // protects=a restored folder that no longer equals its archive is never deleted on the strength of the old archive; fails_when=the edited folder is deleted, something is uploaded, the record changes, the code differs or the exit is not 3; no_claim=does not repair the difference
+  // Arrange
+  const { root, fake, indexBefore, assetsBefore, uploadsBefore } =
+    await archiveAndRestoreC1(t, { 'a.txt': 'original', 'b.txt': 'stable' })
+  await putFile(root, 'c1/a.txt', 'edited!!')
+  const before = await snapshot(join(root, 'artifacts', 'c1'))
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(
+    lines.some((line) => line.startsWith('FAILED c1 E_ARCHIVED_DIFFERS')),
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c1')), before)
+  assert.equal(fake.uploadedNames().length, uploadsBefore)
+  assert.deepEqual(fake.assetNames('c1'), assetsBefore)
+  assert.equal(fake.state.index, indexBefore)
+})
+
+test('keeps a restored folder that gained a file and fails the entry with E_ARCHIVED_DIFFERS without uploading', async (t) => {
+  // protects=an extra file in a restored folder is never deleted unarchived; fails_when=the folder with the extra file is deleted, something is uploaded, the record changes, the code differs or the exit is not 3; no_claim=does not archive the extra file
+  // Arrange
+  const { root, fake, indexBefore, assetsBefore, uploadsBefore } =
+    await archiveAndRestoreC1(t, { 'a.txt': 'original' })
+  await putFile(root, 'c1/extra.txt', 'new evidence')
+  const before = await snapshot(join(root, 'artifacts', 'c1'))
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(
+    lines.some((line) => line.startsWith('FAILED c1 E_ARCHIVED_DIFFERS')),
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c1')), before)
+  assert.equal(fake.uploadedNames().length, uploadsBefore)
+  assert.deepEqual(fake.assetNames('c1'), assetsBefore)
+  assert.equal(fake.state.index, indexBefore)
+})
+
+test('keeps a restored folder and exits nonzero when its release asset is corrupt', async (t) => {
+  // protects=an unchanged restored folder is deleted only while its archive still downloads with the recorded SHA-256; fails_when=the folder is deleted or the exit is 0 although the archive is corrupt; no_claim=does not show how the archive is repaired
+  // Arrange
+  const { root, fake } = await archiveAndRestoreC1(t, { 'a.txt': 'original' })
+  fake.state.corruptPattern = 'c1.tar.gz'
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(lines.some((line) => line.startsWith('FAILED c1 E_HASH_MISMATCH')))
+  assert.equal(
+    await readFile(join(root, 'artifacts', 'c1', 'a.txt'), 'utf8'),
+    'original',
+  )
+})

@@ -89,6 +89,8 @@ Options:
                   never touched.
   --apply         Execute the plan. Without it nothing changes (the plan is printed).
   --restore <f>   Bring the archived folder <f> back into artifacts/ (refuses an existing destination).
+                  A restored folder that stays unchanged is removed again by the next --apply that
+                  reaches it, without a new upload.
   --init          Create the private archive repository once.
   --help          Print this text.
 
@@ -139,6 +141,7 @@ Error codes:
   E_INIT_INCOMPLETE    the archive repository has no index.json (run --init to write it)
   E_GIT                git could not read HEAD
   E_ABOVE_RETENTION    a folder above N - k was asked to be archived (never done)
+  E_ARCHIVED_DIFFERS   the folder is already archived but the local copy differs from its archive, or the release lacks the recorded assets (nothing is uploaded or changed)
   E_ASSET_CONFLICT     a release asset of the same name has another SHA-256 (never overwritten)
   E_HASH_MISMATCH      a downloaded or extracted file differs from what was packed
   E_FOLDER_CHANGED     the local folder changed after packing or in the last moment before deletion
@@ -1110,6 +1113,17 @@ async function recordArchived(github, context, key, record) {
   const { sha, index } = await github.readIndex()
   index.folders[key] = record
   await github.writeIndex(index, sha, `Archive ${key}`)
+  await recordLocal(context, key, record)
+}
+
+/**
+ * Writes one folder's tag into the local ARCHIVED.json (atomically).
+ * Called by {@link recordArchived} and by {@link rotateAlreadyArchived}, which leaves index.json alone but keeps the local pointer.
+ * @param {object} context - Rotation context.
+ * @param {string} key - Archived entry.
+ * @param {{ tag: string, archivedAt: string }} record - The index record.
+ */
+async function recordLocal(context, key, record) {
   const localPath = join(context.artifactsDir, LOCAL_INDEX)
   let local = { schemaVersion: 1, folders: {} }
   try {
@@ -1220,6 +1234,97 @@ async function removeAfterFinalCheck(context, name, manifestFiles) {
 }
 
 /**
+ * Removes a local entry whose archive already exists, after proving the local copy equals it.
+ *
+ * Why: tar and gzip output differs between packings of identical files, so a restored folder packed again meets its own release with another hash (`E_ASSET_CONFLICT` on every run). The existing record stays valid, so nothing is packed or uploaded.
+ * Called by {@link rotateArchive} when index.json already holds a record for the entry.
+ *
+ * @param {object} context - Rotation context.
+ * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
+ * @param {string} name - Top-level entry.
+ * @param {{ tag: string, archivedAt: string, assets: { name: string, size: number, sha256: string }[] }} record - The index record.
+ * @param {string} workDir - The entry's temporary folder.
+ * @returns {Promise<void>} Resolves once the local copy is removed.
+ * @throws {CommandRefusal} `E_ARCHIVED_DIFFERS` when the release lacks the recorded assets or the local copy differs from the archive; `E_HASH_MISMATCH` for a corrupt download or extraction; `E_FOLDER_CHANGED` from the last check. Nothing is uploaded or recorded and the local copy stays.
+ */
+async function rotateAlreadyArchived(context, github, name, record, workDir) {
+  const filesJsonName = `${name}.files.json`
+  const differs = (reason) =>
+    new CommandRefusal(
+      'E_ARCHIVED_DIFFERS',
+      `${name} is already archived in release ${record.tag}, but ${reason}`,
+      {
+        fix: `the local ${name} differs from its archive or the archive is incomplete: rename the local folder, or remove release ${record.tag} and its index.json record in ${context.repository} by hand, then rerun`,
+        exitCode: EXIT.FOLLOW_UP,
+      },
+    )
+  const release = await github.release(record.tag)
+  if (release === null) throw differs('the release does not exist')
+  if (!record.assets.some((asset) => asset.name === filesJsonName))
+    throw differs(`its record lists no ${filesJsonName}`)
+  for (const asset of record.assets) {
+    const held = release.assets.find((item) => item.name === asset.name)
+    if (held === undefined || held.state !== 'uploaded')
+      throw differs(`the release lacks ${asset.name}`)
+  }
+  // Every recorded asset is downloaded again and checked against the record.
+  const downloadDir = join(workDir, 'download')
+  const extractDir = join(workDir, 'extract')
+  await downloadAndVerify(
+    github,
+    context,
+    record.tag,
+    record.assets,
+    downloadDir,
+  )
+  const manifest = JSON.parse(
+    await readFile(join(downloadDir, filesJsonName), 'utf8'),
+  )
+  // The local copy must equal the archive: a changed, extra or missing file means it is not the archived one.
+  const localProblems = await compareWithManifest(
+    context.artifactsDir,
+    name,
+    manifest.files,
+  )
+  if (localProblems.length > 0)
+    throw differs(`the local copy differs: ${localProblems[0]}`)
+  // The archived parts themselves must extract to files.json.
+  await mkdir(extractDir, { recursive: true })
+  const partNames = record.assets
+    .map((asset) => asset.name)
+    .filter((assetName) => assetName.startsWith(`${name}.tar.gz`))
+  await expectSuccess(
+    () =>
+      context.run('tar', ['-xzf', '-', '--no-same-owner', '-C', extractDir], {
+        stdin: joinParts(
+          sortParts(partNames).map((partName) => join(downloadDir, partName)),
+        ),
+      }),
+    'E_HASH_MISMATCH',
+    `extracting the downloaded ${name}`,
+    context.environment,
+  )
+  const extractProblems = await compareWithManifest(
+    extractDir,
+    name,
+    manifest.files,
+  )
+  if (manifest.count !== manifest.files.length || extractProblems.length > 0)
+    throw new CommandRefusal(
+      'E_HASH_MISMATCH',
+      `the extracted ${name} differs from files.json: ${extractProblems[0] ?? 'file count'}`,
+      { fix: 'the local copy is kept; rerun', exitCode: EXIT.FOLLOW_UP },
+    )
+  // No new record: the existing one stays valid; the local pointer is kept.
+  await recordLocal(context, name, record)
+  await context.afterRecord?.(name)
+  await removeAfterFinalCheck(context, name, manifest.files)
+  context.print(
+    `archived ${name} (already in the archive; local copy verified and removed)`,
+  )
+}
+
+/**
  * Archives one cycle folder or loose entry: pack, upload, verify, record, delete.
  *
  * Why: this is the six-step order of Issue 301; the local copy goes only after steps 3 to 5 passed and a last check of the renamed copy.
@@ -1243,6 +1348,11 @@ async function rotateArchive(context, item) {
   await rm(workDir, { recursive: true, force: true })
   await mkdir(workDir, { recursive: true })
   const github = createGithub(context)
+  // A restored folder that is unchanged is already archived: packing it again would give another tar.gz hash.
+  const { index: archiveIndex } = await github.readIndex()
+  const archivedRecord = archiveIndex.folders[name]
+  if (archivedRecord !== undefined)
+    return rotateAlreadyArchived(context, github, name, archivedRecord, workDir)
   // 1. pack and hash
   const files = await hashEntryFiles(context.artifactsDir, name)
   const filesJson = buildFilesJson(name, files)
