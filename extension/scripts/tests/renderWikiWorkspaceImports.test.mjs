@@ -647,3 +647,110 @@ test('an app page that names the package and the function only in separate parag
     )
   })
 })
+
+// Value: protects=publishing a repository whose package.json files are broken or nameless: an unreadable package.json or one without a name is no workspace package, and a single named package is no workspace, so no import sentence is owed; fails_when=the renderer throws on the malformed JSON instead of refusing or publishing by the rules, or treats one named package plus unnamed folders as a workspace and refuses the app and API pages; why_new=no existing test has a package.json that is invalid, nameless or alone; seam=none (the real renderer); no_claim=that the Wiki explains the folders' relation
+test('a repository whose other package.json files are invalid or nameless has no workspace and publishes without an import sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/package.json': '{ "name": ',
+        'apps/api/package.json': '{ "private": true }\n',
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        {
+          path: 'api.html',
+          text: 'The API answers with the day a tap was made.',
+          cites: ['apps/api/src/router.ts'],
+        },
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=a refusal a learner and the editor AI can act on: it names at most three imported functions and at most three pages, and for a package imported whole it names no function and no parentheses; fails_when=the cap is dropped (a long list of every import floods the refusal), the page list is not capped, or a whole-module import prints an empty "()" or "undefined"; why_new=existing refusals name one or two names and pages, and none a whole-module import; seam=none (the real renderer); no_claim=that the first three names are the most important ones
+test('a refusal names at most three imported functions and three pages, and no function for a package imported whole', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          "import { localDay, dayBounds, weekOf, monthOf } from '@acme/shared'\nexport const today = [localDay, dayBounds, weekOf, monthOf]\n",
+        'apps/api/src/router.ts':
+          "import * as shared from '@acme/shared'\nexport const route = shared\n",
+      },
+      [
+        SHARED_PAGE,
+        ...['a', 'b', 'c', 'd'].map((letter) => ({
+          path: `app-${letter}.html`,
+          text: `The app shows part ${letter} of the day.`,
+          cites: ['apps/app/src/today.ts'],
+        })),
+        {
+          path: 'api.html',
+          text: 'The API answers with the day a tap was made.',
+          cites: ['apps/api/src/router.ts'],
+        },
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared (localDay, dayBounds, weekOf), but none of its pages (app-a.html, app-b.html, app-c.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it. apps/api imports @acme/shared, but none of its pages (api.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/api uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=one refusal for everything the Wiki lacks: a Wiki that is both too shallow and silent about the app's import is refused once, with the depth sentences first and the workspace sentence after them; fails_when=the workspace rule is skipped when the depth rules already fail, or the two refusals come in separate passes or in the other order; why_new=every other test here meets only the workspace rule (the repositories have fewer than 12 code files); seam=none (the real renderer); no_claim=the wording of the depth sentences
+test('a Wiki too shallow and silent about an import is refused once, with the depth sentences before the workspace sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const filler = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [
+        `packages/shared/src/extra${index}.ts`,
+        `export const extra${index} = ${index}\n`,
+      ]),
+    )
+    const manifest = await manifestOf(root, { ...WORKSPACE, ...filler }, [
+      { ...SHARED_PAGE, cites: [...SHARED_PAGE.cites, ...Object.keys(filler)] },
+      {
+        path: 'app.html',
+        text: 'The app shows the day the clock is in.',
+        cites: ['apps/app/src/today.ts'],
+      },
+      API_PAGE,
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    const workspaceAt = outcome.indexOf(
+      'apps/app imports @acme/shared (localDay), but none of',
+    )
+    const depthAt = outcome.indexOf('fewer than 1200 characters')
+    assert.ok(depthAt >= 0, outcome)
+    assert.ok(workspaceAt > depthAt, outcome)
+    assert.equal(outcome.includes('apps/api imports'), false)
+  })
+})
