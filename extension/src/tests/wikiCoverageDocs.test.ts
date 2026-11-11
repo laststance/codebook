@@ -162,7 +162,7 @@ test('the bundled skill 1.0.93 gives a page a parent only when it details part o
 })
 
 // Value: protects=the chapter tree a learner navigates: each section with child pages opens at a page about its whole unit, and a page about one part never holds the unit's other parts (Cycle 0116 found VS Code's Copilot Chat with GPT-6.1 Terra hanging the input, notification and post components under "common layout and navigation" on P07 nsx, 3 of 22 children); fails_when=the skill (from 1.0.93) loses the whole-unit opening page rule or the pre-publish tree check, so the agent is never asked to open a section at the whole unit or to check the tree; why_new=Cycle 0117 (C116-E1-1); seam=none (the packaged skill text); no_claim=that an editor AI follows the rule, which only the native E1 and E2 runs show
-test('the bundled skill 1.0.93 opens each section with child pages at a page for its whole unit and checks the tree before publishing', async () => {
+test('the bundled skill 1.0.93 puts every part of a unit under the page about the whole unit, keeps peer units side by side, and checks the tree before rendering', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
@@ -170,25 +170,30 @@ test('the bundled skill 1.0.93 opens each section with child pages at a page for
   assert.ok(skill.includes('metadata:\n  version: "1.0.93"\n'))
   assert.ok(
     skill.includes(
-      'A section whose pages have children opens at a page titled for the section\'s whole unit (a package, runtime, app, folder or suite, such as "Frontend application" or "Express backend"), and that page is the `parent` of the unit\'s parts; a page titled for one part of the unit (one group of components, one flow, one kind of test) is a peer of the unit\'s other parts, never their `parent`, and holds only its own details.',
+      "When one unit (a single package, app, runtime, folder or suite) is split into pages, the page about the whole unit is the `parent` of its parts: its title covers every page of the unit, so each part reads as a part of that title. A page whose title names only some of the unit (one group of components, one flow, one kind of test) is a part, a peer of the unit's other parts and never their `parent`. A section that lists several peer units (packages, adapters, example families) needs no page above them; each peer unit applies this rule to its own pages.",
     ),
   )
   assert.ok(
     skill.includes(
-      "Then list each section's pages as a tree by title and check it before publishing: where a page titled for one part holds another part of the same unit as a child, give that child the whole-unit page as its `parent` instead, adding the whole-unit page when the section has none. Then run the same command without `--render-only` to publish.",
+      "First list each section's pages as a tree by title and check it: where a page titled for part of a unit holds another part of that unit, make the page about the whole unit the `parent` of every part, the former holder included. When the unit has no such page, add one and write it like any other page, with its own sources, a diagram and an explanation of how the parts fit together, not a list of its children. Then run `node <publisher>",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'After any change to the pages or their `parent` fields, run the `--render-only` command again before publishing.',
     ),
   )
 })
 
 // Value: protects=the learner's README says the skill opens each section with child pages at a page about its whole unit and checks the chapter tree before publishing; fails_when=the README loses that sentence while the skill (1.0.93) asks for it; why_new=Cycle 0117 (C116-E1-1); seam=none (the packaged README text); no_claim=that an editor AI builds such a tree
-test('the README says a section with child pages opens at a page about its whole unit, and the tree is checked before publishing', async () => {
+test('the README says every part of a unit hangs under the page about the whole unit, and the tree is checked before rendering', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
 
   // Assert
   assert.ok(
     readme.includes(
-      "The bundled skill also asks that a section with child pages open at a page about its whole unit, such as the frontend application, with the unit's parts as its children, and that the editor AI check the chapter tree before it publishes, so no part hangs under a page about another part.",
+      'The bundled skill also asks that when one unit, such as a package or an app, is split into pages, the page about the whole unit holds all its parts as children, never a page about one part, while peer units such as several packages stay side by side; before it renders the Wiki, the editor AI checks the chapter tree and adds a full page for a missing whole unit.',
     ),
   )
 })
@@ -201,7 +206,7 @@ test('the README says a large repository gets a chapter per package, an Examples
   // Assert
   assert.ok(
     readme.includes(
-      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package, and a shared library never under the code that uses it), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out. The bundled skill also asks that a section with child pages open at a page about its whole unit, such as the frontend application, with the unit's parts as its children, and that the editor AI check the chapter tree before it publishes, so no part hangs under a page about another part. Known limit: VS Code's Copilot Chat can still open a section with a page about one part, such as the common layout, and put the section's other parts under it as child pages; every page stays readable.",
+      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package, and a shared library never under the code that uses it), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out. The bundled skill also asks that when one unit, such as a package or an app, is split into pages, the page about the whole unit holds all its parts as children, never a page about one part, while peer units such as several packages stay side by side; before it renders the Wiki, the editor AI checks the chapter tree and adds a full page for a missing whole unit. Known limit: VS Code's Copilot Chat can still open a section with a page about one part, such as the common layout, and put the section's other parts under it as child pages; every page stays readable.",
     ),
   )
 })
