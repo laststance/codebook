@@ -940,7 +940,7 @@ function citedFolderCountsOf(page) {
 
 /**
  * The digest of a candidate's chapter tree that a command-line publish names with `--checked-tree`: the first 12 hex digits of the SHA-256 of {@link chapterTreeOf}'s lines.
- * Why: Cycle 0117 found that editor agents act on a refusal but not on the tree a successful preview answers. The refusal of {@link uncheckedTreeRefusalOf} is the only place this digest appears, so the agent publishes only after the tree was in front of it, and a later change to a page's title, path, section, `parent` or sources asks again.
+ * Why: Cycle 0117 found that editor agents act on a refusal but not on the tree a successful preview answers. The refusal of {@link uncheckedTreeRefusalOf} is the only place this digest appears, so the agent publishes only after the tree was in front of it, and a later change to that tree (a page's title, path, section or `parent`, or the folders its sources cite and their counts) asks again. The digest covers only what the tree shows: citing another file in the same folder, which the tree does not show, keeps it, and an agent that saw the tree is not refused again for a change it would not see.
  * Called by {@link requireTreeChecked} and by tests.
  * @param manifest - The candidate's manifest, its pages already validated.
  * @returns Twelve lowercase hex digits.
