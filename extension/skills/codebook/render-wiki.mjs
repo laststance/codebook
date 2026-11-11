@@ -226,17 +226,20 @@ const textWeightOf = text => [...text].reduce((sum, character) => sum + characte
 /** A private-use character standing for the end of a block element while a page is read as sentences; no article text holds it. */
 const BLOCK_END_MARK = '';
 /** The end tags (and the line break) that end a sentence as a reader sees the page: a paragraph, list item or list, heading, table cell, row or table, definition, caption, summary, preformatted block, quotation, or a division or section. */
-const BLOCK_END = /<\/(?:p|li|ul|ol|dl|h[1-6]|td|th|tr|table|dt|dd|caption|figcaption|summary|details|pre|blockquote|div|section|article|aside|header|footer|nav|figure)\s*>|<br\s*\/?>/gi;
+const BLOCK_END = /<\/(?:p|li|ul|ol|dl|h[1-6]|td|th|tr|table|dt|dd|caption|figcaption|summary|details|pre|blockquote|div|section|article|aside|header|footer|nav|figure)\s*>|<br\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 /** Splits a page's article into the sentences a reader sees: a block end ({@link BLOCK_END}) or sentence punctuation (`.`, `!`, `?` before a space, or `。`) ends a sentence; comments, tags and character references are read as {@link articleTextOf} reads them. Called by {@link countedTextOf}. @example articleSentencesOf('<p>One. Two</p><li>Three</li>') // => ['One.', 'Two', 'Three'] */
 const articleSentencesOf = contentHtml => articleTextOf(contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(BLOCK_END, ` ${BLOCK_END_MARK} `)).split(new RegExp(`\\s*${BLOCK_END_MARK}\\s*|(?<=[.!?])\\s+|(?<=。)`)).map(sentence => sentence.trim()).filter(Boolean);
 /** The form of a sentence that template text repeats: paths, file names, code names (camelCase, PascalCase with a second capital, snake_case) and numbers each read as one placeholder, letters lowercased, spaces collapsed. A path or file name is a run of ASCII name characters, so a Japanese sentence that names a path keeps its own words; each pattern starts only where its run starts, so a long run is read once. Called by {@link countedTextOf}. @example sentenceFormOf('Reading src/a.ts as QueryClient 2.') // => 'reading p as i n.' */
-const sentenceFormOf = sentence => sentence.replace(/(?<![\w.@$~:-])[\w.@$~:-]*[/\\][\w./\\@$~:-]*/g, 'P').replace(/(?<![\w.-])[\w.-]+\.[A-Za-z]{1,6}\b/g, 'F').replace(/\b[A-Za-z_$][\w$]*[A-Z_$][\w$]*\b/g, 'I').replace(/\d+(?:[.,]\d+)*/g, 'N').toLowerCase().replace(/\s+/g, ' ');
-/** A word that is a name rather than prose: a path or file name (it holds `/` or a `.` inside), a code name with a second capital or an underscore, or a call such as `fetch()`. Called by {@link isNameList}. */
-const NAME_WORD = /^(?:[\w$@-]*[/.][\w$@./:-]*\w|[A-Za-z_$][\w$]*[A-Z_$][\w$]*|[\w$]+\(\))$/;
-/** Whether a sentence is a list of names (identifiers, paths, file names) rather than explanation: at least {@link DEPTH_LIST_MIN_WORDS} words, of which at least {@link DEPTH_LIST_NAME_SHARE} are names ({@link NAME_WORD}). Called by {@link sentenceKindOf}. @example isNameList('IsServerValue 、 isServer 、 environmentManager 、 FocusManager') // => true */
+const sentenceFormOf = sentence => sentence.replace(/(?<![\w.@$~:-])[\w.@$~:-]*[/\\][\w./\\@$~:-]*/g, 'P').replace(/(?<![\w.-])[\w.-]+\.[A-Za-z]{1,6}\b/g, 'F').replace(/(?<![\w$])[A-Za-z_$][\w$]*/g, word => (isCodeName(word) ? 'I' : word)).replace(/\d+(?:[.,]\d+)*/g, 'N').toLowerCase().replace(/\s+/g, ' ');
+/** Whether a word is a code name: letters, digits, `_` or `$`, starting with a letter, `_` or `$`, with a capital, `_` or `$` after its first character (camelCase, PascalCase with a second capital, snake_case). Checked in two linear tests, so a long run is read once. Called by {@link sentenceFormOf} and {@link isNameWord}. @example isCodeName('QueryClient') // => true */
+const isCodeName = word => /^[A-Za-z_$][\w$]*$/.test(word) && /[A-Z_$]/.test(word.slice(1));
+/** Whether a word is a name rather than prose: a path or file name (it holds `/`, or a `.` followed by a letter), a code name ({@link isCodeName}), or a call such as `fetch()`. Called by {@link isNameList}. @example isNameWord('src/a.ts') // => true */
+const isNameWord = word => /^[\w$@.-]*\/[\w$@./:-]*\w$/.test(word) || /^[\w$@-]*\.[A-Za-z][\w$@./:-]*$/.test(word) || isCodeName(word) || /^[\w$]+\(\)$/.test(word);
+/** Whether a sentence is a list of names (identifiers, paths, file names, calls) rather than explanation: at least {@link DEPTH_LIST_MIN_WORDS} words, of which at least {@link DEPTH_LIST_NAME_SHARE} are names ({@link isNameWord}); a word's surrounding brackets, quotes and punctuation are removed, except the `()` of a call. Called by {@link sentenceKindOf}. @example isNameList('IsServerValue 、 isServer 、 environmentManager 、 FocusManager') // => true */
 const isNameList = sentence => {
-  const words = sentence.split(/[\s、,，;；]+/).map(word => word.replace(/^[(["'`「]+|[)\]"'`」:：.,。]+$/g, '')).filter(Boolean);
-  return words.length >= DEPTH_LIST_MIN_WORDS && words.filter(word => NAME_WORD.test(word)).length / words.length >= DEPTH_LIST_NAME_SHARE;
+  // A call keeps its "()"; any other closing bracket or punctuation at a word's end is removed.
+  const words = sentence.split(/[\s、,，;；]+/).map(word => word.replace(/^[(["'`「]+/, '').replace(/[\]"'`」:：.,。]+$/, '').replace(/(?<!\()\)+$/, '').replace(/[\]"'`」:：.,。]+$/, '')).filter(Boolean);
+  return words.length >= DEPTH_LIST_MIN_WORDS && words.filter(isNameWord).length / words.length >= DEPTH_LIST_NAME_SHARE;
 };
 /** A source file's text as prose can quote it: comment markers at line starts and backticks removed, spaces collapsed. Called by the cited-text reader of {@link renderWikiPages}. @example quotableSourceTextOf([' * A `Query` runs.', ' *\/']) // => 'A Query runs. ' */
 const quotableSourceTextOf = lines => lines.map(line => line.replace(/^\s*(?:\/\*\*?|\*\/|\*|\/\/+|#)\s?/, '')).join(' ').replace(/[`*]/g, '').replace(/\s+/g, ' ');
@@ -245,12 +248,12 @@ const isCopiedText = (sentence, citedTexts) => textWeightOf(sentence) >= DEPTH_M
 /** Which measure a sentence adds to: `listed` for a list of names ({@link isNameList}), `repeated` for a later use of a form used {@link DEPTH_REPEATED_SENTENCE_USES} or more times (its first use counts), `copied` for text copied from a cited source ({@link isCopiedText}), else `length`, the counted explanation. Called by {@link countedTextOf} for each sentence in page order; `counted` records the repeated forms whose first use has been counted. @param form - The sentence's form ({@link sentenceFormOf}). @example sentenceKindOf('Prose.', 'prose.', { uses: new Map(), counted: new Set(), citedTexts: [] }) // => 'length' */
 function sentenceKindOf(sentence, form, { uses, counted, citedTexts }) {
   if (isNameList(sentence)) return 'listed';
-  // Template text: only the first use of a form used three or more times counts.
-  if (uses.get(form) >= DEPTH_REPEATED_SENTENCE_USES) {
-    if (counted.has(form)) return 'repeated';
-    counted.add(form);
-  }
-  return isCopiedText(sentence, citedTexts) ? 'copied' : 'length';
+  // Template text: only the first counted use of a form used three or more times counts; a copied use does not take that place.
+  const isTemplate = uses.get(form) >= DEPTH_REPEATED_SENTENCE_USES;
+  if (isTemplate && counted.has(form)) return 'repeated';
+  if (isCopiedText(sentence, citedTexts)) return 'copied';
+  if (isTemplate) counted.add(form);
+  return 'length';
 }
 /** Measures each page's counted explanation in weighted characters ({@link textWeightOf}): its sentences ({@link articleSentencesOf}) except lists of names, later uses of a sentence form the Wiki repeats {@link DEPTH_REPEATED_SENTENCE_USES} or more times, and text copied from the page's cited sources; those are measured apart. Called by {@link depthShortfallsOf}. @param pages - The manifest's pages. @param citedTextsOf - Answers a page's cited sources as quotable text ({@link quotableSourceTextOf}). @returns One `{ path, length, repeated, listed, copied }` per page, `length` the counted explanation. @example countedTextOf(manifest.pages, () => []) // => [{ path: 'index.html', length: 1500, repeated: 0, listed: 0, copied: 0 }] */
 function countedTextOf(pages, citedTextsOf) {
@@ -420,13 +423,14 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   // Every citation has resolved; now no included code file may stay unexplained.
   requireCodeCoverage(manifest, indexedSources, await verifiedInlinePathsOf(manifest, indexedSources, projectRoot, async source => (await linesOf(source)).length));
-  // A page's cited sources (its source list and diagram sources, all read above) as quotable text, read once per file.
+  // A page's cited sources (its source list, diagram sources and inline links that name an indexed source, all read above) as quotable text, read once per file.
   const quotableTexts = new Map();
   const quotableTextOf = path => {
     if (!quotableTexts.has(path)) quotableTexts.set(path, quotableSourceTextOf(sourceLines.get(path) ?? []));
     return quotableTexts.get(path);
   };
-  const citedTextsOf = page => [...new Set([...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path))].map(quotableTextOf);
+  const inlinePathsOf = page => inlineSourceLinksOf(page.contentHtml).filter(link => namesIndexedSource(link, indexedSources.get(link.path), projectRoot)).map(link => link.path);
+  const citedTextsOf = page => [...new Set([...[...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path), ...inlinePathsOf(page)])].map(quotableTextOf);
   requireWikiDepth(manifest, indexedSources, citedTextsOf);
   return pages;
 }
