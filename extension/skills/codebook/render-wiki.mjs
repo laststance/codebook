@@ -119,6 +119,20 @@ const CODE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.js
 const MAX_NAMED_UNCOVERED = 40;
 /** The longest reason, in characters, a coverage exception may give. */
 const MAX_EXCEPTION_REASON = 300;
+/** Base names of files that can hold credentials, which a Wiki never indexes ({@link isCredentialPath}), compared case-insensitively. It is a list of names, not a proof that another file holds no secret: an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, such as `.env.test`, `.env.sample` or `.env-local`, a name that ends with `.env`, `.envrc` and `.dev.vars`), a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`, the extension alone included), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519` and their `_sk` forms, never the `.pub` half), and the `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` and `credentials.json` files. */
+const CREDENTIAL_FILE_NAME = /^(?:\.env(?:[._-].*)?|.+\.env|\.envrc|\.dev\.vars|.*\.(?:pem|key|p12|pfx|jks|keystore|p8|ppk|tfvars)|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?|\.npmrc|\.netrc|\.pgpass|\.pypirc|\.htpasswd|\.git-credentials|credentials(?:\.json)?)$/i;
+/** A folder name whose files a Wiki never indexes ({@link isCredentialPath}): an environment folder (`.env/`), compared case-insensitively. */
+const CREDENTIAL_FOLDER_NAME = /^\.env$/i;
+/** Whether a repository-relative path names a file that can hold credentials: its base name matches {@link CREDENTIAL_FILE_NAME} or one of its folders matches {@link CREDENTIAL_FOLDER_NAME}. Called by {@link requireNoCredentialSources} for each indexed path and the file it resolves to, and by {@link requireNoCredentialLinks} for the paths a page's text links to. @example isCredentialPath('config/.env/db.ts') // => true @example isCredentialPath('src/env.ts') // => false */
+const isCredentialPath = path => {
+  const segments = path.split(/[\\/]/);
+  return CREDENTIAL_FILE_NAME.test(segments.at(-1)) || segments.slice(0, -1).some(segment => CREDENTIAL_FOLDER_NAME.test(segment));
+};
+/** The refusal of a Wiki that indexes files that can hold credentials, by their names or the files they resolve to, naming them as given (sorted by the caller), up to {@link MAX_NAMED_UNCOVERED}. Called by {@link requireNoCredentialSources}. @example credentialRefusal(['.env.test']) // => "The Wiki's source index holds 1 file that can hold credentials: .env.test. …" */
+const credentialRefusal = paths => {
+  const more = paths.length > MAX_NAMED_UNCOVERED ? `, and ${paths.length - MAX_NAMED_UNCOVERED} more` : '';
+  return `The Wiki's source index holds ${paths.length} file${paths.length === 1 ? '' : 's'} that can hold credentials: ${paths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`;
+};
 /** The number of explained code files from which {@link requireWikiDepth} applies; a smaller repository is exempt. */
 const DEPTH_MIN_EXPLAINED_FILES = 12;
 /** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link requireWikiDepth} applies. */
@@ -318,6 +332,78 @@ function requireWikiDepth(manifest, indexedSources, citedTextsOf) {
   const shortfalls = depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
+/**
+ * Refuses a Wiki whose source index holds a file that can hold credentials ({@link CREDENTIAL_FILE_NAME}), by its own name or by the file it resolves to, so a published Wiki never indexes, hashes or cites one and its answers never read one.
+ * Why: Cycle 0116 found an editor agent that excluded `.env` but indexed the tracked `.env.e2e` and `.env.test` of the repository it documented; an indexed link such as `config/runtime.json` pointing at `.env.test` reaches the Wiki's answers even when no page cites it.
+ * Called by {@link renderWikiPages} once the index is read and before any source is read, so a refusal comes before anything is written.
+ * @param includedSources - The manifest's source index, already checked for valid relative paths.
+ * @param projectRoot - The repository root those paths are relative to.
+ * @throws When an included source's path, or the path it resolves to ({@link resolvedPathOf}), is credential-shaped ({@link isCredentialPath}); the message names the files, sorted, up to {@link MAX_NAMED_UNCOVERED}.
+ * @example await requireNoCredentialSources([{ path: 'src/env.ts' }], '/repo') // => undefined (a code file named env is no environment file)
+ * @example await requireNoCredentialSources([{ path: '.env.test' }], '/repo') // throws "The Wiki's source index holds 1 file that can hold credentials: .env.test. …"
+ */
+async function requireNoCredentialSources(includedSources, projectRoot) {
+  const root = await realpath(projectRoot), credentialPaths = [];
+  for (const { path } of includedSources) {
+    if (isCredentialPath(path)) {
+      credentialPaths.push(path);
+      continue;
+    }
+    // A link (config/runtime.json pointing at .env.test) is refused by the file it resolves to, cited or not; a missing file holds nothing.
+    const target = await resolvedPathOf(root, path);
+    if (target !== undefined && isCredentialPath(target)) credentialPaths.push(`${path} (it resolves to ${target})`);
+  }
+  if (credentialPaths.length) throw new Error(credentialRefusal(credentialPaths.sort()));
+}
+/** The errors of `realpath` that mean a path reaches no file this user can open: missing, under a file, a link loop, too long, or behind a folder the user may not enter. The editor and the Wiki's answers resolve the path the same way and fail the same way, so such a path exposes nothing. */
+const UNREACHABLE_PATH_ERRORS = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG', 'EACCES', 'EPERM']);
+/** The path, relative to the repository root and with `/` separators, of the file a repository path resolves to through any link, as the editor's source handler opens it (`realpath` of the joined path); undefined for a path that reaches no file ({@link UNREACHABLE_PATH_ERRORS}). Called by {@link requireNoCredentialSources} and {@link credentialLinkTargetOf}. @param root - The repository root, already resolved. @example await resolvedPathOf('/repo', 'config/runtime.json') // => '.env.test' @example await resolvedPathOf('/repo', 'docs/removed.md') // => undefined */
+async function resolvedPathOf(root, path) {
+  const file = await realpath(join(root, path)).catch(error => {
+    if (UNREACHABLE_PATH_ERRORS.has(error.code)) return undefined;
+    throw error;
+  });
+  return file === undefined ? undefined : relative(root, file).split(sep).join('/');
+}
+/**
+ * The credential-shaped path ({@link isCredentialPath}) an editor link's path reaches: the path as written, or the file the editor's source handler would open for it ({@link resolvedPathOf}), which folds `.` and `..` and follows links.
+ * Called by {@link requireNoCredentialLinks} for each inline link of a page.
+ * @param root - The repository root, already resolved.
+ * @param path - The link's `path` parameter, as the page wrote it.
+ * @returns
+ * - the path itself, when its own name is credential-shaped (even when no such file exists);
+ * - the file it opens, when that one is (`.env.test/x/..` or a link `config/runtime.json` reaches `.env.test`);
+ * - undefined, when neither names a file that can hold credentials, or the path holds a NUL byte, which the editor refuses to open.
+ * @example await credentialLinkTargetOf('/repo', '.env.test') // => '.env.test'
+ * @example await credentialLinkTargetOf('/repo', '.env.test/x/..') // => '.env.test'
+ * @example await credentialLinkTargetOf('/repo', 'src/a.ts') // => undefined
+ */
+async function credentialLinkTargetOf(root, path) {
+  if (isCredentialPath(path)) return path;
+  // The editor's handler refuses a path holding a NUL byte before resolving it, so such a link opens nothing; resolving it here would throw.
+  if (path.includes('\0')) return undefined;
+  const target = await resolvedPathOf(root, path);
+  return target !== undefined && isCredentialPath(target) ? target : undefined;
+}
+/** How the refusal of {@link requireNoCredentialLinks} names one refused link: the page and the path it wrote, and the file it opens when the page spelled it otherwise, so the agent sees why the link is refused. @example credentialLinkLabel({ page: 'index.html', path: 'config/runtime.json' }, '.env.test') // => 'index.html → config/runtime.json (it resolves to .env.test)' */
+const credentialLinkLabel = (link, target) => target === link.path ? `${link.page} → ${link.path}` : `${link.page} → ${link.path} (it resolves to ${target})`;
+/**
+ * Refuses a page whose text links to a file that can hold credentials, indexed or not, by the link's own name or the file it opens in the editor ({@link credentialLinkTargetOf}), so an update that moves such a file to `excludedPaths` cannot keep an old inline citation of it, with its path and hash, and no spelling or link opens one in the editor.
+ * Called by {@link renderWikiPages} after {@link requireNoCredentialSources} and before any source is read.
+ * @param manifest - The manifest's pages.
+ * @param projectRoot - The repository root the links are opened in.
+ * @throws When an editor source link in a page's text ({@link inlineSourceLinksOf}) reaches a credential-shaped path; the message names each page and path, and the file it reaches when that differs, up to {@link MAX_NAMED_UNCOVERED}.
+ * @example await requireNoCredentialLinks({ pages: [{ path: 'index.html', contentHtml: '<a href="vscode://laststance.codebook/source?path=.env.test&amp;line=1">x</a>' }] }, '/repo') // throws "A page links to 1 file that can hold credentials: index.html → .env.test. …"
+ */
+async function requireNoCredentialLinks(manifest, projectRoot) {
+  const root = await realpath(projectRoot);
+  const pageLinks = manifest.pages.flatMap(page => inlineSourceLinksOf(page.contentHtml).filter(link => typeof link.path === 'string').map(link => ({ page: page.path, path: link.path })));
+  const targets = await Promise.all(pageLinks.map(link => credentialLinkTargetOf(root, link.path)));
+  const links = pageLinks.flatMap((link, index) => targets[index] === undefined ? [] : [credentialLinkLabel(link, targets[index])]);
+  if (!links.length) return;
+  const more = links.length > MAX_NAMED_UNCOVERED ? `, and ${links.length - MAX_NAMED_UNCOVERED} more` : '';
+  throw new Error(`A page links to ${links.length} file${links.length === 1 ? '' : 's'} that can hold credentials: ${links.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each link; a Wiki never cites environment files, private keys or password files.`);
+}
 /** Refuses a Wiki that leaves an included code file unexplained: every included source with a code extension ({@link CODE_FILE_EXTENSIONS}) must be cited by a page, a diagram or an inline link, or be covered by an entry of the manifest's `coverageExceptions` (`{ path, reason }`, a file or a folder ending with `/`). Called by {@link renderWikiPages} once every citation has resolved, so a refusal comes before anything is written.
  * @throws When an exception is malformed, repeated or matches no included code file, or when code files stay uncited and unlisted; the message names the count and the first paths. @param inlinePaths - The paths of verified inline links ({@link verifiedInlinePathsOf}). @example requireCodeCoverage(manifest, indexedSources, new Set()) */
 function requireCodeCoverage(manifest, indexedSources, inlinePaths) {
@@ -352,7 +438,7 @@ function requireExactQuote(source, reference, endLine, lines) {
 }
 /** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
 const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
   if (!Array.isArray(manifest.includedSources)) throw new Error('The Wiki needs an included-source index.');
@@ -361,6 +447,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     if (!source || !safePath(source.path) || !/^[a-f0-9]{64}$/.test(source.sha256) || indexedSources.has(source.path)) throw new Error('The Wiki source index has an invalid path, hash or duplicate.');
     indexedSources.set(source.path, source);
   }
+  await requireNoCredentialSources(manifest.includedSources, projectRoot);
+  await requireNoCredentialLinks(manifest, projectRoot);
   // A Windows checkout with core.autocrlf (and a VSIX packaged from one) holds the shell with CRLF line endings; a browser reads every CRLF and lone CR as LF before it hashes an inline script, so the pages are written, and their script hashed, with LF line endings.
   const template = (await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8')).replace(/\r\n?/g, '\n'), shellScriptHash = shellScriptHashOf(template);
   const sourceLines = new Map(), pages = new Map();

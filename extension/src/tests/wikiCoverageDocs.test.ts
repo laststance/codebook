@@ -13,7 +13,7 @@ import { test } from 'node:test'
  * @example
  * ```ts
  * const skill = await readBundledSkill()
- * assert.ok(skill.includes('metadata:\n  version: "1.0.91"\n'))
+ * assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
  * ```
  */
 const readBundledSkill = (): Promise<string> =>
@@ -39,12 +39,12 @@ const readPackagedReadme = (): Promise<string> =>
   readFile(join(__dirname, '..', '..', 'README.md'), 'utf8')
 
 // Value: protects=the Wiki route tells the chat AI that every included code file needs a citation or a coverageExceptions entry with its reason, before the renderer refuses it; fails_when=the skill (from 1.0.88) loses the coverage sentence and the chat learns of the rule only from a refusal it may answer by excepting application modules (C113-W1); why_new=skill 1.0.87 never asked for coverage, and a 6-page Wiki citing 32 of 71 sources published; seam=none; no_claim=how thoroughly a chat model explains each file
-test('the bundled skill 1.0.91 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
+test('the bundled skill 1.0.92 asks the Wiki generator to cite every included code file or name it as an exception with a reason', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.91"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
   assert.ok(
     skill.includes(
       'Every included code file must be cited by a page `sources` list, a diagram node or edge, or an inline editor source link, or be listed under optional `coverageExceptions`',
@@ -68,13 +68,40 @@ test('the README says the generator refuses a Wiki that leaves an included code 
   )
 })
 
-// Value: protects=the Wiki route tells the chat AI how to cover a repository of several hundred code files: a chapter per package, an Examples chapter whose pages cite each family's files, a Testing page citing the tests, source lists built by a scratch script, examples and tests kept out of excludedPaths, and work that goes on until the Wiki is published; fails_when=the skill (from 1.0.91) loses the paragraph, and a large repository's Wiki again leaves examples and tests out through excludedPaths (C114-W2) or excepts learner files (C114-W1), or a chat ends its turn with an unpublished candidate (Cycle 0114 E1 run 1); why_new=Cycle 0114 H3 held in Cursor on TanStack/query, 2,498 code files; seam=none; no_claim=that a chat model follows the paragraph, which the native reruns check
-test('the bundled skill 1.0.91 tells the Wiki of a large repository to cite its examples and tests in Examples and Testing pages instead of leaving them out', async () => {
+// Value: protects=the learner's README names the credential-file refusal the generator enforces and every file shape it refuses, so an owner knows which tracked files a Wiki never indexes; fails_when=the README loses the sentence or one of the shapes the renderer refuses (Cycle 0116 found an agent that indexed the tracked .env.e2e and .env.test of P07 nsx); why_new=the renderer gained the refusal in Cycle 0116 (indexed links and page links from the /ship review), and E3 showed that an update of a Wiki published before it lists the file under excludedPaths; seam=none; no_claim=that the agent never reads such a file while it explores the repository
+test('the README says the generator refuses a Wiki that indexes environment files, private keys or password files', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      "A source link written in an article counts toward that only when it points to this project's included file with that file's hash and a line within it. The generator also refuses a Wiki whose source index holds a file that can hold credentials, and names them: an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, such as `.env.test`, a name that ends with `.env`, `.envrc` or `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`) or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file, also when an indexed path is a link to one, cited or not. It also refuses a page with an editor source link (a `vscode://` or `cursor://` link to Codebook's source handler) to such a file, however the link spells the path, and also when the path is a symbolic link to one. This is a list of names, not a check of the contents. The editor AI then lists those files under the excluded paths, so the published Wiki never indexes or cites them. A Wiki that an earlier version published with such a file stays readable, and its next update lists the file under the excluded paths before it publishes.",
+    ),
+  )
+})
+
+// Value: protects=the Wiki route tells the chat AI every credential file name the renderer refuses, so it keeps them out of includedSources at the start instead of meeting the refusal; fails_when=the skill (from 1.0.92) loses the sentence or a name the renderer refuses (Cycle 0116: Cursor's agent indexed the tracked .env.e2e and .env.test of P07 nsx); why_new=Cycle 0116 review round (CodeRabbit: the skill named no credential file); seam=none; no_claim=that a chat model follows the sentence, which the native credential check covers
+test('the bundled skill 1.0.92 names every credential file the renderer refuses and asks for them under excludedPaths', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.91"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
+  assert.ok(
+    skill.includes(
+      'Never index a file that can hold credentials, whatever it is used for: an environment file (`.env`, `.env.*`, `.env-*`, `.env_*`, `*.env`, `.envrc`, `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`), or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file; list each under `excludedPaths`, because the renderer refuses a Wiki whose `includedSources` holds one.',
+    ),
+  )
+})
+
+// Value: protects=the Wiki route tells the chat AI how to cover a repository of several hundred code files: a chapter per package, an Examples chapter whose pages cite each family's files, a Testing page citing the tests, source lists built by a scratch script, examples and tests kept out of excludedPaths, and work that goes on until the Wiki is published; fails_when=the skill (from 1.0.91) loses the paragraph, and a large repository's Wiki again leaves examples and tests out through excludedPaths (C114-W2) or excepts learner files (C114-W1), or a chat ends its turn with an unpublished candidate (Cycle 0114 E1 run 1); why_new=Cycle 0114 H3 held in Cursor on TanStack/query, 2,498 code files; seam=none; no_claim=that a chat model follows the paragraph, which the native reruns check
+test('the bundled skill 1.0.92 tells the Wiki of a large repository to cite its examples and tests in Examples and Testing pages instead of leaving them out', async () => {
+  // Arrange / Act
+  const skill = await readBundledSkill()
+
+  // Assert
+  assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
   assert.ok(
     skill.includes(
       '**Large repositories.** When the included code reaches several hundred files (a monorepo of packages, examples and tests), plan the tree from the folder layout before reading files one by one, and cover every kind of code the repository holds:',
@@ -117,16 +144,16 @@ test('the bundled skill 1.0.91 tells the Wiki of a large repository to cite its 
   )
 })
 
-// Value: protects=the chapter tree a learner navigates: a child page details part of its parent, and peers (packages, adapters, example families) sit side by side in one section; fails_when=the skill (from 1.0.91) loses the parent sentence, and a section's first page again becomes the parent of unrelated peers (C114-W4: Solid, Svelte, Angular, Preact and Lit Query under "Vue Query"); why_new=Cycle 0115 (C114-W4 nominal parents); seam=none; no_claim=that a chat model follows the sentence, which the native tree check covers
-test('the bundled skill 1.0.91 gives a page a parent only when it details part of that parent, and keeps peers side by side in one section', async () => {
+// Value: protects=the chapter tree a learner navigates: a child page details part of its parent, and peers (packages, adapters, example families) sit side by side in one section; fails_when=the skill (from 1.0.91) loses the parent sentence, and a section's first page again becomes the parent of unrelated peers (C114-W4: Solid, Svelte, Angular, Preact and Lit Query under "Vue Query"); why_new=Cycle 0115 (C114-W4 nominal parents); Cycle 0116 adds the shared library (VS Code's P07 Wiki put the root lib/ utilities under the frontend state page); seam=none; no_claim=that a chat model follows the sentence, which the native tree check covers
+test('the bundled skill 1.0.92 gives a page a parent only when it details part of that parent, and keeps peers, a shared library among them, side by side in one section', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.91"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.92"\n'))
   assert.ok(
     skill.includes(
-      "An optional `parent` names a page in the same section to make a chapter tree: give a page a `parent` only when it details part of that parent's subject (one of its modules, flows, example families or test areas); peers, such as several packages, adapters or example families, stay without a `parent` in one `section`, which the reader lists together; the child pages the depth floor asks for are the module, flow, example-family or test-area pages under the page they detail.",
+      "An optional `parent` names a page in the same section to make a chapter tree: give a page a `parent` only when it details part of that parent's subject (one of its modules, flows, example families or test areas); peers, such as several packages, adapters or example families, or a shared library beside the code that uses it, stay without a `parent` in one `section`, which the reader lists together; the child pages the depth floor asks for are the module, flow, example-family or test-area pages under the page they detail.",
     ),
   )
   assert.ok(
@@ -134,7 +161,7 @@ test('the bundled skill 1.0.91 gives a page a parent only when it details part o
   )
 })
 
-// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.91) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.91; seam=none; no_claim=that a generated Wiki has those chapters
+// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.92) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.91, and Cycle 0116 skill 1.0.92 for the shared library and the known limit its native run left (C116-E1-1); seam=none; no_claim=that a generated Wiki has those chapters
 test('the README says a large repository gets a chapter per package, an Examples chapter and a Testing page', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
@@ -142,7 +169,7 @@ test('the README says a large repository gets a chapter per package, an Examples
   // Assert
   assert.ok(
     readme.includes(
-      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out.",
+      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package, and a shared library never under the code that uses it), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out. Known limit: VS Code's Copilot Chat can still open a section with a page about one part, such as the common layout, and put the section's other parts under it as child pages; every page stays readable.",
     ),
   )
 })

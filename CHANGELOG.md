@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.118.0] - 2026-11-11 (development candidate)
+
+Cycle 0116 ([Issue #298](https://github.com/laststance/codebook/issues/298)), a feature cycle. **The LLM Wiki generator refuses a Wiki whose source index holds a file that can hold credentials, and the bundled skill keeps a shared library's page beside the code that uses it.** On laststance/nsx, one repository with a Vite web UI, an Express server and a WXT Chrome extension (298 code files), Cursor's agent (Grok 4.6 High) published a Wiki that indexed the repository's six tracked environment files. With this build, VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent each kept every such file out and published a Wiki of that repository with a chapter for each runtime. The Wiki was then read, answered a repository question with citations that opened in the editor, and was updated after a source edit.
+
+### Changed
+- **The generator refuses credential files in a Wiki's source index.** `--render-only` and publishing refuse a Wiki whose `includedSources` names one, and name the files. The refused files are:
+  - an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, a name that ends with `.env`, `.envrc`, `.dev.vars`), or a file in a `.env` folder;
+  - a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`);
+  - an SSH private key;
+  - an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file.
+
+  An indexed path that is a link to such a file is refused too, whether or not a page cites it, and so is a page with an editor source link (a `vscode://` or `cursor://` link to Codebook's source handler) to such a file, however the link spells the path, and also when the path is a symbolic link to one. The check reads names, not contents. Look-alike code such as `env.ts`, `envelope.ts` or `key.ts` and SSH public keys are still indexed.
+- **The bundled skill is 1.0.92.** Its first step names every refused file and asks the editor AI to list each one under `excludedPaths`. Its chapter-tree guidance counts a shared library among the peers that stay side by side, never under the code that uses it. In Cursor, an unedited copy that **Codebook: Set Up AI Chat** installed updates when a window reconnects its AI chat.
+
+**Known issue.** VS Code's Copilot Chat (GPT-6.1 Terra) can still open a section with a page about one part, such as the common layout, and put the section's other parts under it as child pages. The next cycle addresses it.
+
+**Compatibility.** No MCP API or study format change. The bundled skill is 1.0.92. A Wiki that an earlier version published with such a file (an `.npmrc` or `.env.example`, for example) stays readable. Its next update lists the file under the excluded paths before it publishes.
+
 ## [0.2.117.0] - 2026-11-11 (development candidate)
 
 Cycle 0115 ([Issue #295](https://github.com/laststance/codebook/issues/295)), a bug-fix cycle. **The LLM Wiki generator counts explanation, not repeated template text, lists of names or copied doc comments, and the bundled skill keeps a Wiki's chapter tree honest.** In Cycle 0114's Wikis of TanStack/query (2,498 code files), 58.5 to 70.9% of Cursor's text was in sentences repeated across pages, VS Code's held 24.3% in lists of export names, and a section's first page held unrelated peers as its children. Those Wikis met the old minimums. With this build, VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent (Grok 4.6 High) each published a Wiki of that repository in which 97 to 99% of the article text is explanation and the adapters stay side by side, and each updated it from the page's **Update LLM Wiki** in under four minutes. VS Code's chat met the new refusal once and deepened the thin pages it named.
