@@ -68,7 +68,7 @@ test('the README says the generator refuses a Wiki that leaves an included code 
   )
 })
 
-// Value: protects=the learner's README names the credential-file refusal the generator enforces and every file shape it refuses, so an owner knows which tracked files a Wiki never indexes; fails_when=the README loses the sentence or one of the shapes the renderer refuses (Cycle 0116 found an agent that indexed the tracked .env.e2e and .env.test of P07 nsx); why_new=the renderer gained the refusal in Cycle 0116; seam=none; no_claim=that the agent never reads such a file while it explores the repository
+// Value: protects=the learner's README names the credential-file refusal the generator enforces and every file shape it refuses, so an owner knows which tracked files a Wiki never indexes; fails_when=the README loses the sentence or one of the shapes the renderer refuses (Cycle 0116 found an agent that indexed the tracked .env.e2e and .env.test of P07 nsx); why_new=the renderer gained the refusal in Cycle 0116, and E3 showed that an update of a Wiki published before it lists the file under excludedPaths; seam=none; no_claim=that the agent never reads such a file while it explores the repository
 test('the README says the generator refuses a Wiki that indexes environment files, private keys or password files', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
@@ -76,7 +76,7 @@ test('the README says the generator refuses a Wiki that indexes environment file
   // Assert
   assert.ok(
     readme.includes(
-      "A source link written in an article counts toward that only when it points to this project's included file with that file's hash and a line within it. The generator also refuses a Wiki whose source index holds a file that can hold credentials, and names them: an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, such as `.env.test`, a name that ends with `.env`, `.envrc` or `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`) or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file, also when a cited path is a link to one. This is a list of names, not a check of the contents. The editor AI then lists those files under the excluded paths, so the published Wiki never indexes or cites them.",
+      "A source link written in an article counts toward that only when it points to this project's included file with that file's hash and a line within it. The generator also refuses a Wiki whose source index holds a file that can hold credentials, and names them: an environment file (`.env`, a name that starts with `.env.`, `.env-` or `.env_`, such as `.env.test`, a name that ends with `.env`, `.envrc` or `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`) or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file, also when a cited path is a link to one. This is a list of names, not a check of the contents. The editor AI then lists those files under the excluded paths, so the published Wiki never indexes or cites them. A Wiki that an earlier version published with such a file stays readable, and its next update lists the file under the excluded paths before it publishes.",
     ),
   )
 })
@@ -161,7 +161,7 @@ test('the bundled skill 1.0.92 gives a page a parent only when it details part o
   )
 })
 
-// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.92) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.91, and Cycle 0116 skill 1.0.92 for the shared library; seam=none; no_claim=that a generated Wiki has those chapters
+// Value: protects=the learner's README says what the skill asks of a large repository's Wiki (package chapters, an Examples chapter, a Testing page, examples and tests kept in); fails_when=the README loses that sentence while the skill (1.0.92) asks for it, so a learner of a large repository cannot tell why the Wiki has Examples and Testing chapters; why_new=Cycle 0114 skill 1.0.91, and Cycle 0116 skill 1.0.92 for the shared library and the known limit its native run left (C116-E1-1); seam=none; no_claim=that a generated Wiki has those chapters
 test('the README says a large repository gets a chapter per package, an Examples chapter and a Testing page', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
@@ -169,7 +169,7 @@ test('the README says a large repository gets a chapter per package, an Examples
   // Assert
   assert.ok(
     readme.includes(
-      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package, and a shared library never under the code that uses it), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out.",
+      "For a repository of several hundred code files, the bundled skill asks for a chapter per package (or its own page among related packages, never a page under another package, and a shared library never under the code that uses it), an **Examples** chapter whose pages each cite one family of examples, and a **Testing** page that cites the tests, and it asks that examples, tests and build code be covered rather than left out, that example and test pages explain what their files show rather than only list them, and that the editor AI stop and report when a refusal needs your agreement. The source-list script it asks for keeps the repository's exclusions: files holding credentials and exclusions you asked for stay out. Known limit: VS Code's Copilot Chat can still open a section with a page about one part, such as the common layout, and put the section's other parts under it as child pages; every page stays readable.",
     ),
   )
 })
