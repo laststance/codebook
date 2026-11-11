@@ -63,6 +63,40 @@ export const QA_RELEASE_TAG = 'qa-builds'
 /** A QA release takes no build that would push it past this many assets (GitHub refuses the 1001st, so this keeps a margin). */
 export const QA_RELEASE_CAPACITY = 900
 
+/** GitHub's own limit of assets per release; only a note joining its build's release may use the margin above {@link QA_RELEASE_CAPACITY}. */
+export const QA_RELEASE_ASSET_LIMIT = 1000
+
+/** A QA build file: `codebook-<sha>.vsix`, `.json` or `-<note>`; group 1 is the build's stem. */
+const QA_BUILD_FILE =
+  /^(codebook-[0-9a-f]+)(?:\.(?:vsix|json)|-[A-Za-z0-9._-]+)$/
+
+/**
+ * Names the QA build a file of `artifacts/qa` belongs to.
+ *
+ * Why: the plan groups a build's files by this stem, and a note added after its build left must find the release that holds the build.
+ * Called by {@link classifyInventory} and {@link chooseQaRelease}.
+ *
+ * @param {string} name - A file name in `artifacts/qa` or a QA release asset name.
+ * @returns {string | null} The `codebook-<sha>` stem, or `null` for a file of no build.
+ * @example qaBuildStem('codebook-1a2b3c-review.md') // => 'codebook-1a2b3c'
+ */
+export function qaBuildStem(name) {
+  return QA_BUILD_FILE.exec(name)?.[1] ?? null
+}
+
+/**
+ * The display label this tool gives every asset it uploads.
+ *
+ * Why: an unrecorded asset is replaced only when its label shows that this tool uploaded it (a run that failed before recording); any other asset of the same name may be someone's only copy.
+ * Called by {@link uploadAssets}.
+ *
+ * @param {string} name - The asset name.
+ * @returns {string} The label, e.g. `c1.files.json (rotate-artifacts)`.
+ */
+export function rotateAssetLabel(name) {
+  return `${name} (rotate-artifacts)`
+}
+
 /** `--current` may exceed the highest cycle folder found by at most this much; more is a typo. */
 export const CURRENT_SLACK = 3
 
@@ -103,7 +137,8 @@ Rules of the plan:
   gate/<sha8>     the current HEAD's folder is kept, the others are deleted without archiving
   qa/             a build is every file named codebook-<sha>.vsix, .json or -<note>; the newest ${QA_BUILDS_KEPT} builds
                   holding a vsix are kept, the others go to release "${QA_RELEASE_TAG}" (a build never splits; when it would
-                  push a release past ${QA_RELEASE_CAPACITY} assets it goes to "${QA_RELEASE_TAG}-2", then "${QA_RELEASE_TAG}-3", ...);
+                  push a release past ${QA_RELEASE_CAPACITY} assets it goes to "${QA_RELEASE_TAG}-2", then "${QA_RELEASE_TAG}-3", ...;
+                  a note added after its build left joins the build's release up to GitHub's ${QA_RELEASE_ASSET_LIMIT} assets);
                   other files are listed and kept
   packages/       kept
   other entries   archived when their newest file is older than 30 days, else kept
@@ -147,7 +182,8 @@ Error codes:
   E_GIT                git could not read HEAD
   E_ABOVE_RETENTION    a folder above N - k was asked to be archived (never done)
   E_ARCHIVED_DIFFERS   the folder is already archived but the local copy differs from its archive, or the release lacks the recorded assets (nothing is uploaded or changed)
-  E_ASSET_CONFLICT     a recorded release asset of the same name has another SHA-256 (never overwritten; an unrecorded one from a failed run is replaced and printed as REPLACED)
+  E_ASSET_CONFLICT     a release asset of the same name has another SHA-256, and a record names it or its label is not this tool's
+                       (never overwritten; an unrecorded one this tool uploaded in a failed run is replaced and printed as REPLACED)
   E_HASH_MISMATCH      a downloaded or extracted file differs from what was packed
   E_FOLDER_CHANGED     the local folder changed after packing or in the last moment before deletion
   E_FOLDER_BUSY        a file of the entry was modified within 10 minutes when its turn came (skipped)
@@ -340,12 +376,9 @@ export function classifyInventory(
   // A QA build is every file sharing its `codebook-<sha>` stem: the vsix/json pair and any notes named after it.
   const builds = new Map()
   for (const info of inventory.qa) {
-    const match =
-      /^(codebook-[0-9a-f]+)(?:\.(?:vsix|json)|-[A-Za-z0-9._-]+)$/.exec(
-        info.name,
-      )
+    const stem = qaBuildStem(info.name)
     // A file of no build is listed, so nothing in qa/ goes unmentioned, and never moved.
-    if (match === null) {
+    if (stem === null) {
       plan.push({
         action: 'keep',
         name: `qa/${info.name}`,
@@ -355,8 +388,8 @@ export function classifyInventory(
       })
       continue
     }
-    const build = builds.get(match[1]) ?? {
-      stem: match[1],
+    const build = builds.get(stem) ?? {
+      stem,
       files: [],
       bytes: 0,
       newestMs: 0,
@@ -368,7 +401,7 @@ export function classifyInventory(
     build.newestMs = Math.max(build.newestMs, info.newestMs)
     build.special.push(...info.special)
     build.hasVsix ||= info.name.endsWith('.vsix')
-    builds.set(match[1], build)
+    builds.set(stem, build)
   }
   const ordered = [...builds.values()].sort(
     (a, b) => b.newestMs - a.newestMs || (a.stem < b.stem ? -1 : 1),
@@ -1017,7 +1050,7 @@ function qaTagNumber(number) {
 /**
  * Uploads assets to a release, reusing those already there with the same SHA-256.
  *
- * Why: a stopped upload must resume, but an asset of the same name with other bytes must never replace an archive of record. An asset no record names (left by a run that failed before recording) is no archive: it is replaced.
+ * Why: a stopped upload must resume, but an asset of the same name with other bytes must never replace an archive of record or a file this tool did not put there. An asset no record names whose label is this tool's ({@link rotateAssetLabel}) was left by a run that failed before recording, so it is no archive and is replaced. Every upload carries that label.
  * Called by {@link rotateArchive} and {@link rotateQaBuild}.
  *
  * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
@@ -1026,7 +1059,7 @@ function qaTagNumber(number) {
  * @param {string} notes - Notes for a release created now.
  * @param {{ name: string, path: string, sha256: string }[]} assets - What to upload.
  * @param {(assetName: string) => Promise<boolean>} isRecorded - Whether index.json, read now, records that asset; asked only when a same-name asset has another hash.
- * @throws {CommandRefusal} `E_ASSET_CONFLICT` for a recorded same-name asset with another hash.
+ * @throws {CommandRefusal} `E_ASSET_CONFLICT` for a same-name asset with another hash that a record names or that lacks this tool's label.
  */
 async function uploadAssets(github, context, tag, notes, assets, isRecorded) {
   let release = await github.release(tag)
@@ -1091,7 +1124,17 @@ async function uploadAssets(github, context, tag, notes, assets, isRecorded) {
             exitCode: EXIT.FOLLOW_UP,
           },
         )
-      // No record names it: an earlier run failed before recording, so it was never an archive.
+      // No record names it, and without this tool's label nothing shows where it came from: it may be someone's only copy.
+      if (existing.label !== rotateAssetLabel(asset.name))
+        throw new CommandRefusal(
+          'E_ASSET_CONFLICT',
+          `release ${tag} already holds ${asset.name} with another SHA-256, and neither a record nor its label shows this tool uploaded it`,
+          {
+            fix: `check that asset in ${context.repository}; if it is not needed, delete it by hand, then rerun`,
+            exitCode: EXIT.FOLLOW_UP,
+          },
+        )
+      // No record names it and its label is this tool's: an earlier run failed before recording, so it was never an archive.
       await github.ok(
         [
           'api',
@@ -1117,8 +1160,16 @@ async function uploadAssets(github, context, tag, notes, assets, isRecorded) {
         'E_UPLOAD',
         `removing partial ${asset.name}`,
       )
+    // "<file>#<label>" is gh's form for an asset's display label.
     await github.ok(
-      ['release', 'upload', tag, asset.path, '--repo', context.repository],
+      [
+        'release',
+        'upload',
+        tag,
+        `${asset.path}#${rotateAssetLabel(asset.name)}`,
+        '--repo',
+        context.repository,
+      ],
       'E_UPLOAD',
       `uploading ${asset.name}`,
     )
@@ -1668,7 +1719,7 @@ async function removeQaBuildAfterFinalCheck(context, stem, assets) {
 /**
  * Picks the QA release a build goes to.
  *
- * Why: GitHub refuses the 1001st asset of a release, so QA builds fill releases by capacity. A build that already has files in a QA release (a stopped run) goes back there; otherwise the newest QA release takes it while it stays within `context.qaReleaseCapacity`, else the next numbered release is created.
+ * Why: GitHub refuses the 1001st asset of a release, so QA builds fill releases by capacity. A build that already has files in a QA release (a stopped run, or a note added after its build left) goes back there while that release stays within {@link QA_RELEASE_ASSET_LIMIT}; otherwise the newest QA release takes it while it stays within `context.qaReleaseCapacity`, else the next numbered release is created.
  * Called by {@link rotateQaBuild}.
  *
  * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
@@ -1678,6 +1729,10 @@ async function removeQaBuildAfterFinalCheck(context, stem, assets) {
  * @returns {Promise<string>} The release tag (it may not exist yet).
  */
 async function chooseQaRelease(github, context, names, recorded) {
+  const stem = qaBuildStem(names[0])
+  const ofThisBuild = (asset) =>
+    names.includes(asset.name) ||
+    (stem !== null && qaBuildStem(asset.name) === stem)
   let newest = { tag: QA_RELEASE_TAG, count: 0, exists: false }
   for (let number = 1; ; number += 1) {
     const tag = qaTagNumber(number)
@@ -1685,13 +1740,18 @@ async function chooseQaRelease(github, context, names, recorded) {
     // Gaps never get filled: the first missing release ends the walk.
     if (release === null) break
     const held = release.assets ?? []
-    // A stopped run left files of this build here: they stay together.
-    if (held.some((asset) => names.includes(asset.name))) return tag
+    const recordedHere = recorded.filter((asset) => qaAssetTag(asset) === tag)
     // The larger count wins: a release payload may list fewer assets than the index records for it.
-    const count = Math.max(
-      held.length,
-      recorded.filter((asset) => qaAssetTag(asset) === tag).length,
+    const count = Math.max(held.length, recordedHere.length)
+    // Files of this build are here (a stopped run, or the build a late note belongs to): the rest joins them while GitHub still takes them.
+    const added = names.filter(
+      (name) => !held.some((asset) => asset.name === name),
+    ).length
+    if (
+      (held.some(ofThisBuild) || recordedHere.some(ofThisBuild)) &&
+      count + added <= QA_RELEASE_ASSET_LIMIT
     )
+      return tag
     newest = { tag, count, exists: true }
   }
   if (!newest.exists) return newest.tag
@@ -1709,7 +1769,7 @@ function nextQaNumber(tag) {
 
 /**
  * Archives one QA build (its vsix and json) as assets of one QA release.
- * The first release is `qa-builds`; when a build would push it past the capacity, `qa-builds-2` and later take over. All files of a build stay together.
+ * The first release is `qa-builds`; when a build would push it past the capacity, `qa-builds-2` and later take over. All files of a build stay together, a note added after its build left included, unless the build's release already holds GitHub's 1,000 assets.
  * Called by {@link runRotation} for a `qa-build` plan item.
  * @param {object} context - Rotation context.
  * @param {{ name: string, files: string[] }} item - The plan item (`qa/<stem>`).

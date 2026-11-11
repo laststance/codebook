@@ -87,6 +87,12 @@ async function snapshot(directory, prefix = '') {
   return result
 }
 
+/** Splits a `gh release upload` file argument into its path and display label, at the first "#" as gh does. */
+function splitUploadArgument(argument) {
+  const at = argument.indexOf('#')
+  return at > 0 ? [argument.slice(0, at), argument.slice(at + 1)] : [argument]
+}
+
 /**
  * A stand-in `gh` that keeps the archive repository's releases, assets and index.json in memory.
  * It never reaches the network; its `calls` list shows what the tool asked and with which token.
@@ -122,13 +128,14 @@ function createFakeGh(options = {}) {
   }
   const result = (stdout) => ({ status: 0, stdout, stderr: '' })
   const failure = (stderr) => ({ status: 1, stdout: '', stderr })
-  const addAsset = (tag, name, data, assetState = 'uploaded') => {
+  const addAsset = (tag, name, data, assetState = 'uploaded', label = null) => {
     const release = state.releases.get(tag)
     release.assets.set(name, {
       id: state.nextId++,
       name,
       data,
       state: assetState,
+      label,
     })
   }
   /** Like `gh release download --pattern`: the pattern is a glob over the whole asset name. */
@@ -161,14 +168,16 @@ function createFakeGh(options = {}) {
       return result('')
     }
     if (first === 'release' && second === 'upload') {
+      // Like gh, "<file>#<label>" names the file before the first "#" and the display label after it.
+      const [path, label = null] = splitUploadArgument(args[3])
       if (state.uploadsLeft <= 0) return failure('connection reset')
-      if (state.failUploadFor !== null && args[3].endsWith(state.failUploadFor))
+      if (state.failUploadFor !== null && path.endsWith(state.failUploadFor))
         return failure('HTTP 502 bad gateway')
       state.uploadsLeft -= 1
-      const name = args[3].split('/').at(-1)
+      const name = path.split('/').at(-1)
       if (state.releases.get(args[2]).assets.has(name))
         return failure('asset under the same name already exists')
-      addAsset(args[2], name, await readFile(args[3]))
+      addAsset(args[2], name, await readFile(path), 'uploaded', label)
       state.uploaded.push(name)
       return result('')
     }
@@ -256,6 +265,7 @@ function createFakeGh(options = {}) {
           assets: [...release.assets.values()].map((asset) => ({
             id: asset.id,
             name: asset.name,
+            label: asset.label,
             size: asset.data.length,
             state: asset.state,
             digest: state.omitDigest ? null : `sha256:${sha256(asset.data)}`,
@@ -268,15 +278,15 @@ function createFakeGh(options = {}) {
   return {
     state,
     handle,
-    /** Puts an asset into a release (creating it) as if an earlier run had uploaded it. */
-    seed(tag, name, data, assetState = 'uploaded') {
+    /** Puts an asset into a release (creating it); a `label` of `<name> (rotate-artifacts)` makes it look uploaded by an earlier run of the tool. */
+    seed(tag, name, data, assetState = 'uploaded', label = null) {
       if (!state.releases.has(tag))
         state.releases.set(tag, {
           id: state.nextId++,
           assets: new Map(),
           notes: '',
         })
-      addAsset(tag, name, data, assetState)
+      addAsset(tag, name, data, assetState, label)
     },
     seedIndex(index) {
       state.index = JSON.stringify(index)
@@ -328,7 +338,7 @@ function afterGhCall(fake, matches, hook) {
 }
 
 const isUploadOf = (name) => (args) =>
-  args[1] === 'upload' && args[3].endsWith(name)
+  args[1] === 'upload' && splitUploadArgument(args[3])[0].endsWith(name)
 
 const summaryOf = (lines) => lines.find((line) => line.startsWith('ROTATE:'))
 
@@ -804,7 +814,10 @@ test('keeps a folder that changed after packing', async (t) => {
   fake.handle = async (args, options) => {
     const answer = await originalHandle(args, options)
     // A run writes into the folder right after its upload finished.
-    if (args[1] === 'upload' && args[3].endsWith('c1.files.json'))
+    if (
+      args[1] === 'upload' &&
+      splitUploadArgument(args[3])[0].endsWith('c1.files.json')
+    )
       await writeFile(join(root, 'artifacts', 'c1', 'a.txt'), 'changed')
     return answer
   }
@@ -2916,6 +2929,8 @@ test('replaces a same-name asset of another hash that no record names and finish
     'c1',
     'c1.files.json',
     Buffer.from('files.json of the changed folder'),
+    'uploaded',
+    'c1.files.json (rotate-artifacts)',
   )
   // Act
   const { code, lines } = await rotate(root, fake, [
@@ -2930,11 +2945,41 @@ test('replaces a same-name asset of another hash that no record names and finish
       'REPLACED c1.files.json (unrecorded, from an earlier failed run)',
     ),
   )
-  assert.match(
-    fake.state.releases.get('c1').assets.get('c1.files.json').data.toString(),
-    /"path": "artifacts\/c1\/a.txt"/,
-  )
+  const replaced = fake.state.releases.get('c1').assets.get('c1.files.json')
+  assert.match(replaced.data.toString(), /"path": "artifacts\/c1\/a.txt"/)
+  assert.equal(replaced.label, 'c1.files.json (rotate-artifacts)')
   assert.equal(JSON.parse(fake.state.index).folders.c1.tag, 'c1')
+})
+
+test('keeps a folder and the same-name asset of another hash that no record names and this tool did not upload', async (t) => {
+  // protects=an asset put into the archive some other way (no record, no label of this tool) is never deleted to make room; fails_when=the asset is deleted or replaced, the run exits 0, or the local folder is deleted; why_new=every unrecorded asset was replaced whatever its origin; seam=none; no_claim=does not cover a recorded asset (other tests)
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const fake = createFakeGh()
+  fake.seed('c1', 'c1.files.json', Buffer.from('a file someone put here'))
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(lines.some((line) => line.startsWith('FAILED c1 E_ASSET_CONFLICT')))
+  assert.equal(
+    fake.state.releases.get('c1').assets.get('c1.files.json').data.toString(),
+    'a file someone put here',
+  )
+  assert.equal(
+    fake.state.calls.filter((call) => call.args.includes('DELETE')).length,
+    0,
+  )
+  assert.equal(
+    await readFile(join(root, 'artifacts', 'c1', 'a.txt'), 'utf8'),
+    'one',
+  )
+  assert.equal(JSON.parse(fake.state.index).folders.c1, undefined)
 })
 
 test('keeps a QA asset of another hash that the qa-builds record names, deleting nothing', async (t) => {
@@ -3001,7 +3046,13 @@ test('replaces a QA asset of another hash that no record names', async (t) => {
   const root = await makeRoot(t)
   await putQaBuilds(root)
   const fake = createFakeGh()
-  fake.seed('qa-builds', 'codebook-0000010.vsix', Buffer.from('half-recorded'))
+  fake.seed(
+    'qa-builds',
+    'codebook-0000010.vsix',
+    Buffer.from('half-recorded'),
+    'uploaded',
+    'codebook-0000010.vsix (rotate-artifacts)',
+  )
   // Act
   const { code, lines } = await rotate(root, fake, [
     '--current',
@@ -3022,4 +3073,85 @@ test('replaces a QA asset of another hash that no record names', async (t) => {
       .data.toString(),
     'vsix 10',
   )
+})
+
+test('puts a note added after its build left into the release that holds the build, even when that release is at capacity', async (t) => {
+  // protects=a late review note stays in the release of its build; fails_when=the note opens qa-builds-2 because qa-builds is at capacity; why_new=the release was matched by file name, not by build; seam=qaReleaseCapacity; no_claim=does not cover GitHub's 1,000-asset limit (next test)
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'qa/codebook-0000001-review.md', 'late note')
+  const fake = createFakeGh()
+  fake.seed('qa-builds', 'codebook-0000001.json', Buffer.from('json 1'))
+  fake.seed('qa-builds', 'codebook-0000001.vsix', Buffer.from('vsix 1'))
+  fake.seedIndex({
+    schemaVersion: 1,
+    folders: {
+      'qa-builds': {
+        tag: 'qa-builds',
+        archivedAt: '2026-11-10T00:00:00.000Z',
+        files: 2,
+        bytes: 12,
+        assets: [
+          {
+            name: 'codebook-0000001.json',
+            size: 6,
+            sha256: sha256(Buffer.from('json 1')),
+            tag: 'qa-builds',
+          },
+          {
+            name: 'codebook-0000001.vsix',
+            size: 6,
+            sha256: sha256(Buffer.from('vsix 1')),
+            tag: 'qa-builds',
+          },
+        ],
+      },
+    },
+  })
+  // Act
+  const { code } = await rotate(root, fake, ['--current', '5', '--apply'], {
+    qaReleaseCapacity: 2,
+  })
+  // Assert
+  assert.equal(code, 0)
+  assert.deepEqual(fake.assetNames('qa-builds'), [
+    'codebook-0000001-review.md',
+    'codebook-0000001.json',
+    'codebook-0000001.vsix',
+  ])
+  assert.equal(fake.state.releases.has('qa-builds-2'), false)
+  assert.deepEqual(
+    JSON.parse(fake.state.index).folders['qa-builds'].assets.map((asset) => [
+      asset.name,
+      asset.tag,
+    ]),
+    [
+      ['codebook-0000001.json', 'qa-builds'],
+      ['codebook-0000001.vsix', 'qa-builds'],
+      ['codebook-0000001-review.md', 'qa-builds'],
+    ],
+  )
+})
+
+test("sends a note added after its build left on to the next release when the build's release already holds 1,000 assets", async (t) => {
+  // protects=a late note never asks GitHub for a 1001st asset; fails_when=the note is uploaded into the full release of its build; why_new=a late note now follows its build past the capacity; seam=none (1,000 seeded assets); no_claim=does not cover a build of several files
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'qa/codebook-0000001-review.md', 'late note')
+  const fake = createFakeGh()
+  fake.seed('qa-builds', 'codebook-0000001.vsix', Buffer.from('vsix 1'))
+  for (let filler = 0; filler < 999; filler += 1)
+    fake.seed(
+      'qa-builds',
+      `codebook-9${String(filler).padStart(6, '0')}.vsix`,
+      Buffer.from(`vsix ${filler}`),
+    )
+  // Act
+  const { code } = await rotate(root, fake, ['--current', '5', '--apply'])
+  // Assert
+  assert.equal(code, 0)
+  assert.equal(fake.assetNames('qa-builds').length, 1000)
+  assert.deepEqual(fake.assetNames('qa-builds-2'), [
+    'codebook-0000001-review.md',
+  ])
 })
