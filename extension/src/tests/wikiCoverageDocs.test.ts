@@ -374,15 +374,20 @@ test('the bundled skill 1.0.98 asks each package page of a workspace to name wha
   )
 })
 
-// Value: protects=an update corrects every page that states a changed rule, not only the pages that cite the changed file; fails_when=the bundled skill (from 1.0.98) loses the update step's sentence that a page describing changed behavior is affected whether or not it cites the file, or stops naming the overview and architecture pages; why_new=Cycle 0118 (H1 E2 step 7: Cursor's update refreshed the stats page and left the overview saying idle spans are those "longer than" the threshold); seam=none; no_claim=that the chat AI finds every such statement
-test('the bundled skill 1.0.98 asks an update to correct every page that describes a changed rule, the overview included', async () => {
+// Value: protects=an update corrects every page that states a changed rule, not only the pages that cite the changed file; fails_when=the bundled skill (from 1.0.98) loses the update step's sentence that a page describing changed behavior is affected whether or not it cites the file, or stops naming the overview and architecture pages, or stops asking that the changed lines themselves be cited; why_new=Cycle 0118 (H1 E2 step 7: Cursor's update refreshed the stats page and left the overview saying idle spans are those "longer than" the threshold; H1 E1 step 7: VS Code's corrected statement cited only the first line of segmentsInRange, not the changed comparison); seam=none; no_claim=that the chat AI finds every such statement
+test('the bundled skill 1.0.98 asks an update to correct every page that describes a changed rule, the overview included, and to cite the changed lines', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
   // Assert
   assert.ok(
     skill.includes(
-      "A page is affected when its text describes changed behavior, whether or not it cites the changed file: for each changed rule, search every page's text, the overview and architecture pages included, for statements about it (its function names and the words of the rule, such as a threshold or a comparison) and correct each one, so no page keeps the old rule;",
+      "A page is affected when its text describes changed behavior, whether or not it cites the changed file: for each changed rule, search every page's text, the overview and architecture pages included, for statements about it (its function names and the words of the rule, such as a threshold or a comparison) and correct each one, so no page keeps the old rule.",
+    ),
+  )
+  assert.ok(
+    skill.includes(
+      'Cite the changed lines themselves beside each corrected statement (the changed line, or a range that holds it), not only the first line of the function that holds them;',
     ),
   )
 })
@@ -400,7 +405,7 @@ test('the README says a workspace Wiki must say what each package takes from the
   )
   assert.ok(
     readme.includes(
-      'the bundled skill asks the editor AI to correct every page that describes the changed behavior, the overview and architecture pages included, not only the pages that cite the changed file.',
+      'the bundled skill asks the editor AI to correct every page that describes the changed behavior, the overview and architecture pages included, not only the pages that cite the changed file, and to cite the changed lines themselves beside each corrected statement.',
     ),
   )
 })
