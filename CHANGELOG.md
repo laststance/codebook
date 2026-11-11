@@ -11,7 +11,7 @@ Cycle 0116 ([Issue #298](https://github.com/laststance/codebook/issues/298)), a 
   - an SSH private key;
   - an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file.
 
-  An indexed path that is a link to such a file is refused too, whether or not a page cites it, and so is a page whose text links to such a file, however the link spells its path and also through a link to it. The check reads names, not contents. Look-alike code such as `env.ts`, `envelope.ts` or `key.ts` and SSH public keys are still indexed.
+  An indexed path that is a link to such a file is refused too, whether or not a page cites it, and so is a page with an editor source link (a `vscode://` or `cursor://` link to Codebook's source handler) to such a file, however the link spells the path, and also when the path is a symbolic link to one. The check reads names, not contents. Look-alike code such as `env.ts`, `envelope.ts` or `key.ts` and SSH public keys are still indexed.
 - **The bundled skill is 1.0.92.** Its first step names every refused file and asks the editor AI to list each one under `excludedPaths`. Its chapter-tree guidance counts a shared library among the peers that stay side by side, never under the code that uses it. In Cursor, an unedited copy that **Codebook: Set Up AI Chat** installed updates when a window reconnects its AI chat.
 
 **Known issue.** VS Code's Copilot Chat (GPT-6.1 Terra) can still open a section with a page about one part, such as the common layout, and put the section's other parts under it as child pages. The next cycle addresses it.
