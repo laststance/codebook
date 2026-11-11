@@ -6,19 +6,24 @@
 //
 // Run `--help` for the prerequisites, an example, the exit codes and the error codes.
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
+  link,
   lstat,
   mkdir,
+  mkdtemp,
   open,
   readdir,
   readFile,
   rename,
   rm,
+  rmdir,
   statfs,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { finished } from 'node:stream/promises'
@@ -55,6 +60,9 @@ export const LOOSE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 /** The release that holds archived QA builds. */
 export const QA_RELEASE_TAG = 'qa-builds'
 
+/** `--current` may exceed the highest cycle folder found by at most this much; more is a typo. */
+export const CURRENT_SLACK = 3
+
 const DEFAULT_KEEP = 3
 const TEMP_FOLDER = '.rotate-tmp'
 const LOCAL_INDEX = 'ARCHIVED.json'
@@ -74,8 +82,9 @@ one release per folder, and deletes the local copy only after every asset was do
 again and every file matched its SHA-256.
 
 Options:
-  --current <N>   The merged cycle's number (digits). Required for the plan and --apply.
-  --keep <k>      Cycles kept besides the older ones (default ${DEFAULT_KEEP}): cycles above N - k stay,
+  --current <N>   The merged cycle's number (digits). Required for the plan and --apply. More than
+                  ${CURRENT_SLACK} above the highest cycle folder found is refused as a typo.
+  --keep <k>      Cycles kept besides the older ones (whole number, at least 1; default ${DEFAULT_KEEP}): cycles above N - k stay,
                   cycles at or below N - k are archived, cycles above N are listed as unknown and
                   never touched.
   --apply         Execute the plan. Without it nothing changes (the plan is printed).
@@ -90,8 +99,10 @@ Rules of the plan:
   qa/             the newest ${QA_BUILDS_KEPT} builds (codebook-<sha>.vsix + .json) are kept, older ones go to release "${QA_RELEASE_TAG}"
   packages/       kept
   other entries   archived when their newest file is older than 30 days, else kept
-  skipped         a folder with a file modified within 10 minutes, with a symbolic link or special file,
-                  with a name outside [A-Za-z0-9._-], or too big for the free disk space (twice its size)
+  skipped         a folder with a file modified within 10 minutes, with a symbolic link, a hard link or a
+                  special file, with a name that cannot be a git tag (leading "." or "-", "..", trailing
+                  ".lock" or ".", a character outside [A-Za-z0-9._-]), or too big for the free disk space
+                  (twice its size)
 
 Prerequisites:
   - the pinned Node (.node-version), the system tar, git
@@ -115,18 +126,25 @@ Exit codes:
   64  usage error
 
 Error codes:
-  E_USAGE              bad option, or two modes together
+  E_USAGE              bad option, two modes together, or --keep that is not a whole number of at least 1
   E_CURRENT_REQUIRED   --current missing or not a whole number
+  E_CURRENT_UNLIKELY   --current is more than ${CURRENT_SLACK} above the highest cycle folder found
+  E_UNSAFE_CONTAINER   artifacts/gate or artifacts/qa is a symbolic link or not a folder
+  E_RUN_ACTIVE         another --apply or --restore holds artifacts/.rotate-tmp/.lock
   E_NO_ACCOUNT         gh cannot give a token for ${ARCHIVE_ACCOUNT}
   E_REPO_MISSING       the archive repository cannot be read
   E_NOT_PRIVATE        the archive repository is not private
-  E_INIT_EXISTS        --init found the repository already there
+  E_INIT_EXISTS        --init found the repository and its index.json already there
+  E_INIT_INCOMPLETE    the archive repository has no index.json (run --init to write it)
   E_GIT                git could not read HEAD
   E_ABOVE_RETENTION    a folder above N - k was asked to be archived (never done)
   E_ASSET_CONFLICT     a release asset of the same name has another SHA-256 (never overwritten)
   E_HASH_MISMATCH      a downloaded or extracted file differs from what was packed
-  E_FOLDER_CHANGED     the local folder changed after packing
-  E_PACK / E_UPLOAD / E_DOWNLOAD / E_GITHUB   a tar or gh call failed
+  E_FOLDER_CHANGED     the local folder changed after packing or in the last moment before deletion
+  E_FOLDER_BUSY        a file of the entry was modified within 10 minutes when its turn came (skipped)
+  E_DISK_SPACE         twice the entry's size exceeds the free disk space (skipped)
+  E_PACK / E_UPLOAD / E_DOWNLOAD / E_GITHUB   a tar (or a stream write, e.g. a full disk) or gh call failed
+  E_OUTPUT_LIMIT       a command printed more than the capture limit
   E_RESTORE_UNKNOWN    the folder is not in the archive index
   E_RESTORE_EXISTS     the destination already exists
   E_RESTORE_UNSAFE     an archive member is absolute, holds "..", leaves the folder or is a link
@@ -147,6 +165,28 @@ Error codes:
 export function parseCycleNumber(name) {
   const match = /^(?:cycle-|c)(\d+)/.exec(name)
   return match === null ? null : Number.parseInt(match[1], 10)
+}
+
+/**
+ * Whether a top-level entry name can be a git tag (a release tag) and a safe command argument.
+ *
+ * Why: the entry name becomes a release tag and a path in `gh`/`tar` arguments; a leading `-` or `.`, `..`, a `.lock` or `.` ending, or a stray character breaks one of them. Loose entries such as `.DS_Store` fall here.
+ * Called by {@link classifyInventory} and {@link restoreFolder}.
+ *
+ * @param {string} name - A top-level name in artifacts/.
+ * @returns {boolean} `true` when the name is usable.
+ * @example isSafeEntryName('c59') // => true
+ * @example isSafeEntryName('.DS_Store') // => false
+ */
+export function isSafeEntryName(name) {
+  return (
+    /^[A-Za-z0-9._-]+$/.test(name) &&
+    !name.startsWith('.') &&
+    !name.startsWith('-') &&
+    !name.includes('..') &&
+    !name.endsWith('.lock') &&
+    !name.endsWith('.')
+  )
 }
 
 /**
@@ -211,6 +251,7 @@ export function classifyInventory(
       return {
         ...base,
         action: 'skip',
+        // Hard links count too: an archive of them cannot be restored.
         reason: `symbolic link or special file: ${info.special[0]}`,
       }
     if (busy(info))
@@ -221,9 +262,13 @@ export function classifyInventory(
       }
     if (
       wanted.action === 'archive' &&
-      !/^[A-Za-z0-9._-]+$/.test(info.name.replace('qa/', ''))
+      !isSafeEntryName(info.name.replace('qa/', ''))
     )
-      return { ...base, action: 'skip', reason: 'name outside [A-Za-z0-9._-]' }
+      return {
+        ...base,
+        action: 'skip',
+        reason: 'name cannot be a git tag or a safe argument',
+      }
     return { ...base, action: wanted.action }
   }
   for (const info of inventory.entries) {
@@ -324,7 +369,7 @@ export function classifyInventory(
  * Walks one path without following links and sums what it holds.
  * @param {string} path - A file or folder.
  * @param {string} [prefix] - Relative path of `path` inside the entry (internal).
- * @returns {Promise<{ files: { rel: string, size: number }[], bytes: number, newestMs: number, special: string[], isDirectory: boolean }>} Regular files, byte sum, newest file modification time, and every link or special file met.
+ * @returns {Promise<{ files: { rel: string, size: number }[], bytes: number, newestMs: number, special: string[], isDirectory: boolean }>} Regular files, byte sum, newest file modification time, and every symbolic link, hard-linked file (link count above 1) or special file met.
  */
 export async function scanTree(path) {
   const top = await lstat(path)
@@ -340,12 +385,12 @@ export async function scanTree(path) {
     if (stats.isDirectory()) {
       for (const child of (await readdir(full)).sort())
         await visit(join(full, child), rel === '' ? child : `${rel}/${child}`)
-    } else if (stats.isFile()) {
+    } else if (stats.isFile() && stats.nlink === 1) {
       result.files.push({ rel, size: stats.size })
       result.bytes += stats.size
       result.newestMs = Math.max(result.newestMs, stats.mtimeMs)
     } else {
-      // Symbolic links, sockets and devices are never archived or deleted.
+      // Symbolic links, hard-linked files, sockets and devices are never archived or deleted (a restore refuses hard links).
       result.special.push(rel === '' ? '.' : rel)
     }
   }
@@ -358,6 +403,7 @@ export async function scanTree(path) {
  * Called by {@link runRotation}.
  * @param {string} artifactsDir - The artifacts/ folder.
  * @returns {Promise<{ entries: object[], gate: object[], qa: object[] }>} Top-level entries (without gate, qa, the temporary area and the local index), gate children, qa files.
+ * @throws {CommandRefusal} `E_UNSAFE_CONTAINER` when gate or qa is a symbolic link or not a folder.
  */
 export async function readInventory(artifactsDir) {
   const describe = async (directory, name) => {
@@ -374,6 +420,16 @@ export async function readInventory(artifactsDir) {
   for (const name of (await readdir(artifactsDir)).sort()) {
     if (name === TEMP_FOLDER || name === LOCAL_INDEX) continue
     if (name === 'gate' || name === 'qa') {
+      // A link in place of the container would send the listing, and later deletions, elsewhere.
+      const container = await lstat(join(artifactsDir, name))
+      if (container.isSymbolicLink() || !container.isDirectory())
+        throw new CommandRefusal(
+          'E_UNSAFE_CONTAINER',
+          `artifacts/${name} is a symbolic link or not a folder`,
+          {
+            fix: `inspect artifacts/${name}, replace it with a real folder or remove it by hand, then rerun`,
+          },
+        )
       const children = (await readdir(join(artifactsDir, name))).sort()
       for (const child of children)
         inventory[name].push(await describe(join(artifactsDir, name), child))
@@ -395,6 +451,10 @@ export async function sha256OfFile(path) {
   return hash.digest('hex')
 }
 
+/** The real part write: one `write` call on the open part file. */
+const defaultPartWrite = (_info, handle, buffer, offset, length) =>
+  handle.write(buffer, offset, length)
+
 /**
  * Writes everything it receives into numbered part files, none over `partBytes`, hashing each part.
  *
@@ -413,12 +473,14 @@ export class PartSplitter extends Writable {
    * @param {string} directory - Where the parts are written.
    * @param {string} baseName - The `<folder>.tar.gz` name.
    * @param {number} partBytes - The largest part.
+   * @param {(info: { baseName: string, partIndex: number }, handle: import('node:fs/promises').FileHandle, buffer: Buffer, offset: number, length: number) => Promise<{ bytesWritten: number }>} [write] - The part write; tests replace it to make a write fail (for example ENOSPC).
    */
-  constructor(directory, baseName, partBytes) {
+  constructor(directory, baseName, partBytes, write = defaultPartWrite) {
     super()
     this.directory = directory
     this.baseName = baseName
     this.partBytes = partBytes
+    this.partWrite = write
     this.parts = []
     this.handle = null
     this.hash = null
@@ -426,6 +488,17 @@ export class PartSplitter extends Writable {
 
   _write(chunk, _encoding, callback) {
     this.#append(chunk).then(() => callback(), callback)
+  }
+
+  // Closes the open part when the stream fails or is destroyed, so no file handle outlives a failed entry.
+  _destroy(error, callback) {
+    const handle = this.handle
+    this.handle = null
+    if (handle === null) return callback(error)
+    handle.close().then(
+      () => callback(error),
+      () => callback(error),
+    )
   }
 
   _final(callback) {
@@ -467,7 +540,9 @@ export class PartSplitter extends Writable {
       const slice = chunk.subarray(offset, offset + this.partBytes - part.size)
       let written = 0
       while (written < slice.length) {
-        const { bytesWritten } = await this.handle.write(
+        const { bytesWritten } = await this.partWrite(
+          { baseName: this.baseName, partIndex: this.parts.length - 1 },
+          this.handle,
           slice,
           written,
           slice.length - written,
@@ -513,26 +588,61 @@ export function checkMemberPaths(names, entryName) {
  *
  * @param {string} cwd - Directory the commands run in.
  * @param {NodeJS.ProcessEnv} environment - The caller's environment.
- * @returns {(command: string, args: string[], options?: { env?: object, stdin?: Readable, stdout?: Writable }) => Promise<{ status: number, stdout: string, stderr: string }>} A runner; `options.env` adds variables, `options.stdin` feeds the child, `options.stdout` receives its output instead of a string. A missing program is status 127.
+ * @param {{ limit?: number }} [settings] - `limit`: captured bytes per stream (tests make it small).
+ * @returns {(command: string, args: string[], options?: { env?: object, stdin?: Readable, stdout?: Writable, signal?: AbortSignal }) => Promise<{ status: number, stdout: string, stderr: string }>} A runner; `options.env` adds variables, `options.stdin` feeds the child, `options.stdout` receives its output instead of a string, `options.signal` ends the child when aborted. A missing program is status 127. A captured stdout that reaches the limit rejects with `E_OUTPUT_LIMIT`.
  */
-export function createCommandRunner(cwd, environment) {
-  const limit = 64 * 1024 * 1024
+export function createCommandRunner(
+  cwd,
+  environment,
+  { limit = 64 * 1024 * 1024 } = {},
+) {
   return (command, args, options = {}) =>
-    new Promise((resolveResult) => {
+    new Promise((resolveResult, rejectResult) => {
       const child = spawn(command, args, {
         cwd,
         env: { ...environment, ...options.env, GIT_TERMINAL_PROMPT: '0' },
         stdio: [options.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        signal: options.signal,
       })
-      let stdout = ''
-      let stderr = ''
+      // Chunks stay Buffers and are decoded once, so a multi-byte character split between two chunks survives.
+      const stdoutChunks = []
+      const stderrChunks = []
+      let stdoutBytes = 0
+      let stderrBytes = 0
+      let overflow = false
+      const text = (chunks) => Buffer.concat(chunks).toString('utf8')
+      const finish = (status, stderr) => {
+        if (overflow) {
+          // A cut answer is never handed on as if it were whole.
+          rejectResult(
+            new CommandRefusal(
+              'E_OUTPUT_LIMIT',
+              `${command} ${args[0] ?? ''} printed ${limit} bytes or more, more than this tool captures`,
+              {
+                fix: 'run that command by hand and check its output size',
+                exitCode: EXIT.FAILED,
+              },
+            ),
+          )
+          return
+        }
+        resolveResult({ status, stdout: text(stdoutChunks), stderr })
+      }
       child.stderr.on('data', (chunk) => {
-        if (stderr.length < limit) stderr += chunk
+        if (stderrBytes < limit) {
+          stderrChunks.push(chunk)
+          stderrBytes += chunk.length
+        }
       })
       if (options.stdout) child.stdout.pipe(options.stdout)
       else
         child.stdout.on('data', (chunk) => {
-          if (stdout.length < limit) stdout += chunk
+          if (overflow) return
+          stdoutBytes += chunk.length
+          if (stdoutBytes >= limit) {
+            overflow = true
+            child.kill()
+          } else stdoutChunks.push(chunk)
         })
       if (options.stdin) {
         // A child that exits early closes the pipe; that is its exit status to report, not our crash.
@@ -542,11 +652,9 @@ export function createCommandRunner(cwd, environment) {
       }
       child.on('error', (error) => {
         options.stdout?.end()
-        resolveResult({ status: 127, stdout, stderr: error.message })
+        finish(127, error.message)
       })
-      child.on('close', (code) =>
-        resolveResult({ status: code ?? 127, stdout, stderr }),
-      )
+      child.on('close', (code) => finish(code ?? 127, text(stderrChunks)))
     })
 }
 
@@ -582,34 +690,73 @@ async function expectSuccess(call, code, what, environment) {
  * @param {string} name - Top-level entry.
  * @param {string} workDir - Empty folder for the parts.
  * @returns {Promise<{ name: string, size: number, sha256: string }[]>} The parts.
+ * @throws {CommandRefusal} `E_PACK` when tar fails or a stream write fails (for example ENOSPC); every part handle is closed first.
  */
 async function packEntry(context, name, workDir) {
   const baseName = `${name}.tar.gz`
-  const splitter = new PartSplitter(workDir, baseName, context.partBytes)
+  const splitter = new PartSplitter(
+    workDir,
+    baseName,
+    context.partBytes,
+    context.partWrite,
+  )
   const gzip = createGzip()
+  const abort = new AbortController()
+  let streamError = null
+  let signalStreamError = () => {}
+  const streamFailed = new Promise((resolveFailure) => {
+    signalStreamError = resolveFailure
+  })
+  // Attached before tar starts: a failing part write (a full disk) must end tar, not hang it on a stalled pipe or crash on an unhandled error event.
+  const onStreamError = (error) => {
+    streamError ??= error
+    abort.abort()
+    signalStreamError()
+  }
+  gzip.on('error', onStreamError)
+  splitter.on('error', onStreamError)
   gzip.pipe(splitter)
-  const result = await context.run(
+  /** Closes every part handle and fails the entry. */
+  const fail = async (reason) => {
+    gzip.destroy()
+    splitter.destroy()
+    if (!splitter.closed)
+      await new Promise((resolveClosed) =>
+        splitter.once('close', resolveClosed),
+      )
+    throw new CommandRefusal('E_PACK', `packing ${name} failed: ${reason}`, {
+      fix: 'fix the cause above (for example free disk space), then rerun',
+      exitCode: EXIT.FOLLOW_UP,
+    })
+  }
+  const tarRun = context.run(
     'tar',
     ['-cf', '-', '-C', context.artifactsDir, name],
-    { stdout: gzip },
+    { stdout: gzip, signal: abort.signal },
   )
-  if (result.status !== 0)
-    throw new CommandRefusal(
-      'E_PACK',
-      `tar failed for ${name}: ${result.stderr.trim().split('\n')[0]}`,
-      { fix: 'fix the cause above, then rerun', exitCode: EXIT.FOLLOW_UP },
-    )
-  await finished(splitter)
+  // Whichever comes first: tar's exit or a stream error.
+  const first = await Promise.race([tarRun, streamFailed])
+  if (streamError !== null) {
+    await tarRun.catch(() => {})
+    return fail(streamError.message)
+  }
+  if (first.status !== 0)
+    return fail(`tar: ${first.stderr.trim().split('\n')[0]}`)
+  try {
+    await finished(splitter)
+  } catch (error) {
+    return fail(error.message)
+  }
   return splitter.parts
 }
 
 /**
- * Hashes every file of an entry for `files.json`.
+ * Hashes every regular file of a tree and names the links it met.
  * @param {string} root - Folder holding the entry.
  * @param {string} name - Entry name (a folder or one file).
- * @returns {Promise<{ path: string, size: number, sha256: string }[]>} `path` as `artifacts/<name>/<relative>`.
+ * @returns {Promise<{ files: { path: string, size: number, sha256: string }[], special: string[] }>} `path` as `artifacts/<name>/<relative>`; `special`: symbolic links, hard-linked files and special files, as `<name>/<relative>`.
  */
-async function hashEntryFiles(root, name) {
+async function hashTree(root, name) {
   const tree = await scanTree(join(root, name))
   const files = []
   for (const file of tree.files) {
@@ -620,21 +767,49 @@ async function hashEntryFiles(root, name) {
       sha256: await sha256OfFile(join(root, relative)),
     })
   }
+  return {
+    files,
+    special: tree.special.map((rel) => (rel === '.' ? name : `${name}/${rel}`)),
+  }
+}
+
+/**
+ * Hashes every file of an entry for `files.json`, refusing the entry when a link appeared after the plan.
+ * Called by {@link rotateArchive} when packing.
+ * @param {string} root - Folder holding the entry.
+ * @param {string} name - Entry name (a folder or one file).
+ * @returns {Promise<{ path: string, size: number, sha256: string }[]>} `path` as `artifacts/<name>/<relative>`.
+ * @throws {CommandRefusal} `E_FOLDER_CHANGED` for a symbolic link, hard link or special file.
+ */
+async function hashEntryFiles(root, name) {
+  const { files, special } = await hashTree(root, name)
+  if (special.length > 0)
+    throw new CommandRefusal(
+      'E_FOLDER_CHANGED',
+      `${name} holds a symbolic link, hard link or special file the plan did not see: ${special[0]}`,
+      {
+        fix: 'remove or move the link, then rerun',
+        exitCode: EXIT.FOLLOW_UP,
+      },
+    )
   return files
 }
 
 /**
  * Compares a folder on disk with a manifest.
+ *
+ * Why: it is the check behind steps 3 and 4 and the last check before deletion; a file that is missing, differs, is extra, or is a link must stop the entry.
+ * Called by {@link rotateArchive}, {@link removeAfterFinalCheck} and {@link restoreFolder}.
+ *
  * @param {string} root - Folder holding the entry.
  * @param {string} name - Entry name.
  * @param {{ path: string, size: number, sha256: string }[]} manifestFiles - The expected files.
- * @returns {Promise<string[]>} Problems found (missing, extra, wrong size or hash); empty when identical.
+ * @returns {Promise<string[]>} Problems found (missing, extra, wrong size or hash, link); empty when identical.
  */
 export async function compareWithManifest(root, name, manifestFiles) {
-  const actual = new Map(
-    (await hashEntryFiles(root, name)).map((file) => [file.path, file]),
-  )
-  const problems = []
+  const tree = await hashTree(root, name)
+  const actual = new Map(tree.files.map((file) => [file.path, file]))
+  const problems = tree.special.map((path) => `link ${path}`)
   for (const expected of manifestFiles) {
     const found = actual.get(expected.path)
     if (found === undefined) problems.push(`missing ${expected.path}`)
@@ -644,6 +819,24 @@ export async function compareWithManifest(root, name, manifestFiles) {
   }
   for (const path of actual.keys()) problems.push(`extra ${path}`)
   return problems
+}
+
+/**
+ * Orders archive part files by their `.part-NNN` number (a single `<folder>.tar.gz` has none).
+ *
+ * Why: tar needs the parts in order; the stored asset order of an index is no promise.
+ * Called by {@link restoreFolder} and {@link rotateArchive}.
+ *
+ * @param {string[]} names - Asset names of one archive.
+ * @returns {string[]} The names sorted by part number.
+ * @example sortParts(['c1.tar.gz.part-001', 'c1.tar.gz.part-000']) // => ['c1.tar.gz.part-000', 'c1.tar.gz.part-001']
+ */
+export function sortParts(names) {
+  const number = (name) => {
+    const match = /\.part-(\d+)$/.exec(name)
+    return match === null ? -1 : Number.parseInt(match[1], 10)
+  }
+  return [...names].sort((a, b) => number(a) - number(b))
 }
 
 /**
@@ -669,6 +862,9 @@ function createGithub(context) {
   const ok = (args, code, what, options) =>
     expectSuccess(() => call(args, options), code, what, env)
   const notFound = (result) => /404|not found/i.test(result.stderr)
+  const firstLine = (result) =>
+    redactSecrets(result.stderr.trim().split('\n')[0], env)
+  const indexPath = `repos/${repository}/contents/index.json`
   return {
     call,
     ok,
@@ -682,15 +878,24 @@ function createGithub(context) {
       if (notFound(result)) return null
       throw new CommandRefusal(
         'E_GITHUB',
-        `reading release ${tag} failed: ${redactSecrets(result.stderr.trim().split('\n')[0], env)}`,
+        `reading release ${tag} failed: ${firstLine(result)}`,
         { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
       )
     },
+    /** Whether index.json exists in the archive repository (`--init` decides on it). */
+    async indexExists() {
+      const result = await call(['api', indexPath])
+      if (result.status === 0) return true
+      if (notFound(result)) return false
+      throw new CommandRefusal(
+        'E_GITHUB',
+        `reading index.json failed: ${firstLine(result)}`,
+        { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
+      )
+    },
+    /** Reads index.json; a missing one means the repository was never fully initialised. */
     async readIndex() {
-      const result = await call([
-        'api',
-        `repos/${repository}/contents/index.json`,
-      ])
+      const result = await call(['api', indexPath])
       if (result.status === 0) {
         const body = JSON.parse(result.stdout)
         return {
@@ -701,26 +906,45 @@ function createGithub(context) {
         }
       }
       if (notFound(result))
-        return { sha: null, index: { schemaVersion: 1, folders: {} } }
+        throw new CommandRefusal(
+          'E_INIT_INCOMPLETE',
+          `${repository} has no index.json`,
+          { fix: 'node extension/scripts/rotate-artifacts.mjs --init' },
+        )
       throw new CommandRefusal(
         'E_GITHUB',
-        `reading index.json failed: ${redactSecrets(result.stderr.trim().split('\n')[0], env)}`,
+        `reading index.json failed: ${firstLine(result)}`,
         { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
       )
     },
+    /**
+     * Writes index.json through a request body file, never the command line (Linux limits one argument to 128 KiB).
+     * The file lives in the run's temporary folder; `--init` has no run folder and uses a throwaway one.
+     */
     async writeIndex(index, sha, message) {
-      const args = [
-        'api',
-        '-X',
-        'PUT',
-        `repos/${repository}/contents/index.json`,
-        '-f',
-        `message=${message}`,
-        '-f',
-        `content=${Buffer.from(`${JSON.stringify(index, null, 2)}\n`).toString('base64')}`,
-      ]
-      if (sha !== null) args.push('-f', `sha=${sha}`)
-      await ok(args, 'E_GITHUB', 'writing index.json')
+      const ownsDirectory = context.locked !== true
+      let directory = context.workRoot
+      if (ownsDirectory)
+        directory = await mkdtemp(join(tmpdir(), 'rotate-index-'))
+      else await mkdir(directory, { recursive: true })
+      try {
+        const body = {
+          message,
+          content: Buffer.from(`${JSON.stringify(index, null, 2)}\n`).toString(
+            'base64',
+          ),
+        }
+        if (sha !== null) body.sha = sha
+        const file = join(directory, 'index-put.json')
+        await writeFile(file, JSON.stringify(body))
+        await ok(
+          ['api', '-X', 'PUT', indexPath, '--input', file],
+          'E_GITHUB',
+          'writing index.json',
+        )
+      } finally {
+        if (ownsDirectory) await rm(directory, { recursive: true, force: true })
+      }
     },
   }
 }
@@ -769,7 +993,7 @@ async function uploadAssets(github, context, tag, notes, assets) {
           ? existing.digest.replace(/^sha256:/, '')
           : null
       if (remote === null) {
-        const directory = join(context.tmpDir, 'resume-check')
+        const directory = join(context.workRoot, 'resume-check')
         await rm(directory, { recursive: true, force: true })
         await mkdir(directory, { recursive: true })
         await github.ok(
@@ -883,10 +1107,103 @@ async function recordArchived(github, context, key, record) {
   await rename(`${localPath}.tmp`, localPath)
 }
 
+/** The error {@link moveWithoutReplacing} throws when something already sits at the destination. */
+class DestinationExists extends Error {
+  code = 'EEXIST'
+}
+
+/**
+ * Moves a file or folder to a destination that must not exist, failing atomically when it does.
+ *
+ * Why: a plain `rename` replaces a file or an empty folder silently; a restore or a put-back must never overwrite what another process created meanwhile.
+ * Called by {@link restoreFolder} (the final move) and by {@link removeAfterFinalCheck} / {@link removeQaBuildAfterFinalCheck} (putting a changed entry back).
+ *
+ * @param {string} source - Existing file or folder (same volume as the destination).
+ * @param {string} destination - Path that must not exist.
+ * @returns {Promise<void>} Resolves once `source` lives at `destination`.
+ * @throws {DestinationExists} `code` `EEXIST`; whatever sits at the destination is left unchanged.
+ */
+async function moveWithoutReplacing(source, destination) {
+  if ((await lstat(source)).isDirectory()) {
+    // mkdir without `recursive` fails on EEXIST; the rename then replaces only the empty folder just made.
+    try {
+      await mkdir(destination)
+    } catch (error) {
+      if (error.code === 'EEXIST') throw new DestinationExists(destination)
+      throw error
+    }
+    try {
+      await rename(source, destination)
+    } catch (error) {
+      // Filled by someone else meanwhile: theirs stays untouched.
+      if (error.code === 'ENOTEMPTY' || error.code === 'EEXIST')
+        throw new DestinationExists(destination)
+      await rmdir(destination).catch(() => {})
+      throw error
+    }
+    return
+  }
+  // link fails on EEXIST, then the second name goes.
+  try {
+    await link(source, destination)
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new DestinationExists(destination)
+    throw error
+  }
+  await unlink(source)
+}
+
+/**
+ * The last check before a local entry is deleted: rename it aside, rescan the renamed copy against `files.json`, and only then remove it.
+ *
+ * Why: a run may write into the folder between step 4 and the deletion; renaming first makes the final scan see exactly what `rm` would delete (same volume, atomic).
+ * Called by {@link rotateArchive} after the record was written.
+ *
+ * @param {object} context - Rotation context.
+ * @param {string} name - Top-level entry.
+ * @param {{ path: string, size: number, sha256: string }[]} manifestFiles - The verified `files.json` files.
+ * @returns {Promise<void>} Resolves once the renamed copy is removed.
+ * @throws {CommandRefusal} `E_FOLDER_CHANGED` on any difference (content, extras, links); the entry is put back, or, when its path was recreated meanwhile, stays in the run's temporary folder and the error names it.
+ */
+async function removeAfterFinalCheck(context, name, manifestFiles) {
+  const original = join(context.artifactsDir, name)
+  const holder = join(context.asideRoot, name)
+  const aside = join(holder, name)
+  await mkdir(holder, { recursive: true })
+  await rename(original, aside)
+  await context.afterAside?.(name)
+  const problems = await compareWithManifest(holder, name, manifestFiles)
+  if (problems.length === 0) {
+    await rm(holder, { recursive: true, force: true })
+    return
+  }
+  try {
+    await moveWithoutReplacing(aside, original)
+  } catch (error) {
+    throw new CommandRefusal(
+      'E_FOLDER_CHANGED',
+      `${name} changed just before deletion (${problems[0]}) and could not be put back (${error.message}); the renamed copy stays at ${aside}`,
+      {
+        fix: `compare ${aside} with ${original} by hand; nothing was deleted`,
+        exitCode: EXIT.FOLLOW_UP,
+      },
+    )
+  }
+  await rmdir(holder).catch(() => {})
+  throw new CommandRefusal(
+    'E_FOLDER_CHANGED',
+    `${name} changed just before deletion: ${problems[0]}; it was put back`,
+    {
+      fix: 'wait until the folder is stable, then rerun',
+      exitCode: EXIT.FOLLOW_UP,
+    },
+  )
+}
+
 /**
  * Archives one cycle folder or loose entry: pack, upload, verify, record, delete.
  *
- * Why: this is the six-step order of Issue 301; the local copy goes only after steps 3 to 5 passed.
+ * Why: this is the six-step order of Issue 301; the local copy goes only after steps 3 to 5 passed and a last check of the renamed copy.
  * Called by {@link runRotation} for an `archive` plan item.
  *
  * @param {object} context - Rotation context.
@@ -903,7 +1220,7 @@ async function rotateArchive(context, item) {
       `${name} (cycle ${item.cycle}) is above ${context.current - context.keep}`,
       { fix: 'raise nothing; this folder stays', exitCode: EXIT.REFUSED },
     )
-  const workDir = join(context.tmpDir, name)
+  const workDir = join(context.workRoot, name)
   await rm(workDir, { recursive: true, force: true })
   await mkdir(workDir, { recursive: true })
   const github = createGithub(context)
@@ -944,7 +1261,11 @@ async function rotateArchive(context, item) {
   await expectSuccess(
     () =>
       context.run('tar', ['-xzf', '-', '--no-same-owner', '-C', extractDir], {
-        stdin: joinParts(parts.map((part) => join(downloadDir, part.name))),
+        stdin: joinParts(
+          sortParts(parts.map((part) => part.name)).map((partName) =>
+            join(downloadDir, partName),
+          ),
+        ),
       }),
     'E_HASH_MISMATCH',
     `extracting the downloaded ${name}`,
@@ -964,7 +1285,7 @@ async function rotateArchive(context, item) {
       `the extracted ${name} differs from files.json: ${extractProblems[0] ?? 'file count'}`,
       { fix: 'the local copy is kept; rerun', exitCode: EXIT.FOLLOW_UP },
     )
-  // 4. a file changed after packing stops the deletion
+  // 4. a file changed after packing (or a link, or an extra file) stops the deletion
   const localProblems = await compareWithManifest(
     context.artifactsDir,
     name,
@@ -979,7 +1300,7 @@ async function rotateArchive(context, item) {
         exitCode: EXIT.FOLLOW_UP,
       },
     )
-  // 5. index.json (and the local ARCHIVED.json)
+  // 5. index.json (and the local ARCHIVED.json): the record comes before the deletion
   await recordArchived(github, context, name, {
     tag: name,
     archivedAt: new Date(context.now()).toISOString(),
@@ -992,8 +1313,81 @@ async function rotateArchive(context, item) {
       sha256,
     })),
   })
-  // 6. delete the local copy, permanently
-  await rm(join(context.artifactsDir, name), { recursive: true, force: true })
+  await context.afterRecord?.(name)
+  // 6. last check on the renamed copy, then delete it permanently
+  await removeAfterFinalCheck(context, name, remoteManifest.files)
+}
+
+/**
+ * Reads one QA build file without following links.
+ * @param {string} path - The file.
+ * @returns {Promise<{ size: number, sha256: string }>} Size and SHA-256.
+ * @throws {CommandRefusal} `E_FOLDER_CHANGED` for a link, hard link or non-file.
+ */
+async function qaFileFacts(path) {
+  const stats = await lstat(path)
+  if (!stats.isFile() || stats.nlink > 1)
+    throw new CommandRefusal(
+      'E_FOLDER_CHANGED',
+      `${path} is a symbolic link, hard link or special file`,
+      { fix: 'remove the link, then rerun', exitCode: EXIT.FOLLOW_UP },
+    )
+  return { size: stats.size, sha256: await sha256OfFile(path) }
+}
+
+/**
+ * The last check before QA build files are deleted: rename them aside, rehash, then remove; on a difference move them back.
+ * Called by {@link rotateQaBuild} after the record was written.
+ * @param {object} context - Rotation context.
+ * @param {string} stem - The build's `codebook-<sha>` stem.
+ * @param {{ name: string, path: string, size: number, sha256: string }[]} assets - The uploaded files with their hashes.
+ * @throws {CommandRefusal} `E_FOLDER_CHANGED` on a difference; the files are back, or, when a path was recreated meanwhile, stay in the run's temporary folder and the error names it.
+ */
+async function removeQaBuildAfterFinalCheck(context, stem, assets) {
+  const holder = join(context.asideRoot, `qa-${stem}`)
+  await mkdir(holder, { recursive: true })
+  const moved = []
+  let problem = null
+  try {
+    for (const asset of assets) {
+      await rename(asset.path, join(holder, asset.name))
+      moved.push(asset)
+    }
+    await context.afterAside?.(stem)
+    for (const asset of assets) {
+      const facts = await qaFileFacts(join(holder, asset.name))
+      if (facts.size !== asset.size || facts.sha256 !== asset.sha256) {
+        problem = `${asset.name} differs from what was uploaded`
+        break
+      }
+    }
+  } catch (error) {
+    problem = error.reason ?? error.message
+  }
+  if (problem === null) {
+    await rm(holder, { recursive: true, force: true })
+    return
+  }
+  const stuck = []
+  for (const asset of moved)
+    await moveWithoutReplacing(join(holder, asset.name), asset.path).catch(() =>
+      stuck.push(asset.name),
+    )
+  if (stuck.length > 0)
+    throw new CommandRefusal(
+      'E_FOLDER_CHANGED',
+      `${stem} changed just before deletion (${problem}) and ${stuck.join(', ')} could not be put back; the renamed files stay in ${holder}`,
+      {
+        fix: `compare ${holder} with artifacts/qa by hand; nothing was deleted`,
+        exitCode: EXIT.FOLLOW_UP,
+      },
+    )
+  await rmdir(holder).catch(() => {})
+  throw new CommandRefusal(
+    'E_FOLDER_CHANGED',
+    `${stem} changed just before deletion: ${problem}; the files were put back`,
+    { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
+  )
 }
 
 /**
@@ -1011,8 +1405,7 @@ async function rotateQaBuild(context, item) {
     assets.push({
       name: file,
       path: join(directory, file),
-      size: (await lstat(join(directory, file))).size,
-      sha256: await sha256OfFile(join(directory, file)),
+      ...(await qaFileFacts(join(directory, file))),
     })
   await uploadAssets(
     github,
@@ -1022,20 +1415,22 @@ async function rotateQaBuild(context, item) {
     assets,
   )
   const downloadDir = join(
-    context.tmpDir,
+    context.workRoot,
     item.name.replace('/', '-'),
     'download',
   )
   await rm(downloadDir, { recursive: true, force: true })
   await downloadAndVerify(github, context, QA_RELEASE_TAG, assets, downloadDir)
   // Step 4: the build files must still be what was uploaded.
-  for (const asset of assets)
-    if ((await sha256OfFile(asset.path)) !== asset.sha256)
+  for (const asset of assets) {
+    const facts = await qaFileFacts(asset.path)
+    if (facts.size !== asset.size || facts.sha256 !== asset.sha256)
       throw new CommandRefusal(
         'E_FOLDER_CHANGED',
         `${asset.name} changed after hashing`,
         { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
       )
+  }
   const { sha, index } = await github.readIndex()
   const known = index.folders[QA_RELEASE_TAG]?.assets ?? []
   const merged = [
@@ -1051,7 +1446,12 @@ async function rotateQaBuild(context, item) {
     assets: merged,
   }
   await github.writeIndex(index, sha, `Archive ${item.name}`)
-  for (const asset of assets) await rm(asset.path, { force: true })
+  await context.afterRecord?.(item.name)
+  await removeQaBuildAfterFinalCheck(
+    context,
+    item.name.replace('qa/', ''),
+    assets,
+  )
 }
 
 /**
@@ -1082,7 +1482,7 @@ async function readHead(run, environment) {
  * @param {object} context - Rotation context.
  * @param {{ needRepository?: boolean }} [options] - `needRepository: false` for `--init`.
  * @returns {Promise<string>} The token (never printed).
- * @throws {CommandRefusal} `E_NO_ACCOUNT`, `E_REPO_MISSING` or `E_NOT_PRIVATE`.
+ * @throws {CommandRefusal} `E_NO_ACCOUNT`, `E_REPO_MISSING`, `E_NOT_PRIVATE` or `E_INIT_INCOMPLETE`.
  */
 async function requireAccount(context, { needRepository = true } = {}) {
   const result = await context.run('gh', [
@@ -1117,6 +1517,8 @@ async function requireAccount(context, { needRepository = true } = {}) {
       `${context.repository} is not private`,
       { fix: 'make the archive repository private in GitHub, then rerun' },
     )
+  // A repository without index.json was never fully initialised (`--init` writes it).
+  await createGithub(context).readIndex()
   return token
 }
 
@@ -1147,40 +1549,145 @@ function printPlan(plan, print) {
 }
 
 /**
- * Prints the plan, and with `--apply` executes it entry by entry.
+ * Whether a process is alive (signal 0 probes without sending anything).
+ * Called by {@link acquireLock} to tell a live lock from a stale one.
+ * @param {number} pid - Process id read from the lock file.
+ * @returns {boolean} `true` when the process exists (a process owned by someone else counts as alive).
+ */
+function defaultIsProcessAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code === 'EPERM'
+  }
+}
+
+/**
+ * Takes the exclusive run lock `artifacts/.rotate-tmp/.lock` (created with `wx`, holding the pid and start time).
  *
- * Why: the one command of the merge chain; a failure of one entry keeps that entry and never stops the others.
- * Called by {@link main}.
+ * Why: two runs would empty each other's temporary folder or archive the same entry twice; only one `--apply` or `--restore` may work at a time.
+ * Called by {@link withRunLock}.
  *
- * @param {object} options - `current`, `keep`, `apply`.
+ * @param {object} context - Rotation context.
+ * @throws {CommandRefusal} `E_RUN_ACTIVE` for a lock whose process lives, or one that cannot be read.
+ */
+async function acquireLock(context) {
+  const lockPath = join(context.tmpDir, '.lock')
+  await mkdir(context.tmpDir, { recursive: true })
+  const body = JSON.stringify({
+    pid: process.pid,
+    startedAt: new Date(context.now()).toISOString(),
+    runId: context.runId,
+  })
+  const active = (detail) =>
+    new CommandRefusal(
+      'E_RUN_ACTIVE',
+      `another run holds ${lockPath}: ${detail}`,
+      {
+        fix: `wait for it to finish; if no such run exists, remove ${lockPath} by hand`,
+      },
+    )
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await writeFile(lockPath, body, { flag: 'wx' })
+      return
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+    }
+    let holder = null
+    try {
+      holder = JSON.parse(await readFile(lockPath, 'utf8'))
+    } catch {
+      // Unreadable or half written: treated as a live lock, never guessed away.
+    }
+    if (!Number.isInteger(holder?.pid))
+      throw active('its content cannot be read')
+    if (attempt === 1 || context.isProcessAlive(holder.pid))
+      throw active(`pid ${holder.pid}, started ${holder.startedAt}`)
+    // A dead holder: its lock is replaced, and its leftover work folders (never its renamed copies) are removed.
+    context.print(
+      `LOCK: replaced the stale lock of pid ${holder.pid} (started ${holder.startedAt})`,
+    )
+    for (const other of await readdir(context.tmpDir, { withFileTypes: true }))
+      if (other.isDirectory())
+        await rm(join(context.tmpDir, other.name, 'work'), {
+          recursive: true,
+          force: true,
+        })
+    // Move the stale lock aside first; a lock another process just created must not be deleted by mistake.
+    const aside = `${lockPath}.stale-${context.runId}`
+    await rename(lockPath, aside)
+    const moved = JSON.parse(await readFile(aside, 'utf8').catch(() => 'null'))
+    if (moved?.runId !== holder.runId) {
+      // It was a fresh lock after all: put it back and refuse.
+      await link(aside, lockPath).catch(() => {})
+      await rm(aside, { force: true })
+      throw active('it was replaced by another run just now')
+    }
+    await rm(aside, { force: true })
+  }
+}
+
+/**
+ * Runs `body` holding the run lock, then removes this run's temporary work and the lock.
+ *
+ * Why: `--apply` and `--restore` use their own folder `artifacts/.rotate-tmp/<run id>/` and nothing may remove another run's folder.
+ * Called by {@link runRotation} and {@link restoreFolder}.
+ *
+ * @template T
+ * @param {object} context - Rotation context (`runId`, `runDir`, `workRoot`, `asideRoot` are set by {@link main}).
+ * @param {() => Promise<T>} body - The work.
+ * @returns {Promise<T>} What `body` returns.
+ */
+async function withRunLock(context, body) {
+  await acquireLock(context)
+  context.locked = true
+  try {
+    return await body()
+  } finally {
+    // A restored copy that could not be published stays (keepWork), and so does any renamed copy that could not be put back.
+    if (context.keepWork !== true)
+      await rm(context.workRoot, { recursive: true, force: true })
+    await rmdir(context.asideRoot).catch(() => {})
+    await rmdir(context.runDir).catch(() => {})
+    const lockPath = join(context.tmpDir, '.lock')
+    const holder = JSON.parse(
+      await readFile(lockPath, 'utf8').catch(() => 'null'),
+    )
+    if (holder?.runId === context.runId) await rm(lockPath, { force: true })
+    await rmdir(context.tmpDir).catch(() => {})
+    context.locked = false
+  }
+}
+
+/**
+ * The highest cycle number among the top-level cycle folders.
+ * @param {{ name: string }[]} entries - Top-level entries of {@link readInventory}.
+ * @returns {number | null} The highest number, or `null` when no cycle folder exists.
+ */
+function highestCycle(entries) {
+  let highest = null
+  for (const entry of entries) {
+    const cycle = parseCycleNumber(entry.name)
+    if (cycle !== null && (highest === null || cycle > highest)) highest = cycle
+  }
+  return highest
+}
+
+/**
+ * Executes the apply part of a plan entry by entry, inside the run lock.
+ *
+ * Why: a failure of one entry keeps that entry and never stops the others; the busy check runs again when an entry's turn comes.
+ * Called by {@link runRotation}.
+ *
+ * @param {object[]} plan - From {@link classifyInventory}.
+ * @param {Record<string, number>} counts - From {@link printPlan}.
  * @param {object} context - Rotation context.
  * @returns {Promise<number>} The exit code ({@link EXIT}).
  */
-async function runRotation({ current, keep, apply }, context) {
-  const { print, progress } = context
-  progress.enter('read HEAD')
-  const sourceCommit = await readHead(context.run, context.environment)
-  progress.enter('scan artifacts')
-  const inventory = await readInventory(context.artifactsDir)
-  const plan = classifyInventory(inventory, {
-    current,
-    keep,
-    headShort: sourceCommit.slice(0, 8),
-    now: context.now(),
-  })
-  const counts = printPlan(plan, print)
-  if (!apply) {
-    print(
-      `PLAN: archive=${counts.archive} delete=${counts.delete} keep=${counts.keep} skip=${counts.skip} unknown=${counts.unknown} bytes_to_free=${counts.toFree}`,
-    )
-    return EXIT.DONE
-  }
-  progress.enter('check the archive account')
-  await requireAccount(context)
-  Object.assign(context, { current, keep, sourceCommit })
-  progress.enter('rotate', { sideEffect: true })
-  await rm(context.tmpDir, { recursive: true, force: true })
-  await mkdir(context.tmpDir, { recursive: true })
+async function applyPlan(plan, counts, context) {
+  const { print } = context
   const result = {
     archived: 0,
     deleted: 0,
@@ -1191,6 +1698,23 @@ async function runRotation({ current, keep, apply }, context) {
   for (const item of plan) {
     if (item.action !== 'archive' && item.action !== 'delete') continue
     try {
+      // The plan may be minutes old: a run may have started writing since.
+      const paths =
+        item.kind === 'qa-build'
+          ? item.files.map((file) => join('qa', file))
+          : [item.name]
+      let busy = false
+      for (const path of paths) {
+        const tree = await scanTree(join(context.artifactsDir, path))
+        if (tree.newestMs > context.now() - BUSY_MS) busy = true
+      }
+      if (busy) {
+        result.skipped += 1
+        print(
+          `skipped ${item.name} E_FOLDER_BUSY: a file changed within 10 minutes`,
+        )
+        continue
+      }
       if (item.action === 'delete') {
         await rm(join(context.artifactsDir, item.name), {
           recursive: true,
@@ -1223,12 +1747,10 @@ async function runRotation({ current, keep, apply }, context) {
         `FAILED ${item.name} ${code}: ${redactSecrets(message, { ...context.environment, GH_TOKEN: context.token })} (kept)`,
       )
     } finally {
-      // The temporary area is emptied after each entry.
-      await rm(context.tmpDir, { recursive: true, force: true })
-      await mkdir(context.tmpDir, { recursive: true })
+      // This entry's temporary work is removed (renamed copies live apart and stay when they could not be put back).
+      await rm(context.workRoot, { recursive: true, force: true })
     }
   }
-  await rm(context.tmpDir, { recursive: true, force: true })
   print(
     `ROTATE: archived=${result.archived} deleted=${result.deleted} kept=${counts.keep + counts.unknown} skipped=${result.skipped} failed=${result.failed} freed_bytes=${result.freed}`,
   )
@@ -1236,9 +1758,56 @@ async function runRotation({ current, keep, apply }, context) {
 }
 
 /**
+ * Prints the plan, and with `--apply` executes it entry by entry.
+ *
+ * Why: the one command of the merge chain; plan mode changes nothing and never creates the temporary area.
+ * Called by {@link main}.
+ *
+ * @param {object} options - `current`, `keep`, `apply`.
+ * @param {object} context - Rotation context.
+ * @returns {Promise<number>} The exit code ({@link EXIT}).
+ * @throws {CommandRefusal} `E_CURRENT_UNLIKELY` when `--current` is far above every cycle folder.
+ */
+async function runRotation({ current, keep, apply }, context) {
+  const { print, progress } = context
+  progress.enter('read HEAD')
+  const sourceCommit = await readHead(context.run, context.environment)
+  progress.enter('scan artifacts')
+  const inventory = await readInventory(context.artifactsDir)
+  const highest = highestCycle(inventory.entries)
+  // A typo such as 1170 for 117 would put every cycle below N - keep and archive them all.
+  if (highest !== null && current > highest + CURRENT_SLACK)
+    throw new CommandRefusal(
+      'E_CURRENT_UNLIKELY',
+      `--current ${current} is more than ${CURRENT_SLACK} above the highest cycle folder found (${highest})`,
+      {
+        fix: `node extension/scripts/rotate-artifacts.mjs --current ${highest} (the highest cycle found in artifacts/ is ${highest}), or the merged cycle's real number`,
+      },
+    )
+  const plan = classifyInventory(inventory, {
+    current,
+    keep,
+    headShort: sourceCommit.slice(0, 8),
+    now: context.now(),
+  })
+  const counts = printPlan(plan, print)
+  if (!apply) {
+    print(
+      `PLAN: archive=${counts.archive} delete=${counts.delete} keep=${counts.keep} skip=${counts.skip} unknown=${counts.unknown} bytes_to_free=${counts.toFree}`,
+    )
+    return EXIT.DONE
+  }
+  progress.enter('check the archive account')
+  await requireAccount(context)
+  Object.assign(context, { current, keep, sourceCommit })
+  progress.enter('rotate', { sideEffect: true })
+  return withRunLock(context, () => applyPlan(plan, counts, context))
+}
+
+/**
  * Brings an archived folder back, byte-identical to its `files.json`.
  *
- * Why: archiving is only safe when it can be undone; the cited `artifacts/…` hashes must be checkable again.
+ * Why: archiving is only safe when it can be undone; the cited `artifacts/...` hashes must be checkable again.
  * Called by {@link main} for `--restore`.
  *
  * @param {string} folder - The archived entry's name.
@@ -1254,7 +1823,7 @@ async function restoreFolder(folder, context) {
       'QA builds are never restored automatically',
       { fix: `download the asset from the ${QA_RELEASE_TAG} release by hand` },
     )
-  if (!/^[A-Za-z0-9._-]+$/.test(folder) || folder === '.' || folder === '..')
+  if (!isSafeEntryName(folder))
     throw new CommandRefusal(
       'E_USAGE',
       `${folder} is not an archived entry name`,
@@ -1264,31 +1833,31 @@ async function restoreFolder(folder, context) {
       },
     )
   const destination = join(context.artifactsDir, folder)
-  const exists = await lstat(destination).then(
-    () => true,
-    () => false,
-  )
-  if (exists)
-    throw new CommandRefusal(
-      'E_RESTORE_EXISTS',
-      `${destination} already exists`,
-      { fix: 'move or remove it, then rerun' },
-    )
-  progress.enter('check the archive account')
-  await requireAccount(context)
-  const github = createGithub(context)
-  const { index } = await github.readIndex()
-  const record = index.folders[folder]
-  if (record === undefined)
-    throw new CommandRefusal(
-      'E_RESTORE_UNKNOWN',
-      `${folder} is not in index.json of ${context.repository}`,
-      { fix: 'check the folder name against index.json' },
-    )
   progress.enter('restore', { sideEffect: true })
-  const workDir = join(context.tmpDir, `restore-${folder}`)
-  await rm(workDir, { recursive: true, force: true })
-  try {
+  return withRunLock(context, async () => {
+    const exists = await lstat(destination).then(
+      () => true,
+      () => false,
+    )
+    if (exists)
+      throw new CommandRefusal(
+        'E_RESTORE_EXISTS',
+        `${destination} already exists`,
+        { fix: 'move or remove it, then rerun' },
+      )
+    progress.enter('check the archive account')
+    await requireAccount(context)
+    const github = createGithub(context)
+    const { index } = await github.readIndex()
+    const record = index.folders[folder]
+    if (record === undefined)
+      throw new CommandRefusal(
+        'E_RESTORE_UNKNOWN',
+        `${folder} is not in index.json of ${context.repository}`,
+        { fix: 'check the folder name against index.json' },
+      )
+    const workDir = join(context.workRoot, `restore-${folder}`)
+    await rm(workDir, { recursive: true, force: true })
     const downloadDir = join(workDir, 'download')
     await downloadAndVerify(
       github,
@@ -1297,9 +1866,12 @@ async function restoreFolder(folder, context) {
       record.assets,
       downloadDir,
     )
-    const archiveParts = record.assets
-      .filter((asset) => asset.name.startsWith(`${folder}.tar.gz`))
-      .map((asset) => join(downloadDir, asset.name))
+    // The parts are joined by their part number, whatever order the index lists them in.
+    const archiveParts = sortParts(
+      record.assets
+        .map((asset) => asset.name)
+        .filter((assetName) => assetName.startsWith(`${folder}.tar.gz`)),
+    ).map((assetName) => join(downloadDir, assetName))
     // The members are checked before anything is extracted.
     const names = (
       await expectSuccess(
@@ -1363,23 +1935,35 @@ async function restoreFolder(folder, context) {
         `the restored ${folder} differs from files.json: ${problems[0]}`,
         { fix: 'nothing was moved into artifacts/' },
       )
-    await rename(join(extractDir, folder), destination)
-  } finally {
-    // Nothing else uses the temporary area during a restore.
-    await rm(context.tmpDir, { recursive: true, force: true })
-  }
-  print(
-    `RESTORE: ${folder} restored with ${record.files} files, ${record.bytes} bytes`,
-  )
-  return EXIT.DONE
+    await context.beforeRestorePublish?.(destination)
+    // The destination may have appeared since the first check: the move fails atomically and leaves it as it is.
+    const restored = join(extractDir, folder)
+    try {
+      await moveWithoutReplacing(restored, destination)
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      context.keepWork = true
+      throw new CommandRefusal(
+        'E_RESTORE_EXISTS',
+        `${destination} appeared during the restore and was left unchanged`,
+        {
+          fix: `the restored copy stays at ${restored}; move or remove ${destination}, then move the copy there by hand`,
+        },
+      )
+    }
+    print(
+      `RESTORE: ${folder} restored with ${record.files} files, ${record.bytes} bytes`,
+    )
+    return EXIT.DONE
+  })
 }
 
 /**
- * Creates the private archive repository and its empty index, once.
+ * Creates the private archive repository and its empty index, or writes the missing index of an existing private one.
  * Called by {@link main} for `--init`.
  * @param {object} context - Rotation context.
  * @returns {Promise<number>} The exit code.
- * @throws {CommandRefusal} `E_INIT_EXISTS` when the repository already exists.
+ * @throws {CommandRefusal} `E_INIT_EXISTS` when the repository and its index.json are already there; `E_NOT_PRIVATE` for an existing public repository.
  */
 async function initRepository(context) {
   await requireAccount(context, { needRepository: false })
@@ -1391,12 +1975,28 @@ async function initRepository(context) {
     '--json',
     'visibility',
   ])
-  if (view.status === 0)
-    throw new CommandRefusal(
-      'E_INIT_EXISTS',
-      `${context.repository} already exists`,
-      { fix: 'nothing to do; use --current <N> --apply' },
+  const emptyIndex = { schemaVersion: 1, folders: {} }
+  if (view.status === 0) {
+    if (JSON.parse(view.stdout).visibility !== 'PRIVATE')
+      throw new CommandRefusal(
+        'E_NOT_PRIVATE',
+        `${context.repository} is not private`,
+        { fix: 'make the archive repository private in GitHub, then rerun' },
+      )
+    // A first --init that stopped between the two steps leaves a repository without index.json: finish it.
+    if (await github.indexExists())
+      throw new CommandRefusal(
+        'E_INIT_EXISTS',
+        `${context.repository} and its index.json already exist`,
+        { fix: 'nothing to do; use --current <N> --apply' },
+      )
+    context.progress.enter('write the index', { sideEffect: true })
+    await github.writeIndex(emptyIndex, null, 'Create index')
+    context.print(
+      `INIT: wrote index.json in the existing ${context.repository} (private)`,
     )
+    return EXIT.DONE
+  }
   context.progress.enter('create the repository', { sideEffect: true })
   await github.ok(
     [
@@ -1410,11 +2010,7 @@ async function initRepository(context) {
     'E_GITHUB',
     'creating the repository',
   )
-  await github.writeIndex(
-    { schemaVersion: 1, folders: {} },
-    null,
-    'Create index',
-  )
+  await github.writeIndex(emptyIndex, null, 'Create index')
   context.print(`INIT: created ${context.repository} (private)`)
   return EXIT.DONE
 }
@@ -1426,7 +2022,7 @@ async function initRepository(context) {
  *
  * @param {import('./utils/commandContract.mjs').CommandProgress} progress - Stage tracker.
  * @param {string[]} [argv] - Arguments after the script name.
- * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, repository: string }>} [overrides] - Seams for tests (`partBytes` is no CLI flag).
+ * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, repository: string, runId: string, isProcessAlive: (pid: number) => boolean, partWrite: Function, afterRecord: (name: string) => Promise<void>, afterAside: (name: string) => Promise<void>, beforeRestorePublish: (destination: string) => Promise<void> }>} [overrides] - Seams for tests, none of them a CLI flag: `partBytes` (small parts), `partWrite` (a failing part write), `afterRecord` (runs right after the record was written), `afterAside` (runs right after the entry was renamed aside), `beforeRestorePublish` (runs before the restore's final move), `isProcessAlive` and `runId` (the run lock).
  * @returns {Promise<number>} The exit code.
  * @throws {CommandRefusal} Refusals listed in `--help`.
  */
@@ -1475,12 +2071,26 @@ export async function main(
     )
   const repositoryRoot = overrides.repositoryRoot ?? SCRIPT_REPOSITORY_ROOT
   const artifactsDir = join(repositoryRoot, 'artifacts')
+  const tmpDir = join(artifactsDir, TEMP_FOLDER)
+  const runId = overrides.runId ?? randomUUID()
+  const runDir = join(tmpDir, runId)
   const context = {
     run: overrides.run ?? createCommandRunner(repositoryRoot, environment),
     artifactsDir,
-    tmpDir: join(artifactsDir, TEMP_FOLDER),
+    // Each run works in its own folder under the temporary area.
+    tmpDir,
+    runId,
+    runDir,
+    workRoot: join(runDir, 'work'),
+    asideRoot: join(runDir, 'aside'),
+    locked: false,
     repository: overrides.repository ?? ARCHIVE_REPOSITORY,
     partBytes: overrides.partBytes ?? PART_BYTES,
+    partWrite: overrides.partWrite,
+    afterRecord: overrides.afterRecord,
+    afterAside: overrides.afterAside,
+    beforeRestorePublish: overrides.beforeRestorePublish,
+    isProcessAlive: overrides.isProcessAlive ?? defaultIsProcessAlive,
     now: overrides.now ?? Date.now,
     freeBytes:
       overrides.freeBytes ??
@@ -1497,7 +2107,11 @@ export async function main(
   if (values.restore !== undefined)
     return restoreFolder(values.restore, context)
   // The plan and --apply both need the merged cycle.
-  if (values.current === undefined || !/^\d+$/.test(values.current))
+  if (
+    values.current === undefined ||
+    !/^\d+$/.test(values.current) ||
+    !Number.isSafeInteger(Number.parseInt(values.current, 10))
+  )
     throw new CommandRefusal(
       'E_CURRENT_REQUIRED',
       '--current <N> (the merged cycle number, digits) is required',
@@ -1505,18 +2119,21 @@ export async function main(
         fix: 'node extension/scripts/rotate-artifacts.mjs --current <N> [--apply]',
       },
     )
-  if (values.keep !== undefined && !/^\d+$/.test(values.keep))
-    throw new CommandRefusal('E_USAGE', '--keep must be a whole number', {
-      fix: usageFix,
-      exitCode: EXIT.USAGE,
-    })
+  const keep = values.keep === undefined ? DEFAULT_KEEP : Number(values.keep)
+  // A zero or odd --keep would archive the current cycle or read as a typo; only whole numbers from 1 count.
+  if (
+    values.keep !== undefined &&
+    (!/^\d+$/.test(values.keep) || !Number.isSafeInteger(keep) || keep < 1)
+  )
+    throw new CommandRefusal(
+      'E_USAGE',
+      '--keep must be a whole number of at least 1',
+      { fix: usageFix, exitCode: EXIT.USAGE },
+    )
   return runRotation(
     {
       current: Number.parseInt(values.current, 10),
-      keep:
-        values.keep === undefined
-          ? DEFAULT_KEEP
-          : Number.parseInt(values.keep, 10),
+      keep,
       apply: values.apply === true,
     },
     context,
