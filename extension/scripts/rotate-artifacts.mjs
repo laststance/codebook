@@ -57,8 +57,11 @@ export const BUSY_MS = 10 * 60 * 1000
 /** A loose entry whose newest file is older than this is archived. */
 export const LOOSE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
-/** The release that holds archived QA builds. */
+/** The release that holds the first archived QA builds; later ones spill into `qa-builds-2`, `qa-builds-3`, and so on. */
 export const QA_RELEASE_TAG = 'qa-builds'
+
+/** A QA release takes no build that would push it past this many assets (GitHub refuses the 1001st, so this keeps a margin). */
+export const QA_RELEASE_CAPACITY = 900
 
 /** `--current` may exceed the highest cycle folder found by at most this much; more is a typo. */
 export const CURRENT_SLACK = 3
@@ -99,7 +102,9 @@ Rules of the plan:
                   kept above N - k, archived at or below
   gate/<sha8>     the current HEAD's folder is kept, the others are deleted without archiving
   qa/             a build is every file named codebook-<sha>.vsix, .json or -<note>; the newest ${QA_BUILDS_KEPT} builds
-                  holding a vsix are kept, the others go to release "${QA_RELEASE_TAG}"; other files are listed and kept
+                  holding a vsix are kept, the others go to release "${QA_RELEASE_TAG}" (a build never splits; when it would
+                  push a release past ${QA_RELEASE_CAPACITY} assets it goes to "${QA_RELEASE_TAG}-2", then "${QA_RELEASE_TAG}-3", ...);
+                  other files are listed and kept
   packages/       kept
   other entries   archived when their newest file is older than 30 days, else kept
   skipped         a folder with a file modified within 10 minutes, with a symbolic link, a hard link or a
@@ -142,7 +147,7 @@ Error codes:
   E_GIT                git could not read HEAD
   E_ABOVE_RETENTION    a folder above N - k was asked to be archived (never done)
   E_ARCHIVED_DIFFERS   the folder is already archived but the local copy differs from its archive, or the release lacks the recorded assets (nothing is uploaded or changed)
-  E_ASSET_CONFLICT     a release asset of the same name has another SHA-256 (never overwritten)
+  E_ASSET_CONFLICT     a recorded release asset of the same name has another SHA-256 (never overwritten; an unrecorded one from a failed run is replaced and printed as REPLACED)
   E_HASH_MISMATCH      a downloaded or extracted file differs from what was packed
   E_FOLDER_CHANGED     the local folder changed after packing or in the last moment before deletion
   E_FOLDER_BUSY        a file of the entry was modified within 10 minutes when its turn came (skipped)
@@ -986,9 +991,33 @@ function createGithub(context) {
 }
 
 /**
+ * Whether a release tag is one of the QA releases ({@link QA_RELEASE_TAG} or a spill-over `qa-builds-<n>`).
+ *
+ * Why: QA builds are never restored, and their assets carry the tag of the release they went to.
+ * Called by {@link restoreFolder} and {@link qaAssetTag}.
+ *
+ * @param {string} tag - Release tag or entry name.
+ * @returns {boolean} True for `qa-builds`, `qa-builds-2`, `qa-builds-3`, ...
+ * @example isQaReleaseTag('qa-builds-2') // => true
+ */
+export function isQaReleaseTag(tag) {
+  return /^qa-builds(-\d+)?$/.test(tag)
+}
+
+/** The release holding a recorded QA asset; a record written before spill-over releases existed has no `tag` and means {@link QA_RELEASE_TAG}. */
+function qaAssetTag(asset) {
+  return typeof asset.tag === 'string' ? asset.tag : QA_RELEASE_TAG
+}
+
+/** The tag of the nth QA release: `qa-builds`, `qa-builds-2`, `qa-builds-3`, ... */
+function qaTagNumber(number) {
+  return number === 1 ? QA_RELEASE_TAG : `${QA_RELEASE_TAG}-${number}`
+}
+
+/**
  * Uploads assets to a release, reusing those already there with the same SHA-256.
  *
- * Why: a stopped upload must resume, but an asset of the same name with other bytes must never be overwritten.
+ * Why: a stopped upload must resume, but an asset of the same name with other bytes must never replace an archive of record. An asset no record names (left by a run that failed before recording) is no archive: it is replaced.
  * Called by {@link rotateArchive} and {@link rotateQaBuild}.
  *
  * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
@@ -996,9 +1025,10 @@ function createGithub(context) {
  * @param {string} tag - Release tag.
  * @param {string} notes - Notes for a release created now.
  * @param {{ name: string, path: string, sha256: string }[]} assets - What to upload.
- * @throws {CommandRefusal} `E_ASSET_CONFLICT` for a same-name asset with another hash.
+ * @param {(assetName: string) => Promise<boolean>} isRecorded - Whether index.json, read now, records that asset; asked only when a same-name asset has another hash.
+ * @throws {CommandRefusal} `E_ASSET_CONFLICT` for a recorded same-name asset with another hash.
  */
-async function uploadAssets(github, context, tag, notes, assets) {
+async function uploadAssets(github, context, tag, notes, assets, isRecorded) {
   let release = await github.release(tag)
   if (release === null) {
     await github.ok(
@@ -1051,17 +1081,32 @@ async function uploadAssets(github, context, tag, notes, assets) {
         remote = await sha256OfFile(join(directory, asset.name))
       }
       if (remote === asset.sha256) continue
-      throw new CommandRefusal(
-        'E_ASSET_CONFLICT',
-        `release ${tag} already holds ${asset.name} with another SHA-256`,
-        {
-          fix: `if the old asset is wrong, delete it in ${context.repository} by hand, then rerun`,
-          exitCode: EXIT.FOLLOW_UP,
-        },
+      // A recorded asset is the archive of record and is never replaced.
+      if (await isRecorded(asset.name))
+        throw new CommandRefusal(
+          'E_ASSET_CONFLICT',
+          `release ${tag} already holds ${asset.name} with another SHA-256`,
+          {
+            fix: `if the old asset is wrong, delete it in ${context.repository} by hand, then rerun`,
+            exitCode: EXIT.FOLLOW_UP,
+          },
+        )
+      // No record names it: an earlier run failed before recording, so it was never an archive.
+      await github.ok(
+        [
+          'api',
+          '-X',
+          'DELETE',
+          `repos/${context.repository}/releases/assets/${existing.id}`,
+        ],
+        'E_UPLOAD',
+        `removing unrecorded ${asset.name}`,
       )
-    }
-    // A stopped upload leaves a partial asset; it is no complete copy, so it makes way.
-    if (existing !== undefined)
+      context.print(
+        `REPLACED ${asset.name} (unrecorded, from an earlier failed run)`,
+      )
+    } else if (existing !== undefined)
+      // A stopped upload leaves a partial asset; it is no complete copy, so it makes way.
       await github.ok(
         [
           'api',
@@ -1456,7 +1501,15 @@ async function rotateArchive(context, item) {
     ...assets.map((asset) => `- ${asset.name} ${asset.sha256}`),
   ].join('\n')
   // 2. upload (resumes: same-hash assets are reused)
-  await uploadAssets(github, context, name, notes, assets)
+  // The index is read again when a conflict shows, so the decision never rests on an older read.
+  await uploadAssets(
+    github,
+    context,
+    name,
+    notes,
+    assets,
+    async () => (await github.readIndex()).index.folders[name] !== undefined,
+  )
   // The packed copies are no longer needed; the downloads below are what gets checked.
   for (const asset of assets) await rm(asset.path, { force: true })
   // 3. download again, compare asset hashes, join, extract, compare every file
@@ -1613,7 +1666,50 @@ async function removeQaBuildAfterFinalCheck(context, stem, assets) {
 }
 
 /**
- * Archives one QA build (its vsix and json) as assets of the `qa-builds` release.
+ * Picks the QA release a build goes to.
+ *
+ * Why: GitHub refuses the 1001st asset of a release, so QA builds fill releases by capacity. A build that already has files in a QA release (a stopped run) goes back there; otherwise the newest QA release takes it while it stays within `context.qaReleaseCapacity`, else the next numbered release is created.
+ * Called by {@link rotateQaBuild}.
+ *
+ * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
+ * @param {object} context - Rotation context.
+ * @param {string[]} names - The build's file names.
+ * @param {{ name: string, tag?: string }[]} recorded - The assets index.json records for the QA builds.
+ * @returns {Promise<string>} The release tag (it may not exist yet).
+ */
+async function chooseQaRelease(github, context, names, recorded) {
+  let newest = { tag: QA_RELEASE_TAG, count: 0, exists: false }
+  for (let number = 1; ; number += 1) {
+    const tag = qaTagNumber(number)
+    const release = await github.release(tag)
+    // Gaps never get filled: the first missing release ends the walk.
+    if (release === null) break
+    const held = release.assets ?? []
+    // A stopped run left files of this build here: they stay together.
+    if (held.some((asset) => names.includes(asset.name))) return tag
+    // The larger count wins: a release payload may list fewer assets than the index records for it.
+    const count = Math.max(
+      held.length,
+      recorded.filter((asset) => qaAssetTag(asset) === tag).length,
+    )
+    newest = { tag, count, exists: true }
+  }
+  if (!newest.exists) return newest.tag
+  if (newest.count + names.length <= context.qaReleaseCapacity)
+    return newest.tag
+  // The newest release is full: the next number starts a new release.
+  return qaTagNumber(nextQaNumber(newest.tag))
+}
+
+/** The number after a QA tag's own: `qa-builds` is 1, so the next is 2. */
+function nextQaNumber(tag) {
+  const match = /-(\d+)$/.exec(tag)
+  return (match === null ? 1 : Number(match[1])) + 1
+}
+
+/**
+ * Archives one QA build (its vsix and json) as assets of one QA release.
+ * The first release is `qa-builds`; when a build would push it past the capacity, `qa-builds-2` and later take over. All files of a build stay together.
  * Called by {@link runRotation} for a `qa-build` plan item.
  * @param {object} context - Rotation context.
  * @param {{ name: string, files: string[] }} item - The plan item (`qa/<stem>`).
@@ -1629,12 +1725,24 @@ async function rotateQaBuild(context, item) {
       path: join(directory, file),
       ...(await qaFileFacts(join(directory, file))),
     })
+  const { index: startIndex } = await github.readIndex()
+  const tag = await chooseQaRelease(
+    github,
+    context,
+    assets.map((asset) => asset.name),
+    startIndex.folders[QA_RELEASE_TAG]?.assets ?? [],
+  )
   await uploadAssets(
     github,
     context,
-    QA_RELEASE_TAG,
+    tag,
     'QA builds archived from artifacts/qa. Never restored automatically.',
     assets,
+    // Read again at the conflict: only an asset the record names for this release is an archive of record.
+    async (assetName) =>
+      (
+        (await github.readIndex()).index.folders[QA_RELEASE_TAG]?.assets ?? []
+      ).some((old) => old.name === assetName && qaAssetTag(old) === tag),
   )
   const downloadDir = join(
     context.workRoot,
@@ -1642,7 +1750,7 @@ async function rotateQaBuild(context, item) {
     'download',
   )
   await rm(downloadDir, { recursive: true, force: true })
-  await downloadAndVerify(github, context, QA_RELEASE_TAG, assets, downloadDir)
+  await downloadAndVerify(github, context, tag, assets, downloadDir)
   // Step 4: the build files must still be what was uploaded.
   for (const asset of assets) {
     const facts = await qaFileFacts(asset.path)
@@ -1657,7 +1765,7 @@ async function rotateQaBuild(context, item) {
   const known = index.folders[QA_RELEASE_TAG]?.assets ?? []
   const merged = [
     ...known.filter((old) => !assets.some((asset) => asset.name === old.name)),
-    ...assets.map(({ name, size, sha256 }) => ({ name, size, sha256 })),
+    ...assets.map(({ name, size, sha256 }) => ({ name, size, sha256, tag })),
   ]
   index.folders[QA_RELEASE_TAG] = {
     tag: QA_RELEASE_TAG,
@@ -1668,8 +1776,12 @@ async function rotateQaBuild(context, item) {
     assets: merged,
   }
   await github.writeIndex(index, sha, `Archive ${item.name}`)
-  // The local pointer comes before the deletion too: a failed write keeps the build files.
-  await recordLocal(context, QA_RELEASE_TAG, index.folders[QA_RELEASE_TAG])
+  // The local pointer comes before the deletion too: a failed write keeps the build files. It names every QA tag in use.
+  for (const qaTag of new Set(merged.map(qaAssetTag)))
+    await recordLocal(context, qaTag, {
+      tag: qaTag,
+      archivedAt: index.folders[QA_RELEASE_TAG].archivedAt,
+    })
   await context.afterRecord?.(item.name)
   await removeQaBuildAfterFinalCheck(
     context,
@@ -2056,11 +2168,11 @@ async function runRotation({ current, keep, apply }, context) {
  */
 async function restoreFolder(folder, context) {
   const { print, progress } = context
-  if (folder === QA_RELEASE_TAG)
+  if (isQaReleaseTag(folder))
     throw new CommandRefusal(
       'E_RESTORE_UNSUPPORTED',
       'QA builds are never restored automatically',
-      { fix: `download the asset from the ${QA_RELEASE_TAG} release by hand` },
+      { fix: `download the asset from the ${folder} release by hand` },
     )
   if (!isSafeEntryName(folder))
     throw new CommandRefusal(
@@ -2261,7 +2373,7 @@ async function initRepository(context) {
  *
  * @param {import('./utils/commandContract.mjs').CommandProgress} progress - Stage tracker.
  * @param {string[]} [argv] - Arguments after the script name.
- * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, repository: string, runId: string, isProcessAlive: (pid: number) => boolean, partWrite: Function, afterRecord: (name: string) => Promise<void>, afterAside: (name: string) => Promise<void>, afterFinalHash: (name: string) => Promise<void>, afterLockRead: (holder: object) => Promise<void>, beforeRestorePublish: (destination: string) => Promise<void> }>} [overrides] - Seams for tests, none of them a CLI flag: `partBytes` (small parts), `partWrite` (a failing part write), `afterRecord` (runs right after the record was written), `afterAside` (runs right after the entry was renamed aside), `afterFinalHash` (runs after the final hash comparison, before the second stat pass), `afterLockRead` (runs after a stale lock was read, before it is reclaimed), `beforeRestorePublish` (runs before the restore's final move), `isProcessAlive` and `runId` (the run lock).
+ * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, qaReleaseCapacity: number, repository: string, runId: string, isProcessAlive: (pid: number) => boolean, partWrite: Function, afterRecord: (name: string) => Promise<void>, afterAside: (name: string) => Promise<void>, afterFinalHash: (name: string) => Promise<void>, afterLockRead: (holder: object) => Promise<void>, beforeRestorePublish: (destination: string) => Promise<void> }>} [overrides] - Seams for tests, none of them a CLI flag: `partBytes` (small parts), `qaReleaseCapacity` (assets one QA release takes before `qa-builds-2` starts), `partWrite` (a failing part write), `afterRecord` (runs right after the record was written), `afterAside` (runs right after the entry was renamed aside), `afterFinalHash` (runs after the final hash comparison, before the second stat pass), `afterLockRead` (runs after a stale lock was read, before it is reclaimed), `beforeRestorePublish` (runs before the restore's final move), `isProcessAlive` and `runId` (the run lock).
  * @returns {Promise<number>} The exit code.
  * @throws {CommandRefusal} Refusals listed in `--help`.
  */
@@ -2331,6 +2443,7 @@ export async function main(
     afterFinalHash: overrides.afterFinalHash,
     afterLockRead: overrides.afterLockRead,
     beforeRestorePublish: overrides.beforeRestorePublish,
+    qaReleaseCapacity: overrides.qaReleaseCapacity ?? QA_RELEASE_CAPACITY,
     isProcessAlive: overrides.isProcessAlive ?? defaultIsProcessAlive,
     now: overrides.now ?? Date.now,
     freeBytes:

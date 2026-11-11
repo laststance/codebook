@@ -953,6 +953,28 @@ test('reuses a same-hash asset even when GitHub reports no digest for it', async
   )
 })
 
+/** Makes index.json record folder c1 right after the entry's own first read of it (the run's start check is the read before), as a concurrent run's record would. */
+function recordC1AfterFirstIndexRead(fake) {
+  let reads = 0
+  afterGhCall(
+    fake,
+    (args) =>
+      args[0] === 'api' &&
+      typeof args[1] === 'string' &&
+      args[1].endsWith('/contents/index.json') &&
+      !args.includes('PUT') &&
+      (reads += 1) === 2,
+    () => {
+      fake.seedIndex({
+        schemaVersion: 1,
+        folders: {
+          c1: { tag: 'c1', archivedAt: '2026-11-01T00:00:00.000Z', assets: [] },
+        },
+      })
+    },
+  )
+}
+
 test('refuses to overwrite a release asset of the same name with another hash', async (t) => {
   // protects=an earlier archive is never overwritten by different bytes; fails_when=the asset changes, or the folder is deleted; no_claim=does not tell which side is right
   // Arrange
@@ -960,6 +982,8 @@ test('refuses to overwrite a release asset of the same name with another hash', 
   await putFile(root, 'c1/a.txt', 'one')
   const fake = createFakeGh()
   fake.seed('c1', 'c1.tar.gz', Buffer.from('some other archive'))
+  // Another run records c1 right after this run's first index read, so only a fresh read at upload time sees it.
+  recordC1AfterFirstIndexRead(fake)
   // Act
   const { code, lines } = await rotate(root, fake, [
     '--current',
@@ -2758,5 +2782,244 @@ test('records qa-builds in artifacts/ARCHIVED.json before deleting archived QA b
         },
       },
     },
+  )
+})
+
+test('puts a QA build that does not fit the newest QA release into qa-builds-2 and records that tag', async (t) => {
+  // protects=QA builds never pass GitHub's 1000 assets per release, the next build opens qa-builds-2; fails_when=every build still goes to qa-builds, or the index names no tag, or ARCHIVED.json names only qa-builds; why_new=one release held every QA build; seam=qaReleaseCapacity (new); no_claim=does not cover the real 900 limit
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  // Act
+  const { code } = await rotate(root, fake, ['--current', '5', '--apply'], {
+    qaReleaseCapacity: 2,
+  })
+  // Assert
+  assert.equal(code, 0)
+  assert.deepEqual(fake.assetNames('qa-builds'), [
+    'codebook-0000010.json',
+    'codebook-0000010.vsix',
+  ])
+  assert.deepEqual(fake.assetNames('qa-builds-2'), [
+    'codebook-0000011.json',
+    'codebook-0000011.vsix',
+  ])
+  const record = JSON.parse(fake.state.index).folders['qa-builds']
+  assert.equal(record.tag, 'qa-builds')
+  assert.deepEqual(
+    record.assets.map((asset) => [asset.name, asset.tag]),
+    [
+      ['codebook-0000010.json', 'qa-builds'],
+      ['codebook-0000010.vsix', 'qa-builds'],
+      ['codebook-0000011.json', 'qa-builds-2'],
+      ['codebook-0000011.vsix', 'qa-builds-2'],
+    ],
+  )
+  const local = JSON.parse(
+    await readFile(join(root, 'artifacts', 'ARCHIVED.json'), 'utf8'),
+  )
+  assert.deepEqual(Object.keys(local.folders).sort(), [
+    'qa-builds',
+    'qa-builds-2',
+  ])
+  assert.equal(local.folders['qa-builds-2'].tag, 'qa-builds-2')
+})
+
+test('never splits one QA build over two releases, even when one file would still fit', async (t) => {
+  // protects=a build's vsix and json stay in one release; fails_when=qa-builds takes the second build's first file because capacity 3 leaves room for one; why_new=capacity is counted per build, not per file; seam=qaReleaseCapacity; no_claim=says nothing about which build goes first
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  // Act
+  const { code } = await rotate(root, fake, ['--current', '5', '--apply'], {
+    qaReleaseCapacity: 3,
+  })
+  // Assert
+  assert.equal(code, 0)
+  assert.equal(fake.assetNames('qa-builds').length, 2)
+  assert.deepEqual(fake.assetNames('qa-builds-2'), [
+    'codebook-0000011.json',
+    'codebook-0000011.vsix',
+  ])
+})
+
+test('refuses to restore a spill-over QA release such as qa-builds-2', async (t) => {
+  // protects=--restore never rebuilds QA builds from any QA release; fails_when=qa-builds-2 is treated as an archived folder (E_RESTORE_UNKNOWN or a restore) instead of E_RESTORE_UNSUPPORTED; why_new=only qa-builds was refused; seam=none; no_claim=does not cover other names
+  // Arrange
+  const root = await makeRoot(t)
+  const fake = createFakeGh()
+  // Act
+  const refusal = await rotate(root, fake, ['--restore', 'qa-builds-2']).catch(
+    (error) => error,
+  )
+  // Assert
+  assert.equal(refusal.code, 'E_RESTORE_UNSUPPORTED')
+  assert.deepEqual(fake.state.calls, [])
+})
+
+test('reads an index written before QA tags existed as qa-builds and verifies its files there', async (t) => {
+  // protects=an index record whose assets carry no tag still means release qa-builds; fails_when=the old build is looked up in another release, or re-recorded without the qa-builds tag; why_new=the record gained a tag per asset; seam=seedIndex with the old shape; no_claim=does not cover a mixed old and new record
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  const vsix = Buffer.from('vsix 10')
+  const json = Buffer.from('json 10')
+  fake.seed('qa-builds', 'codebook-0000010.vsix', vsix)
+  fake.seed('qa-builds', 'codebook-0000010.json', json)
+  fake.seedIndex({
+    schemaVersion: 1,
+    folders: {
+      'qa-builds': {
+        tag: 'qa-builds',
+        archivedAt: '2026-11-01T00:00:00.000Z',
+        files: 2,
+        bytes: 14,
+        assets: [
+          { name: 'codebook-0000010.vsix', size: 7, sha256: sha256(vsix) },
+          { name: 'codebook-0000010.json', size: 7, sha256: sha256(json) },
+        ],
+      },
+    },
+  })
+  // Act
+  const { code } = await rotate(root, fake, ['--current', '5', '--apply'])
+  // Assert
+  assert.equal(code, 0)
+  assert.deepEqual(
+    JSON.parse(fake.state.index).folders['qa-builds'].assets.map((asset) => [
+      asset.name,
+      asset.tag,
+    ]),
+    [
+      ['codebook-0000010.json', 'qa-builds'],
+      ['codebook-0000010.vsix', 'qa-builds'],
+      ['codebook-0000011.json', 'qa-builds'],
+      ['codebook-0000011.vsix', 'qa-builds'],
+    ],
+  )
+  assert.deepEqual(fake.uploadedNames().sort(), [
+    'codebook-0000011.json',
+    'codebook-0000011.vsix',
+  ])
+})
+
+test('replaces a same-name asset of another hash that no record names and finishes the folder', async (t) => {
+  // protects=a rerun after a failure before the record is not blocked forever by its own leftover; fails_when=the run exits 3 with E_ASSET_CONFLICT, the stale bytes stay in the release, or no REPLACED line names the asset; why_new=every same-name asset was refused; seam=none; no_claim=does not show the recorded case (next tests)
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const fake = createFakeGh()
+  fake.seed(
+    'c1',
+    'c1.files.json',
+    Buffer.from('files.json of the changed folder'),
+  )
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 0)
+  assert.ok(
+    lines.includes(
+      'REPLACED c1.files.json (unrecorded, from an earlier failed run)',
+    ),
+  )
+  assert.match(
+    fake.state.releases.get('c1').assets.get('c1.files.json').data.toString(),
+    /"path": "artifacts\/c1\/a.txt"/,
+  )
+  assert.equal(JSON.parse(fake.state.index).folders.c1.tag, 'c1')
+})
+
+test('keeps a QA asset of another hash that the qa-builds record names, deleting nothing', async (t) => {
+  // protects=a recorded QA asset is never replaced, also when the record is the old one without tags; fails_when=the asset is deleted or replaced, or the build is deleted locally; why_new=QA conflicts were never told apart by record; seam=seedIndex with the old shape; no_claim=does not cover a QA asset no record names
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  fake.seed('qa-builds', 'codebook-0000010.vsix', Buffer.from('recorded bytes'))
+  fake.seedIndex({
+    schemaVersion: 1,
+    folders: {
+      'qa-builds': {
+        tag: 'qa-builds',
+        archivedAt: '2026-11-01T00:00:00.000Z',
+        files: 1,
+        bytes: 14,
+        assets: [
+          {
+            name: 'codebook-0000010.vsix',
+            size: 14,
+            sha256: sha256(Buffer.from('recorded bytes')),
+          },
+        ],
+      },
+    },
+  })
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '5',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(
+    lines.some((line) =>
+      line.startsWith('FAILED qa/codebook-0000010 E_ASSET_CONFLICT'),
+    ),
+  )
+  assert.equal(
+    fake.state.releases
+      .get('qa-builds')
+      .assets.get('codebook-0000010.vsix')
+      .data.toString(),
+    'recorded bytes',
+  )
+  assert.equal(
+    fake.state.calls.filter((call) => call.args.includes('DELETE')).length,
+    0,
+  )
+  assert.equal(
+    await readFile(
+      join(root, 'artifacts', 'qa', 'codebook-0000010.vsix'),
+      'utf8',
+    ),
+    'vsix 10',
+  )
+})
+
+test('replaces a QA asset of another hash that no record names', async (t) => {
+  // protects=a leftover QA asset of a failed run does not block every later --apply; fails_when=the run exits 3 with E_ASSET_CONFLICT or the stale vsix stays; why_new=QA uploads had the same dead end as folders; seam=none; no_claim=does not cover the recorded case (previous test)
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  fake.seed('qa-builds', 'codebook-0000010.vsix', Buffer.from('half-recorded'))
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '5',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 0)
+  assert.ok(
+    lines.includes(
+      'REPLACED codebook-0000010.vsix (unrecorded, from an earlier failed run)',
+    ),
+  )
+  assert.equal(
+    fake.state.releases
+      .get('qa-builds')
+      .assets.get('codebook-0000010.vsix')
+      .data.toString(),
+    'vsix 10',
   )
 })
