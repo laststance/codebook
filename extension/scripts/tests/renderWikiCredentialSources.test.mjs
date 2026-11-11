@@ -383,6 +383,22 @@ test('a page link to an unindexed path that is a link to an environment file is 
   })
 })
 
+// Value: protects=a Wiki whose page holds a malformed editor link whose path decodes to a NUL byte: the editor's handler refuses such a path, so the credential check skips it as the renderer did before it resolved links, instead of failing the render with Node's ERR_INVALID_ARG_VALUE; fails_when=a page link with path=a%00b makes the renderer throw; why_new=Cycle 0116 /ship fix-check (a regression of the link resolution in 60cd55cb); seam=none (the real renderer); no_claim=how the reader shows the malformed link
+test('a page link whose path holds a NUL byte does not stop the render', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.pages[0].contentHtml +=
+      '<p>See <a href="vscode://laststance.codebook/source?path=a%00b&amp;line=1">a malformed link</a>.</p>'
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
 // Value: protects=an update of a Wiki whose index names a symbolic link that loops back on itself: such a path opens no file in the editor or in the Wiki's answers, so the credential check skips it instead of failing the render with the system's ELOOP error; fails_when=the looping index entry makes the renderer throw; why_new=Cycle 0116 /ship pass 2 API-contract specialist (raw fs errors from the credential pre-pass); seam=none (the real renderer and a real symbolic link); no_claim=how the Wiki's freshness shows the broken entry
 test('an indexed path that is a link looping back on itself does not stop the render', async () => {
   await inProject(async (root) => {

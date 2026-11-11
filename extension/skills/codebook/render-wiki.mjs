@@ -373,13 +373,15 @@ async function resolvedPathOf(root, path) {
  * @returns
  * - the path itself, when its own name is credential-shaped (even when no such file exists);
  * - the file it opens, when that one is (`.env.test/x/..` or a link `config/runtime.json` reaches `.env.test`);
- * - undefined, when neither names a file that can hold credentials.
+ * - undefined, when neither names a file that can hold credentials, or the path holds a NUL byte, which the editor refuses to open.
  * @example await credentialLinkTargetOf('/repo', '.env.test') // => '.env.test'
  * @example await credentialLinkTargetOf('/repo', '.env.test/x/..') // => '.env.test'
  * @example await credentialLinkTargetOf('/repo', 'src/a.ts') // => undefined
  */
 async function credentialLinkTargetOf(root, path) {
   if (isCredentialPath(path)) return path;
+  // The editor's handler refuses a path holding a NUL byte before resolving it, so such a link opens nothing; resolving it here would throw.
+  if (path.includes('\0')) return undefined;
   const target = await resolvedPathOf(root, path);
   return target !== undefined && isCredentialPath(target) ? target : undefined;
 }
