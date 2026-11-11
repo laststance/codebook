@@ -1,0 +1,1527 @@
+// Moves old native evidence out of the ignored artifacts/ folder into private GitHub Releases, verified before any local copy is deleted (Issue 301).
+//
+//   node extension/scripts/rotate-artifacts.mjs --current <N> [--keep 3] [--apply]
+//   node extension/scripts/rotate-artifacts.mjs --restore <folder>
+//   node extension/scripts/rotate-artifacts.mjs --init
+//
+// Run `--help` for the prerequisites, an example, the exit codes and the error codes.
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import {
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  statfs,
+  writeFile,
+} from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { Readable, Writable } from 'node:stream'
+import { finished } from 'node:stream/promises'
+import { fileURLToPath } from 'node:url'
+import { parseArgs } from 'node:util'
+import { createGzip } from 'node:zlib'
+
+import {
+  CommandRefusal,
+  EXIT,
+  redactSecrets,
+  runCommandLine,
+} from './utils/commandContract.mjs'
+import { isRunAsScript } from './utils/isRunAsScript.mjs'
+
+/** The repository the evidence moves to, owned by the repository's owner account. */
+export const ARCHIVE_REPOSITORY = 'ryota-murakami/codebook-artifacts'
+
+/** The GitHub account every `gh` call acts as (never switched globally; its token travels in `GH_TOKEN`). */
+export const ARCHIVE_ACCOUNT = 'ryota-murakami'
+
+/** One release asset must stay under 2 GiB; parts stay below this. */
+export const PART_BYTES = 1900 * 1024 * 1024
+
+/** The newest QA builds kept in artifacts/qa. */
+export const QA_BUILDS_KEPT = 10
+
+/** A folder with a file modified within this time is busy (a run may still write it). */
+export const BUSY_MS = 10 * 60 * 1000
+
+/** A loose entry whose newest file is older than this is archived. */
+export const LOOSE_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+/** The release that holds archived QA builds. */
+export const QA_RELEASE_TAG = 'qa-builds'
+
+const DEFAULT_KEEP = 3
+const TEMP_FOLDER = '.rotate-tmp'
+const LOCAL_INDEX = 'ARCHIVED.json'
+const SCRIPT_REPOSITORY_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+)
+
+/** The `--help` text: prerequisites, one example, exit codes and error codes. */
+export const HELP_TEXT = `Usage: node extension/scripts/rotate-artifacts.mjs --current <N> [--keep <k>] [--apply]
+       node extension/scripts/rotate-artifacts.mjs --restore <folder>
+       node extension/scripts/rotate-artifacts.mjs --init
+
+Moves old evidence from artifacts/ to private GitHub Releases of ${ARCHIVE_REPOSITORY},
+one release per folder, and deletes the local copy only after every asset was downloaded
+again and every file matched its SHA-256.
+
+Options:
+  --current <N>   The merged cycle's number (digits). Required for the plan and --apply.
+  --keep <k>      Cycles kept besides the older ones (default ${DEFAULT_KEEP}): cycles above N - k stay,
+                  cycles at or below N - k are archived, cycles above N are listed as unknown and
+                  never touched.
+  --apply         Execute the plan. Without it nothing changes (the plan is printed).
+  --restore <f>   Bring the archived folder <f> back into artifacts/ (refuses an existing destination).
+  --init          Create the private archive repository once.
+  --help          Print this text.
+
+Rules of the plan:
+  cycle folders (c59, cycle-0052, c62-n62: first number after "c" or "cycle-")
+                  kept above N - k, archived at or below
+  gate/<sha8>     the current HEAD's folder is kept, the others are deleted without archiving
+  qa/             the newest ${QA_BUILDS_KEPT} builds (codebook-<sha>.vsix + .json) are kept, older ones go to release "${QA_RELEASE_TAG}"
+  packages/       kept
+  other entries   archived when their newest file is older than 30 days, else kept
+  skipped         a folder with a file modified within 10 minutes, with a symbolic link or special file,
+                  with a name outside [A-Za-z0-9._-], or too big for the free disk space (twice its size)
+
+Prerequisites:
+  - the pinned Node (.node-version), the system tar, git
+  - gh able to act as ${ARCHIVE_ACCOUNT} (gh auth token --user ${ARCHIVE_ACCOUNT}); the account is never switched
+  - the private archive repository (--init creates it)
+
+Example:
+  node extension/scripts/rotate-artifacts.mjs --current 117 --apply
+
+Output: one line per entry (action, entry, bytes), then
+  ROTATE: archived=<n> deleted=<n> kept=<n> skipped=<n> failed=<n> freed_bytes=<n>
+(kept counts keep and unknown entries). Without --apply the last line is
+  PLAN: archive=<n> delete=<n> keep=<n> skip=<n> unknown=<n> bytes_to_free=<n>
+
+Exit codes:
+  0   done
+  1   refused before any side effect
+  2   failed before any side effect
+  3   some entries failed and were kept; the others are done (rerun resumes)
+  4   outcome unknown or in need of an audit
+  64  usage error
+
+Error codes:
+  E_USAGE              bad option, or two modes together
+  E_CURRENT_REQUIRED   --current missing or not a whole number
+  E_NO_ACCOUNT         gh cannot give a token for ${ARCHIVE_ACCOUNT}
+  E_REPO_MISSING       the archive repository cannot be read
+  E_NOT_PRIVATE        the archive repository is not private
+  E_INIT_EXISTS        --init found the repository already there
+  E_GIT                git could not read HEAD
+  E_ABOVE_RETENTION    a folder above N - k was asked to be archived (never done)
+  E_ASSET_CONFLICT     a release asset of the same name has another SHA-256 (never overwritten)
+  E_HASH_MISMATCH      a downloaded or extracted file differs from what was packed
+  E_FOLDER_CHANGED     the local folder changed after packing
+  E_PACK / E_UPLOAD / E_DOWNLOAD / E_GITHUB   a tar or gh call failed
+  E_RESTORE_UNKNOWN    the folder is not in the archive index
+  E_RESTORE_EXISTS     the destination already exists
+  E_RESTORE_UNSAFE     an archive member is absolute, holds "..", leaves the folder or is a link
+  E_RESTORE_UNSUPPORTED  QA builds are never restored automatically
+  E_INTERNAL           unexpected exception (exit 2 before a side effect, 4 after one)
+`
+
+/**
+ * The cycle number a top-level entry belongs to, from the first run of digits after a leading `c` or `cycle-`.
+ *
+ * Why: the plan keeps recent cycles and archives older ones, so every entry must be classed by the same rule.
+ * Called by {@link classifyInventory}.
+ *
+ * @param {string} name - A top-level name in artifacts/.
+ * @returns {number | null} The number (`c59` is 59, `cycle-0052` is 52, `c62-n62` is 62), or `null` for a name that does not start that way.
+ * @example parseCycleNumber('cycle-0052') // => 52
+ */
+export function parseCycleNumber(name) {
+  const match = /^(?:cycle-|c)(\d+)/.exec(name)
+  return match === null ? null : Number.parseInt(match[1], 10)
+}
+
+/**
+ * The name of one part of an archive.
+ * @param {string} baseName - The `<folder>.tar.gz` name.
+ * @param {number} index - Zero based part index.
+ * @param {number} count - How many parts the archive has; one part has no suffix.
+ * @returns {string} `<folder>.tar.gz` for a single part, else `<folder>.tar.gz.part-000`, `-001`…
+ * @example partName('c59.tar.gz', 1, 3) // => 'c59.tar.gz.part-001'
+ */
+export function partName(baseName, index, count) {
+  return count === 1
+    ? baseName
+    : `${baseName}.part-${String(index).padStart(3, '0')}`
+}
+
+/**
+ * Builds the `files.json` manifest of one archived entry.
+ * @param {string} folder - The top-level entry name.
+ * @param {{ path: string, size: number, sha256: string }[]} files - Every file, `path` as `artifacts/<folder>/<relative>`.
+ * @returns {object} The manifest: schema, folder, files sorted by path, count and bytes.
+ * @example buildFilesJson('c1', [{ path: 'artifacts/c1/a', size: 3, sha256: 'ab' }]).count // => 1
+ */
+export function buildFilesJson(folder, files) {
+  const sorted = [...files].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  )
+  return {
+    schemaVersion: 1,
+    folder,
+    files: sorted,
+    count: sorted.length,
+    bytes: sorted.reduce((sum, file) => sum + file.size, 0),
+  }
+}
+
+/**
+ * Turns a scanned artifacts/ folder into the plan: one item per entry with its action.
+ *
+ * Why: the plan and `--apply` must act on the same decisions, and a pure function lets tests pin every rule.
+ * Called by {@link runRotation}.
+ *
+ * @param {{ entries: object[], gate: object[], qa: object[] }} inventory - Scan results ({@link readInventory}).
+ * @param {{ current: number, keep: number, headShort: string, now: number }} options - The merged cycle, cycles kept, the current HEAD's first 8 characters, the clock.
+ * @returns {{ action: 'keep'|'archive'|'delete'|'skip'|'unknown', name: string, bytes: number, kind: string, reason?: string, cycle?: number, files?: string[] }[]} The plan in a stable order.
+ */
+export function classifyInventory(
+  inventory,
+  { current, keep, headShort, now },
+) {
+  const plan = []
+  const busy = (info) => info.newestMs > now - BUSY_MS
+  /** Skips an archive/delete candidate that is busy, holds a link, or has an unusable name; otherwise gives the wanted action. */
+  const guard = (info, wanted, extra = {}) => {
+    const base = {
+      name: info.name,
+      bytes: info.bytes,
+      kind: wanted.kind,
+      ...extra,
+    }
+    if (info.special.length > 0)
+      return {
+        ...base,
+        action: 'skip',
+        reason: `symbolic link or special file: ${info.special[0]}`,
+      }
+    if (busy(info))
+      return {
+        ...base,
+        action: 'skip',
+        reason: 'a file changed within 10 minutes',
+      }
+    if (
+      wanted.action === 'archive' &&
+      !/^[A-Za-z0-9._-]+$/.test(info.name.replace('qa/', ''))
+    )
+      return { ...base, action: 'skip', reason: 'name outside [A-Za-z0-9._-]' }
+    return { ...base, action: wanted.action }
+  }
+  for (const info of inventory.entries) {
+    if (info.name === 'packages') {
+      plan.push({
+        action: 'keep',
+        name: info.name,
+        bytes: info.bytes,
+        kind: 'packages',
+      })
+      continue
+    }
+    const cycle = parseCycleNumber(info.name)
+    if (cycle === null) {
+      // A loose entry is archived only when old enough; a young one is only listed.
+      if (now - info.newestMs > LOOSE_AGE_MS)
+        plan.push(guard(info, { action: 'archive', kind: 'loose' }))
+      else
+        plan.push({
+          action: 'keep',
+          name: info.name,
+          bytes: info.bytes,
+          kind: 'loose',
+          reason: 'newer than 30 days',
+        })
+      continue
+    }
+    if (cycle > current)
+      plan.push({
+        action: 'unknown',
+        name: info.name,
+        bytes: info.bytes,
+        kind: 'cycle',
+        cycle,
+        reason: `cycle ${cycle} is above ${current}`,
+      })
+    else if (cycle > current - keep)
+      plan.push({
+        action: 'keep',
+        name: info.name,
+        bytes: info.bytes,
+        kind: 'cycle',
+        cycle,
+      })
+    else plan.push(guard(info, { action: 'archive', kind: 'cycle' }, { cycle }))
+  }
+  // The current HEAD's gate folder stays; the others are regenerable logs.
+  for (const info of inventory.gate) {
+    const name = `gate/${info.name}`
+    if (info.name === headShort)
+      plan.push({
+        action: 'keep',
+        name,
+        bytes: info.bytes,
+        kind: 'gate',
+        reason: 'current HEAD',
+      })
+    else plan.push(guard({ ...info, name }, { action: 'delete', kind: 'gate' }))
+  }
+  // A QA build is the vsix/json pair sharing a stem; the newest ones stay.
+  const builds = new Map()
+  for (const info of inventory.qa) {
+    const match = /^(codebook-[0-9a-f]+)\.(vsix|json)$/.exec(info.name)
+    if (match === null) continue
+    const build = builds.get(match[1]) ?? {
+      stem: match[1],
+      files: [],
+      bytes: 0,
+      newestMs: 0,
+      special: [],
+    }
+    build.files.push(info.name)
+    build.bytes += info.bytes
+    build.newestMs = Math.max(build.newestMs, info.newestMs)
+    build.special.push(...info.special)
+    builds.set(match[1], build)
+  }
+  const ordered = [...builds.values()].sort(
+    (a, b) => b.newestMs - a.newestMs || (a.stem < b.stem ? -1 : 1),
+  )
+  ordered.forEach((build, index) => {
+    const name = `qa/${build.stem}`
+    if (index < QA_BUILDS_KEPT)
+      plan.push({ action: 'keep', name, bytes: build.bytes, kind: 'qa-build' })
+    else
+      plan.push(
+        guard(
+          { ...build, name },
+          { action: 'archive', kind: 'qa-build' },
+          { files: build.files.sort() },
+        ),
+      )
+  })
+  return plan
+}
+
+/**
+ * Walks one path without following links and sums what it holds.
+ * @param {string} path - A file or folder.
+ * @param {string} [prefix] - Relative path of `path` inside the entry (internal).
+ * @returns {Promise<{ files: { rel: string, size: number }[], bytes: number, newestMs: number, special: string[], isDirectory: boolean }>} Regular files, byte sum, newest file modification time, and every link or special file met.
+ */
+export async function scanTree(path) {
+  const top = await lstat(path)
+  const result = {
+    files: [],
+    bytes: 0,
+    newestMs: 0,
+    special: [],
+    isDirectory: top.isDirectory(),
+  }
+  const visit = async (full, rel) => {
+    const stats = await lstat(full)
+    if (stats.isDirectory()) {
+      for (const child of (await readdir(full)).sort())
+        await visit(join(full, child), rel === '' ? child : `${rel}/${child}`)
+    } else if (stats.isFile()) {
+      result.files.push({ rel, size: stats.size })
+      result.bytes += stats.size
+      result.newestMs = Math.max(result.newestMs, stats.mtimeMs)
+    } else {
+      // Symbolic links, sockets and devices are never archived or deleted.
+      result.special.push(rel === '' ? '.' : rel)
+    }
+  }
+  await visit(path, '')
+  return result
+}
+
+/**
+ * Scans artifacts/ into the inventory the plan classifies.
+ * Called by {@link runRotation}.
+ * @param {string} artifactsDir - The artifacts/ folder.
+ * @returns {Promise<{ entries: object[], gate: object[], qa: object[] }>} Top-level entries (without gate, qa, the temporary area and the local index), gate children, qa files.
+ */
+export async function readInventory(artifactsDir) {
+  const describe = async (directory, name) => {
+    const tree = await scanTree(join(directory, name))
+    return {
+      name,
+      bytes: tree.bytes,
+      newestMs: tree.newestMs,
+      special: tree.special,
+      fileCount: tree.files.length,
+    }
+  }
+  const inventory = { entries: [], gate: [], qa: [] }
+  for (const name of (await readdir(artifactsDir)).sort()) {
+    if (name === TEMP_FOLDER || name === LOCAL_INDEX) continue
+    if (name === 'gate' || name === 'qa') {
+      const children = (await readdir(join(artifactsDir, name))).sort()
+      for (const child of children)
+        inventory[name].push(await describe(join(artifactsDir, name), child))
+      continue
+    }
+    inventory.entries.push(await describe(artifactsDir, name))
+  }
+  return inventory
+}
+
+/**
+ * Hashes a file's bytes.
+ * @param {string} path - The file.
+ * @returns {Promise<string>} Lower-case SHA-256 hex.
+ */
+export async function sha256OfFile(path) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+/**
+ * Writes everything it receives into numbered part files, none over `partBytes`, hashing each part.
+ *
+ * Why: one release asset must stay under 2 GiB, and the archive is streamed from tar through gzip, so it is cut as it arrives instead of being stored whole first.
+ * Created by {@link packEntry}; tests give it small parts.
+ *
+ * @example
+ * ```js
+ * const splitter = new PartSplitter(dir, 'c1.tar.gz', 1000)
+ * source.pipe(splitter); await finished(splitter)
+ * splitter.parts // => [{ name: 'c1.tar.gz.part-000', size: 1000, sha256: '…' }, …]
+ * ```
+ */
+export class PartSplitter extends Writable {
+  /**
+   * @param {string} directory - Where the parts are written.
+   * @param {string} baseName - The `<folder>.tar.gz` name.
+   * @param {number} partBytes - The largest part.
+   */
+  constructor(directory, baseName, partBytes) {
+    super()
+    this.directory = directory
+    this.baseName = baseName
+    this.partBytes = partBytes
+    this.parts = []
+    this.handle = null
+    this.hash = null
+  }
+
+  _write(chunk, _encoding, callback) {
+    this.#append(chunk).then(() => callback(), callback)
+  }
+
+  _final(callback) {
+    this.#closePart()
+      .then(async () => {
+        // A single part carries no suffix.
+        if (this.parts.length === 1) {
+          const only = this.parts[0]
+          await rename(
+            join(this.directory, only.name),
+            join(this.directory, this.baseName),
+          )
+          only.name = this.baseName
+        }
+      })
+      .then(() => callback(), callback)
+  }
+
+  async #closePart() {
+    if (this.handle === null) return
+    await this.handle.close()
+    this.parts.at(-1).sha256 = this.hash.digest('hex')
+    this.handle = null
+  }
+
+  async #append(chunk) {
+    let offset = 0
+    while (offset < chunk.length) {
+      // A new part opens only when a byte arrives, so an exact multiple leaves no empty part.
+      if (this.handle !== null && this.parts.at(-1).size === this.partBytes)
+        await this.#closePart()
+      if (this.handle === null) {
+        const name = `${this.baseName}.part-${String(this.parts.length).padStart(3, '0')}`
+        this.handle = await open(join(this.directory, name), 'w')
+        this.hash = createHash('sha256')
+        this.parts.push({ name, size: 0, sha256: '' })
+      }
+      const part = this.parts.at(-1)
+      const slice = chunk.subarray(offset, offset + this.partBytes - part.size)
+      let written = 0
+      while (written < slice.length) {
+        const { bytesWritten } = await this.handle.write(
+          slice,
+          written,
+          slice.length - written,
+        )
+        written += bytesWritten
+      }
+      this.hash.update(slice)
+      part.size += slice.length
+      offset += slice.length
+    }
+  }
+}
+
+/**
+ * Checks tar member names before anything is extracted.
+ *
+ * Why: a restore extracts an archive from the network side of the system; a name that is absolute or climbs out must stop it.
+ * Called by {@link restoreFolder}.
+ *
+ * @param {string[]} names - Member names as tar lists them.
+ * @param {string} entryName - The folder (or file) the archive must stay inside.
+ * @returns {string | null} The first offending name, or `null`.
+ * @example checkMemberPaths(['c1/a', 'c1/../x'], 'c1') // => 'c1/../x'
+ */
+export function checkMemberPaths(names, entryName) {
+  for (const raw of names) {
+    const name = raw.replace(/^(\.\/)+/, '')
+    const unsafe =
+      name.startsWith('/') ||
+      /^[A-Za-z]:/.test(name) ||
+      name.split(/[\\/]/).includes('..') ||
+      !(name === entryName || name.startsWith(`${entryName}/`))
+    if (unsafe) return raw
+  }
+  return null
+}
+
+/**
+ * A command runner: the one seam every `gh`, `git` and `tar` call goes through, so tests replace it.
+ *
+ * Why: nothing here may reach GitHub in tests; the real tool uses this spawn-based runner.
+ * Called by {@link main} when no runner is injected.
+ *
+ * @param {string} cwd - Directory the commands run in.
+ * @param {NodeJS.ProcessEnv} environment - The caller's environment.
+ * @returns {(command: string, args: string[], options?: { env?: object, stdin?: Readable, stdout?: Writable }) => Promise<{ status: number, stdout: string, stderr: string }>} A runner; `options.env` adds variables, `options.stdin` feeds the child, `options.stdout` receives its output instead of a string. A missing program is status 127.
+ */
+export function createCommandRunner(cwd, environment) {
+  const limit = 64 * 1024 * 1024
+  return (command, args, options = {}) =>
+    new Promise((resolveResult) => {
+      const child = spawn(command, args, {
+        cwd,
+        env: { ...environment, ...options.env, GIT_TERMINAL_PROMPT: '0' },
+        stdio: [options.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stderr.on('data', (chunk) => {
+        if (stderr.length < limit) stderr += chunk
+      })
+      if (options.stdout) child.stdout.pipe(options.stdout)
+      else
+        child.stdout.on('data', (chunk) => {
+          if (stdout.length < limit) stdout += chunk
+        })
+      if (options.stdin) {
+        // A child that exits early closes the pipe; that is its exit status to report, not our crash.
+        child.stdin.on('error', () => {})
+        options.stdin.on('error', () => child.kill())
+        options.stdin.pipe(child.stdin)
+      }
+      child.on('error', (error) => {
+        options.stdout?.end()
+        resolveResult({ status: 127, stdout, stderr: error.message })
+      })
+      child.on('close', (code) =>
+        resolveResult({ status: code ?? 127, stdout, stderr }),
+      )
+    })
+}
+
+/**
+ * Runs a command and refuses the entry when it fails.
+ * @param {Function} call - A runner call already bound to its arguments.
+ * @param {string} code - The `E_…` code to raise.
+ * @param {string} what - What the call did, for the message.
+ * @param {NodeJS.ProcessEnv} environment - Secrets to hide.
+ * @returns {Promise<{ status: number, stdout: string, stderr: string }>} The result of a call with status 0.
+ * @throws {CommandRefusal} With the first line of stderr.
+ */
+async function expectSuccess(call, code, what, environment) {
+  const result = await call()
+  if (result.status === 0) return result
+  const line = redactSecrets(
+    result.stderr.trim().split('\n')[0] || `exit ${result.status}`,
+    environment,
+  )
+  throw new CommandRefusal(code, `${what} failed: ${line}`, {
+    fix: 'check the message above, then rerun (a rerun resumes)',
+    exitCode: EXIT.FOLLOW_UP,
+  })
+}
+
+/**
+ * Cuts the artifacts of one entry into tar+gzip parts under the temporary area.
+ *
+ * Why: step 1 of the rotation order (pack and hash). gzip runs inside Node so its header is the same on every run, which lets a resumed run find its already uploaded assets with the same SHA-256.
+ * Called by {@link rotateArchive}.
+ *
+ * @param {object} context - Rotation context ({@link runRotation}).
+ * @param {string} name - Top-level entry.
+ * @param {string} workDir - Empty folder for the parts.
+ * @returns {Promise<{ name: string, size: number, sha256: string }[]>} The parts.
+ */
+async function packEntry(context, name, workDir) {
+  const baseName = `${name}.tar.gz`
+  const splitter = new PartSplitter(workDir, baseName, context.partBytes)
+  const gzip = createGzip()
+  gzip.pipe(splitter)
+  const result = await context.run(
+    'tar',
+    ['-cf', '-', '-C', context.artifactsDir, name],
+    { stdout: gzip },
+  )
+  if (result.status !== 0)
+    throw new CommandRefusal(
+      'E_PACK',
+      `tar failed for ${name}: ${result.stderr.trim().split('\n')[0]}`,
+      { fix: 'fix the cause above, then rerun', exitCode: EXIT.FOLLOW_UP },
+    )
+  await finished(splitter)
+  return splitter.parts
+}
+
+/**
+ * Hashes every file of an entry for `files.json`.
+ * @param {string} root - Folder holding the entry.
+ * @param {string} name - Entry name (a folder or one file).
+ * @returns {Promise<{ path: string, size: number, sha256: string }[]>} `path` as `artifacts/<name>/<relative>`.
+ */
+async function hashEntryFiles(root, name) {
+  const tree = await scanTree(join(root, name))
+  const files = []
+  for (const file of tree.files) {
+    const relative = file.rel === '' ? name : `${name}/${file.rel}`
+    files.push({
+      path: `artifacts/${relative}`,
+      size: file.size,
+      sha256: await sha256OfFile(join(root, relative)),
+    })
+  }
+  return files
+}
+
+/**
+ * Compares a folder on disk with a manifest.
+ * @param {string} root - Folder holding the entry.
+ * @param {string} name - Entry name.
+ * @param {{ path: string, size: number, sha256: string }[]} manifestFiles - The expected files.
+ * @returns {Promise<string[]>} Problems found (missing, extra, wrong size or hash); empty when identical.
+ */
+export async function compareWithManifest(root, name, manifestFiles) {
+  const actual = new Map(
+    (await hashEntryFiles(root, name)).map((file) => [file.path, file]),
+  )
+  const problems = []
+  for (const expected of manifestFiles) {
+    const found = actual.get(expected.path)
+    if (found === undefined) problems.push(`missing ${expected.path}`)
+    else if (found.size !== expected.size || found.sha256 !== expected.sha256)
+      problems.push(`differs ${expected.path}`)
+    actual.delete(expected.path)
+  }
+  for (const path of actual.keys()) problems.push(`extra ${path}`)
+  return problems
+}
+
+/**
+ * Streams the parts, in order, as one readable.
+ * @param {string[]} paths - Part files.
+ * @returns {Readable} Their bytes joined.
+ */
+function joinParts(paths) {
+  return Readable.from(
+    (async function* () {
+      for (const path of paths)
+        for await (const chunk of createReadStream(path)) yield chunk
+    })(),
+  )
+}
+
+/** A bound set of `gh` calls acting as the archive account. */
+function createGithub(context) {
+  const { run, token, repository, environment } = context
+  const env = { ...environment, GH_TOKEN: token }
+  const call = (args, options = {}) =>
+    run('gh', args, { ...options, env: { GH_TOKEN: token } })
+  const ok = (args, code, what, options) =>
+    expectSuccess(() => call(args, options), code, what, env)
+  const notFound = (result) => /404|not found/i.test(result.stderr)
+  return {
+    call,
+    ok,
+    /** Reads the release by tag; `null` when it does not exist. */
+    async release(tag) {
+      const result = await call([
+        'api',
+        `repos/${repository}/releases/tags/${tag}`,
+      ])
+      if (result.status === 0) return JSON.parse(result.stdout)
+      if (notFound(result)) return null
+      throw new CommandRefusal(
+        'E_GITHUB',
+        `reading release ${tag} failed: ${redactSecrets(result.stderr.trim().split('\n')[0], env)}`,
+        { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
+      )
+    },
+    async readIndex() {
+      const result = await call([
+        'api',
+        `repos/${repository}/contents/index.json`,
+      ])
+      if (result.status === 0) {
+        const body = JSON.parse(result.stdout)
+        return {
+          sha: body.sha,
+          index: JSON.parse(
+            Buffer.from(body.content, 'base64').toString('utf8'),
+          ),
+        }
+      }
+      if (notFound(result))
+        return { sha: null, index: { schemaVersion: 1, folders: {} } }
+      throw new CommandRefusal(
+        'E_GITHUB',
+        `reading index.json failed: ${redactSecrets(result.stderr.trim().split('\n')[0], env)}`,
+        { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
+      )
+    },
+    async writeIndex(index, sha, message) {
+      const args = [
+        'api',
+        '-X',
+        'PUT',
+        `repos/${repository}/contents/index.json`,
+        '-f',
+        `message=${message}`,
+        '-f',
+        `content=${Buffer.from(`${JSON.stringify(index, null, 2)}\n`).toString('base64')}`,
+      ]
+      if (sha !== null) args.push('-f', `sha=${sha}`)
+      await ok(args, 'E_GITHUB', 'writing index.json')
+    },
+  }
+}
+
+/**
+ * Uploads assets to a release, reusing those already there with the same SHA-256.
+ *
+ * Why: a stopped upload must resume, but an asset of the same name with other bytes must never be overwritten.
+ * Called by {@link rotateArchive} and {@link rotateQaBuild}.
+ *
+ * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
+ * @param {object} context - Rotation context.
+ * @param {string} tag - Release tag.
+ * @param {string} notes - Notes for a release created now.
+ * @param {{ name: string, path: string, sha256: string }[]} assets - What to upload.
+ * @throws {CommandRefusal} `E_ASSET_CONFLICT` for a same-name asset with another hash.
+ */
+async function uploadAssets(github, context, tag, notes, assets) {
+  let release = await github.release(tag)
+  if (release === null) {
+    await github.ok(
+      [
+        'release',
+        'create',
+        tag,
+        '--repo',
+        context.repository,
+        '--title',
+        tag,
+        '--notes',
+        notes,
+      ],
+      'E_UPLOAD',
+      `creating release ${tag}`,
+    )
+    release = await github.release(tag)
+  }
+  for (const asset of assets) {
+    const existing = (release?.assets ?? []).find(
+      (item) => item.name === asset.name,
+    )
+    if (existing !== undefined && existing.state === 'uploaded') {
+      // GitHub's REST release asset has a `digest` ("sha256:…"); an old asset may lack it, then it is downloaded and hashed.
+      let remote =
+        typeof existing.digest === 'string'
+          ? existing.digest.replace(/^sha256:/, '')
+          : null
+      if (remote === null) {
+        const directory = join(context.tmpDir, 'resume-check')
+        await rm(directory, { recursive: true, force: true })
+        await mkdir(directory, { recursive: true })
+        await github.ok(
+          [
+            'release',
+            'download',
+            tag,
+            '--repo',
+            context.repository,
+            '--pattern',
+            asset.name,
+            '--dir',
+            directory,
+            '--clobber',
+          ],
+          'E_DOWNLOAD',
+          `downloading ${asset.name}`,
+        )
+        remote = await sha256OfFile(join(directory, asset.name))
+      }
+      if (remote === asset.sha256) continue
+      throw new CommandRefusal(
+        'E_ASSET_CONFLICT',
+        `release ${tag} already holds ${asset.name} with another SHA-256`,
+        {
+          fix: `if the old asset is wrong, delete it in ${context.repository} by hand, then rerun`,
+          exitCode: EXIT.FOLLOW_UP,
+        },
+      )
+    }
+    // A stopped upload leaves a partial asset; it is no complete copy, so it makes way.
+    if (existing !== undefined)
+      await github.ok(
+        [
+          'api',
+          '-X',
+          'DELETE',
+          `repos/${context.repository}/releases/assets/${existing.id}`,
+        ],
+        'E_UPLOAD',
+        `removing partial ${asset.name}`,
+      )
+    await github.ok(
+      ['release', 'upload', tag, asset.path, '--repo', context.repository],
+      'E_UPLOAD',
+      `uploading ${asset.name}`,
+    )
+  }
+}
+
+/**
+ * Downloads every asset of a release again and checks its SHA-256.
+ * Called by {@link rotateArchive}, {@link rotateQaBuild} and {@link restoreFolder}.
+ * @param {ReturnType<typeof createGithub>} github - Bound `gh` calls.
+ * @param {object} context - Rotation context.
+ * @param {string} tag - Release tag.
+ * @param {{ name: string, sha256: string }[]} assets - Names and expected hashes.
+ * @param {string} directory - Empty folder for the downloads.
+ * @throws {CommandRefusal} `E_HASH_MISMATCH` for a differing asset.
+ */
+async function downloadAndVerify(github, context, tag, assets, directory) {
+  await mkdir(directory, { recursive: true })
+  for (const asset of assets) {
+    await github.ok(
+      [
+        'release',
+        'download',
+        tag,
+        '--repo',
+        context.repository,
+        '--pattern',
+        asset.name,
+        '--dir',
+        directory,
+        '--clobber',
+      ],
+      'E_DOWNLOAD',
+      `downloading ${asset.name}`,
+    )
+    const actual = await sha256OfFile(join(directory, asset.name))
+    if (actual !== asset.sha256)
+      throw new CommandRefusal(
+        'E_HASH_MISMATCH',
+        `${asset.name} downloaded with SHA-256 ${actual}, expected ${asset.sha256}`,
+        {
+          fix: 'the local copy is kept; rerun, and delete the asset in the archive if it stays wrong',
+          exitCode: EXIT.FOLLOW_UP,
+        },
+      )
+  }
+}
+
+/** Merges one folder's record into index.json and the local ARCHIVED.json. */
+async function recordArchived(github, context, key, record) {
+  const { sha, index } = await github.readIndex()
+  index.folders[key] = record
+  await github.writeIndex(index, sha, `Archive ${key}`)
+  const localPath = join(context.artifactsDir, LOCAL_INDEX)
+  let local = { schemaVersion: 1, folders: {} }
+  try {
+    local = JSON.parse(await readFile(localPath, 'utf8'))
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  local.folders[key] = {
+    tag: record.tag,
+    repository: context.repository,
+    archivedAt: record.archivedAt,
+  }
+  await writeFile(`${localPath}.tmp`, `${JSON.stringify(local, null, 2)}\n`)
+  await rename(`${localPath}.tmp`, localPath)
+}
+
+/**
+ * Archives one cycle folder or loose entry: pack, upload, verify, record, delete.
+ *
+ * Why: this is the six-step order of Issue 301; the local copy goes only after steps 3 to 5 passed.
+ * Called by {@link runRotation} for an `archive` plan item.
+ *
+ * @param {object} context - Rotation context.
+ * @param {{ name: string, cycle?: number, bytes: number }} item - The plan item.
+ * @returns {Promise<void>} Resolves once the local copy is deleted.
+ * @throws {CommandRefusal} The first failing step's code; the local copy then stays.
+ */
+async function rotateArchive(context, item) {
+  const { name } = item
+  // Defence in depth: the plan never selects these, but the rule is the safety of the tool.
+  if (item.cycle !== undefined && item.cycle > context.current - context.keep)
+    throw new CommandRefusal(
+      'E_ABOVE_RETENTION',
+      `${name} (cycle ${item.cycle}) is above ${context.current - context.keep}`,
+      { fix: 'raise nothing; this folder stays', exitCode: EXIT.REFUSED },
+    )
+  const workDir = join(context.tmpDir, name)
+  await rm(workDir, { recursive: true, force: true })
+  await mkdir(workDir, { recursive: true })
+  const github = createGithub(context)
+  // 1. pack and hash
+  const files = await hashEntryFiles(context.artifactsDir, name)
+  const filesJson = buildFilesJson(name, files)
+  const parts = await packEntry(context, name, workDir)
+  const filesJsonName = `${name}.files.json`
+  const filesJsonPath = join(workDir, filesJsonName)
+  await writeFile(filesJsonPath, `${JSON.stringify(filesJson, null, 2)}\n`)
+  const assets = [
+    ...parts.map((part) => ({ ...part, path: join(workDir, part.name) })),
+    {
+      name: filesJsonName,
+      path: filesJsonPath,
+      size: (await lstat(filesJsonPath)).size,
+      sha256: await sha256OfFile(filesJsonPath),
+    },
+  ]
+  const notes = [
+    `Folder: ${name}`,
+    `Files: ${filesJson.count}`,
+    `Bytes: ${filesJson.bytes}`,
+    `Source commit: ${context.sourceCommit}`,
+    '',
+    'SHA-256:',
+    ...assets.map((asset) => `- ${asset.name} ${asset.sha256}`),
+  ].join('\n')
+  // 2. upload (resumes: same-hash assets are reused)
+  await uploadAssets(github, context, name, notes, assets)
+  // The packed copies are no longer needed; the downloads below are what gets checked.
+  for (const asset of assets) await rm(asset.path, { force: true })
+  // 3. download again, compare asset hashes, join, extract, compare every file
+  const downloadDir = join(workDir, 'download')
+  const extractDir = join(workDir, 'extract')
+  await downloadAndVerify(github, context, name, assets, downloadDir)
+  await mkdir(extractDir, { recursive: true })
+  await expectSuccess(
+    () =>
+      context.run('tar', ['-xzf', '-', '--no-same-owner', '-C', extractDir], {
+        stdin: joinParts(parts.map((part) => join(downloadDir, part.name))),
+      }),
+    'E_HASH_MISMATCH',
+    `extracting the downloaded ${name}`,
+    context.environment,
+  )
+  const remoteManifest = JSON.parse(
+    await readFile(join(downloadDir, filesJsonName), 'utf8'),
+  )
+  const extractProblems = await compareWithManifest(
+    extractDir,
+    name,
+    remoteManifest.files,
+  )
+  if (remoteManifest.count !== filesJson.count || extractProblems.length > 0)
+    throw new CommandRefusal(
+      'E_HASH_MISMATCH',
+      `the extracted ${name} differs from files.json: ${extractProblems[0] ?? 'file count'}`,
+      { fix: 'the local copy is kept; rerun', exitCode: EXIT.FOLLOW_UP },
+    )
+  // 4. a file changed after packing stops the deletion
+  const localProblems = await compareWithManifest(
+    context.artifactsDir,
+    name,
+    remoteManifest.files,
+  )
+  if (localProblems.length > 0)
+    throw new CommandRefusal(
+      'E_FOLDER_CHANGED',
+      `${name} changed after packing: ${localProblems[0]}`,
+      {
+        fix: 'wait until the folder is stable, then rerun',
+        exitCode: EXIT.FOLLOW_UP,
+      },
+    )
+  // 5. index.json (and the local ARCHIVED.json)
+  await recordArchived(github, context, name, {
+    tag: name,
+    archivedAt: new Date(context.now()).toISOString(),
+    sourceCommit: context.sourceCommit,
+    files: filesJson.count,
+    bytes: filesJson.bytes,
+    assets: assets.map(({ name: assetName, size, sha256 }) => ({
+      name: assetName,
+      size,
+      sha256,
+    })),
+  })
+  // 6. delete the local copy, permanently
+  await rm(join(context.artifactsDir, name), { recursive: true, force: true })
+}
+
+/**
+ * Archives one QA build (its vsix and json) as assets of the `qa-builds` release.
+ * Called by {@link runRotation} for a `qa-build` plan item.
+ * @param {object} context - Rotation context.
+ * @param {{ name: string, files: string[] }} item - The plan item (`qa/<stem>`).
+ * @returns {Promise<void>} Resolves once the local files are deleted.
+ */
+async function rotateQaBuild(context, item) {
+  const github = createGithub(context)
+  const directory = join(context.artifactsDir, 'qa')
+  const assets = []
+  for (const file of item.files)
+    assets.push({
+      name: file,
+      path: join(directory, file),
+      size: (await lstat(join(directory, file))).size,
+      sha256: await sha256OfFile(join(directory, file)),
+    })
+  await uploadAssets(
+    github,
+    context,
+    QA_RELEASE_TAG,
+    'QA builds archived from artifacts/qa. Never restored automatically.',
+    assets,
+  )
+  const downloadDir = join(
+    context.tmpDir,
+    item.name.replace('/', '-'),
+    'download',
+  )
+  await rm(downloadDir, { recursive: true, force: true })
+  await downloadAndVerify(github, context, QA_RELEASE_TAG, assets, downloadDir)
+  // Step 4: the build files must still be what was uploaded.
+  for (const asset of assets)
+    if ((await sha256OfFile(asset.path)) !== asset.sha256)
+      throw new CommandRefusal(
+        'E_FOLDER_CHANGED',
+        `${asset.name} changed after hashing`,
+        { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
+      )
+  const { sha, index } = await github.readIndex()
+  const known = index.folders[QA_RELEASE_TAG]?.assets ?? []
+  const merged = [
+    ...known.filter((old) => !assets.some((asset) => asset.name === old.name)),
+    ...assets.map(({ name, size, sha256 }) => ({ name, size, sha256 })),
+  ]
+  index.folders[QA_RELEASE_TAG] = {
+    tag: QA_RELEASE_TAG,
+    archivedAt: new Date(context.now()).toISOString(),
+    sourceCommit: context.sourceCommit,
+    files: merged.length,
+    bytes: merged.reduce((sum, asset) => sum + asset.size, 0),
+    assets: merged,
+  }
+  await github.writeIndex(index, sha, `Archive ${item.name}`)
+  for (const asset of assets) await rm(asset.path, { force: true })
+}
+
+/**
+ * Reads the repository's current HEAD.
+ * @param {Function} run - Command runner.
+ * @param {NodeJS.ProcessEnv} environment - Secrets to hide.
+ * @returns {Promise<string>} The full commit SHA.
+ * @throws {CommandRefusal} `E_GIT`.
+ */
+async function readHead(run, environment) {
+  const result = await run('git', ['rev-parse', 'HEAD'])
+  const sha = result.stdout.trim()
+  if (result.status !== 0 || !/^[0-9a-f]{40}$/.test(sha))
+    throw new CommandRefusal(
+      'E_GIT',
+      `git rev-parse HEAD failed: ${redactSecrets(result.stderr.trim().split('\n')[0] || sha, environment)}`,
+      { fix: 'run from the repository checkout', exitCode: EXIT.FAILED },
+    )
+  return sha
+}
+
+/**
+ * Obtains the archive account's token and checks the archive repository is private.
+ *
+ * Why: evidence is private; nothing may be uploaded to a public repository or under another account.
+ * Called by {@link runRotation}, {@link restoreFolder} and {@link initRepository}.
+ *
+ * @param {object} context - Rotation context.
+ * @param {{ needRepository?: boolean }} [options] - `needRepository: false` for `--init`.
+ * @returns {Promise<string>} The token (never printed).
+ * @throws {CommandRefusal} `E_NO_ACCOUNT`, `E_REPO_MISSING` or `E_NOT_PRIVATE`.
+ */
+async function requireAccount(context, { needRepository = true } = {}) {
+  const result = await context.run('gh', [
+    'auth',
+    'token',
+    '--user',
+    ARCHIVE_ACCOUNT,
+  ])
+  const token = result.stdout.trim()
+  if (result.status !== 0 || token === '')
+    throw new CommandRefusal(
+      'E_NO_ACCOUNT',
+      `gh cannot give a token for ${ARCHIVE_ACCOUNT}`,
+      { fix: `gh auth login as ${ARCHIVE_ACCOUNT} (never gh auth switch)` },
+    )
+  context.token = token
+  if (!needRepository) return token
+  const view = await context.run(
+    'gh',
+    ['repo', 'view', context.repository, '--json', 'visibility'],
+    { env: { GH_TOKEN: token } },
+  )
+  if (view.status !== 0)
+    throw new CommandRefusal(
+      'E_REPO_MISSING',
+      `cannot read ${context.repository}`,
+      { fix: 'node extension/scripts/rotate-artifacts.mjs --init' },
+    )
+  if (JSON.parse(view.stdout).visibility !== 'PRIVATE')
+    throw new CommandRefusal(
+      'E_NOT_PRIVATE',
+      `${context.repository} is not private`,
+      { fix: 'make the archive repository private in GitHub, then rerun' },
+    )
+  return token
+}
+
+/**
+ * Prints one plan line per entry and returns the counts.
+ * @param {object[]} plan - From {@link classifyInventory}.
+ * @param {(line: string) => void} print - Output.
+ * @returns {Record<string, number>} Entries and bytes per action.
+ */
+function printPlan(plan, print) {
+  const counts = {
+    keep: 0,
+    archive: 0,
+    delete: 0,
+    skip: 0,
+    unknown: 0,
+    toFree: 0,
+  }
+  for (const item of plan) {
+    counts[item.action] += 1
+    if (item.action === 'archive' || item.action === 'delete')
+      counts.toFree += item.bytes
+    print(
+      `${item.action.padEnd(7)} ${item.name} ${item.bytes}${item.reason ? ` (${item.reason})` : ''}`,
+    )
+  }
+  return counts
+}
+
+/**
+ * Prints the plan, and with `--apply` executes it entry by entry.
+ *
+ * Why: the one command of the merge chain; a failure of one entry keeps that entry and never stops the others.
+ * Called by {@link main}.
+ *
+ * @param {object} options - `current`, `keep`, `apply`.
+ * @param {object} context - Rotation context.
+ * @returns {Promise<number>} The exit code ({@link EXIT}).
+ */
+async function runRotation({ current, keep, apply }, context) {
+  const { print, progress } = context
+  progress.enter('read HEAD')
+  const sourceCommit = await readHead(context.run, context.environment)
+  progress.enter('scan artifacts')
+  const inventory = await readInventory(context.artifactsDir)
+  const plan = classifyInventory(inventory, {
+    current,
+    keep,
+    headShort: sourceCommit.slice(0, 8),
+    now: context.now(),
+  })
+  const counts = printPlan(plan, print)
+  if (!apply) {
+    print(
+      `PLAN: archive=${counts.archive} delete=${counts.delete} keep=${counts.keep} skip=${counts.skip} unknown=${counts.unknown} bytes_to_free=${counts.toFree}`,
+    )
+    return EXIT.DONE
+  }
+  progress.enter('check the archive account')
+  await requireAccount(context)
+  Object.assign(context, { current, keep, sourceCommit })
+  progress.enter('rotate', { sideEffect: true })
+  await rm(context.tmpDir, { recursive: true, force: true })
+  await mkdir(context.tmpDir, { recursive: true })
+  const result = {
+    archived: 0,
+    deleted: 0,
+    skipped: counts.skip,
+    failed: 0,
+    freed: 0,
+  }
+  for (const item of plan) {
+    if (item.action !== 'archive' && item.action !== 'delete') continue
+    try {
+      if (item.action === 'delete') {
+        await rm(join(context.artifactsDir, item.name), {
+          recursive: true,
+          force: true,
+        })
+        result.deleted += 1
+      } else {
+        // The temporary copy and the extraction may need about twice the entry's size.
+        const free = await context.freeBytes(context.artifactsDir)
+        if (item.bytes * 2 > free) {
+          result.skipped += 1
+          print(
+            `skipped ${item.name} E_DISK_SPACE: needs ${item.bytes * 2} bytes, ${free} free`,
+          )
+          continue
+        }
+        if (item.kind === 'qa-build') await rotateQaBuild(context, item)
+        else await rotateArchive(context, item)
+        result.archived += 1
+      }
+      result.freed += item.bytes
+    } catch (error) {
+      result.failed += 1
+      const code = error instanceof CommandRefusal ? error.code : 'E_INTERNAL'
+      const message =
+        error instanceof CommandRefusal
+          ? error.reason
+          : String(error?.message ?? error)
+      print(
+        `FAILED ${item.name} ${code}: ${redactSecrets(message, { ...context.environment, GH_TOKEN: context.token })} (kept)`,
+      )
+    } finally {
+      // The temporary area is emptied after each entry.
+      await rm(context.tmpDir, { recursive: true, force: true })
+      await mkdir(context.tmpDir, { recursive: true })
+    }
+  }
+  await rm(context.tmpDir, { recursive: true, force: true })
+  print(
+    `ROTATE: archived=${result.archived} deleted=${result.deleted} kept=${counts.keep + counts.unknown} skipped=${result.skipped} failed=${result.failed} freed_bytes=${result.freed}`,
+  )
+  return result.failed > 0 ? EXIT.FOLLOW_UP : EXIT.DONE
+}
+
+/**
+ * Brings an archived folder back, byte-identical to its `files.json`.
+ *
+ * Why: archiving is only safe when it can be undone; the cited `artifacts/…` hashes must be checkable again.
+ * Called by {@link main} for `--restore`.
+ *
+ * @param {string} folder - The archived entry's name.
+ * @param {object} context - Rotation context.
+ * @returns {Promise<number>} The exit code.
+ * @throws {CommandRefusal} `E_RESTORE_UNKNOWN`, `E_RESTORE_EXISTS`, `E_RESTORE_UNSAFE`, `E_HASH_MISMATCH`.
+ */
+async function restoreFolder(folder, context) {
+  const { print, progress } = context
+  if (folder === QA_RELEASE_TAG)
+    throw new CommandRefusal(
+      'E_RESTORE_UNSUPPORTED',
+      'QA builds are never restored automatically',
+      { fix: `download the asset from the ${QA_RELEASE_TAG} release by hand` },
+    )
+  if (!/^[A-Za-z0-9._-]+$/.test(folder) || folder === '.' || folder === '..')
+    throw new CommandRefusal(
+      'E_USAGE',
+      `${folder} is not an archived entry name`,
+      {
+        fix: 'node extension/scripts/rotate-artifacts.mjs --help',
+        exitCode: EXIT.USAGE,
+      },
+    )
+  const destination = join(context.artifactsDir, folder)
+  const exists = await lstat(destination).then(
+    () => true,
+    () => false,
+  )
+  if (exists)
+    throw new CommandRefusal(
+      'E_RESTORE_EXISTS',
+      `${destination} already exists`,
+      { fix: 'move or remove it, then rerun' },
+    )
+  progress.enter('check the archive account')
+  await requireAccount(context)
+  const github = createGithub(context)
+  const { index } = await github.readIndex()
+  const record = index.folders[folder]
+  if (record === undefined)
+    throw new CommandRefusal(
+      'E_RESTORE_UNKNOWN',
+      `${folder} is not in index.json of ${context.repository}`,
+      { fix: 'check the folder name against index.json' },
+    )
+  progress.enter('restore', { sideEffect: true })
+  const workDir = join(context.tmpDir, `restore-${folder}`)
+  await rm(workDir, { recursive: true, force: true })
+  try {
+    const downloadDir = join(workDir, 'download')
+    await downloadAndVerify(
+      github,
+      context,
+      record.tag,
+      record.assets,
+      downloadDir,
+    )
+    const archiveParts = record.assets
+      .filter((asset) => asset.name.startsWith(`${folder}.tar.gz`))
+      .map((asset) => join(downloadDir, asset.name))
+    // The members are checked before anything is extracted.
+    const names = (
+      await expectSuccess(
+        () =>
+          context.run('tar', ['-tzf', '-'], { stdin: joinParts(archiveParts) }),
+        'E_RESTORE_UNSAFE',
+        'listing the archive',
+        context.environment,
+      )
+    ).stdout
+      .split('\n')
+      .filter((line) => line !== '')
+    const bad = checkMemberPaths(names, folder)
+    if (bad !== null)
+      throw new CommandRefusal(
+        'E_RESTORE_UNSAFE',
+        `the archive holds the unsafe member path ${JSON.stringify(bad)}`,
+        { fix: 'nothing was extracted; do not restore this archive' },
+      )
+    const detailed = (
+      await expectSuccess(
+        () =>
+          context.run('tar', ['-tvzf', '-'], {
+            stdin: joinParts(archiveParts),
+          }),
+        'E_RESTORE_UNSAFE',
+        'listing the archive',
+        context.environment,
+      )
+    ).stdout
+      .split('\n')
+      .filter((line) => /^[lh]/.test(line))
+    if (detailed.length > 0)
+      throw new CommandRefusal(
+        'E_RESTORE_UNSAFE',
+        'the archive holds a link, which could leave the folder',
+        { fix: 'nothing was extracted; do not restore this archive' },
+      )
+    const extractDir = join(workDir, 'extract')
+    await mkdir(extractDir, { recursive: true })
+    await expectSuccess(
+      () =>
+        context.run('tar', ['-xzf', '-', '--no-same-owner', '-C', extractDir], {
+          stdin: joinParts(archiveParts),
+        }),
+      'E_RESTORE_UNSAFE',
+      'extracting the archive',
+      context.environment,
+    )
+    const manifest = JSON.parse(
+      await readFile(join(downloadDir, `${folder}.files.json`), 'utf8'),
+    )
+    const problems = await compareWithManifest(
+      extractDir,
+      folder,
+      manifest.files,
+    )
+    if (problems.length > 0)
+      throw new CommandRefusal(
+        'E_HASH_MISMATCH',
+        `the restored ${folder} differs from files.json: ${problems[0]}`,
+        { fix: 'nothing was moved into artifacts/' },
+      )
+    await rename(join(extractDir, folder), destination)
+  } finally {
+    // Nothing else uses the temporary area during a restore.
+    await rm(context.tmpDir, { recursive: true, force: true })
+  }
+  print(
+    `RESTORE: ${folder} restored with ${record.files} files, ${record.bytes} bytes`,
+  )
+  return EXIT.DONE
+}
+
+/**
+ * Creates the private archive repository and its empty index, once.
+ * Called by {@link main} for `--init`.
+ * @param {object} context - Rotation context.
+ * @returns {Promise<number>} The exit code.
+ * @throws {CommandRefusal} `E_INIT_EXISTS` when the repository already exists.
+ */
+async function initRepository(context) {
+  await requireAccount(context, { needRepository: false })
+  const github = createGithub(context)
+  const view = await github.call([
+    'repo',
+    'view',
+    context.repository,
+    '--json',
+    'visibility',
+  ])
+  if (view.status === 0)
+    throw new CommandRefusal(
+      'E_INIT_EXISTS',
+      `${context.repository} already exists`,
+      { fix: 'nothing to do; use --current <N> --apply' },
+    )
+  context.progress.enter('create the repository', { sideEffect: true })
+  await github.ok(
+    [
+      'repo',
+      'create',
+      context.repository,
+      '--private',
+      '--description',
+      'Archived native evidence of laststance/codebook',
+    ],
+    'E_GITHUB',
+    'creating the repository',
+  )
+  await github.writeIndex(
+    { schemaVersion: 1, folders: {} },
+    null,
+    'Create index',
+  )
+  context.print(`INIT: created ${context.repository} (private)`)
+  return EXIT.DONE
+}
+
+/**
+ * The command's entry: parses arguments, prints `--help`, and runs the chosen mode.
+ *
+ * Why: it is what `node extension/scripts/rotate-artifacts.mjs` calls through {@link runCommandLine}; tests call it with their own argv and seams.
+ *
+ * @param {import('./utils/commandContract.mjs').CommandProgress} progress - Stage tracker.
+ * @param {string[]} [argv] - Arguments after the script name.
+ * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, repository: string }>} [overrides] - Seams for tests (`partBytes` is no CLI flag).
+ * @returns {Promise<number>} The exit code.
+ * @throws {CommandRefusal} Refusals listed in `--help`.
+ */
+export async function main(
+  progress,
+  argv = process.argv.slice(2),
+  overrides = {},
+) {
+  const environment = overrides.environment ?? process.env
+  const print = overrides.print ?? ((line) => console.log(line))
+  const usageFix = 'node extension/scripts/rotate-artifacts.mjs --help'
+  let parsed
+  try {
+    parsed = parseArgs({
+      args: argv,
+      options: {
+        current: { type: 'string' },
+        keep: { type: 'string' },
+        apply: { type: 'boolean' },
+        restore: { type: 'string' },
+        init: { type: 'boolean' },
+        help: { type: 'boolean' },
+      },
+    })
+  } catch (error) {
+    throw new CommandRefusal('E_USAGE', error.message, {
+      fix: usageFix,
+      exitCode: EXIT.USAGE,
+    })
+  }
+  const values = parsed.values
+  if (values.help === true) {
+    print(HELP_TEXT)
+    return EXIT.DONE
+  }
+  const modes = [
+    values.apply === true,
+    values.restore !== undefined,
+    values.init === true,
+  ].filter(Boolean).length
+  if (modes > 1)
+    throw new CommandRefusal(
+      'E_USAGE',
+      '--apply, --restore and --init exclude each other',
+      { fix: usageFix, exitCode: EXIT.USAGE },
+    )
+  const repositoryRoot = overrides.repositoryRoot ?? SCRIPT_REPOSITORY_ROOT
+  const artifactsDir = join(repositoryRoot, 'artifacts')
+  const context = {
+    run: overrides.run ?? createCommandRunner(repositoryRoot, environment),
+    artifactsDir,
+    tmpDir: join(artifactsDir, TEMP_FOLDER),
+    repository: overrides.repository ?? ARCHIVE_REPOSITORY,
+    partBytes: overrides.partBytes ?? PART_BYTES,
+    now: overrides.now ?? Date.now,
+    freeBytes:
+      overrides.freeBytes ??
+      (async (path) => {
+        const stats = await statfs(path)
+        return stats.bavail * stats.bsize
+      }),
+    print,
+    progress,
+    environment,
+    token: '',
+  }
+  if (values.init === true) return initRepository(context)
+  if (values.restore !== undefined)
+    return restoreFolder(values.restore, context)
+  // The plan and --apply both need the merged cycle.
+  if (values.current === undefined || !/^\d+$/.test(values.current))
+    throw new CommandRefusal(
+      'E_CURRENT_REQUIRED',
+      '--current <N> (the merged cycle number, digits) is required',
+      {
+        fix: 'node extension/scripts/rotate-artifacts.mjs --current <N> [--apply]',
+      },
+    )
+  if (values.keep !== undefined && !/^\d+$/.test(values.keep))
+    throw new CommandRefusal('E_USAGE', '--keep must be a whole number', {
+      fix: usageFix,
+      exitCode: EXIT.USAGE,
+    })
+  return runRotation(
+    {
+      current: Number.parseInt(values.current, 10),
+      keep:
+        values.keep === undefined
+          ? DEFAULT_KEEP
+          : Number.parseInt(values.keep, 10),
+      apply: values.apply === true,
+    },
+    context,
+  )
+}
+
+if (isRunAsScript(import.meta.url))
+  process.exitCode = await runCommandLine(main)
