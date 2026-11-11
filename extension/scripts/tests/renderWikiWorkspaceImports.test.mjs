@@ -425,6 +425,7 @@ test('a code file with a long run of spaces after import is read in well under a
 
     // Assert
     assert.equal(outcome, 'rendered')
+    // gstack-timing-ok: the bound separates a linear read (under 10 ms here) from catastrophic backtracking (11 s for 4,000 spaces before the fix); 2,000 ms leaves a 200-fold margin for a loaded runner.
     assert.ok(performance.now() - started < 2000)
   })
 })
@@ -752,5 +753,194 @@ test('a Wiki too shallow and silent about an import is refused once, with the de
     assert.ok(depthAt >= 0, outcome)
     assert.ok(workspaceAt > depthAt, outcome)
     assert.equal(outcome.includes('apps/api imports'), false)
+  })
+})
+
+// Value: protects=publishing a repository whose code holds a line of many unclosable quotes (an escaped-quote pattern, generated data): reading it stays linear; fails_when=the string scanner retries from every quote of the line and the render stalls (0.5 s for 20,000 escaped pairs, quadratic, before the fix); why_new=Cycle 0118 /ship Codex structured review (P1); seam=none (the real renderer); no_claim=a bound for every pathological text
+test('a code file with a line of 60,000 escaped quotes is read in well under a second', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/quotes.ts': `export const quotes = /${'\\"'.repeat(60000)}/\n`,
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app imports localDay from @acme/shared to show the day the clock is in.',
+          cites: ['apps/app/src/today.ts', 'apps/app/src/quotes.ts'],
+        },
+        API_PAGE,
+      ],
+    )
+    const started = performance.now()
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+    // gstack-timing-ok: the bound separates a linear scan (milliseconds) from the quadratic one (several seconds for 60,000 pairs before the fix); 2,000 ms leaves a wide margin for a loaded runner.
+    assert.ok(performance.now() - started < 2000)
+  })
+})
+
+// Value: protects=imports written after a regular-expression literal that holds `/*` (such as /[/*]/): the pattern opens no comment, so the import still owes its sentence; fails_when=the pattern blanks the rest of the file and a Wiki that never explains the import is published; why_new=Cycle 0118 /ship review (Codex P2, batched specialist); seam=none (the real renderer); no_claim=that every regular-expression literal position is recognised
+test('an import after a regular-expression literal holding /* still owes a sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          "const punctuation = /[/*]/\nimport { localDay } from '@acme/shared'\nexport const today = (now: string): string => localDay(now.replace(punctuation, ''))\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        API_PAGE,
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared (localDay), but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=packages that require another workspace package by its folder (require('../../../packages/shared')) or take its default export as { default as x }: both are imports of that package; fails_when=the folder path or the default entry is read as no import and the Wiki publishes without naming the package; why_new=Cycle 0118 /ship Codex structured review (P2); seam=none (the real renderer); no_claim=that bundler aliases or tsconfig paths are resolved
+test('a require of a package folder and a default entry in braces each owe a sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          "const shared = require('../../../packages/shared')\nexport const today = (now: string): string => shared.localDay(now)\n",
+        'apps/api/src/router.ts':
+          "import { default as dayOf } from '@acme/shared'\nexport const route = (at: string): string => dayOf(at)\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        {
+          path: 'api.html',
+          text: 'The API answers with the day of a tap.',
+          cites: ['apps/api/src/router.ts'],
+        },
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared, but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it. apps/api imports @acme/shared, but none of its pages (api.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/api uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=an explanation written across a line break inside one paragraph: <br> keeps the paragraph whole, so the package and the function still stand together; fails_when=a <br> splits the paragraph and a correct Wiki is refused; why_new=Cycle 0118 /ship Codex structured review (P2); seam=none (the real renderer); no_claim=that other inline breaks are kept
+test('an app page whose one paragraph names the function and the package across a line break satisfies the rule', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(root, WORKSPACE, [
+      SHARED_PAGE,
+      {
+        path: 'app.html',
+        text: 'The app uses <code>localDay</code><br>from <code>@acme/shared</code> to show the day the clock is in.',
+        cites: ['apps/app/src/today.ts'],
+      },
+      API_PAGE,
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=packages whose package.json starts with a byte-order mark: the package still counts, so its imports still owe a sentence; fails_when=the mark makes the name unreadable, the package drops out and the rule silently turns off for it; why_new=Cycle 0118 /ship adversarial review; seam=none (the real renderer); no_claim=other encodings
+test('a shared package whose package.json starts with a byte-order mark still counts as a workspace package', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'packages/shared/package.json': '\uFEFF{ "name": "@acme/shared" }\n',
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        API_PAGE,
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared (localDay), but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=packages that keep a package.json inside a test or fixture folder: such a manifest is fixture data, so it never becomes a workspace package that owns files or turns an npm import into a workspace import; fails_when=a fixture manifest named like a dependency makes the app owe a sentence about it; why_new=Cycle 0118 /ship adversarial review; seam=none (the real renderer); no_claim=that example packages are told apart from real ones
+test('a package.json inside a fixture folder is no workspace package', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/__fixtures__/react/package.json': '{ "name": "react" }\n',
+        'apps/app/src/view.ts':
+          "import { useState } from 'react'\nexport const view = (): unknown => useState(0)\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app imports localDay from @acme/shared to show the day the clock is in, and keeps a counter in state.',
+          cites: ['apps/app/src/today.ts', 'apps/app/src/view.ts'],
+        },
+        API_PAGE,
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
   })
 })
