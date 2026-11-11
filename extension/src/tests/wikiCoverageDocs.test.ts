@@ -392,7 +392,7 @@ test('the bundled skill 1.0.99 asks an update to correct every page that describ
   )
 })
 
-// Value: protects=the learner's README names the workspace rule the generator enforces and the update's promise to fix every page that states a changed rule; fails_when=the README says nothing about the refusal of a workspace Wiki that never says what a package takes from another, or about updates correcting overview pages; why_new=Cycle 0118 (H1 E1 and E2, steps 2 and 7); seam=none; no_claim=the wording of the refusal itself (the renderer test pins it)
+// Value: protects=the learner's README names the workspace rule the generator enforces and the update's promise to fix every page that states a changed rule; fails_when=the README says nothing about the refusal of a workspace Wiki that never says what a package takes from another, about which imports the rule reads (require() calls, awaited import() calls, a component's script elements), or about updates correcting overview pages; why_new=Cycle 0118 (H1 E1 and E2, steps 2 and 7; PR 305's hosted review); seam=none; no_claim=the wording of the refusal itself (the renderer test pins it)
 test('the README says a workspace Wiki must say what each package takes from the others and that an update fixes every page that describes a change', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
@@ -406,6 +406,11 @@ test('the README says a workspace Wiki must say what each package takes from the
   assert.ok(
     readme.includes(
       'A type-only import, a constant written in capitals, an import made only by tests, mocks or fixtures, and a file the Wiki lists as a coverage exception owe no such sentence, and an import line pasted into a code block does not count.',
+    ),
+  )
+  assert.ok(
+    readme.includes(
+      'Imports are read from `import` and `export … from` statements, `require()` calls and awaited dynamic `import()` calls; in a Vue or Svelte component, only its `<script>` elements are read.',
     ),
   )
   assert.ok(

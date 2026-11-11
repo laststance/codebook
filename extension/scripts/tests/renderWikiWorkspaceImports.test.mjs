@@ -944,3 +944,185 @@ test('a package.json inside a fixture folder is no workspace package', async () 
     assert.equal(outcome, 'rendered')
   })
 })
+
+// Value: protects=imports written after an arrow function that returns a regular-expression literal holding `/*` (() => /[/*]/): the pattern opens no comment, so the import still owes its sentence; fails_when=the arrow's pattern blanks the rest of the file and a Wiki that never explains the import is published; why_new=Cycle 0118 hosted CodeRabbit review of PR 305 (Major); seam=none (the real renderer); no_claim=that a pattern after a keyword such as typeof or case is recognised
+test('an import after an arrow function that returns a regular-expression literal holding /* still owes a sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          "const punctuation = (): RegExp => /[/*]/\nimport { localDay } from '@acme/shared'\nexport const today = (now: string): string => localDay(now.replace(punctuation(), ''))\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        API_PAGE,
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared (localDay), but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=packages that load another workspace package with an expression: an awaited dynamic import() takes the whole module, so a page must name the package, and a property read from a require call (require('@acme/shared/day').localDay) must be named with the package; fails_when=either load is read as no import and a Wiki that never says what the package takes from the other is published; why_new=Cycle 0118 hosted CodeRabbit review of PR 305 (Major); seam=none (the real renderer); no_claim=that a specifier built at run time or a bundler alias is read
+test('an awaited dynamic import and a property read from a require call each owe a sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          "export const today = async (now: string): Promise<string> => (await import('@acme/shared')).localDay(now)\n",
+        'apps/api/src/router.ts':
+          "exports.route = (at: string): string => require('@acme/shared/day').localDay(at)\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        {
+          path: 'api.html',
+          text: 'The API answers with the day of a tap.',
+          cites: ['apps/api/src/router.ts'],
+        },
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared, but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it. apps/api imports @acme/shared (localDay), but none of its pages (api.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/api uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=TypeScript files that name another package's type as import('…').Type: that is a type, not a load that runs, so it owes no sentence, as an import type statement owes none; fails_when=reading expression loads makes a type written as import('@acme/shared').Day count as an import of the shared package; why_new=Cycle 0118 hosted CodeRabbit review of PR 305 (expression loads are now read, and TypeScript writes types the same way); seam=none (the real renderer); no_claim=that an import() whose promise is passed on without await or .then is read
+test('a TypeScript type written as an import of the shared package owes no sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          "export type Day = import('@acme/shared').Day\nexport const today = (now: string): Day => now.slice(0, 10)\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts'],
+        },
+        API_PAGE,
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=Vue and Svelte components: only their <script> elements run, so import text in a template (a code sample) owes no sentence while the script's own import still does; fails_when=a template's sample import makes the app owe a sentence about a function its code never imports, or the script's import goes unread; why_new=Cycle 0118 hosted CodeRabbit review of PR 305 (Minor); seam=none (the real renderer); no_claim=that an Astro component's frontmatter is told apart from its template
+test('a Vue component owes a sentence for its script import but not for import text in its template', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(
+      root,
+      {
+        ...WORKSPACE,
+        'apps/app/src/today.ts':
+          'export const today = (now: string): string => now.slice(0, 10)\n',
+        'apps/app/src/Today.vue':
+          "<template>\n  <code>import { localDay } from '@acme/shared'</code>\n</template>\n<script setup lang=\"ts\">\nimport { dayBounds } from '@acme/shared'\nconst bounds = dayBounds(new Date().toISOString())\n</script>\n",
+      },
+      [
+        SHARED_PAGE,
+        {
+          path: 'app.html',
+          text: 'The app shows the day the clock is in.',
+          cites: ['apps/app/src/today.ts', 'apps/app/src/Today.vue'],
+        },
+        API_PAGE,
+      ],
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared (dayBounds), but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})
+
+// Value: protects=the citation a page's sentence rests on: an inline link whose line is past the end of the importing file cites nothing, as the coverage rule already holds, so it cannot make the page's explanation count; fails_when=a page that names the package and the function but cites the importing file only through a link to line 99999 satisfies the rule; why_new=Cycle 0118 hosted CodeRabbit review of PR 305 (Minor); seam=none (the real renderer); no_claim=that a link inside the file's range points at the import
+test('an app page whose only link to the importing file names a line past its end does not satisfy the rule', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = {
+      ...WORKSPACE,
+      'apps/app/src/clock.ts': 'export const TICK_MS = 1000\n',
+    }
+    const query = new URLSearchParams({
+      root,
+      path: 'apps/app/src/today.ts',
+      line: '99999',
+      sha256: createHash('sha256')
+        .update(files['apps/app/src/today.ts'])
+        .digest('hex'),
+    })
+    const linkPastTheEnd = `vscode://laststance.codebook/source?${query.toString().replaceAll('&', '&amp;')}`
+    const manifest = await manifestOf(root, files, [
+      {
+        ...SHARED_PAGE,
+        cites: [
+          'packages/shared/src/day.ts',
+          'packages/shared/package.json',
+          'apps/app/src/today.ts',
+        ],
+      },
+      {
+        path: 'app.html',
+        text: `The app imports localDay from @acme/shared in <a href="${linkPastTheEnd}">today.ts</a> to show the day the clock is in.`,
+        cites: ['apps/app/src/clock.ts'],
+      },
+      API_PAGE,
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'apps/app imports @acme/shared (localDay), but none of its pages (app.html) names @acme/shared or packages/shared together with a function or schema that a file the page cites imports from it: on one of those pages, say what apps/app uses from @acme/shared and for what, naming that function or schema and citing a file that imports it.',
+    )
+  })
+})

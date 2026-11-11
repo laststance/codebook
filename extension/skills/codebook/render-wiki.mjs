@@ -334,18 +334,20 @@ function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf) {
 }
 /** How many imported names, and how many of a package's pages, one sentence of {@link workspaceShortfallOf} names. */
 const WORKSPACE_MAX_NAMED = 3;
-/** A string literal (group 1, kept), a regular-expression literal or a comment (both blanked) of JavaScript or TypeScript text, so {@link moduleTextOf} drops comments without reading into strings or patterns: a commented-out import is no import, a comment inside an import's braces hides none of its names, and a pattern such as `/[/*]/` opens no comment. A regular-expression literal is recognised after an operator, a bracket, `return` or a line start. Every match always succeeds and moves on: an unclosed string runs to the end of its line, an unclosed template or block comment to the end of the text, so the scan is linear however many quotes a line holds. */
-const COMMENT_OR_STRING = /("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|`(?:\\.|[^`\\])*`?)|\/(?<=(?:^|\n|[=(,:;!&|?{}[\]]|\breturn)[ \t]*\/)(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
-/** A code file's text as {@link MODULE_STATEMENT} and {@link REQUIRE_STATEMENT} read it: comments removed ({@link COMMENT_OR_STRING}), each string literal replaced by a numbered token `'N'` whose text `literals[N]` keeps, and every whitespace run one space. A statement written across lines reads as one line, a long run of spaces costs one step, and import text inside a string (a code sample, a generator's template) is no statement. Called by {@link moduleStatementsOf}. @example moduleTextOf("import {\n  a, // note\n  b\n} from 'x'") // => { code: "import { a, b } from '0'", literals: ['x'] } */
+/** A string literal (group 1, kept), a regular-expression literal or a comment (both blanked) of JavaScript or TypeScript text, so {@link moduleTextOf} drops comments without reading into strings or patterns: a commented-out import is no import, a comment inside an import's braces hides none of its names, and a pattern such as `/[/*]/` opens no comment. A regular-expression literal is recognised after an operator (an arrow's `=>` and a comparison's `>` included), a bracket, `return` or a line start. Every match always succeeds and moves on: an unclosed string runs to the end of its line, an unclosed template or block comment to the end of the text, so the scan is linear however many quotes a line holds. */
+const COMMENT_OR_STRING = /("(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|`(?:\\.|[^`\\])*`?)|\/(?<=(?:^|\n|[=(,:;!&|?{}[\]>]|\breturn)[ \t]*\/)(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+/** A code file's text as {@link MODULE_STATEMENT}, {@link BOUND_LOAD} and {@link LOAD_EXPRESSION} read it: comments removed ({@link COMMENT_OR_STRING}), each string literal replaced by a numbered token `'N'` whose text `literals[N]` keeps, and every whitespace run one space. A statement written across lines reads as one line, a long run of spaces costs one step, and import text inside a string (a code sample, a generator's template) is no statement. Called by {@link moduleStatementsOf}. @example moduleTextOf("import {\n  a, // note\n  b\n} from 'x'") // => { code: "import { a, b } from '0'", literals: ['x'] } */
 function moduleTextOf(text) {
   const literals = [];
   const code = text.replace(COMMENT_OR_STRING, (comment, literal) => (literal === undefined ? ' ' : `'${literals.push(literal.slice(1, literal.length > 1 && literal.at(-1) === literal[0] ? -1 : undefined)) - 1}'`)).replace(/\s+/g, ' ');
   return { code, literals };
 }
-/** A static `import` or `export … from` statement in {@link moduleTextOf} text: group 1 is `type ` for a type-only statement, group 2 the clause (default name, `{ … }` names, `* as` name), group 3 the string token of the module specifier. The clause holds only names, spaces, commas, braces and `*`, never another `import` or `export` keyword, and at most 2,000 characters: a declaration (`export function f() {…}`) or an `export { … }` without `from` never reaches a later statement's `from`, and a clause that never meets `from` stops after a bounded number of steps. A side-effect import (`import 'x'`) and a dynamic `import()` have no clause and do not match. */
+/** A static `import` or `export … from` statement in {@link moduleTextOf} text: group 1 is `type ` for a type-only statement, group 2 the clause (default name, `{ … }` names, `* as` name), group 3 the string token of the module specifier. The clause holds only names, spaces, commas, braces and `*`, never another `import` or `export` keyword, and at most 2,000 characters: a declaration (`export function f() {…}`) or an `export { … }` without `from` never reaches a later statement's `from`, and a clause that never meets `from` stops after a bounded number of steps. A side-effect import (`import 'x'`) and a dynamic `import()` have no clause and do not match; {@link BOUND_LOAD} and {@link LOAD_EXPRESSION} read dynamic imports. */
 const MODULE_STATEMENT = /\b(?:import|export) ?(type )?((?:(?!\b(?:import|export)\b)[\w$ ,{}*]){1,2000}?) ?\bfrom ?'(\d+)'/g;
-/** A CommonJS `require` of a module bound to a name or destructured in {@link moduleTextOf} text: group 1 the binding (`shared`, or `{ a, b: c }`), group 2 the string token of the module specifier. */
-const REQUIRE_STATEMENT = /\b(?:const|let|var) (\{[\w$ ,:]{0,2000}\}|[\w$]+) ?= ?require ?\( ?'(\d+)' ?\)/g;
+/** A CommonJS `require` or a dynamic `import()` of a module, bound to a name or destructured, in {@link moduleTextOf} text (`const { a } = require('x')`, `const { a } = await import('x')`): group 1 the binding (`shared`, or `{ a, b: c }`), group 2 the string token of the module specifier. */
+const BOUND_LOAD = /\b(?:const|let|var) (\{[\w$ ,:]{0,2000}\}|[\w$]+) ?= ?(?:require|(?:await )?import) ?\( ?'(\d+)' ?\)/g;
+/** A load of a module written as an expression in {@link moduleTextOf} text, once {@link BOUND_LOAD} has taken the bound ones: any CommonJS `require('…')` call, with group 1 its string token and group 2 the property read from it (`require('x').localDay`), and a dynamic `import('…')` that is awaited (group 3) or followed by `.then` (group 4). A bare `import('…')` is left out, because TypeScript writes a type the same way (`import('x').Day`). */
+const LOAD_EXPRESSION = /\brequire ?\( ?'(\d+)' ?\)(?: ?\. ?([A-Za-z_$][\w$]*))?|\bawait import ?\( ?'(\d+)' ?\)|\bimport ?\( ?'(\d+)' ?\) ?\. ?then\b/g;
 /** Whether an imported name can stand in an article as a function or schema a package uses: an identifier other than `default`, and not a constant written in capitals only (`DAY_ROWS_MAX`). Called by {@link importedNamesOf}. @example isUsableImportName('localDay') // => true @example isUsableImportName('REFUSAL') // => false */
 const isUsableImportName = name => /^[A-Za-z_$][\w$]*$/.test(name) && name !== 'default' && !/^[A-Z0-9_$]+$/.test(name);
 /** What one statement's clause ({@link MODULE_STATEMENT}) brings in: `names`, each `{ … }` entry by its exported name (`a as b` gives `a`; an inline `type` entry gives nothing) kept when {@link isUsableImportName}, and `wholeModule`, true when the clause also has a default import or a `* as` namespace, whose local name is the importer's own choice. Called by {@link workspaceImportsOf}. @example importedNamesOf('Base, { localDay, type DayRow, dayBounds as bounds }') // => { names: ['localDay', 'dayBounds'], wholeModule: true } */
@@ -379,24 +381,41 @@ async function workspacePackagesOf(indexedSources, textOf) {
 const ownerOf = (path, packages) => packages.filter(candidate => path.startsWith(candidate.folder)).sort((first, second) => second.folder.length - first.folder.length)[0];
 /** The workspace package a module specifier names: its package name alone or followed by a subpath (`@acme/shared/time`). Called by {@link workspaceImportsOf}. @example packageOfSpecifier('@acme/shared/time', packages) // => { name: '@acme/shared', folder: 'packages/shared/' } */
 const packageOfSpecifier = (specifier, packages) => packages.find(candidate => specifier === candidate.name || specifier.startsWith(`${candidate.name}/`));
-/** The import statements of one code file, ES modules ({@link MODULE_STATEMENT}) and CommonJS requires ({@link REQUIRE_STATEMENT}): `{ typeOnly, clause, specifier }`, a require's `{ a: b }` rename read as `a as b`. Called by {@link workspaceImportsOf}. @example moduleStatementsOf("const { localDay } = require('@acme/shared')") // => [{ typeOnly: false, clause: '{ localDay }', specifier: '@acme/shared' }] */
+/** The import statements of one code file, ES modules ({@link MODULE_STATEMENT}), bound requires and dynamic imports ({@link BOUND_LOAD}) and loads written as expressions ({@link LOAD_EXPRESSION}): `{ typeOnly, clause, specifier }`, a binding's `{ a: b }` rename read as `a as b`, a property read from a `require` call as `{ a }`, and any other expression load as `*`, the whole module. Called by {@link workspaceImportsOf}. @example moduleStatementsOf("const { localDay } = require('@acme/shared')") // => [{ typeOnly: false, clause: '{ localDay }', specifier: '@acme/shared' }] @example moduleStatementsOf("const day = (await import('@acme/shared')).localDay") // => [{ typeOnly: false, clause: '*', specifier: '@acme/shared' }] */
 function moduleStatementsOf(text) {
   const { code, literals } = moduleTextOf(text);
   const modules = [...code.matchAll(MODULE_STATEMENT)].map(match => ({ typeOnly: Boolean(match[1]), clause: match[2], specifier: literals[match[3]] }));
-  const requires = [...code.matchAll(REQUIRE_STATEMENT)].map(match => ({ typeOnly: false, clause: match[1].replace(/ ?: ?/g, ' as '), specifier: literals[match[2]] }));
-  return [...modules, ...requires];
+  const bound = [...code.matchAll(BOUND_LOAD)].map(match => ({ typeOnly: false, clause: match[1].replace(/ ?: ?/g, ' as '), specifier: literals[match[2]] }));
+  // The bound loads are taken out first, so each load counts once: a bound require keeps the names it destructures instead of also counting as the whole module.
+  const expressions = [...code.replace(BOUND_LOAD, ' ').matchAll(LOAD_EXPRESSION)].map(match => ({ typeOnly: false, clause: match[2] ? `{ ${match[2]} }` : '*', specifier: literals[match[1] ?? match[3] ?? match[4]] }));
+  return [...modules, ...bound, ...expressions];
 }
 /** The workspace package a statement of one file imports from: the package its specifier names ({@link packageOfSpecifier}), or for a relative specifier (`../../packages/shared/src/day`) the package that holds the path it resolves to ({@link ownerOf}). Called by {@link workspaceImportsOf}. @example importedPackageOf('../../packages/shared/src/day', 'apps/app/src/today.ts', packages) // => { name: '@acme/shared', folder: 'packages/shared/' } */
 const importedPackageOf = (specifier, path, packages) => (specifier.startsWith('.') ? ownerOf(`${posix.join(posix.dirname(path), specifier)}/`, packages) : packageOfSpecifier(specifier, packages));
 /** A test, a mock or a fixture: a file below a `__tests__`, `__mocks__`, `__fixtures__`, `__testfixtures__`, `fixture(s)`, `test(s)` or `e2e` folder, or named `*.test.*`, `*.spec.*`, `*.test-d.*` or `*.bench.*`. Its imports say how a package is tested, not what its code uses, so {@link workspaceImportsOf} skips it. */
 const TEST_OR_FIXTURE_PATH = /(?:^|\/)(?:__tests__|__mocks__|__fixtures__|__testfixtures__|fixtures?|tests?|e2e)\/|\.(?:test|spec|test-d|bench)\.[cm]?[jt]sx?$/;
+/** A Vue or Svelte single-file component, whose code runs only from its `<script>` elements: its template and styles are markup, so import text there (a code sample in the template) is no import. */
+const COMPONENT_FILE = /\.(?:vue|svelte)$/i;
+/** The text of a code file that runs, as {@link moduleStatementsOf} reads it: for a component ({@link COMPONENT_FILE}) the text of its `<script>` elements one after another, each up to its `</script>` or, without one, to the end of the file; for any other file the whole text. The scan only moves forward, so it stays linear however many tags a file holds. Called by {@link workspaceImportsOf}. @example scriptTextOf('Today.vue', '<template><code>import { a } from "x"</code></template><script setup>import { b } from "y"</script>') // => 'import { b } from "y"' */
+function scriptTextOf(path, text) {
+  if (!COMPONENT_FILE.test(path)) return text;
+  const scripts = [], scriptTag = /<script\b[^>]{0,2000}>/gi, endTag = /<\/script/gi;
+  for (let tag = scriptTag.exec(text); tag; tag = scriptTag.exec(text)) {
+    endTag.lastIndex = scriptTag.lastIndex;
+    const end = endTag.exec(text)?.index ?? text.length;
+    scripts.push(text.slice(scriptTag.lastIndex, end));
+    // The next search starts after this element; an element without its end tag runs to the end of the file.
+    scriptTag.lastIndex = end;
+  }
+  return scripts.join('\n');
+}
 /** Every value a workspace package's code imports from another workspace package, by name or by a relative path into its folder ({@link importedPackageOf}), read from each statement ({@link moduleStatementsOf}) of an explained code file: one `{ path, owner, target, name }` per imported name, and one with no `name` for a default or `* as` import of the whole module ({@link importedNamesOf}). A type-only statement imports nothing that runs, a package's own name points back into it, and tests and fixtures ({@link TEST_OR_FIXTURE_PATH}) are no part of what the package's code uses, so none of them counts. Called by {@link workspaceShortfallsOf}. @param codeFiles - The explained code files: included code files no coverage exception covers. @example await workspaceImportsOf(packages, ['apps/app/src/day.ts'], textOf) // => [{ path: 'apps/app/src/day.ts', owner: app, target: shared, name: 'localDay' }] */
 async function workspaceImportsOf(packages, codeFiles, textOf) {
   const imports = [];
   for (const path of codeFiles.filter(file => !TEST_OR_FIXTURE_PATH.test(file))) {
     const owner = ownerOf(path, packages);
     if (!owner) continue;
-    for (const statement of moduleStatementsOf(await textOf(path))) {
+    for (const statement of moduleStatementsOf(scriptTextOf(path, await textOf(path)))) {
       const target = importedPackageOf(statement.specifier, path, packages);
       if (statement.typeOnly || !target || target === owner) continue;
       const { names, wholeModule } = importedNamesOf(statement.clause);
@@ -644,13 +663,14 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   // Every citation has resolved; now no included code file may stay unexplained.
   requireCodeCoverage(manifest, indexedSources, await verifiedInlinePathsOf(manifest, indexedSources, projectRoot, async source => (await linesOf(source)).length));
-  // A page's cited sources (its source list, diagram sources and inline links that name an indexed source, all read above) as quotable text, read once per file.
+  // A page's cited sources (its source list, diagram sources and inline links that name an indexed source at a line inside it, all read above) as quotable text, read once per file.
   const quotableTexts = new Map();
   const quotableTextOf = path => {
     if (!quotableTexts.has(path)) quotableTexts.set(path, quotableSourceTextOf(sourceLines.get(path) ?? []));
     return quotableTexts.get(path);
   };
-  const inlinePathsOf = page => inlineSourceLinksOf(page.contentHtml).filter(link => namesIndexedSource(link, indexedSources.get(link.path), projectRoot)).map(link => link.path);
+  // An inline link counts for its page only as the coverage rule counts it (verifiedInlinePathsOf): a line past the end of the file cites nothing.
+  const inlinePathsOf = page => inlineSourceLinksOf(page.contentHtml).filter(link => namesIndexedSource(link, indexedSources.get(link.path), projectRoot) && Number(link.line) <= (sourceLines.get(link.path) ?? []).length).map(link => link.path);
   const citedPathsOfPage = page => new Set([...[...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path), ...inlinePathsOf(page)]);
   const citedTextsOf = page => [...citedPathsOfPage(page)].map(quotableTextOf);
   const textOf = async path => (await linesOf(indexedSources.get(path))).join('\n');

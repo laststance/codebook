@@ -6,8 +6,8 @@ Cycle 0118 ([Issue #304](https://github.com/laststance/codebook/issues/304)), a 
 
 ### Changed
 - **Package pages say what they import.** In a workspace whose packages each have a named `package.json` among the included sources, a package's own pages (pages whose listed sources lie mostly in that package) must name, in one paragraph, list item or table cell, each other workspace package its code imports and a function or schema a file the page cites imports from it. `--render-only` and publishing refuse a Wiki that leaves this out, naming the package, what it imports and its pages.
-  - An import counts when it names the other package or a relative path into its folder. A type-only import, a constant written in capitals, an import made only by tests, mocks or fixtures, and a file the Wiki lists as a coverage exception owe no sentence.
-  - For a default or `* as` import, naming the package is enough. An import line pasted into a code block does not count as an explanation.
+  - An import counts when it names the other package or a relative path into its folder, whether a static `import`, a `require()` call or an awaited dynamic `import()` makes it; in a Vue or Svelte component, only its `<script>` elements are read. A type-only import, a constant written in capitals, an import made only by tests, mocks or fixtures, and a file the Wiki lists as a coverage exception owe no sentence.
+  - For a default or `* as` import, or a module loaded whole by `require()` or an awaited `import()`, naming the package is enough. An import line pasted into a code block does not count as an explanation.
 - **The bundled skill is 1.0.99.**
   - Step 4 asks the editor AI to write that sentence on the importing package's own page.
   - On an update, the skill corrects every page that describes a changed rule, the overview and architecture pages included, whether or not the page cites the changed file, and cites the changed lines themselves beside each corrected statement.
