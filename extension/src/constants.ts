@@ -1289,9 +1289,18 @@ export const WIKI_CITATION_LIMIT = 40
 /** Number of citations the Wiki prompt asks the model to aim for (the lines that support the answer most directly). */
 export const WIKI_PROMPT_CITATION_TARGET = 12
 export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304
+/** The most code identifiers a Wiki route reply may name for choosing excerpt lines; more are ignored. */
+export const WIKI_ROUTE_TERM_LIMIT = 8
+/** The longest code identifier, in characters, a Wiki route reply may name; a longer one is ignored. */
+export const WIKI_ROUTE_TERM_MAX_CHARS = 64
+/** The characters of a Wiki page's first paragraph its route guide entry keeps, enough to say what the page explains. */
+export const WIKI_PAGE_GUIDE_SUMMARY_CHARS = 240
+/** The sources each page offers in a Wiki route request at first; the number doubles while every page still fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}. */
+export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
-export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000
+/** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
+export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000

@@ -3039,7 +3039,7 @@ export function activate(
           const openedReader = await startDeepWikiReader(
             outputDirectory,
             projectRoot,
-            async (question, sources, signal) => {
+            async (question, sources, signal, pageGuide) => {
               if ((await realpath(requireWorkspace())) !== projectRoot)
                 throw new Error(
                   'The opened repository changed. Reopen its Wiki.',
@@ -3067,6 +3067,7 @@ export function activate(
                       sources,
                       question,
                       'cursor',
+                      pageGuide,
                     )
                   } finally {
                     cancellation.dispose()
@@ -3118,6 +3119,7 @@ export function activate(
                   question,
                   wikiHost,
                   cancellation.token,
+                  pageGuide,
                 )
               } finally {
                 cancellation.dispose()

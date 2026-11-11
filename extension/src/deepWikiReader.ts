@@ -66,6 +66,7 @@ import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { takeWikiPagePlace } from './utils/takeWikiPagePlace'
+import { wikiPageGuideOf, type WikiPageGuide } from './utils/wikiPageGuideOf'
 import {
   wikiPageRefusalHtml,
   type WikiPageRefusalReason,
@@ -87,6 +88,7 @@ type AnswerQuestion = (
   question: string,
   sources: WikiIncludedSource[],
   signal: AbortSignal,
+  pageGuide: WikiPageGuide[],
 ) => Promise<WikiQuestionResult>
 
 const qaClient = `(function () {
@@ -176,7 +178,7 @@ const SERVED_PAGE_FETCH_DIRECTIVES =
 /** The policy of every page the reader serves, a refusal page included: a script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries. Everything else the page fetches, frames or submits stays on this origin ({@link SERVED_PAGE_FETCH_DIRECTIVES}). */
 const SERVED_PAGE_POLICY = `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`
 
-/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), and only when there is none at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When the Wiki folder or a folder on its path in the project is a link, a file, or a folder whose real path leaves the project, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
+/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), and only when there is none at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist, the included sources and the guide of its pages that a routed question lists ({@link wikiPageGuideOf}). @throws When the Wiki folder or a folder on its path in the project is a link, a file, or a folder whose real path leaves the project, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
   projectRoot: string,
@@ -185,6 +187,7 @@ export async function readDeepWikiManifest(
   sources: WikiIncludedSource[]
   revision?: string
   excludedPaths: string[]
+  pageGuide: WikiPageGuide[]
 }> {
   await assertNoLinkOnWikiPath(outputDirectory, projectRoot)
   // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
@@ -269,7 +272,13 @@ export async function readDeepWikiManifest(
           (path: unknown): path is string => typeof path === 'string',
         )
       : []
-  return { files: new Set(paths), sources, revision, excludedPaths }
+  return {
+    files: new Set(paths),
+    sources,
+    revision,
+    excludedPaths,
+    pageGuide: wikiPageGuideOf(pages),
+  }
 }
 
 /** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for each forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
@@ -535,8 +544,8 @@ export async function startDeepWikiReader(
       sendJson(response, 400, { error: 'Enter a shorter Wiki question.' })
       return
     }
-    // An agent may publish a new owned directory while this reader stays open: the question is answered from the sources the manifest names now.
-    const { sources } = await readManifestShared()
+    // An agent may publish a new owned directory while this reader stays open: the question is answered from the sources and pages the manifest names now.
+    const { sources, pageGuide } = await readManifestShared()
     // A client that went while the body or the manifest was read is closed already, and no model is asked for it; one that goes later stops its question when its answer closes. Both are looked at in one step, so no close falls between them.
     if (response.destroyed) return
     const controller = new AbortController()
@@ -547,7 +556,7 @@ export async function startDeepWikiReader(
       sendJson(
         response,
         200,
-        await answerQuestion(question, sources, controller.signal),
+        await answerQuestion(question, sources, controller.signal, pageGuide),
       )
     } catch (error) {
       if (!response.writableEnded)

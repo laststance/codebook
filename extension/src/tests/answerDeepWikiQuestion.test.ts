@@ -919,3 +919,171 @@ test('Wiki prompt asks the model to cite at most 12 directly supporting lines', 
     /only the lines that support the answer most directly \(at most 12\)/,
   )
 })
+
+// Value: protects=reader questions on a large repository whose words match no path, such as a Japanese question about English code: the route request lists the Wiki's own pages with their sources, so an implementation file that a path-ordered candidate list leaves out still reaches the model, and the reply's identifiers choose its answering lines past the first 80; fails_when=the route request lists candidates in path order and ends before the implementation (Cycle 0119 F1: TanStack/query's core was source 1,994 of 2,483 and the list held 298), or the excerpt keeps only a long file's first lines; why_new=Cycle 0119 (H1 E2 step 6, F1); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the right page
+test('a question whose words match no source routes through the Wiki pages to an implementation file a path-ordered list leaves out', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-route-'))
+  const root = await realpath(directory)
+  const filler = `export const setting = "${'x'.repeat(380)}";\n`
+  const sources = await Promise.all(
+    Array.from({ length: 600 }, async (_, index) => {
+      const path = `module-${String(index).padStart(3, '0')}.ts`
+      await writeFile(join(root, path), filler)
+      return {
+        path,
+        sha256: createHash('sha256').update(filler).digest('hex'),
+      }
+    }),
+  )
+  const queryLines = Array.from(
+    { length: 200 },
+    (_, index) => `// step ${index + 1}`,
+  )
+  queryLines[149] =
+    "    if (this.state.fetchStatus !== 'idle') return this.retryer.promise"
+  const query = `${queryLines.join('\n')}\n`
+  await mkdir(join(root, 'packages/core/src'), { recursive: true })
+  await writeFile(join(root, 'packages/core/src/query.ts'), query)
+  sources.push({
+    path: 'packages/core/src/query.ts',
+    sha256: createHash('sha256').update(query).digest('hex'),
+  })
+  const pageGuide = [
+    {
+      title: 'Query cache',
+      summary: 'How a query fetches and reuses a request already in flight.',
+      sources: ['packages/core/src/query.ts'],
+    },
+    {
+      title: 'Settings',
+      summary: 'Constant settings.',
+      sources: ['module-000.ts', 'module-001.ts'],
+    },
+  ]
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: ['packages/core/src/query.ts'], terms: ['fetchStatus'] }
+        : {
+            answer: 'A fetch already in flight is reused.',
+            citations: [{ id: 'S1', line: 150 }],
+          },
+    )
+  }
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      '同じクエリを2回取得するとどうなりますか？',
+      'cursor',
+      pageGuide,
+    )
+
+    // Assert
+    assert.match(prompts[0]!, /\nPages: \[\{"title":"Query cache"/)
+    assert.match(prompts[0]!, /"sources":\["packages\/core\/src\/query\.ts"\]/)
+    assert.match(
+      prompts[1]!,
+      /150:     if \(this\.state\.fetchStatus !== 'idle'\)/,
+    )
+    assert.equal(answer.citations[0]?.path, 'packages/core/src/query.ts')
+    assert.equal(answer.citations[0]?.line, 150)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
+// Value: protects=the excerpt of a routed long file when the question's own words match none of its lines: the identifiers the route reply names choose the lines, and a reply's entries that are no identifier are ignored; fails_when=the excerpt keeps only the file's first 80 lines, so the answer cannot cite the line that answers the question, or a non-identifier entry is used as a search term; why_new=Cycle 0119 (F1: a Japanese question's excerpts held only the first lines of each file); seam=a stub editor model; no_claim=that a real model names the right identifiers
+test('the identifiers a route reply names choose the answering lines of a long routed file', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-route-terms-'))
+  const root = await realpath(directory)
+  const sources = await Promise.all(
+    [
+      'alpha.ts',
+      'beta.ts',
+      'gamma.ts',
+      'delta.ts',
+      'epsilon.ts',
+      'zeta.ts',
+    ].map(async (path) => {
+      const content = 'export const item = 1;\n'
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  const queryLines = Array.from(
+    { length: 200 },
+    (_, index) => `// step ${index + 1}`,
+  )
+  queryLines[149] = '  const cancelRefetch = options.cancelRefetch ?? true'
+  const query = `${queryLines.join('\n')}\n`
+  await writeFile(join(root, 'query.ts'), query)
+  sources.push({
+    path: 'query.ts',
+    sha256: createHash('sha256').update(query).digest('hex'),
+  })
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const model = {
+    sendRequest: async (messages: { text: string }[]) => {
+      prompts.push(messages[0]!.text)
+      const result =
+        prompts.length === 1
+          ? {
+              paths: ['query.ts'],
+              terms: ['step 1', '<b>', 'cancelRefetch'],
+            }
+          : {
+              answer: 'A new fetch cancels the running one by default.',
+              citations: [{ id: 'S1', line: 150 }],
+            }
+      return {
+        text: (async function* () {
+          yield JSON.stringify(result)
+        })(),
+      }
+    },
+  }
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestion(
+      model as never,
+      root,
+      sources,
+      '再取得中にもう一度取得すると、前の取得はどうなりますか？',
+      'vscode',
+    )
+
+    // Assert
+    assert.match(prompts[1]!, /150:   const cancelRefetch/)
+    assert.doesNotMatch(prompts[1]!, /"1: \/\/ step 1\\n/)
+    assert.equal(answer.citations[0]?.path, 'query.ts')
+    assert.equal(answer.citations[0]?.line, 150)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})

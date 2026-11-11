@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { WIKI_CURSOR_REQUEST_TIMEOUT_MS } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   parseCursorWikiCliResult,
@@ -300,4 +301,17 @@ test('a stalled Cursor Agent request times out and leaves no Wiki workspace', as
     else process.env.HOME = previousHome
     await removeTestFolder(fakeHome)
   }
+})
+
+// Value: protects=a Cursor reader question on a large Wiki gets its answer: Cycle 0119 measured the route request of a question on TanStack/query's Wiki at 148.5 s with Grok 4.6 High, and each Cursor Agent request may run 300 s, twice that; fails_when=the per-request bound goes back to 120 s or below the measured time, so the reader shows "Cursor Agent timed out" for a request that would have answered (Cycle 0119 F1); why_new=Cycle 0119 (H1 E2 step 6, F1); seam=none (the shipped constant the request's timer uses); no_claim=that 300 s suffices for every repository, model or machine
+test('a Cursor Agent Wiki request may run 300 seconds, twice the route request measured on the largest required repository', () => {
+  // Arrange
+  const measuredRouteRequestMs = 148_500
+
+  // Act
+  const requestBoundMs = WIKI_CURSOR_REQUEST_TIMEOUT_MS
+
+  // Assert
+  assert.equal(requestBoundMs, 300_000)
+  assert.ok(requestBoundMs >= 2 * measuredRouteRequestMs)
 })

@@ -410,6 +410,104 @@ test('a failed editor-model answer reaches the browser reader as its message alo
   }
 })
 
+// Value: protects=a reader question on a large Wiki can route through the Wiki's own pages: the reader hands the answer each published page's title, the start of its first paragraph and the sources its list and its diagrams cite; fails_when=the answer gets no page guide, or a guide without a page's diagram sources (Cycle 0119 F1: a Cursor question on TanStack/query's Wiki routed through raw paths in path order and never reached the core); why_new=Cycle 0119 (H1 E2 step 6, F1); seam=the reader's real api/ask endpoint with a recording answer function; no_claim=how the answer uses the guide (answerDeepWikiQuestion's tests) or that a real model picks the right page
+test('a reader question hands the answer the guide of the published Wiki pages', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-reader-page-guide-'),
+  )
+  const projectRoot = await realpath(projectDirectory)
+  const output = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(join(output, 'pages'), { recursive: true })
+  await writeFile(
+    join(output, 'index.html'),
+    '<!doctype html><body><form id="qa-form"><textarea></textarea><div class="qa-answer"></div></form></body>',
+  )
+  await writeFile(
+    join(output, 'pages/query.html'),
+    '<!doctype html><body>Query cache</body>',
+  )
+  await writeFile(
+    join(output, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [
+        {
+          path: 'pages/query.html',
+          title: 'Query cache',
+          contentHtml:
+            '<h2>Flow</h2><p>A query fetches once and shares the request.</p>',
+          sources: [{ path: 'src/query.ts', line: 12 }],
+          diagrams: [
+            {
+              nodes: [
+                {
+                  id: 'observer',
+                  sources: [{ path: 'src/observer.ts', line: 4 }],
+                },
+              ],
+              edges: [],
+            },
+          ],
+        },
+      ],
+      assets: [],
+      includedSources: [
+        { path: 'src/query.ts', sha256: 'a'.repeat(64) },
+        { path: 'src/observer.ts', sha256: 'b'.repeat(64) },
+      ],
+    }),
+  )
+  const guides: unknown[] = []
+  const reader = await startDeepWikiReader(
+    output,
+    projectRoot,
+    async (_question, _sources, _signal, pageGuide) => {
+      guides.push(pageGuide)
+      return {
+        answer: 'It shares the request.',
+        citations: [
+          {
+            path: 'src/query.ts',
+            line: 12,
+            uri: 'vscode://laststance.codebook/source',
+          },
+        ],
+        sourceChanged: false,
+      }
+    },
+  )
+  try {
+    // Act
+    const response = await fetch(new URL('api/ask', reader.url), {
+      method: 'POST',
+      headers: {
+        Origin: new URL(reader.url).origin,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        question: 'How many requests does a query send?',
+      }),
+    })
+
+    // Assert
+    assert.equal(response.status, 200)
+    assert.deepEqual(guides, [
+      [
+        {
+          title: 'Query cache',
+          summary: 'A query fetches once and shares the request.',
+          sources: ['src/query.ts', 'src/observer.ts'],
+        },
+      ],
+    ])
+  } finally {
+    await reader.close()
+    await removeTestFolder(projectDirectory)
+  }
+})
+
 // Value: protects=a learner whose browser reader hits an unexpected failure (a manifest replaced by an incomplete one) sees the failure's message alone, so the page shows one Error prefix; fails_when=the reader's 500 answer carries `String(error)` ("Error: ...") instead of the message; why_new=C113 review round; seam=startDeepWikiReader over a Wiki whose manifest is rewritten after start, then a request for an asset that reads the manifest; no_claim=which failures reach this route
 test('an unexpected failure of a reader request answers 500 with its message alone, without an Error prefix', async () => {
   // Arrange
