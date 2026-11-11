@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.120.0] - 2026-11-11 (development candidate)
+
+A contributor tooling release ([Issue #301](https://github.com/laststance/codebook/issues/301)): the extension behaves as 0.2.119.0 for learners (no feature, no fix of product behavior). One new repository command moves old native-trial evidence out of the checkout's ignored `artifacts/` folder into private GitHub Releases, so the evidence stays reachable while the disk stops filling.
+
+**Repository command for contributors** (not part of the VSIX; `--help` lists its prerequisites, exit codes and error codes):
+
+- `node extension/scripts/rotate-artifacts.mjs --current <N>` prints the rotation plan for merged cycle `N` and changes nothing. It keeps that cycle and the two before it, the current HEAD's gate logs, the 10 newest QA builds and `packages/`.
+- `--apply` archives every older cycle folder, older QA build (with its review notes) and loose entry older than 30 days as private release assets of `ryota-murakami/codebook-artifacts`. Each archive has a `files.json` with every file's SHA-256, and gate logs of other heads are deleted. A local copy is deleted only after its assets are downloaded again, extracted and matched file by file, and after a last check that nothing changed. A folder with a link, a file written in the last 10 minutes or a name that cannot be a tag is skipped. A failed entry stays, and a rerun resumes.
+- `--restore <folder>` brings an archived folder back, byte for byte as its `files.json` lists it, and refuses unsafe archive members. `--init` creates the private archive repository.
+
+**Compatibility.** MCP API, skill (1.0.97), saved studies, histories and LLM Wikis are unchanged. Nothing in the VSIX changed apart from its version.
+
 ## [0.2.119.0] - 2026-11-11 (development candidate)
 
 Cycle 0117 ([Issue #300](https://github.com/laststance/codebook/issues/300)), a bug-fix cycle. **The LLM Wiki publisher's command line refuses to publish until the editor AI names the digest of the chapter tree it was shown, and the bundled skill and Codebook's own Wiki requests keep the editor AI's own instructions out of the Wiki.** On laststance/nsx (a Vite web UI, an Express server and a WXT Chrome extension, 298 code files), VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent (Grok 4.6 High) each published a Wiki whose sections open at a page for the whole unit, with every part of that unit under it, in generation and after an update. Neither Wiki names a testing, naming or code style that the repository does not use.
