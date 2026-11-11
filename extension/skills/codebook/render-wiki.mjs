@@ -223,8 +223,10 @@ function requireValidException(entry, seen, codeFiles) {
   seen.add(entry.path);
   if (!codeFiles.some(path => isExceptionFor(entry, path))) throw new Error(`The coverage exception for ${entry.path} matches no included code file; remove it.`);
 }
-/** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link wikiDepthShortfallsOf}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
+/** Lists the included sources that count as application code, by {@link CODE_FILE_EXTENSIONS}. Called by {@link requireCodeCoverage} and {@link explainedCodeFilesOf}. @example codeFilePathsOf(new Map([['a.ts', {}], ['b.json', {}]])) // => ['a.ts'] */
 const codeFilePathsOf = indexedSources => [...indexedSources.keys()].filter(path => CODE_FILE_EXTENSIONS.has(extname(path).toLowerCase()));
+/** The explained code files of a Wiki: included code files ({@link codeFilePathsOf}) that no entry of the manifest's `coverageExceptions` covers. Called by {@link wikiDepthShortfallsOf} and {@link workspaceShortfallsOf}, so a file the Wiki explicitly leaves unexplained owes neither depth nor a sentence about its imports. @example explainedCodeFilesOf({ coverageExceptions: [{ path: 'gen/', reason: 'generated' }] }, new Map([['gen/a.ts', {}], ['b.ts', {}]])) // => ['b.ts'] */
+const explainedCodeFilesOf = (manifest, indexedSources) => codeFilePathsOf(indexedSources).filter(path => !(manifest.coverageExceptions ?? []).some(entry => isExceptionFor(entry, path)));
 /** The tags of inline elements, which a reader sees joined to the text beside them: `<code>QueryCache</code>.` reads `QueryCache.`. A tag ends at the first `>` outside its quoted attribute values. */
 const INLINE_TAG = /<\/?(?:a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time|u|var)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 /** Reads a page's article as plain text: comments removed, inline tags ({@link INLINE_TAG}) removed with nothing in their place and other tags replaced by a space (a tag ends at the first `>` outside its quoted attribute values, as {@link validatePages} guarantees every quotation mark is closed), the common entities and numeric character references decoded (each to one character), whitespace runs collapsed. Called by {@link articleSentencesOf}. @example articleTextOf('<p>a &amp; <code>b</code>.</p>') // => 'a & b.' */
@@ -325,25 +327,33 @@ function depthShortfallsOf(pages, explainedCount, citedTextsOf) {
  * @param citedTextsOf - Answers a page's cited sources as quotable text, for the copied-text rule.
  * @returns One sentence for each failed rule, naming the measured value, the required value and what to add; empty for a deep enough Wiki or a small repository. @example wikiDepthShortfallsOf(manifest, indexedSources, () => []) // => [] */
 function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf) {
-  const exceptions = manifest.coverageExceptions ?? [];
-  const explained = codeFilePathsOf(indexedSources).filter(path => !exceptions.some(entry => isExceptionFor(entry, path)));
+  const explained = explainedCodeFilesOf(manifest, indexedSources);
   // A small repository is exempt from the depth rules.
   if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return [];
   return depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
 }
 /** How many imported names, and how many of a package's pages, one sentence of {@link workspaceShortfallOf} names. */
 const WORKSPACE_MAX_NAMED = 3;
-/** A static `import` or `export … from` statement of JavaScript or TypeScript: group 1 is `type ` for a type-only statement, group 2 the clause (default name, `{ … }` names, `* as` name), group 3 the module specifier. The clause holds only names, spaces, commas, braces and `*`, so a declaration (`export function f() {…}`) never reaches a later `from`; a side-effect import (`import 'x'`) and a dynamic `import()` have no clause and do not match. */
-const MODULE_STATEMENT = /\b(?:import|export)\s+(type\s+)?([\w$\s,{}*]+?)\s+from\s+['"]([^'"\n]+)['"]/g;
+/** A string literal (group 1, kept) or a comment (blanked) of JavaScript or TypeScript text, so {@link moduleTextOf} drops comments without reading into strings: a commented-out import is no import, and a comment inside an import's braces hides none of its names. An unclosed block comment runs to the end of the text, so no match scans the rest more than once. */
+const COMMENT_OR_STRING = /("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g;
+/** A code file's text as {@link MODULE_STATEMENT} and {@link REQUIRE_STATEMENT} read it: comments removed ({@link COMMENT_OR_STRING}), each string literal replaced by a numbered token `'N'` whose text `literals[N]` keeps, and every whitespace run one space. A statement written across lines reads as one line, a long run of spaces costs one step, and import text inside a string (a code sample, a generator's template) is no statement. Called by {@link moduleStatementsOf}. @example moduleTextOf("import {\n  a, // note\n  b\n} from 'x'") // => { code: "import { a, b } from '0'", literals: ['x'] } */
+function moduleTextOf(text) {
+  const literals = [];
+  const code = text.replace(COMMENT_OR_STRING, (comment, literal) => (literal === undefined ? ' ' : `'${literals.push(literal.slice(1, -1)) - 1}'`)).replace(/\s+/g, ' ');
+  return { code, literals };
+}
+/** A static `import` or `export … from` statement in {@link moduleTextOf} text: group 1 is `type ` for a type-only statement, group 2 the clause (default name, `{ … }` names, `* as` name), group 3 the string token of the module specifier. The clause holds only names, spaces, commas, braces and `*`, never another `import` or `export` keyword, and at most 2,000 characters: a declaration (`export function f() {…}`) or an `export { … }` without `from` never reaches a later statement's `from`, and a clause that never meets `from` stops after a bounded number of steps. A side-effect import (`import 'x'`) and a dynamic `import()` have no clause and do not match. */
+const MODULE_STATEMENT = /\b(?:import|export) ?(type )?((?:(?!\b(?:import|export)\b)[\w$ ,{}*]){1,2000}?) ?\bfrom ?'(\d+)'/g;
+/** A CommonJS `require` of a module bound to a name or destructured in {@link moduleTextOf} text: group 1 the binding (`shared`, or `{ a, b: c }`), group 2 the string token of the module specifier. */
+const REQUIRE_STATEMENT = /\b(?:const|let|var) (\{[\w$ ,:]{0,2000}\}|[\w$]+) ?= ?require ?\( ?'(\d+)' ?\)/g;
 /** Whether an imported name can stand in an article as a function or schema a package uses: an identifier other than `default`, and not a constant written in capitals only (`DAY_ROWS_MAX`). Called by {@link importedNamesOf}. @example isUsableImportName('localDay') // => true @example isUsableImportName('REFUSAL') // => false */
 const isUsableImportName = name => /^[A-Za-z_$][\w$]*$/.test(name) && name !== 'default' && !/^[A-Z0-9_$]+$/.test(name);
-/** The names one statement's clause ({@link MODULE_STATEMENT}) brings in: each `{ … }` entry by its exported name (`a as b` gives `a`; an inline `type` entry gives nothing), a default import and a `* as` namespace by their local names, kept when {@link isUsableImportName}. A clause that swallowed an earlier `export { … }` without `from` is read from its last statement keyword. Called by {@link workspaceImportsOf}. @example importedNamesOf('Base, { localDay, type DayRow, dayBounds as bounds }') // => ['localDay', 'dayBounds', 'Base'] */
+/** What one statement's clause ({@link MODULE_STATEMENT}) brings in: `names`, each `{ … }` entry by its exported name (`a as b` gives `a`; an inline `type` entry gives nothing) kept when {@link isUsableImportName}, and `wholeModule`, true when the clause also has a default import or a `* as` namespace, whose local name is the importer's own choice. Called by {@link workspaceImportsOf}. @example importedNamesOf('Base, { localDay, type DayRow, dayBounds as bounds }') // => { names: ['localDay', 'dayBounds'], wholeModule: true } */
 function importedNamesOf(clause) {
-  const own = clause.split(/\b(?:import|export)\s+(?:type\s+)?/).at(-1);
-  const braced = /\{([^}]*)\}/.exec(own)?.[1] ?? '';
-  const named = braced.split(',').map(entry => entry.trim()).filter(entry => !entry.startsWith('type ')).map(entry => entry.split(/\s+as\s+/)[0]);
-  const bare = own.replace(/\{[^}]*\}/, '').replace(/\*\s+as\s+/, '').split(',').map(part => part.trim());
-  return [...named, ...bare].filter(isUsableImportName);
+  const braced = /\{([^}]*)\}/.exec(clause)?.[1] ?? '';
+  const names = braced.split(',').map(entry => entry.trim()).filter(entry => !entry.startsWith('type ')).map(entry => entry.split(/ as /)[0]).filter(isUsableImportName);
+  const wholeModule = clause.replace(/\{[^}]*\}/, '').split(',').some(part => part.trim());
+  return { names, wholeModule };
 }
 /** The `name` of a `package.json` text, or undefined for unreadable JSON or a missing or empty name. Called by {@link workspacePackagesOf}. @example packageNameOf('{"name":"@acme/shared"}') // => '@acme/shared' */
 function packageNameOf(text) {
@@ -367,38 +377,55 @@ async function workspacePackagesOf(indexedSources, textOf) {
 const ownerOf = (path, packages) => packages.filter(candidate => path.startsWith(candidate.folder)).sort((first, second) => second.folder.length - first.folder.length)[0];
 /** The workspace package a module specifier names: its package name alone or followed by a subpath (`@acme/shared/time`). Called by {@link workspaceImportsOf}. @example packageOfSpecifier('@acme/shared/time', packages) // => { name: '@acme/shared', folder: 'packages/shared/' } */
 const packageOfSpecifier = (specifier, packages) => packages.find(candidate => specifier === candidate.name || specifier.startsWith(`${candidate.name}/`));
-/** Every value a workspace package's code imports from another workspace package: one `{ path, owner, target, name }` per imported name ({@link importedNamesOf}) of each static statement ({@link MODULE_STATEMENT}) in an included code file. A type-only statement imports nothing that runs, and a package's own name points back into it, so neither counts. Called by {@link workspaceShortfallsOf}. @example await workspaceImportsOf(packages, ['apps/app/src/day.ts'], textOf) // => [{ path: 'apps/app/src/day.ts', owner: app, target: shared, name: 'localDay' }] */
+/** The import statements of one code file, ES modules ({@link MODULE_STATEMENT}) and CommonJS requires ({@link REQUIRE_STATEMENT}): `{ typeOnly, clause, specifier }`, a require's `{ a: b }` rename read as `a as b`. Called by {@link workspaceImportsOf}. @example moduleStatementsOf("const { localDay } = require('@acme/shared')") // => [{ typeOnly: false, clause: '{ localDay }', specifier: '@acme/shared' }] */
+function moduleStatementsOf(text) {
+  const { code, literals } = moduleTextOf(text);
+  const modules = [...code.matchAll(MODULE_STATEMENT)].map(match => ({ typeOnly: Boolean(match[1]), clause: match[2], specifier: literals[match[3]] }));
+  const requires = [...code.matchAll(REQUIRE_STATEMENT)].map(match => ({ typeOnly: false, clause: match[1].replace(/ ?: ?/g, ' as '), specifier: literals[match[2]] }));
+  return [...modules, ...requires];
+}
+/** The workspace package a statement of one file imports from: the package its specifier names ({@link packageOfSpecifier}), or for a relative specifier (`../../packages/shared/src/day`) the package that holds the path it resolves to ({@link ownerOf}). Called by {@link workspaceImportsOf}. @example importedPackageOf('../../packages/shared/src/day', 'apps/app/src/today.ts', packages) // => { name: '@acme/shared', folder: 'packages/shared/' } */
+const importedPackageOf = (specifier, path, packages) => (specifier.startsWith('.') ? ownerOf(posix.join(posix.dirname(path), specifier), packages) : packageOfSpecifier(specifier, packages));
+/** A test, a mock or a fixture: a file below a `__tests__`, `__mocks__`, `__fixtures__`, `__testfixtures__`, `fixture(s)`, `test(s)` or `e2e` folder, or named `*.test.*`, `*.spec.*`, `*.test-d.*` or `*.bench.*`. Its imports say how a package is tested, not what its code uses, so {@link workspaceImportsOf} skips it. */
+const TEST_OR_FIXTURE_PATH = /(?:^|\/)(?:__tests__|__mocks__|__fixtures__|__testfixtures__|fixtures?|tests?|e2e)\/|\.(?:test|spec|test-d|bench)\.[cm]?[jt]sx?$/;
+/** Every value a workspace package's code imports from another workspace package, by name or by a relative path into its folder ({@link importedPackageOf}), read from each statement ({@link moduleStatementsOf}) of an explained code file: one `{ path, owner, target, name }` per imported name, and one with no `name` for a default or `* as` import of the whole module ({@link importedNamesOf}). A type-only statement imports nothing that runs, a package's own name points back into it, and tests and fixtures ({@link TEST_OR_FIXTURE_PATH}) are no part of what the package's code uses, so none of them counts. Called by {@link workspaceShortfallsOf}. @param codeFiles - The explained code files: included code files no coverage exception covers. @example await workspaceImportsOf(packages, ['apps/app/src/day.ts'], textOf) // => [{ path: 'apps/app/src/day.ts', owner: app, target: shared, name: 'localDay' }] */
 async function workspaceImportsOf(packages, codeFiles, textOf) {
   const imports = [];
-  for (const path of codeFiles) {
+  for (const path of codeFiles.filter(file => !TEST_OR_FIXTURE_PATH.test(file))) {
     const owner = ownerOf(path, packages);
     if (!owner) continue;
-    for (const match of (await textOf(path)).matchAll(MODULE_STATEMENT)) {
-      const target = packageOfSpecifier(match[3], packages);
-      if (match[1] || !target || target === owner) continue;
-      for (const name of importedNamesOf(match[2])) imports.push({ path, owner, target, name });
+    for (const statement of moduleStatementsOf(await textOf(path))) {
+      const target = importedPackageOf(statement.specifier, path, packages);
+      if (statement.typeOnly || !target || target === owner) continue;
+      const { names, wholeModule } = importedNamesOf(statement.clause);
+      imports.push(...names.map(name => ({ path, owner, target, name })), ...(wholeModule ? [{ path, owner, target }] : []));
     }
   }
   return imports;
 }
-/** Escapes a name for a regular expression. Called by {@link mentions}. @example escapedPattern('a.b') // => 'a\\.b' */
+/** Escapes a name for a regular expression. Called by {@link mentions} and {@link mentionsName}. @example escapedPattern('a.b') // => 'a\\.b' */
 const escapedPattern = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** Whether an article's text names a package, folder or identifier as a word of its own: no name character (`\w`, `$`, `@`, `-`, `.`, `/`) right before it, and no word character, `$` or `-` right after it, so `packages/shared` is named in `packages/shared/src` but not in `packages/shared-ui`. Called by {@link explainsImport}. @example mentions('localDay() folds a tap', 'localDay') // => true */
+/** Whether an article's text names a package or folder as a word of its own: no name character (`\w`, `$`, `@`, `-`, `.`, `/`) right before it, and no word character, `$` or `-` right after it, so `packages/shared` is named in `packages/shared/src` but not in `packages/shared-ui`. Called by {@link explainsImport}. @example mentions('It imports @acme/shared.', '@acme/shared') // => true */
 const mentions = (text, name) => new RegExp(`(?<![\\w$@./-])${escapedPattern(name)}(?![\\w$-])`).test(text);
+/** Whether an article's text names an imported identifier as a word of its own: no word character or `$` on either side, so a call written through its module (`shared.localDay()`) names `localDay` too. Called by {@link explainsImport}. @example mentionsName('It calls shared.localDay() first.', 'localDay') // => true */
+const mentionsName = (text, name) => new RegExp(`(?<![\\w$])${escapedPattern(name)}(?![\\w$])`).test(text);
 /** Whether a page is mostly about one workspace package: more than half of its `sources` entries lie in files that package owns ({@link ownerOf}). Called by {@link workspaceShortfallsOf}. @example isMostlyAbout({ sources: [{ path: 'apps/app/a.ts' }] }, app, packages) // => true */
 const isMostlyAbout = (page, owner, packages) => page.sources.filter(reference => ownerOf(reference.path, packages) === owner).length * 2 > page.sources.length;
-/** Whether a page says what its package uses from another one: its article names the target package (by name or folder) and a function or schema that a file the page cites imports from it. Called by {@link workspaceShortfallsOf}. @param used - The owner's imports from the target ({@link workspaceImportsOf}). @param citedPaths - The paths the page cites. @example explainsImport(page, shared, used, new Set(['apps/app/src/day.ts'])) // => true */
+/** A page's article split at its block ends ({@link BLOCK_END}) into the paragraphs, list items and table cells a reader sees, without code blocks: an import line pasted into a `<pre>` says nothing about what the code uses it for. Called by {@link explainsImport}. @example articleBlocksOf('<p>One. Two.</p><pre>import x</pre><li>Three</li>') // => ['One. Two.', 'Three'] */
+const articleBlocksOf = contentHtml => articleTextOf(contentHtml.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<pre\b[\s\S]*?<\/pre\s*>/gi, ' ').replace(BLOCK_END, ` ${BLOCK_END_MARK} `)).split(BLOCK_END_MARK).map(block => block.trim()).filter(Boolean);
+/** Whether a block of text names a workspace package, by its name or its folder. Called by {@link explainsImport}. @example namesPackage('It reads packages/shared.', shared) // => true */
+const namesPackage = (text, target) => mentions(text, target.name) || mentions(text, target.folder.slice(0, -1));
+/** Whether a page says what its package uses from another one: one paragraph, list item or table cell of its article ({@link articleBlocksOf}) names the target package (by name or folder) and a function or schema that a file the page cites imports from it, so the two names stand in one statement rather than in unrelated sentences; for a default or `* as` import of the whole module, naming the package is enough, since the local name is the importer's own. Called by {@link workspaceShortfallsOf}. @param used - The owner's imports from the target ({@link workspaceImportsOf}). @param citedPaths - The paths the page cites. @example explainsImport(page, shared, used, new Set(['apps/app/src/day.ts'])) // => true */
 function explainsImport(page, target, used, citedPaths) {
-  const text = articleTextOf(page.contentHtml);
-  if (!mentions(text, target.name) && !mentions(text, target.folder.slice(0, -1))) return false;
-  return used.some(entry => citedPaths.has(entry.path) && mentions(text, entry.name));
+  const cited = used.filter(entry => citedPaths.has(entry.path));
+  return articleBlocksOf(page.contentHtml).some(block => namesPackage(block, target) && cited.some(entry => entry.name === undefined || mentionsName(block, entry.name)));
 }
-/** The refusal sentence for one package whose pages never say what it uses from another workspace package, naming up to {@link WORKSPACE_MAX_NAMED} imported names and pages. Called by {@link workspaceShortfallsOf}. @example workspaceShortfallOf(app, shared, used, [appPage]) // => 'apps/app imports @acme/shared (localDay), but …' */
+/** The refusal sentence for one package whose pages never say what it uses from another workspace package, naming up to {@link WORKSPACE_MAX_NAMED} imported names and pages (no names when it imports only the whole module). Called by {@link workspaceShortfallsOf}. @example workspaceShortfallOf(app, shared, used, [appPage]) // => 'apps/app imports @acme/shared (localDay), but …' */
 function workspaceShortfallOf(owner, target, used, ownPages) {
   const ownerFolder = owner.folder.slice(0, -1), targetFolder = target.folder.slice(0, -1);
-  const names = [...new Set(used.map(entry => entry.name))].slice(0, WORKSPACE_MAX_NAMED).join(', ');
+  const names = [...new Set(used.map(entry => entry.name).filter(Boolean))].slice(0, WORKSPACE_MAX_NAMED).join(', ');
   const pages = ownPages.slice(0, WORKSPACE_MAX_NAMED).map(page => page.path).join(', ');
-  return `${ownerFolder} imports ${target.name} (${names}), but none of its pages (${pages}) names ${target.name} or ${targetFolder} together with a function or schema that a file the page cites imports from it: on one of those pages, say what ${ownerFolder} uses from ${target.name} and for what, naming that function or schema and citing a file that imports it.`;
+  return `${ownerFolder} imports ${target.name}${names ? ` (${names})` : ''}, but none of its pages (${pages}) names ${target.name} or ${targetFolder} together with a function or schema that a file the page cites imports from it: on one of those pages, say what ${ownerFolder} uses from ${target.name} and for what, naming that function or schema and citing a file that imports it.`;
 }
 /**
  * Measures how a Wiki of a workspace explains the packages' use of each other: for each workspace package ({@link workspacePackagesOf}) with a page mostly about it ({@link isMostlyAbout}) and each other package its code imports values from ({@link workspaceImportsOf}), one of those pages must name the imported package and a function or schema it uses from it ({@link explainsImport}).
@@ -412,7 +439,7 @@ function workspaceShortfallOf(owner, target, used, ownPages) {
 async function workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf) {
   const packages = await workspacePackagesOf(indexedSources, textOf);
   if (packages.length < 2) return [];
-  const imports = await workspaceImportsOf(packages, codeFilePathsOf(indexedSources), textOf);
+  const imports = await workspaceImportsOf(packages, explainedCodeFilesOf(manifest, indexedSources), textOf);
   const shortfalls = [];
   for (const owner of packages) {
     const ownPages = manifest.pages.filter(page => isMostlyAbout(page, owner, packages));
