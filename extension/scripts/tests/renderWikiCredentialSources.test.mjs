@@ -301,6 +301,24 @@ test('an indexed path that no page cites but that links to an environment file i
   })
 })
 
+// Value: protects=an update of a Wiki whose index still names a file deleted from the checkout: the credential check that resolves every indexed path skips a path that names no file instead of failing the render; fails_when=the missing index entry makes the renderer throw ENOENT; why_new=Cycle 0116 /ship pass 1 fix (every indexed path is resolved); seam=none (the real renderer); no_claim=how the Wiki's freshness shows the deleted file
+test('an indexed file that no longer exists in the checkout does not trip the credential check', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await manifestOf(root, { 'a.ts': CODE }, ['a.ts'])
+    manifest.includedSources.push({
+      path: 'docs/removed.md',
+      sha256: createHash('sha256').update('# Removed\n').digest('hex'),
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
 // Value: protects=the owner's secrets when an update moves an environment file to excludedPaths but a page's text still links to it: the link would publish its path and hash; fails_when=a page keeps an editor link to the excluded .env.test and the Wiki renders; why_new=Cycle 0116 /ship outside voice and Codex structured review, reproduced by QA probe 004; seam=none (the real renderer); no_claim=links to files with other names
 test('a page whose text links to an excluded environment file is refused, naming the page and the file', async () => {
   await inProject(async (root) => {
