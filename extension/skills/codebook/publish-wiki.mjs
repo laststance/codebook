@@ -903,7 +903,41 @@ async function restoreFinalizedFiles(finalized, stage) {
   return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, every file and folder of the candidate before the last check of the learner's files and the swap ({@link syncCandidate}; a failed sync keeps the journal), the folder of the Wiki again after it ({@link syncFolder}), and the learner's files in the prior Wiki are compared with their copies after it ({@link manualFilesChangedSince}; the answer names a file saved late as `manualFilesSavedAfterCheck`), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+/** The folder name {@link citedFolderCountsOf} gives a cited file at the repository root. */
+const ROOT_FOLDER = '(root)';
+/**
+ * The chapter tree a `--render-only` preview answers: one line per section, then one line per page indented under its `parent`, with the page's title, path and the top-level folders its `sources` cite ({@link citedFolderCountsOf}).
+ * Why: Cycle 0117 found editor agents that hung the parts of a unit under a page about one part, or a shared library under one of the units that import it; the printed tree lets the agent check its tree against the skill's step 5 before it publishes. The publisher judges nothing.
+ * Called by {@link publishWiki} for a `--render-only` run, after {@link renderWikiPages} validated every `parent`.
+ * @param manifest - The candidate's manifest, its pages already validated (parents exist, lie in the same section and form no cycle).
+ * @returns The lines, sections in the order their first page appears and pages in manifest order.
+ * @example chapterTreeOf({ pages: [{ path: 'app.html', title: 'App', section: 'Web', sources: [{ path: 'src/main.ts', line: 1 }] }] }) // => ['Section: Web', '  App (app.html): src 1']
+ */
+export function chapterTreeOf(manifest) {
+  const lines = [];
+  for (const section of new Set(manifest.pages.map(page => page.section))) {
+    lines.push(`Section: ${section}`);
+    appendChapterLines(manifest.pages.filter(page => page.section === section), undefined, 1, lines);
+  }
+  return lines;
+}
+/** Appends the pages whose `parent` is the given path (undefined for the section's top pages), each followed by its own children one level deeper. Called by {@link chapterTreeOf}. @example appendChapterLines(pages, undefined, 1, lines) */
+function appendChapterLines(sectionPages, parent, depth, lines) {
+  for (const page of sectionPages.filter(candidate => (candidate.parent ?? undefined) === parent)) {
+    lines.push(`${'  '.repeat(depth)}${page.title} (${page.path}): ${citedFolderCountsOf(page)}`);
+    appendChapterLines(sectionPages, page.path, depth + 1, lines);
+  }
+}
+/** How many distinct files a page's `sources` cite in each top-level folder, most first, a file at the root counting as {@link ROOT_FOLDER}. Called by {@link appendChapterLines}. @example citedFolderCountsOf({ sources: [{ path: 'lib/a.ts' }, { path: 'lib/b.ts' }, { path: 'src/c.ts' }] }) // => 'lib 2, src 1' */
+function citedFolderCountsOf(page) {
+  const counts = new Map();
+  for (const path of new Set((page.sources ?? []).map(source => source.path))) {
+    const folder = path.includes('/') ? path.slice(0, path.indexOf('/')) : ROOT_FOLDER;
+    counts.set(folder, (counts.get(folder) ?? 0) + 1);
+  }
+  return [...counts].sort(([first, firstCount], [second, secondCount]) => secondCount - firstCount || first.localeCompare(second)).map(([folder, count]) => `${folder} ${count}`).join(', ') || 'no cited sources';
+}
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview and answers their chapter tree ({@link chapterTreeOf}). Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, every file and folder of the candidate before the last check of the learner's files and the swap ({@link syncCandidate}; a failed sync keeps the journal), the folder of the Wiki again after it ({@link syncFolder}), and the learner's files in the prior Wiki are compared with their copies after it ({@link manualFilesChangedSince}; the answer names a file saved late as `manualFilesSavedAfterCheck`), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
 export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
   // The read of the owner the lock and the journal name (PowerShell and reg.exe on Windows, sysctl, ps and ioreg on macOS) starts now and runs beside the rendering.
   ownerHere(system);
@@ -926,7 +960,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     // The pages and the learner's files this publish wrote into the candidate, and the folders it made there: every refusal before the swap removes what is still its own ({@link removeWritten}), so no copy of a learner's file is left to refuse the next publish as a file outside the manifest.
     const written = [], made = [], writeHeld = heldWriterOf(requirePathHeld, isFolderWhereItWas, written, made);
     await writePagesHeld(rendered, stage, writeHeld, written, made);
-    if (renderOnly) return { stage, renderedPages: rendered.size };
+    // The preview answers the chapter tree so the editor AI can check it before publishing (skill step 6).
+    if (renderOnly) return { stage, renderedPages: rendered.size, chapterTree: chapterTreeOf(manifest) };
     const manifestText = await finalizedManifestTextOf(manifest, owned, stage);
     const { record, backup, finalizedReceiptText, preparedText } = await publishJournalOf(paths, prior, receipt, manifestText, bytes, receiptBytes, system, lock.id);
     const journalNow = publishJournalWriterOf(record, preparedText, journal, requirePathHeld);

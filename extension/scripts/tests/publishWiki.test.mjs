@@ -2147,6 +2147,40 @@ test('reader generation refuses a source edit rather than publishing an old cita
   }
 })
 
+// Value: protects=the editor AI's check of its chapter tree before publishing (skill 1.0.94 step 6): a --render-only preview answers the tree it would publish, with the top-level folders each page cites; fails_when=the preview answers no chapterTree, or one that leaves out the section or the page's folder count; why_new=Cycle 0117 (C117-E2-1, hypothesis B); seam=none (the real publisher on a prepared candidate); no_claim=that an editor AI reads the tree or fixes a wrong one, which only the native E1 and E2 runs show
+test('a render-only preview answers the chapter tree it would publish, with the folders each page cites', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-chapter-tree-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    stage = join(root, '.codebook/wiki.stage')
+  try {
+    await writeStage(
+      stage,
+      root,
+      '<h1>Candidate article</h1>',
+      undefined,
+      output,
+    )
+    // Act
+    const result = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: stage,
+      renderOnly: true,
+    })
+    // Assert
+    assert.deepEqual(result.chapterTree, [
+      'Section: Guide',
+      '  Overview (index.html): (root) 1',
+    ])
+    await assert.rejects(access(output))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('preview rendering produces the shared reader without changing published or manual files', async () => {
   // Arrange
   const root = await realpath(
