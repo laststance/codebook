@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.119.0] - 2026-11-11 (development candidate)
+
+Cycle 0117 ([Issue #300](https://github.com/laststance/codebook/issues/300)), a bug-fix cycle. **The LLM Wiki publisher refuses to publish until the editor AI has checked the Wiki's chapter tree, and the bundled skill and Codebook's own Wiki requests keep the editor AI's own instructions out of the Wiki.** On laststance/nsx (a Vite web UI, an Express server and a WXT Chrome extension, 298 code files), VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent (Grok 4.6 High) each published a Wiki whose sections open at a page for the whole unit, with every part of that unit under it, in generation and after an update. Neither Wiki names a testing, naming or code style that the repository does not use.
+
+### Changed
+- **Publishing waits for a checked chapter tree.** The publisher's preview (`--render-only`) answers the chapter tree: one line per page, under its parent, with the top-level folders the page cites. A publish from the command line needs `--checked-tree <digest>`, the digest of the tree the editor AI checked. Without it, or with the digest of another tree, publishing is refused. The refusal shows the tree, the rule and the digest to pass, and a tree changed after its check is refused again.
+- **The bundled skill is 1.0.97.**
+  - When one unit, such as a package or an app, is split into pages, the page about the whole unit holds all its parts as children, never a page about one part. Peer units, such as several packages or a shared library that several of them import, stay side by side.
+  - The editor AI checks the tree, fixes it (adding a full page for a missing whole unit), previews again, then publishes with the digest.
+  - It writes only about the repository. It writes no sentence about the Wiki itself or how it was made, names a convention of the project only from a project file the page cites, and uses no term from its own instructions or user rules, such as the name of a testing style, that no file of the project uses.
+  - In Cursor, an unedited copy that **Codebook: Set Up AI Chat** installed updates when a window reconnects its AI chat.
+- **Codebook's Wiki requests say the same.** The requests that **Generate LLM Wiki** and **Update LLM Wiki** send to the editor AI ask it to write only about the repository and never to describe its code or tests in the terms of its own instructions or user rules.
+
+**Fixed.** 0.2.118.0's known issue: VS Code's Copilot Chat no longer opens a section with a page about one part, such as the common layout, holding the section's other parts.
+
+**Compatibility.** No MCP API or study format change. The bundled skill is 1.0.97. A Wiki that an earlier version published stays readable. An editor AI that follows an older or edited copy of the skill meets the chapter tree refusal on its next publish.
+
 ## [0.2.118.0] - 2026-11-11 (development candidate)
 
 Cycle 0116 ([Issue #298](https://github.com/laststance/codebook/issues/298)), a feature cycle. **The LLM Wiki generator refuses a Wiki whose source index holds a file that can hold credentials, and the bundled skill keeps a shared library's page beside the code that uses it.** On laststance/nsx, one repository with a Vite web UI, an Express server and a WXT Chrome extension (298 code files), Cursor's agent (Grok 4.6 High) published a Wiki that indexed the repository's six tracked environment files. With this build, VS Code's Copilot Chat (GPT-6.1 Terra) and Cursor's agent each kept every such file out and published a Wiki of that repository with a chapter for each runtime. The Wiki was then read, answered a repository question with citations that opened in the editor, and was updated after a source edit.
