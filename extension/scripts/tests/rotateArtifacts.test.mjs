@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
+  appendFile,
   link,
   mkdir,
   mkdtemp,
@@ -101,6 +102,9 @@ function createFakeGh(options = {}) {
         ? JSON.stringify({ schemaVersion: 1, folders: {} })
         : null,
     indexVersion: 1,
+    // The object response of index.json carries no content, as for a file over 1 MB.
+    indexTooLarge: options.indexTooLarge ?? false,
+    rawReads: 0,
     failIndexWrite: options.failIndexWrite ?? false,
     putBodies: [],
     calls: [],
@@ -214,14 +218,35 @@ function createFakeGh(options = {}) {
       state.indexVersion += 1
       return result('{}')
     }
+    // The raw media type returns the file body itself, as GitHub does for files over 1 MB.
+    if (
+      first === 'api' &&
+      args.includes('Accept: application/vnd.github.raw+json') &&
+      args.at(-1).endsWith('/contents/index.json')
+    ) {
+      state.rawReads += 1
+      return state.index === null
+        ? failure('gh: Not Found (HTTP 404)')
+        : result(state.index)
+    }
     if (first === 'api' && second.endsWith('/contents/index.json'))
       return state.index === null
         ? failure('gh: Not Found (HTTP 404)')
         : result(
-            JSON.stringify({
-              sha: String(state.indexVersion),
-              content: Buffer.from(state.index).toString('base64'),
-            }),
+            JSON.stringify(
+              state.indexTooLarge
+                ? // GitHub answers the object media type of a file over 1 MB with an empty content.
+                  {
+                    sha: String(state.indexVersion),
+                    content: '',
+                    encoding: 'none',
+                  }
+                : {
+                    sha: String(state.indexVersion),
+                    content: Buffer.from(state.index).toString('base64'),
+                    encoding: 'base64',
+                  },
+            ),
           )
     if (first === 'api' && second.includes('/releases/tags/')) {
       const release = state.releases.get(second.split('/').at(-1))
@@ -2459,4 +2484,279 @@ test('refuses to restore qa-builds or an unsafe name and writes nothing under ar
   )
   assert.deepEqual(await snapshot(join(root, 'artifacts')), {})
   assert.deepEqual(fake.state.calls, [])
+})
+
+test('puts a folder back when a file already hashed is appended to during the final check', async (t) => {
+  // protects=a writer holding a file open from before the rename cannot make the tool delete bytes that were never archived; fails_when=the folder is deleted although a file grew after it was hashed; why_new=the content rescan alone saw only files in the order it hashed them; seam=afterFinalHash (new, runs between the final hash and the second stat pass); no_claim=a write after the second stat pass and before rm cannot be seen
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const fake = createFakeGh()
+  const asideFile = join(
+    root,
+    'artifacts',
+    '.rotate-tmp',
+    'run-1',
+    'aside',
+    'c1',
+    'c1',
+    'a.txt',
+  )
+  // Act
+  const { code, lines } = await rotate(
+    root,
+    fake,
+    ['--current', '4', '--apply'],
+    {
+      runId: 'run-1',
+      afterFinalHash: () => appendFile(asideFile, 'more'),
+    },
+  )
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(
+    lines.includes(
+      'FAILED c1 E_FOLDER_CHANGED: c1 changed just before deletion: a.txt changed while it was being checked (size, mtime, ctime or inode differs); it was put back (kept)',
+    ),
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c1')), {
+    'a.txt': sha256('onemore'),
+  })
+})
+
+test('puts QA build files back when a build file is appended to during the final check', async (t) => {
+  // protects=a QA build written through a descriptor opened before the rename is never deleted unarchived; fails_when=the build is deleted although it grew after it was hashed; why_new=the QA final check rehashed its files one after another without a second stat pass; seam=afterFinalHash (runs between the final hash and the second stat pass); no_claim=does not cover the json twin
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  const asideFile = join(
+    root,
+    'artifacts',
+    '.rotate-tmp',
+    'run-q',
+    'aside',
+    'qa-codebook-0000010',
+    'codebook-0000010.vsix',
+  )
+  // Act
+  const { code, lines } = await rotate(
+    root,
+    fake,
+    ['--current', '5', '--apply'],
+    {
+      runId: 'run-q',
+      afterFinalHash: async (stem) => {
+        if (stem === 'codebook-0000010') await appendFile(asideFile, 'more')
+      },
+    },
+  )
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(
+    lines.some((line) =>
+      line.startsWith(
+        'FAILED qa/codebook-0000010 E_FOLDER_CHANGED: codebook-0000010 changed just before deletion: codebook-0000010.vsix changed while it was being checked',
+      ),
+    ),
+  )
+  assert.equal(
+    await readFile(
+      join(root, 'artifacts', 'qa', 'codebook-0000010.vsix'),
+      'utf8',
+    ),
+    'vsix 10more',
+  )
+  assert.ok(
+    (await readdir(join(root, 'artifacts', 'qa'))).includes(
+      'codebook-0000010.json',
+    ),
+  )
+})
+
+test('keeps the live run work folder and refuses with E_RUN_ACTIVE when a second reclaimer meets the stale lock the first one already replaced', async (t) => {
+  // protects=two runs that read the same stale lock never both reclaim it, and the loser never deletes the winner's work folder; fails_when=the second run removes the live run's work folder or takes over its lock; why_new=the old reclaim emptied every work folder before it held the lock; seam=afterLockRead (new, runs after the stale lock was read) and isProcessAlive; no_claim=real parallel processes are not started
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const tmpDir = join(root, 'artifacts', '.rotate-tmp')
+  await putFile(root, '.rotate-tmp/dead-run/work/leftover.bin', 'junk')
+  await writeFile(
+    join(tmpDir, '.lock'),
+    JSON.stringify({
+      pid: 4242,
+      startedAt: '2026-11-10T00:00:00.000Z',
+      runId: 'dead-run',
+    }),
+  )
+  const isProcessAlive = (pid) => pid !== 4242
+  const argv = ['--current', '4', '--apply']
+  let releaseFirst
+  const secondFinished = new Promise((resolve) => {
+    releaseFirst = resolve
+  })
+  let firstHoldsLock
+  const firstIsWorking = new Promise((resolve) => {
+    firstHoldsLock = resolve
+  })
+  const firstFake = createFakeGh()
+  const originalHandle = firstFake.handle
+  // The first run stops inside its first release call, holding the lock and its work folder.
+  firstFake.handle = async (args, options) => {
+    if (args[0] === 'release' && args[1] === 'create') {
+      firstHoldsLock()
+      await secondFinished
+    }
+    return originalHandle(args, options)
+  }
+  let firstRun = Promise.resolve({ code: -1 })
+  // Act
+  const secondOutcome = await rotate(root, createFakeGh(), argv, {
+    runId: 'run-B',
+    isProcessAlive,
+    // The second run has read the stale lock; the first run now replaces it completely.
+    afterLockRead: async () => {
+      firstRun = rotate(root, firstFake, argv, {
+        runId: 'run-A',
+        isProcessAlive,
+      })
+      await Promise.race([firstIsWorking, firstRun])
+    },
+  }).then(
+    () => null,
+    (error) => error,
+  )
+  const lockAfterSecond = JSON.parse(
+    await readFile(join(tmpDir, '.lock'), 'utf8'),
+  )
+  const firstWork = await readdir(join(tmpDir, 'run-A', 'work'))
+  releaseFirst()
+  const first = await firstRun
+  // Assert
+  assert.equal(secondOutcome.code, 'E_RUN_ACTIVE')
+  assert.equal(lockAfterSecond.runId, 'run-A')
+  assert.deepEqual(firstWork, ['c1'])
+  assert.equal(first.code, 0)
+  assert.deepEqual(await readdir(join(tmpDir, 'dead-run')), [])
+})
+
+test('reads index.json through the raw media type when the object response carries no content', async (t) => {
+  // protects=the archive keeps working once index.json grows past GitHub's 1 MB object limit; fails_when=--apply fails or parses an empty body when encoding is none; why_new=every earlier test served the content inline; seam=none (the stand-in gh answers the raw Accept header); no_claim=no real file above 1 MB is fetched
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const fake = createFakeGh({ indexTooLarge: true })
+  // Act
+  const { code, lines } = await rotate(root, fake, [
+    '--current',
+    '4',
+    '--apply',
+  ])
+  // Assert
+  assert.equal(code, 0)
+  assert.equal(
+    summaryOf(lines),
+    'ROTATE: archived=1 deleted=0 kept=0 skipped=0 failed=0 freed_bytes=3',
+  )
+  assert.equal(fake.state.rawReads > 0, true)
+  assert.deepEqual(Object.keys(JSON.parse(fake.state.index).folders), ['c1'])
+  assert.deepEqual(await artifactsNames(root), ['ARCHIVED.json'])
+})
+
+test('puts the folder back and exits 3 when the final check itself throws', async (t) => {
+  // protects=an unreadable or vanished file during the final check never strands the folder in the temporary area; fails_when=the folder is missing from artifacts/ after a thrown EACCES; why_new=only a content or stat mismatch took the put-back path; seam=afterAside throws EACCES; no_claim=does not cover a put-back that fails too (next test)
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const fake = createFakeGh()
+  // Act
+  const { code, lines } = await rotate(
+    root,
+    fake,
+    ['--current', '4', '--apply'],
+    {
+      afterAside: async () => {
+        throw Object.assign(new Error('EACCES: permission denied'), {
+          code: 'EACCES',
+        })
+      },
+    },
+  )
+  // Assert
+  assert.equal(code, 3)
+  assert.ok(
+    lines.includes(
+      'FAILED c1 E_FOLDER_CHANGED: c1 changed just before deletion: the final check failed: EACCES: permission denied; it was put back (kept)',
+    ),
+  )
+  assert.deepEqual(await snapshot(join(root, 'artifacts', 'c1')), {
+    'a.txt': sha256('one'),
+  })
+  assert.equal((await artifactsNames(root)).includes('.rotate-tmp'), false)
+})
+
+test('names the renamed copy and the manual recovery, and not "kept", when a failed final check cannot be put back', async (t) => {
+  // protects=an entry stranded in the temporary area is reported as such, with the move that recovers it; fails_when=the FAILED line ends with (kept) or lacks the aside path and the recovery; why_new=the put-back failure line used to end with (kept); seam=afterAside throws EIO and recreates the folder path; no_claim=does not move the folder back for the owner
+  // Arrange
+  const root = await makeRoot(t)
+  await putFile(root, 'c1/a.txt', 'one')
+  const fake = createFakeGh()
+  const aside = join(
+    root,
+    'artifacts',
+    '.rotate-tmp',
+    'run-1',
+    'aside',
+    'c1',
+    'c1',
+  )
+  // Act
+  const { code, lines } = await rotate(
+    root,
+    fake,
+    ['--current', '4', '--apply'],
+    {
+      runId: 'run-1',
+      afterAside: async () => {
+        await mkdir(join(root, 'artifacts', 'c1'))
+        throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
+      },
+    },
+  )
+  // Assert
+  assert.equal(code, 3)
+  const failed = lines.find((line) => line.startsWith('FAILED c1 '))
+  assert.ok(
+    failed.endsWith(
+      `the renamed copy stays at ${aside}; to recover, move it back to artifacts/c1 by hand`,
+    ),
+  )
+  assert.deepEqual(await snapshot(aside), { 'a.txt': sha256('one') })
+})
+
+test('records qa-builds in artifacts/ARCHIVED.json before deleting archived QA builds', async (t) => {
+  // protects=an agent meeting a cited artifacts/qa path finds its tag in the local index; fails_when=a QA-only --apply deletes builds and leaves no qa-builds entry; why_new=only the folder path wrote ARCHIVED.json; seam=none; no_claim=does not show that a failed local write keeps the build files
+  // Arrange
+  const root = await makeRoot(t)
+  await putQaBuilds(root)
+  const fake = createFakeGh()
+  // Act
+  const { code } = await rotate(root, fake, ['--current', '5', '--apply'])
+  // Assert
+  assert.equal(code, 0)
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(join(root, 'artifacts', 'ARCHIVED.json'), 'utf8'),
+    ),
+    {
+      schemaVersion: 1,
+      folders: {
+        'qa-builds': {
+          tag: 'qa-builds',
+          repository: REPOSITORY,
+          archivedAt: '2026-11-11T12:00:00.000Z',
+        },
+      },
+    },
+  )
 })

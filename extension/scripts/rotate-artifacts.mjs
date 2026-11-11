@@ -920,12 +920,26 @@ function createGithub(context) {
       const result = await call(['api', indexPath])
       if (result.status === 0) {
         const body = JSON.parse(result.stdout)
-        return {
-          sha: body.sha,
-          index: JSON.parse(
-            Buffer.from(body.content, 'base64').toString('utf8'),
-          ),
+        let text
+        if (body.encoding === 'base64' && body.content !== '')
+          text = Buffer.from(body.content, 'base64').toString('utf8')
+        else {
+          // Files over 1 MB come back with an empty `content` and `encoding: "none"`; the raw media type returns the body itself (up to 100 MB).
+          const raw = await call([
+            'api',
+            '-H',
+            'Accept: application/vnd.github.raw+json',
+            indexPath,
+          ])
+          if (raw.status !== 0)
+            throw new CommandRefusal(
+              'E_GITHUB',
+              `reading index.json (raw) failed: ${firstLine(raw)}`,
+              { fix: 'rerun', exitCode: EXIT.FOLLOW_UP },
+            )
+          text = raw.stdout
         }
+        return { sha: body.sha, index: JSON.parse(text) }
       }
       if (notFound(result))
         throw new CommandRefusal(
@@ -1187,16 +1201,60 @@ async function moveWithoutReplacing(source, destination) {
 }
 
 /**
- * The last check before a local entry is deleted: rename it aside, rescan the renamed copy against `files.json`, and only then remove it.
+ * Records size, modification time, change time and inode of every non-directory under a path, without following links.
  *
- * Why: a run may write into the folder between step 4 and the deletion; renaming first makes the final scan see exactly what `rm` would delete (same volume, atomic).
+ * Why: the final hash pass reads files one after another, so a writer that kept a file open from before the rename can append to a file already hashed; a size, mtime, ctime or inode change between two stat passes exposes it.
+ * Called by {@link removeAfterFinalCheck} and {@link removeQaBuildAfterFinalCheck}.
+ *
+ * @param {string} path - A file or folder (the renamed copy).
+ * @param {string} [rel] - Relative path of `path` inside the entry (internal).
+ * @param {Map<string, string>} [found] - Accumulator (internal).
+ * @returns {Promise<Map<string, string>>} Relative path to a `size:mtimeMs:ctimeMs:ino` fingerprint (`.` for a lone file).
+ */
+async function statFingerprints(path, rel = '.', found = new Map()) {
+  const stats = await lstat(path)
+  if (stats.isDirectory()) {
+    for (const child of (await readdir(path)).sort())
+      await statFingerprints(
+        join(path, child),
+        rel === '.' ? child : `${rel}/${child}`,
+        found,
+      )
+  } else {
+    found.set(
+      rel,
+      `${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.ino}`,
+    )
+  }
+  return found
+}
+
+/**
+ * Names the first file whose fingerprint differs between two {@link statFingerprints} passes, or that appeared or vanished.
+ * @param {Map<string, string>} before - The first pass.
+ * @param {Map<string, string>} after - The second pass.
+ * @returns {string | null} A sentence naming the file, or `null` when both passes agree.
+ */
+function firstFingerprintDifference(before, after) {
+  for (const [rel, fingerprint] of before)
+    if (after.get(rel) !== fingerprint)
+      return `${rel} changed while it was being checked (size, mtime, ctime or inode differs)`
+  for (const rel of after.keys())
+    if (!before.has(rel)) return `${rel} appeared while it was being checked`
+  return null
+}
+
+/**
+ * The last check before a local entry is deleted: rename it aside, stat and rescan the renamed copy against `files.json`, stat it again, and only then remove it.
+ *
+ * Why: a run may write into the folder between step 4 and the deletion; renaming first makes the final scan see exactly what `rm` would delete (same volume, atomic). A writer holding a file open from before the rename can still append to a file already hashed, so a second stat pass right before `rm` must match the first. Any thrown error (EACCES, ENOENT, EIO) takes the put-back path like a mismatch.
  * Called by {@link rotateArchive} after the record was written.
  *
  * @param {object} context - Rotation context.
  * @param {string} name - Top-level entry.
  * @param {{ path: string, size: number, sha256: string }[]} manifestFiles - The verified `files.json` files.
  * @returns {Promise<void>} Resolves once the renamed copy is removed.
- * @throws {CommandRefusal} `E_FOLDER_CHANGED` on any difference (content, extras, links); the entry is put back, or, when its path was recreated meanwhile, stays in the run's temporary folder and the error names it.
+ * @throws {CommandRefusal} `E_FOLDER_CHANGED` on any difference (content, extras, links, stat change) or a failed check; the entry is put back, or, when its path was recreated meanwhile, stays in the run's temporary folder and the error names it.
  */
 async function removeAfterFinalCheck(context, name, manifestFiles) {
   const original = join(context.artifactsDir, name)
@@ -1204,28 +1262,47 @@ async function removeAfterFinalCheck(context, name, manifestFiles) {
   const aside = join(holder, name)
   await mkdir(holder, { recursive: true })
   await rename(original, aside)
-  await context.afterAside?.(name)
-  const problems = await compareWithManifest(holder, name, manifestFiles)
-  if (problems.length === 0) {
+  let problem = null
+  try {
+    await context.afterAside?.(name)
+    const before = await statFingerprints(aside)
+    const problems = await compareWithManifest(holder, name, manifestFiles)
+    if (problems.length > 0) problem = problems[0]
+    else {
+      await context.afterFinalHash?.(name)
+      // Nothing but this stat pass and the rm below may run between the comparison and the deletion.
+      problem = firstFingerprintDifference(
+        before,
+        await statFingerprints(aside),
+      )
+    }
+  } catch (error) {
+    // A failed check proves nothing about the copy: it goes back like a changed one.
+    problem = `the final check failed: ${error.message}`
+  }
+  if (problem === null) {
     await rm(holder, { recursive: true, force: true })
     return
   }
   try {
     await moveWithoutReplacing(aside, original)
   } catch (error) {
-    throw new CommandRefusal(
+    const stuck = new CommandRefusal(
       'E_FOLDER_CHANGED',
-      `${name} changed just before deletion (${problems[0]}) and could not be put back (${error.message}); the renamed copy stays at ${aside}`,
+      `${name} changed just before deletion (${problem}) and could not be put back (${error.message}); the renamed copy stays at ${aside}; to recover, move it back to artifacts/${name} by hand`,
       {
-        fix: `compare ${aside} with ${original} by hand; nothing was deleted`,
+        fix: `compare ${aside} with ${original} by hand, then move ${aside} back to artifacts/${name}; nothing was deleted`,
         exitCode: EXIT.FOLLOW_UP,
       },
     )
+    // The FAILED line must not claim the entry is where it was.
+    stuck.kept = false
+    throw stuck
   }
   await rmdir(holder).catch(() => {})
   throw new CommandRefusal(
     'E_FOLDER_CHANGED',
-    `${name} changed just before deletion: ${problems[0]}; it was put back`,
+    `${name} changed just before deletion: ${problem}; it was put back`,
     {
       fix: 'wait until the folder is stable, then rerun',
       exitCode: EXIT.FOLLOW_UP,
@@ -1477,18 +1554,30 @@ async function removeQaBuildAfterFinalCheck(context, stem, assets) {
   await mkdir(holder, { recursive: true })
   const moved = []
   let problem = null
+  const fingerprints = async () => {
+    const found = new Map()
+    for (const asset of assets)
+      await statFingerprints(join(holder, asset.name), asset.name, found)
+    return found
+  }
   try {
     for (const asset of assets) {
       await rename(asset.path, join(holder, asset.name))
       moved.push(asset)
     }
     await context.afterAside?.(stem)
+    const before = await fingerprints()
     for (const asset of assets) {
       const facts = await qaFileFacts(join(holder, asset.name))
       if (facts.size !== asset.size || facts.sha256 !== asset.sha256) {
         problem = `${asset.name} differs from what was uploaded`
         break
       }
+    }
+    if (problem === null) {
+      await context.afterFinalHash?.(stem)
+      // Nothing but this stat pass and the rm below may run between the comparison and the deletion.
+      problem = firstFingerprintDifference(before, await fingerprints())
     }
   } catch (error) {
     problem = error.reason ?? error.message
@@ -1502,15 +1591,19 @@ async function removeQaBuildAfterFinalCheck(context, stem, assets) {
     await moveWithoutReplacing(join(holder, asset.name), asset.path).catch(() =>
       stuck.push(asset.name),
     )
-  if (stuck.length > 0)
-    throw new CommandRefusal(
+  if (stuck.length > 0) {
+    const refusal = new CommandRefusal(
       'E_FOLDER_CHANGED',
-      `${stem} changed just before deletion (${problem}) and ${stuck.join(', ')} could not be put back; the renamed files stay in ${holder}`,
+      `${stem} changed just before deletion (${problem}) and ${stuck.join(', ')} could not be put back; the renamed files stay in ${holder}; to recover, move them back into artifacts/qa by hand`,
       {
-        fix: `compare ${holder} with artifacts/qa by hand; nothing was deleted`,
+        fix: `compare ${holder} with artifacts/qa by hand, then move the files back into artifacts/qa; nothing was deleted`,
         exitCode: EXIT.FOLLOW_UP,
       },
     )
+    // The FAILED line must not claim the files are where they were.
+    refusal.kept = false
+    throw refusal
+  }
   await rmdir(holder).catch(() => {})
   throw new CommandRefusal(
     'E_FOLDER_CHANGED',
@@ -1575,6 +1668,8 @@ async function rotateQaBuild(context, item) {
     assets: merged,
   }
   await github.writeIndex(index, sha, `Archive ${item.name}`)
+  // The local pointer comes before the deletion too: a failed write keeps the build files.
+  await recordLocal(context, QA_RELEASE_TAG, index.folders[QA_RELEASE_TAG])
   await context.afterRecord?.(item.name)
   await removeQaBuildAfterFinalCheck(
     context,
@@ -1717,45 +1812,60 @@ async function acquireLock(context) {
         fix: `wait for it to finish; if no such run exists, remove ${lockPath} by hand`,
       },
     )
+  // The run id of a dead owner whose lock this run replaced; its work folder goes only once this run holds the new lock.
+  let deadRunId = null
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    let created = false
     try {
       await writeFile(lockPath, body, { flag: 'wx' })
-      return
+      created = true
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
+    }
+    if (created) {
+      // Only the dead owner's own work folder (never another run's, never its renamed copies) is removed.
+      if (typeof deadRunId === 'string' && isSafeEntryName(deadRunId))
+        await rm(join(context.tmpDir, deadRunId, 'work'), {
+          recursive: true,
+          force: true,
+        })
+      return
     }
     let holder = null
     try {
       holder = JSON.parse(await readFile(lockPath, 'utf8'))
-    } catch {
-      // Unreadable or half written: treated as a live lock, never guessed away.
+    } catch (error) {
+      // The lock vanished between the wx and this read: try again. Unreadable or half written is treated as a live lock, never guessed away.
+      if (error.code === 'ENOENT') continue
     }
     if (!Number.isInteger(holder?.pid))
       throw active('its content cannot be read')
     if (attempt === 1 || context.isProcessAlive(holder.pid))
       throw active(`pid ${holder.pid}, started ${holder.startedAt}`)
-    // A dead holder: its lock is replaced, and its leftover work folders (never its renamed copies) are removed.
-    context.print(
-      `LOCK: replaced the stale lock of pid ${holder.pid} (started ${holder.startedAt})`,
-    )
-    for (const other of await readdir(context.tmpDir, { withFileTypes: true }))
-      if (other.isDirectory())
-        await rm(join(context.tmpDir, other.name, 'work'), {
-          recursive: true,
-          force: true,
-        })
-    // Move the stale lock aside first; a lock another process just created must not be deleted by mistake.
+    await context.afterLockRead?.(holder)
+    // Reclaim atomically: of several reclaimers only one rename of the stale lock succeeds.
     const aside = `${lockPath}.stale-${context.runId}`
-    await rename(lockPath, aside)
+    try {
+      await rename(lockPath, aside)
+    } catch (error) {
+      // Another reclaimer won: the next round re-reads the lock (a live owner gives E_RUN_ACTIVE).
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
     const moved = JSON.parse(await readFile(aside, 'utf8').catch(() => 'null'))
     if (moved?.runId !== holder.runId) {
-      // It was a fresh lock after all: put it back and refuse.
+      // The rename took a fresh lock another run created after the read: put it back and refuse.
       await link(aside, lockPath).catch(() => {})
       await rm(aside, { force: true })
       throw active('it was replaced by another run just now')
     }
     await rm(aside, { force: true })
+    context.print(
+      `LOCK: replaced the stale lock of pid ${holder.pid} (started ${holder.startedAt})`,
+    )
+    deadRunId = holder.runId ?? null
   }
+  throw active('it could not be taken after a retry')
 }
 
 /**
@@ -1873,7 +1983,7 @@ async function applyPlan(plan, counts, context) {
           ? error.reason
           : String(error?.message ?? error)
       print(
-        `FAILED ${item.name} ${code}: ${redactSecrets(message, { ...context.environment, GH_TOKEN: context.token })} (kept)`,
+        `FAILED ${item.name} ${code}: ${redactSecrets(message, { ...context.environment, GH_TOKEN: context.token })}${error?.kept === false ? '' : ' (kept)'}`,
       )
     } finally {
       // This entry's temporary work is removed (renamed copies live apart and stay when they could not be put back).
@@ -2151,7 +2261,7 @@ async function initRepository(context) {
  *
  * @param {import('./utils/commandContract.mjs').CommandProgress} progress - Stage tracker.
  * @param {string[]} [argv] - Arguments after the script name.
- * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, repository: string, runId: string, isProcessAlive: (pid: number) => boolean, partWrite: Function, afterRecord: (name: string) => Promise<void>, afterAside: (name: string) => Promise<void>, beforeRestorePublish: (destination: string) => Promise<void> }>} [overrides] - Seams for tests, none of them a CLI flag: `partBytes` (small parts), `partWrite` (a failing part write), `afterRecord` (runs right after the record was written), `afterAside` (runs right after the entry was renamed aside), `beforeRestorePublish` (runs before the restore's final move), `isProcessAlive` and `runId` (the run lock).
+ * @param {Partial<{ run: Function, repositoryRoot: string, print: (line: string) => void, environment: NodeJS.ProcessEnv, now: () => number, freeBytes: (path: string) => Promise<number>, partBytes: number, repository: string, runId: string, isProcessAlive: (pid: number) => boolean, partWrite: Function, afterRecord: (name: string) => Promise<void>, afterAside: (name: string) => Promise<void>, afterFinalHash: (name: string) => Promise<void>, afterLockRead: (holder: object) => Promise<void>, beforeRestorePublish: (destination: string) => Promise<void> }>} [overrides] - Seams for tests, none of them a CLI flag: `partBytes` (small parts), `partWrite` (a failing part write), `afterRecord` (runs right after the record was written), `afterAside` (runs right after the entry was renamed aside), `afterFinalHash` (runs after the final hash comparison, before the second stat pass), `afterLockRead` (runs after a stale lock was read, before it is reclaimed), `beforeRestorePublish` (runs before the restore's final move), `isProcessAlive` and `runId` (the run lock).
  * @returns {Promise<number>} The exit code.
  * @throws {CommandRefusal} Refusals listed in `--help`.
  */
@@ -2218,6 +2328,8 @@ export async function main(
     partWrite: overrides.partWrite,
     afterRecord: overrides.afterRecord,
     afterAside: overrides.afterAside,
+    afterFinalHash: overrides.afterFinalHash,
+    afterLockRead: overrides.afterLockRead,
     beforeRestorePublish: overrides.beforeRestorePublish,
     isProcessAlive: overrides.isProcessAlive ?? defaultIsProcessAlive,
     now: overrides.now ?? Date.now,
