@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.122.0] - 2026-11-12 (development candidate)
+
+Cycle 0119 ([Issue #306](https://github.com/laststance/codebook/issues/306)), a feature cycle. **A question asked in the browser reader of a large LLM Wiki now reaches the code that answers it, also when it is worded in another language than the code, and Cursor gives each of its two requests up to 5 minutes.** On TanStack/query (2,483 included sources, 27 workspace packages), VS Code's Copilot Chat and Cursor's agent each generated, read, answered questions on and updated a passing Wiki within Codebook's bounds.
+
+### Fixed
+- **Questions route through the Wiki's own pages.** On a Wiki that cites more than six unchanged source files, a question that names none of them by path is answered in two requests. The editor model first picks up to six source files from the Wiki's pages (each page's title, the start of its first paragraph and the files it cites in its source list, its diagrams or the source links of its text) and names the code identifiers that mark the answering lines; then it answers from those lines. Before, the first request listed the files in path order up to its size limit, so on a large repository a question whose words matched no path never reached the implementation (on TanStack/query the core package began at file 1,994 of 2,483).
+  - When a large Wiki's pages and files do not all fit in that first request, the files whose names or lines match the question's words, and the pages that cite them, are kept first.
+  - A Wiki without pages that cite unchanged sources keeps the earlier list of files with their first lines.
+- **Cursor gives each request of a Wiki question up to 5 minutes.** Each of the two `cursor-agent` requests may run for up to 5 minutes before the page reports `Cursor Agent timed out answering the Wiki question. Retry or use editor chat.` The bound was 2 minutes, which the first request on TanStack/query exceeded (about 2.5 minutes).
+
+**Compatibility.** No MCP API, skill (1.0.99) or study format change. Published Wikis are read as they are; nothing needs regenerating.
+
 ## [0.2.121.0] - 2026-11-12 (development candidate)
 
 Cycle 0118 ([Issue #304](https://github.com/laststance/codebook/issues/304)), a feature cycle. **In a workspace of several packages, the LLM Wiki generator refuses a Wiki whose package pages never say what each package uses from the other packages it imports, and the bundled skill's updates correct every page that describes a changed rule.** On laststance/switch-time (an Expo app, a Hono API and a shared package in one pnpm workspace), VS Code's Copilot Chat and Cursor's agent each generated, read, answered questions on and updated a passing Wiki within Codebook's bounds.
