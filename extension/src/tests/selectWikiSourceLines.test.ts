@@ -440,3 +440,26 @@ test('a doc comment on the first overload brings the overloads and the implement
   for (const unitLine of [0, 1, 2, 3, 4, 5])
     assert.ok(selected.includes(unitLine), `line ${unitLine + 1} is selected`)
 })
+
+// Value: protects=the third-best matching line of a long file whose two best matches each begin a 40-line function: the first function comes whole and the third match keeps its place; fails_when=units are admitted until the budget is full, so the two whole functions take all 80 lines and the third-best match, which may hold the answer, is dropped (Cycle 0122 review round, CodeRabbit minor); why_new=Cycle 0122 review round; seam=none; no_claim=that three kept lines suit every question
+test('the three best matching lines keep their places when the two best bring 40-line functions', () => {
+  // Arrange
+  const lines = [
+    'export function storeObservableOne() {',
+    ...Array.from({ length: 38 }, (_, index) => `  step(${index + 1})`),
+    '}',
+    'export function storeObservableTwo() {',
+    ...Array.from({ length: 38 }, (_, index) => `  step(${index + 1})`),
+    '}',
+    'export const storeOnly = 1',
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['store', 'observable'])
+
+  // Assert
+  assert.ok(selected.includes(39), 'the first function comes whole')
+  assert.ok(selected.includes(40), 'the second function line is selected')
+  assert.ok(selected.includes(80), 'the third-best match is selected')
+  assert.equal(selected.length, 80)
+})
