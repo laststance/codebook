@@ -262,7 +262,7 @@ test('the skill and the README say a Wiki too thin for its code is refused: no c
   )
   assert.ok(
     readme.includes(
-      'Once 12 or more included code files, or fewer files that hold 1,200 or more lines in total, need explanation, it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, too few pages for its code (one per 8 explained code files, up to 30 pages), a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
+      'Once 12 or more included code files need explanation, or fewer such files hold 1,200 or more lines in total (every line counts, blank and comment lines included), it also refuses a Wiki whose chapters are too thin for the code it covers: no child pages, too few pages for its code (one per 8 explained code files, up to 30 pages), a page without a diagram, too few diagrams for its pages, or too little explanation (including a page that is only a stub).',
     ),
   )
   assert.ok(

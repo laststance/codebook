@@ -343,9 +343,12 @@ const sixFilesHolding = (totalLines) => {
 test('a 7-file Wiki of 1,200 lines with one page and no chapter tree is refused with the chapter tree sentence', async () => {
   await inProject(async (root) => {
     // Arrange
+    const extraFiles = sixFilesHolding(1200)
+    // The last file's final line has no newline, and it still counts: a count that drops it would see 1,199 lines and exempt the Wiki.
+    extraFiles['src/file-5.ts'] = extraFiles['src/file-5.ts'].slice(0, -1)
     const manifest = await wikiOf(root, {
       fileCount: 1,
-      extraFiles: sixFilesHolding(1200),
+      extraFiles,
       pageTexts: [3000],
       childCount: 0,
       diagramCounts: [2],
@@ -369,6 +372,30 @@ test('a 7-file Wiki of 1,199 lines with one short flat page is rendered because 
     const manifest = await wikiOf(root, {
       fileCount: 1,
       extraFiles: sixFilesHolding(1199),
+      pageTexts: [100],
+      childCount: 0,
+      diagramCounts: [],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=the small repository whose excepted code (a generated client) needs no explanation; fails_when=the 1,200-line condition counts excepted code files or every included file, not only the explained code files; why_new=Cycle 0123 review round (OCR: a fixture of explained files alone let both counts pass); seam=none (the real renderer); no_claim=that the exception's reason is true
+test('a 7-file Wiki whose explained code holds 1,100 lines beside a 200-line excepted file is rendered because excepted code does not count toward the 1,200 lines', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 1,
+      extraFiles: {
+        ...sixFilesHolding(1100),
+        'gen/api.ts': 'export const api = 1;\n'.repeat(200),
+      },
+      coverageExceptions: [{ path: 'gen/', reason: 'Generated client.' }],
       pageTexts: [100],
       childCount: 0,
       diagramCounts: [],
