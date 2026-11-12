@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { longFunctionWindowsOf } from '../utils/anchorClusters'
 import { longDeclarationHeadOfLine } from '../utils/codeUnitOfLine'
 import { declaresPriorityTerm } from '../utils/declaresPriorityTerm'
+import { matchesRouteIdentifier } from '../utils/matchesRouteIdentifier'
 import { selectWikiSourceLines } from '../utils/selectWikiSourceLines'
 
 // Value: protects=the excerpt of a long file whose question words match 80 or more lines: a doc comment inside an object literal brings the method it documents, closed by `},`, whole into the excerpt; fails_when=the excerpt keeps only the matching lines, so the comment arrives without the method body (Cycle 0121 F3, P03 createStore.ts:347-374), or the method's block is ended at the object's closing brace instead of its own; why_new=Cycle 0122 F3 (hypothesis A); seam=none; no_claim=that an editor model answers from the body
@@ -953,4 +955,378 @@ test('declaresPriorityTerm accepts function, const and method heads and rejects 
     results,
     cases.map(([, , expected]) => expected),
   )
+})
+
+/**
+ * Builds P06's 44-line `pasteItem` (fullpage.js:1299-1342 at 5788fd3c30cd): it reads the clipboard, then creates a bookmark with its title and URL, or an empty folder named with " (copy)".
+ * @returns The function's source lines; the create branches are lines 10 to 22 of it, counted from 0.
+ * @example
+ * pasteItemLines()[0] // => 'async function pasteItem(paneNum) {'
+ */
+function pasteItemLines(): string[] {
+  return [
+    'async function pasteItem(paneNum) {',
+    '  if (!state.clipboard) return',
+    '',
+    '  const targetFolderId = state.panes[paneNum].currentFolderId',
+    '',
+    '  try {',
+    '    // Copy - get bookmark and create copy',
+    '    const [original] = await chrome.bookmarks.get(state.clipboard.id)',
+    '    let created',
+    '',
+    '    if (original.url) {',
+    '      created = await chrome.bookmarks.create({',
+    '        parentId: targetFolderId,',
+    '        title: original.title,',
+    '        url: original.url,',
+    '      })',
+    '    } else {',
+    '      // Copy folder (shallow - just the folder itself)',
+    '      created = await chrome.bookmarks.create({',
+    '        parentId: targetFolderId,',
+    "        title: original.title + ' (copy)',",
+    '      })',
+    '    }',
+    '',
+    '    // Push undo action',
+    '    pushUndoAction({',
+    "      type: 'paste',",
+    '      createdId: created.id,',
+    '    })',
+    '',
+    "    showToast('Item copied', 'success')",
+    '',
+    '    state.clipboard = null',
+    '',
+    '    await loadPaneContent(1)',
+    "    if (state.viewMode === 'split') {",
+    '      await loadPaneContent(2)',
+    '    }',
+    '    await loadFolderTree()',
+    '  } catch (error) {',
+    "    showToast('Paste failed', 'error')",
+    "    console.error('Paste failed:', error)",
+    '  }',
+    '}',
+  ]
+}
+
+/** The lines of {@link pasteItemLines} that create the pasted bookmark and folder, counted from the function's first line. */
+const PASTE_CREATE_BRANCH_OFFSETS = Array.from(
+  { length: 13 },
+  (_, index) => 10 + index,
+)
+
+// Value: protects=a route identifier marks a line only as a whole identifier, so `get` (the last part of `chrome.bookmarks.get`) no longer marks every getElementById or targetId line; fails_when=route identifiers match inside longer names again (Cycle 0124 F3: `get` matched 178 lines of P06's fullpage.js, 14 as an identifier); why_new=Cycle 0124 F3, new util; seam=none; no_claim=identifiers written with non-ASCII letters
+test('a route identifier matches a line only as a whole identifier', () => {
+  // Arrange
+  const cases: [string, string, boolean][] = [
+    ['const [node] = await chrome.bookmarks.get(id)', 'get', true],
+    ['const el = document.getelementbyid(x)', 'get', false],
+    ['const targetid = 1', 'get', false],
+  ]
+
+  // Act
+  const results = cases.map(([line, term]) =>
+    matchesRouteIdentifier(line, term),
+  )
+
+  // Assert
+  assert.deepEqual(results, [true, false, false])
+})
+
+// Value: protects=a dotted route identifier read through `this.` still marks its line after the boundary rule; fails_when=the boundary rule treats the `.` before a dotted identifier as part of a longer name and drops the line; why_new=Cycle 0124 F3 compatibility guard (passes before and after); seam=none; no_claim=identifiers that the route reply never names
+test('a dotted route identifier after this. still marks its line in a long file excerpt', () => {
+  // Arrange
+  const lines = [
+    ...fillerLines(90),
+    '  if (this.state.clipboard.id) {',
+    ...otherLines(20),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    ['filler'],
+    ['state.clipboard', 'clipboard'],
+  )
+
+  // Assert
+  assert.ok(selected.includes(90), 'the this.state.clipboard line is selected')
+})
+
+// Value: protects=a route reply that names identifiers inside a long function but not the function (P06 pasteItem): the function's window comes, so both create branches reach the editor model; fails_when=the anchors stay scattered single lines among 60 other create calls (Cycle 0123 6F: 2 to 6 of 13 create lines on the real file); why_new=Cycle 0124 F3; seam=none; no_claim=the real file's line numbers
+test('a route naming only identifiers inside a long function brings the window of that function', () => {
+  // Arrange
+  const pasteItem = [
+    'async function pasteItem() {',
+    '  const folderId = pane.currentFolderId',
+    ...Array.from({ length: 20 }, (_, index) => `  guard(${index})`),
+    '  if (source.url) {',
+    '    await chrome.bookmarks.create({ parentId: folderId, url: source.url })',
+    '  } else {',
+    '    await chrome.bookmarks.create({ parentId: folderId, title: source.title })',
+    '  }',
+    ...Array.from({ length: 17 }, (_, index) => `  refresh(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...otherLines(10),
+    ...Array.from({ length: 60 }, (_, index) => [
+      `await chrome.bookmarks.create({ title: "other${index}" })`,
+      ...otherLines(5),
+    ]).flat(),
+    ...pasteItem,
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['chrome.bookmarks.create', 'create', 'currentfolderid'],
+  )
+
+  // Assert
+  const declarationLine = lines.length - pasteItem.length
+  for (let offset = 0; offset < 40; offset++)
+    assert.ok(
+      selected.includes(declarationLine + offset),
+      `line ${offset + 1} of pasteItem is selected`,
+    )
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=a route-named long function whose anchors lie past its first 40 lines (P06 handleContextAction's copy and paste cases): it brings its declaration and the window around those anchors; fails_when=it brings its first 40 lines, which hold none of the anchors (Cycle 0123's head rule); why_new=Cycle 0124 F3; seam=none; no_claim=where the model looks inside the window
+test('a route-named long function whose anchors lie past its head brings the window around them', () => {
+  // Arrange
+  const handler = [
+    'function handleAction(action) {',
+    ...Array.from({ length: 48 }, (_, index) => `  step(${index})`),
+    '  state.clipboard = item',
+    ...Array.from({ length: 4 }, (_, index) => `  copy(${index})`),
+    '  if (state.clipboard) {',
+    '    paste()',
+    '  }',
+    ...Array.from({ length: 12 }, (_, index) => `  done(${index})`),
+    '}',
+  ]
+  const lines = [...handler, ...fillerLines(70), ...otherLines(20)]
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    ['filler'],
+    ['handleaction', 'state.clipboard', 'clipboard'],
+  )
+
+  // Assert
+  for (const line of [0, 47, 52, 69])
+    assert.ok(selected.includes(line), `line ${line + 1} is selected`)
+  assert.equal(
+    selected.includes(20),
+    false,
+    'the head past the declaration stays out',
+  )
+})
+
+// Value: protects=a long function's window ends at the function's closing line, so it never spends places on the next function (Cycle 0123's prototype window of P06 setupKeyboardShortcuts ran 21 lines past its end); fails_when=the window keeps its full length past the closing line, or no window comes; why_new=Cycle 0124 F3; seam=none; no_claim=the lines the fill adds when places remain
+test('a long function window stops at the function closing line', () => {
+  // Arrange
+  const routine = [
+    'function longRoutine() {',
+    ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
+    '  save(record)',
+    '  log(record)',
+    '  check(record)',
+    '  verify(record)',
+    '  publish(record)',
+    ...Array.from({ length: 10 }, (_, index) => `  finish(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...routine,
+    ...functionOf('nextRoutine', 30),
+    ...fillerLines(80),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['filler'], ['save', 'publish'])
+
+  // Assert
+  for (let line = 44; line <= 61; line++)
+    assert.ok(
+      selected.includes(line),
+      `line ${line + 1} of the window is selected`,
+    )
+  assert.equal(selected.includes(62), false, 'the next function stays out')
+})
+
+// Value: protects=P06's set 4 shape: three long functions compete for 80 lines (a route-named dispatcher whose copy and paste cases hold anchors, a keyboard handler that calls it and checks the clipboard, and pasteItem), and pasteItem's create branches still come; fails_when=the dispatcher's first 40 lines and other windows take the places (Cycle 0123: 0 of 13 create lines for state.clipboard with handleContextAction); why_new=Cycle 0124 F3; seam=none; no_claim=the real file's exact budget split
+test('three competing long functions still leave the paste function its create branches', () => {
+  // Arrange
+  const dispatcher = [
+    'async function handleContextAction(action, targetId, paneNum) {',
+    '  switch (action) {',
+    ...Array.from({ length: 37 }, (_, index) => `    step(${index})`),
+    "    case 'copy':",
+    "      state.clipboard = { action: 'copy', id: targetId }",
+    "      showToast('Item copied to clipboard', 'info')",
+    '      break',
+    "    case 'paste':",
+    '      if (state.clipboard) {',
+    '        await pasteItem(paneNum)',
+    '      }',
+    '      break',
+    ...Array.from({ length: 18 }, (_, index) => `    later(${index})`),
+    '  }',
+    '}',
+  ]
+  const keyboard = [
+    'function setupKeyboardShortcuts() {',
+    "  document.addEventListener('keydown', (e) => {",
+    ...Array.from({ length: 43 }, (_, index) => `    check(${index})`),
+    "    if (e.key === 'c') {",
+    "      handleContextAction('copy', firstSelected, paneNum)",
+    '    }',
+    '',
+    '    // Ctrl+V: Paste',
+    "    if (e.key === 'v' && state.clipboard) {",
+    '      pasteItem(paneNum)',
+    '    }',
+    ...Array.from({ length: 6 }, (_, index) => `    tail(${index})`),
+    '  })',
+    '}',
+  ]
+  const lines = [
+    ...otherLines(10),
+    'const state = {',
+    '  clipboard: null,',
+    '}',
+    ...otherLines(20),
+    ...dispatcher,
+    '',
+    ...pasteItemLines(),
+    '',
+    ...keyboard,
+    ...otherLines(30),
+  ]
+  const pasteStart = 34 + dispatcher.length + 1
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['state.clipboard', 'clipboard', 'handlecontextaction'],
+  )
+
+  // Assert
+  for (const offset of PASTE_CREATE_BRANCH_OFFSETS)
+    assert.ok(
+      selected.includes(pasteStart + offset),
+      `pasteItem line ${offset + 1} is selected`,
+    )
+})
+
+// Value: protects=P06's set 7 shape: a short route member (`get`) that occurs inside many longer names leaves the function naming both route identifiers its window; fails_when=getElementById lines and get-named functions match as substrings and fill the excerpt (Cycle 0123: 0 of 13 create lines for chrome.bookmarks.get with clipboard); why_new=Cycle 0124 F3; seam=none; no_claim=names that hold the member as a whole identifier
+test('a short route member inside many longer names leaves the answering function its window', () => {
+  // Arrange
+  const lines = [
+    ...Array.from(
+      { length: 120 },
+      (_, index) => `const el${index} = document.getElementById('x${index}')`,
+    ),
+    ...functionOf('getFolderIcon', 39),
+    ...functionOf('getFaviconUrl', 36),
+    ...pasteItemLines(),
+    ...otherLines(20),
+  ]
+  const pasteStart = 120 + 39 + 36
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['chrome.bookmarks.get', 'get', 'clipboard'],
+  )
+
+  // Assert
+  for (const offset of PASTE_CREATE_BRANCH_OFFSETS)
+    assert.ok(
+      selected.includes(pasteStart + offset),
+      `pasteItem line ${offset + 1} is selected`,
+    )
+})
+
+// Value: protects=the order of long functions: the one whose anchors name more different route identifiers ranks first, not the one with more lines of one identifier; fails_when=functions rank by anchor count alone; why_new=Cycle 0124 F3, new util; seam=none; no_claim=which function a real model needs
+test('the long function naming more different route identifiers ranks before one with more lines of a single identifier', () => {
+  // Arrange
+  const noisy = [
+    'function noisyHandler() {',
+    ...Array.from({ length: 45 }, () => '  update()'),
+    '}',
+  ]
+  const answering = [
+    'function answeringHandler() {',
+    ...Array.from({ length: 40 }, (_, index) => `  guard(${index})`),
+    '  save(record)',
+    '  publish(record)',
+    '}',
+  ]
+  const lines = [...noisy, ...answering]
+  const anchors = lines
+    .map((_, index) => index)
+    .filter((index) => /update|save|publish/.test(lines[index]!))
+
+  // Act
+  const windows = longFunctionWindowsOf(lines, anchors, [
+    'update',
+    'save',
+    'publish',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    windows.map((window) => window.declarationLine),
+    [47, 0],
+  )
+})
+
+// Value: protects=a call that passes a function expression (`pasteItem(function () {`) earns no declaration bonus, so it cannot outrank the function's real declaration; fails_when=the method pattern accepts the call (PR #317 hosted review); why_new=Cycle 0124 (D5); seam=none; no_claim=method declarations with a function-valued default parameter
+test('declaresPriorityTerm treats a call with a function expression argument as a call', () => {
+  // Arrange
+  const line = '  pasteItem(function () {'
+
+  // Act
+  const declares = declaresPriorityTerm(line, ['pasteitem'])
+
+  // Assert
+  assert.equal(declares, false)
+})
+
+// Value: protects=an object or class method head still earns the declaration bonus after the function-expression rule; fails_when=the rule rejects every method whose line opens a body; why_new=Cycle 0124 compatibility guard (passes before and after); seam=none; no_claim=keyword declarations, covered by the table test above
+test('declaresPriorityTerm still accepts a method head', () => {
+  // Arrange
+  const line = '  pasteItem(source) {'
+
+  // Act
+  const declares = declaresPriorityTerm(line, ['pasteitem'])
+
+  // Assert
+  assert.equal(declares, true)
+})
+
+// Value: protects=a long function holding one route-identifier anchor brings no window: its anchor stays a single line, as before Cycle 0124 (a route that names the function keeps Cycle 0123's head, tested above); fails_when=one anchor is enough for a 40-line window; why_new=Cycle 0124 compatibility guard (passes before and after); seam=none; no_claim=functions holding two or more anchors
+test('a long function holding one route identifier anchor brings no window', () => {
+  // Arrange
+  const routine = functionOf('longRoutine', 50)
+  routine[30] = '  save(record)'
+  const lines = [...routine, ...fillerLines(85)]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['filler'], ['save'])
+
+  // Assert
+  assert.ok(selected.includes(30), 'the anchor line is selected')
+  assert.equal(selected.includes(10), false, 'the function body stays out')
 })

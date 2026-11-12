@@ -21,7 +21,7 @@ const DECLARED_NAME =
 const DECLARATION_TOO_LONG = 'too-long'
 
 /** Zero-based first and last lines of a run of source lines, both included. */
-interface LineRange {
+export interface LineRange {
   first: number
   last: number
 }
@@ -208,9 +208,10 @@ function declaresSameName(
  * @param lines - Complete source, indexed from zero.
  * @param openLine - The line that ends with the block's `{`.
  * @param declarationLine - The declaration's first line, from which the unit limit counts.
+ * @param maxLines - How many lines from the declaration line the walk may read: the unit limit by default, `Infinity` to find the closing line of a declaration too long for a whole unit ({@link longDeclarationLastLine}, Cycle 0124).
  * @returns
  * - The closing line
- * - {@link DECLARATION_TOO_LONG} when the block is still open, at its indentation or deeper, {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines after the declaration
+ * - {@link DECLARATION_TOO_LONG} when the block is still open, at its indentation or deeper, `maxLines` lines after the declaration
  * - `undefined` when a non-blank line is indented less than the opening line first, or the source ends first
  * @example
  * blockCloseLine(['if (ready) {', '  run()', '} else {', '  wait()', '}'], 0, 0) // => 4
@@ -219,12 +220,10 @@ function blockCloseLine(
   lines: readonly string[],
   openLine: number,
   declarationLine: number,
+  maxLines: number = WIKI_CONTEXT_UNIT_LINE_LIMIT,
 ): number | typeof DECLARATION_TOO_LONG | undefined {
   const indentation = indentationOf(lines[openLine]!)
-  const limit = Math.min(
-    lines.length,
-    declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT,
-  )
+  const limit = Math.min(lines.length, declarationLine + maxLines)
   for (let index = openLine + 1; index < limit; index++) {
     const line = lines[index]!
     const text = line.trim()
@@ -240,17 +239,16 @@ function blockCloseLine(
     )
       return index
   }
-  // The unit limit, not the end of the source, stopped the walk: the block is too long, not malformed.
-  return limit === declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT
-    ? DECLARATION_TOO_LONG
-    : undefined
+  // The line limit, not the end of the source, stopped the walk: the block is too long, not malformed.
+  return limit === declarationLine + maxLines ? DECLARATION_TOO_LONG : undefined
 }
 
 /**
  * Finds the lines of the declaration that begins on a line: its signature, continued over lines, and the brace block it opens. The body's `{` ends the declaration line or a signature line at the declaration's indentation, so a parameter type or default opened on a deeper signature line is part of the signature. Overloads of the same function or method run on to its implementation.
  * @param lines - Complete source, indexed from zero.
  * @param declarationLine - The declaration's first line.
- * @returns The declaration's first and last lines; {@link DECLARATION_TOO_LONG} when its block is still open {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines after the declaration; `undefined` when its block is left by a dedent, or its signature does not end, within that reach.
+ * @param maxLines - How many lines from the declaration line the scan may read: the unit limit by default, `Infinity` for {@link longDeclarationLastLine}.
+ * @returns The declaration's first and last lines; {@link DECLARATION_TOO_LONG} when its block is still open `maxLines` lines after the declaration; `undefined` when its block is left by a dedent, or its signature does not end, within that reach.
  * @example
  * declarationRange(['function add(', '  value,', ') {', '  return value + 1', '}'], 0) // => { first: 0, last: 4 }
  * declarationRange(['const limit = 3', 'run()'], 0) // => { first: 0, last: 0 }
@@ -258,12 +256,10 @@ function blockCloseLine(
 function declarationRange(
   lines: readonly string[],
   declarationLine: number,
+  maxLines: number = WIKI_CONTEXT_UNIT_LINE_LIMIT,
 ): LineRange | typeof DECLARATION_TOO_LONG | undefined {
   const indentation = indentationOf(lines[declarationLine]!)
-  const limit = Math.min(
-    lines.length,
-    declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT,
-  )
+  const limit = Math.min(lines.length, declarationLine + maxLines)
   for (let index = declarationLine; index < limit; index++) {
     const line = lines[index]!
     // The body's `{` ends the declaration line or a signature line at its indentation; a deeper `{` opens a parameter type or a default.
@@ -271,7 +267,7 @@ function declarationRange(
       opensBlock(line) &&
       (index === declarationLine || indentationOf(line) === indentation)
     ) {
-      const last = blockCloseLine(lines, index, declarationLine)
+      const last = blockCloseLine(lines, index, declarationLine, maxLines)
       return typeof last === 'number' ? { first: declarationLine, last } : last
     }
     // A signature that opens no block ends at its last continued line, unless an overload or the implementation of the same name follows.
@@ -394,4 +390,59 @@ export function longDeclarationHeadOfLine(
     },
     (_, offset) => declarationLine + offset,
   )
+}
+
+/**
+ * Finds the closing line of a declaration too long for a whole unit, by the same rule that closes a unit's block but with no line limit.
+ * Why: Cycle 0124 (F3, Issue #318) — a long function's window in a Wiki question's excerpt must never run past the function into the next one, as the window of P06's `setupKeyboardShortcuts` (lines 1660-1721) ran to line 1742.
+ * Called by {@link enclosingLongDeclarationOf} for each declaration it finds above an anchor.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param declarationLine - A line that begins a declaration too long for a whole unit (one {@link longDeclarationHeadOfLine} accepts).
+ * @returns
+ * - The declaration's closing line
+ * - `undefined` when the line begins no declaration too long for a whole unit, or the declaration's block is left by a dedent or never closes
+ * @example
+ * longDeclarationLastLine(['function load() {', ...fortyOneStatements, '}', 'next()'], 0) // => 42
+ * longDeclarationLastLine(['function add() {', '  return 1', '}'], 0) // => undefined
+ */
+function longDeclarationLastLine(
+  lines: readonly string[],
+  declarationLine: number,
+): number | undefined {
+  if (!longDeclarationHeadOfLine(lines, declarationLine)) return undefined
+  const range = declarationRange(lines, declarationLine, Infinity)
+  return range && range !== DECLARATION_TOO_LONG ? range.last : undefined
+}
+
+/**
+ * Finds the declaration too long for a whole unit whose block holds a line, so the anchors inside one long function can be grouped.
+ * Walks up from the line above the anchor: each non-blank line indented less than every non-blank line passed so far (the anchor included) may open the block that holds it. The first of those that begins a declaration too long for a whole unit ({@link longDeclarationHeadOfLine}) decides: it encloses the anchor when its block is still open there. A line at indentation 0 is the last one tried.
+ * Why: Cycle 0124 (F3, Issue #318) — the route reply named identifiers inside P06's 44-line `pasteItem`, not the function, so its lines stayed scattered single lines in the excerpt.
+ * Called by {@link longFunctionWindowsOf} for each route-identifier anchor.
+ * @param lines - Complete verified source, indexed from zero; taken to be formatted, as for code units.
+ * @param anchor - A zero-based anchor line.
+ * @returns
+ * - The enclosing declaration's first line and closing line
+ * - `undefined` when the anchor is at indentation 0, no long declaration lies above it within its blocks, or the first one found closes before the anchor or never closes
+ * @example
+ * enclosingLongDeclarationOf(['function load() {', ...fortyOneStatements, '}'], 20) // => { first: 0, last: 42 }
+ */
+export function enclosingLongDeclarationOf(
+  lines: readonly string[],
+  anchor: number,
+): LineRange | undefined {
+  let bound = indentationOf(lines[anchor]!)
+  for (let index = anchor - 1; index >= 0 && bound > 0; index--) {
+    const line = lines[index]!
+    // A blank line, or one at the bound or deeper, lies inside the same block.
+    if (!line.trim() || indentationOf(line) >= bound) continue
+    bound = indentationOf(line)
+    if (!longDeclarationHeadOfLine(lines, index)) continue
+    const last = longDeclarationLastLine(lines, index)
+    // The first long declaration above decides; one that closed above the anchor or never closes encloses nothing.
+    return last !== undefined && anchor <= last
+      ? { first: index, last }
+      : undefined
+  }
+  return undefined
 }

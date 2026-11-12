@@ -1,6 +1,8 @@
 /** Words that may stand before a declared name: `export default async function run`, `public static run() {`. */
 const DECLARATION_MODIFIERS =
   '(?:(?:export|default|declare|async|public|private|protected|static|abstract|override|readonly)\\s+)*'
+/** The `function` keyword as a word: a line that holds it after a name passes a function expression, as in `pasteItem(function () {`, so it is a call, not a method. Cycle 0124 (Issue #318, PR #317's hosted review). */
+const FUNCTION_KEYWORD = /\bfunction\b/
 
 /**
  * Escapes a text for use inside a regular expression.
@@ -17,7 +19,7 @@ function escapeRegExp(text: string): string {
  * Tells whether a source line declares a name: a `function`, `function*`, `class`, `const`, `let` or `var` declaration, or an object or class method that opens its body on the line.
  * @param line - One source line.
  * @param name - The declared name to look for, compared without regard to case.
- * @returns `true` for `export default async function pasteItem() {`, `class PasteItem {`, `const pasteItem = async () => {` and `  pasteItem(source) {`; `false` for a call such as `pasteItem(source)` or `await pasteItem(source)`, a callback opener such as `pasteItem(() => {` and a line that only contains the name.
+ * @returns `true` for `export default async function pasteItem() {`, `class PasteItem {`, `const pasteItem = async () => {` and `  pasteItem(source) {`; `false` for a call such as `pasteItem(source)` or `await pasteItem(source)`, a callback opener such as `pasteItem(() => {` or `pasteItem(function () {`, and a line that only contains the name.
  * @example
  * declaresName('async function pasteItem() {', 'pasteItem') // => true
  * declaresName('  await pasteItem()', 'pasteItem') // => false
@@ -32,12 +34,15 @@ function declaresName(line: string, name: string): boolean {
     'i',
   )
   if (keywordDeclaration.test(text)) return true
-  // A method opens its body on its own line; a callback or an arrow function after the name is a call.
+  // A method opens its body on its own line.
   const method = new RegExp(
     `^${DECLARATION_MODIFIERS}${escaped}\\s*[<(].*\\{$`,
     'i',
   )
-  return method.test(text) && !text.includes('=>')
+  // A callback after the name (`=>`, or a `function` expression as in `pasteItem(function () {`) makes the line a call.
+  return (
+    method.test(text) && !text.includes('=>') && !FUNCTION_KEYWORD.test(text)
+  )
 }
 
 /**

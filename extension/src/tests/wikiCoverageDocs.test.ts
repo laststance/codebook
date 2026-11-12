@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  WIKI_CONTEXT_CLUSTER_MIN_ANCHORS,
   WIKI_CONTEXT_LINE_LIMIT,
   WIKI_CONTEXT_UNIT_LINE_LIMIT,
 } from '../constants'
@@ -303,7 +304,7 @@ test('the README says how a question on a large Wiki is routed through its pages
   )
 })
 
-// Value: protects=the learner's README telling that a Wiki answer reads a long file's matching comments together with the code they describe: a matching line brings the whole function, method, class or object it documents or declares, with its body and the comment above it, within the 40-line unit cap, without pushing out the three best matches or a line of a route identifier, and the README's two numbers are the product's constants; fails_when=the README is silent on the rule, names another excerpt size or unit cap, or the constants move away from the 80 and 40 lines the README states; why_new=Cycle 0122 F3 (hypothesis A, criterion 5) and its review round (hard-coded expectation; the identifier reservation); seam=none; no_claim=that the excerpt rule finds every declaration in every formatting style
+// Value: protects=the learner's README telling that a Wiki answer reads a long file's matching comments together with the code they describe: a matching line brings the whole function, method, class or object it documents or declares, with its body and the comment above it, within the 40-line unit cap, without pushing out the three best matches or a line of a route identifier, and the README's two numbers are the product's constants; fails_when=the README is silent on the rule, names another excerpt size or unit cap, or the constants move away from the 80 and 40 lines the README states; why_new=Cycle 0122 F3 (hypothesis A, criterion 5) and its review round (hard-coded expectation; the identifier reservation); Cycle 0124 F3 (Issue #318) moved the sentence's end to the long-function windows, the whole-name match and their two-anchor minimum; seam=none; no_claim=that the excerpt rule finds every declaration in every formatting style
 test('the README says a matching line in a long source file brings the whole declaration it documents or declares', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
@@ -311,11 +312,12 @@ test('the README says a matching line in a long source file brings the whole dec
   // Assert
   assert.ok(
     readme.includes(
-      'In a source file longer than 80 lines, each matching line first brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines without pushing out the three best matching lines or a line holding an identifier the editor model named, so an answer sees the code a matching comment describes, not the comment alone; the line that declares a function, class or variable the editor model named comes first, and if that declaration is too long for a whole unit it brings its first 40 lines right there; once those whole units are placed, another matching function too long for one brings its first 40 lines, as far as the excerpt has room.',
+      'In a source file longer than 80 lines, each matching line first brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines without pushing out the three best matching lines or a line holding an identifier the editor model named, so an answer sees the code a matching comment describes, not the comment alone; the line that declares a function, class or variable the editor model named comes first, and if that declaration is too long for a whole unit it brings, right there, its declaration line and up to 39 lines around the lines inside it that hold the identifiers the editor model named (its first 40 lines when those lines lie there), never past its closing line; before the first matching line that comes alone, each other function too long for a whole unit that holds two or more lines with those identifiers brings the same part of itself, the functions holding more different identifiers first; once those are placed, another matching function too long for one brings its first 40 lines, as far as the excerpt has room. An identifier the editor model named matches only as a whole name, so `get` does not match `getElementById` or `targetId`.',
     ),
   )
   assert.equal(WIKI_CONTEXT_LINE_LIMIT, 80)
   assert.equal(WIKI_CONTEXT_UNIT_LINE_LIMIT, 40)
+  assert.equal(WIKI_CONTEXT_CLUSTER_MIN_ANCHORS, 2)
 })
 
 /**

@@ -1,15 +1,37 @@
 import {
+  WIKI_CONTEXT_CLUSTER_MIN_ANCHORS,
   WIKI_CONTEXT_HEAD_MIN_LINES,
   WIKI_CONTEXT_KEPT_ANCHOR_COUNT,
   WIKI_CONTEXT_LINE_LIMIT,
 } from '../constants'
 
+import {
+  longFunctionWindowsOf,
+  type LongFunctionWindow,
+} from './anchorClusters'
 import { codeUnitOfLine, longDeclarationHeadOfLine } from './codeUnitOfLine'
 import { declaresPriorityTerm } from './declaresPriorityTerm'
+import { matchesRouteIdentifier } from './matchesRouteIdentifier'
+
+/** What one long source's excerpt build shares between its admission steps. */
+interface ExcerptBuild {
+  /** Complete verified source, indexed from zero. */
+  lines: readonly string[]
+  /** The anchors whose own lines keep their places ({@link keptAnchorsOf}). */
+  keptAnchors: readonly number[]
+  /** The identifiers the route reply named, lowercased. */
+  priorityTerms: readonly string[]
+  /** Each long function holding route-identifier anchors with its window, ranked ({@link longFunctionWindowsOf}). */
+  windows: readonly LongFunctionWindow[]
+  /** Declaration lines whose window a route-named declaration already brought, so their cluster is not admitted again. */
+  windowedDeclarations: Set<number>
+  /** The lines selected so far. */
+  selected: Set<number>
+}
 
 /**
  * Keeps matching source and nearby control flow when Wiki Q&A builds bounded excerpts.
- * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; then a function too long for a whole unit brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
+ * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; a route-named function too long for a whole unit brings the window over its own anchors, and before the first single line each long function holding several route-identifier anchors brings its window ({@link longFunctionWindowsOf}, Cycle 0124); then a function too long for a whole unit brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
  * Called by {@link answerDeepWikiQuestionWithPrompt} before optional model routing, and by its route step for a routed file, with the code identifiers the route reply named as priority terms.
  * @param lines - Complete verified source, indexed from zero.
  * @param terms - Normalized words from the repository question.
@@ -66,7 +88,7 @@ export function selectWikiSourceLines(
 
 /**
  * Scores a line of a long file against the question's words and the identifiers a route reply named.
- * One priority match outweighs every ordinary term together, so the lines a route reply named come first; a line that declares one of the identifiers outweighs every line that only mentions them (Cycle 0123 F3, Issue #316: the declaration of `pasteItem` ranked below call sites of other identifiers). A dotted identifier and its own last part, both in the list, count once on a line that holds the dotted one.
+ * One priority match outweighs every ordinary term together, so the lines a route reply named come first; a line that declares one of the identifiers outweighs every line that only mentions them (Cycle 0123 F3, Issue #316: the declaration of `pasteItem` ranked below call sites of other identifiers). A dotted identifier and its own last part, both in the list, count once on a line that holds the dotted one. A route identifier matches only as a whole identifier ({@link matchesRouteIdentifier}); question words still match inside longer words.
  * Called by {@link selectWikiSourceLines} for every line.
  * @param line - One source line.
  * @param terms - Normalized words from the repository question.
@@ -83,7 +105,10 @@ function scoreLine(
 ): number {
   const lower = line.toLowerCase()
   const priorityWeight = terms.length + 1
-  const matched = priorityTerms.filter((term) => lower.includes(term))
+  // A route identifier counts only as a whole identifier, so `get` never matches inside `getElementById` (Cycle 0124 F3).
+  const matched = priorityTerms.filter((term) =>
+    matchesRouteIdentifier(lower, term),
+  )
   // A member that is the last part of a matched dotted identifier is the same match.
   const distinct = matched.filter(
     (term) =>
@@ -103,11 +128,12 @@ function scoreLine(
  * Gives each ranked anchor, in rank order, the code unit it documents or opens ({@link codeUnitOfLine}) while the excerpt budget allows, and its own line otherwise; an anchor that is not a kept line is left out once the budget left is reserved for kept lines.
  * Why: Cycle 0122 (F3) — when 80 or more lines of a long file matched, the excerpt was 80 single lines, and a matching doc comment reached the model without the function it documents.
  * A unit is admitted only while a place stays for every kept line not yet selected ({@link keptAnchorsOf}: the best-ranked matches and each route identifier's first line), so whole functions never push those out (Cycle 0122 review round).
+ * A route-named function too long for a whole unit brings, in rank order, the window over its own anchors ({@link admitUnitOrNamedWindow}); just before the first anchor that only brings its own line, each long function holding {@link WIKI_CONTEXT_CLUSTER_MIN_ANCHORS} or more route-identifier anchors brings its window, best first ({@link admitClusterWindows}, Cycle 0124 F3).
  * Called by {@link selectWikiSourceLines} before it fills the rest of the budget with lines around the anchors.
  * @param lines - Complete verified source, indexed from zero.
  * @param anchors - Matching zero-based lines, best first.
  * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
- * @param priorityTerms - The identifiers the route reply named, lowercased; an anchor that declares one of them and begins a function too long for a whole unit brings that function's head in rank order, with the whole units (Cycle 0123 F3).
+ * @param priorityTerms - The identifiers the route reply named, lowercased; their anchors form the long functions' windows (every anchor when the reply named none).
  * @returns The selected zero-based lines, at most {@link WIKI_CONTEXT_LINE_LIMIT}; lines already selected cost nothing again.
  * @example
  * codeUnitsOfAnchors(['// Adds one.', 'function add(value) {', '  return value + 1', '}'], [0], [], []) // => Set { 0, 1, 2, 3 }
@@ -118,23 +144,112 @@ function codeUnitsOfAnchors(
   keptAnchors: readonly number[],
   priorityTerms: readonly string[],
 ): Set<number> {
-  const selected = new Set<number>()
+  const build: ExcerptBuild = {
+    lines,
+    keptAnchors,
+    priorityTerms,
+    windows: longFunctionWindowsOf(
+      lines,
+      routeAnchorsOf(lines, anchors, priorityTerms),
+      priorityTerms,
+    ),
+    windowedDeclarations: new Set<number>(),
+    selected: new Set<number>(),
+  }
+  const { selected } = build
+  let didAdmitClusters = false
   for (const anchor of anchors) {
     // Once the budget is spent, the remaining anchors are left out.
     if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) break
     if (selected.has(anchor)) continue
-    const wholeUnit = codeUnitOfLine(lines, anchor)
-    // A route identifier's declaration too long for a whole unit brings its head here, before single lines of other anchors take the places.
-    if (
-      !wholeUnit &&
-      declaresPriorityTerm(lines[anchor]!, priorityTerms) &&
-      admitHead(longDeclarationHeadOfLine(lines, anchor), keptAnchors, selected)
-    )
-      continue
-    admitUnitOrLine(anchor, wholeUnit ?? [anchor], keptAnchors, selected)
+    if (admitUnitOrNamedWindow(build, anchor)) continue
+    // Before the first anchor that brings only its own line, the long functions holding several anchors bring their windows.
+    if (!didAdmitClusters) {
+      didAdmitClusters = true
+      admitClusterWindows(build)
+      if (selected.has(anchor)) continue
+    }
+    admitUnitOrLine(anchor, [anchor], keptAnchors, selected)
   }
+  // Every anchor brought a unit or a window, so the clusters still get their turn.
+  if (!didAdmitClusters) admitClusterWindows(build)
   admitLongDeclarationHeads(lines, anchors, keptAnchors, selected)
   return selected
+}
+
+/**
+ * Lists the anchors that may form a long function's window: those holding a route identifier, or every anchor when the reply named none, so a common question word never makes a window when identifiers were named.
+ * Called by {@link codeUnitsOfAnchors} before it groups anchors by long function.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchors - Matching zero-based lines, best first.
+ * @param priorityTerms - The identifiers the route reply named, lowercased.
+ * @returns The anchors in the same order.
+ * @example
+ * routeAnchorsOf(['save(a)', 'record'], [0, 1], ['save']) // => [0]
+ */
+function routeAnchorsOf(
+  lines: readonly string[],
+  anchors: readonly number[],
+  priorityTerms: readonly string[],
+): number[] {
+  if (!priorityTerms.length) return [...anchors]
+  return anchors.filter((anchor) =>
+    priorityTerms.some((term) =>
+      matchesRouteIdentifier(lines[anchor]!.toLowerCase(), term),
+    ),
+  )
+}
+
+/**
+ * Places what an anchor brings besides its own line: its whole code unit ({@link admitUnitOrLine}), or, for the declaration of a route identifier too long for a whole unit, the window over that function's own anchors (its head when none lies past it).
+ * Why: Cycle 0124 (F3, Issue #318) — the head of P06's route-named `handleContextAction` (lines 1230-1269) took 40 places while its copy and paste cases (1270-1277) held the anchors.
+ * Called by {@link codeUnitsOfAnchors} for each ranked anchor.
+ * @param build - The excerpt build; an admitted window's declaration line joins its `windowedDeclarations`.
+ * @param anchor - The anchor line.
+ * @returns `true` when the anchor has a whole unit (admitted, or given way to its own line) or its window was admitted; `false` when only its own line remains to place.
+ * @example
+ * admitUnitOrNamedWindow(build, 0) // => false for `const a = 1` with no route identifier
+ */
+function admitUnitOrNamedWindow(build: ExcerptBuild, anchor: number): boolean {
+  const { lines, keptAnchors, priorityTerms, selected } = build
+  const wholeUnit = codeUnitOfLine(lines, anchor)
+  if (wholeUnit) {
+    admitUnitOrLine(anchor, wholeUnit, keptAnchors, selected)
+    return true
+  }
+  if (!declaresPriorityTerm(lines[anchor]!, priorityTerms)) return false
+  const head = longDeclarationHeadOfLine(lines, anchor)
+  if (!head) return false
+  const declarationLine = head[0]!
+  const window =
+    build.windows.find(
+      (candidate) => candidate.declarationLine === declarationLine,
+    )?.window ?? head
+  if (!admitHead(window, keptAnchors, selected)) return false
+  build.windowedDeclarations.add(declarationLine)
+  return true
+}
+
+/**
+ * Brings the window of each long function holding {@link WIKI_CONTEXT_CLUSTER_MIN_ANCHORS} or more route-identifier anchors, best first, under the head budget rule ({@link admitHead}); a function whose window a route-named declaration already brought is skipped.
+ * Why: Cycle 0124 (F3, Issue #318) — identifiers named inside P06's `pasteItem`, without its name, left 0 to 6 of the 13 lines that create the pasted bookmark and folder.
+ * Called by {@link codeUnitsOfAnchors} just before the first anchor that brings only its own line, or after its loop.
+ * @param build - The excerpt build; admitted window lines join its `selected`.
+ * @example
+ * admitClusterWindows(build) // adds the window of the long function around two route-identifier anchors
+ */
+function admitClusterWindows(build: ExcerptBuild): void {
+  const { keptAnchors, selected } = build
+  for (const candidate of build.windows) {
+    if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
+    // A lone anchor stays a single line, and a window already brought is not brought again.
+    if (
+      candidate.anchors.length < WIKI_CONTEXT_CLUSTER_MIN_ANCHORS ||
+      build.windowedDeclarations.has(candidate.declarationLine)
+    )
+      continue
+    admitHead(candidate.window, keptAnchors, selected)
+  }
 }
 
 /**
@@ -202,8 +317,8 @@ function admitLongDeclarationHeads(
 
 /**
  * Adds a head to the selection under the unit budget rule.
- * Called by {@link codeUnitsOfAnchors} for a route identifier's declaration, and by {@link admitLongDeclarationHeads} for every other anchor.
- * @param head - A head's zero-based lines ({@link longDeclarationHeadOfLine}); `undefined` for an anchor with no head.
+ * Called by {@link admitUnitOrNamedWindow} for a route identifier's declaration, by {@link admitClusterWindows} for a long function's window, and by {@link admitLongDeclarationHeads} for every other anchor.
+ * @param head - A head's or window's zero-based lines, the declaration line first ({@link longDeclarationHeadOfLine}, {@link longFunctionWindowsOf}); `undefined` for an anchor with no head.
  * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
  * @param selected - The lines selected so far; the admitted head lines are added to it.
  * @returns `true` when the head, whole or cut to the places left, was added; `false` when there is no head or fewer than {@link WIKI_CONTEXT_HEAD_MIN_LINES} of its lines fit.
@@ -271,7 +386,7 @@ function keptAnchorsOf(
 ): number[] {
   const identifierAnchors = priorityTerms.flatMap((term) => {
     const anchor = anchors.find((index) =>
-      lines[index]!.toLowerCase().includes(term),
+      matchesRouteIdentifier(lines[index]!.toLowerCase(), term),
     )
     return anchor === undefined ? [] : [anchor]
   })

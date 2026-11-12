@@ -1312,6 +1312,10 @@ export const WIKI_CONTEXT_UNIT_LINE_LIMIT = 40
 export const WIKI_CONTEXT_HEAD_MIN_LINES = 10
 /** The best-ranked matching lines of a long file that always keep their places in a Wiki question's excerpt, whatever code units the lines ranked before them bring: two 40-line units would otherwise fill the excerpt and drop the third-best match (Cycle 0122 review round). */
 export const WIKI_CONTEXT_KEPT_ANCHOR_COUNT = 3
+/** The lines a long function's window in a Wiki question's excerpt starts before the first anchor of its densest span, so the statement that leads into that anchor comes along. Cycle 0124 (F3, Issue #318): the anchors inside P06's `pasteItem` stayed single lines, and the answer called what a paste creates unknown. */
+export const WIKI_CONTEXT_WINDOW_LEAD_LINES = 2
+/** The fewest route-identifier anchors a long function must hold for its window to enter a Wiki question's excerpt before single lines; a function holding one anchor keeps that line alone. Cycle 0124 (F3, Issue #318). */
+export const WIKI_CONTEXT_CLUSTER_MIN_ANCHORS = 2
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
