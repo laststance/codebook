@@ -1308,6 +1308,8 @@ export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
 /** The most lines one code unit (a declaration with its brace block, and the comment above it when that fits) may bring into a Wiki question's excerpt of a long file: half of {@link WIKI_CONTEXT_LINE_LIMIT}, so one unit never fills an excerpt. Cycle 0122 (F3): a matching doc comment reached the model without the function it documents, and the answer called that function's behavior unknown. */
 export const WIKI_CONTEXT_UNIT_LINE_LIMIT = 40
+/** The fewest lines of a function too long for a whole unit that a Wiki question's excerpt takes as its head (the declaration line and the lines after it, up to {@link WIKI_CONTEXT_UNIT_LINE_LIMIT}); a head that cannot get this many lines in the budget left is not taken, and the anchor line stays alone. Cycle 0123 (F3, Issue #316): P06's 44-line `pasteItem` fell back to scattered lines, and the answer called what a paste creates undeterminable. */
+export const WIKI_CONTEXT_HEAD_MIN_LINES = 10
 /** The best-ranked matching lines of a long file that always keep their places in a Wiki question's excerpt, whatever code units the lines ranked before them bring: two 40-line units would otherwise fill the excerpt and drop the third-best match (Cycle 0122 review round). */
 export const WIKI_CONTEXT_KEPT_ANCHOR_COUNT = 3
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000

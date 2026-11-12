@@ -1,13 +1,14 @@
 import {
+  WIKI_CONTEXT_HEAD_MIN_LINES,
   WIKI_CONTEXT_KEPT_ANCHOR_COUNT,
   WIKI_CONTEXT_LINE_LIMIT,
 } from '../constants'
 
-import { codeUnitOfLine } from './codeUnitOfLine'
+import { codeUnitOfLine, longDeclarationHeadOfLine } from './codeUnitOfLine'
 
 /**
  * Keeps matching source and nearby control flow when Wiki Q&A builds bounded excerpts.
- * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; lines around the anchors fill what is left.
+ * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; then a function too long for a whole unit brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
  * Called by {@link answerDeepWikiQuestionWithPrompt} before optional model routing, and by its route step for a routed file, with the code identifiers the route reply named as priority terms.
  * @param lines - Complete verified source, indexed from zero.
  * @param terms - Normalized words from the repository question.
@@ -115,7 +116,66 @@ function codeUnitsOfAnchors(
     )
       selected.add(anchor)
   }
+  admitLongDeclarationHeads(lines, anchors, keptAnchors, selected)
   return selected
+}
+
+/**
+ * Gives each ranked anchor that begins a function too long for a whole unit the head of that function ({@link longDeclarationHeadOfLine}), after every whole unit is placed, so a whole unit is never displaced by a head.
+ * Why: Cycle 0123 (F3, Issue #316) — P06's 44-line `pasteItem` was just over the unit limit, so the excerpt held 2 to 6 of the lines that create the bookmark and the folder.
+ * A head follows the unit budget rule: a place stays for every kept line not yet selected, selected lines cost nothing, and the excerpt never passes {@link WIKI_CONTEXT_LINE_LIMIT}. A head that does not fit whole is cut to the space left, declaration line first, when that holds at least {@link WIKI_CONTEXT_HEAD_MIN_LINES} lines; otherwise the anchor stays alone.
+ * Called by {@link codeUnitsOfAnchors} after its whole-unit pass.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchors - Matching zero-based lines, best first.
+ * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
+ * @param selected - The lines selected so far; the admitted head lines are added to it.
+ * @example
+ * admitLongDeclarationHeads(lines, [0], [], selected) // adds lines 0 to 39 of a 44-line function that begins on line 0
+ */
+function admitLongDeclarationHeads(
+  lines: readonly string[],
+  anchors: readonly number[],
+  keptAnchors: readonly number[],
+  selected: Set<number>,
+): void {
+  for (const anchor of anchors) {
+    if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
+    const head = longDeclarationHeadOfLine(lines, anchor)
+    if (!head) continue
+    // A kept line waiting for its place keeps it: the head's own kept lines use theirs.
+    const waitingKept = keptAnchors.filter((kept) => !selected.has(kept))
+    const prefix = headPrefixWithin(
+      head,
+      new Set([...selected, ...waitingKept]),
+      WIKI_CONTEXT_LINE_LIMIT - selected.size - waitingKept.length,
+    )
+    // A head cut shorter than the minimum is not worth its places.
+    if (prefix.length < Math.min(head.length, WIKI_CONTEXT_HEAD_MIN_LINES))
+      continue
+    for (const index of prefix) selected.add(index)
+  }
+}
+
+/**
+ * Cuts a head to the places left: its first lines in order, as many as the room allows.
+ * Called by {@link admitLongDeclarationHeads} for each head, before it checks the head against {@link WIKI_CONTEXT_HEAD_MIN_LINES}.
+ * @param head - A head's zero-based lines in order, the declaration line first.
+ * @param freeLines - Lines that cost no new place: the lines selected already and the kept lines whose places are reserved.
+ * @param room - How many new places the head may take.
+ * @returns The longest prefix of the head whose lines outside `freeLines` number at most `room`.
+ * @example
+ * headPrefixWithin([0, 1, 2, 3], new Set([0]), 2) // => [0, 1, 2]
+ */
+function headPrefixWithin(
+  head: readonly number[],
+  freeLines: ReadonlySet<number>,
+  room: number,
+): number[] {
+  const newPlaces = head.filter((index) => !freeLines.has(index))
+  // The first line past the room that costs a place ends the prefix.
+  const cutAt = newPlaces[Math.max(room, 0)]
+  const end = cutAt === undefined ? head.length : head.indexOf(cutAt)
+  return head.slice(0, end)
 }
 
 /**

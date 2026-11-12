@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { longDeclarationHeadOfLine } from '../utils/codeUnitOfLine'
 import { selectWikiSourceLines } from '../utils/selectWikiSourceLines'
 
 // Value: protects=the excerpt of a long file whose question words match 80 or more lines: a doc comment inside an object literal brings the method it documents, closed by `},`, whole into the excerpt; fails_when=the excerpt keeps only the matching lines, so the comment arrives without the method body (Cycle 0121 F3, P03 createStore.ts:347-374), or the method's block is ended at the object's closing brace instead of its own; why_new=Cycle 0122 F3 (hypothesis A); seam=none; no_claim=that an editor model answers from the body
@@ -628,4 +629,206 @@ test('a matching comment above a 40-line function stays one line, keeping units 
   assert.ok(selected.includes(0), 'the matching comment is selected')
   assert.equal(selected.includes(1), false, 'read() stays out')
   assert.equal(selected.length, 80)
+})
+
+/**
+ * Builds a function of `lineCount` lines, closing brace included, that begins at its first line.
+ * @param name - The function's name, printed on the declaration line.
+ * @param lineCount - The function's total line count, at least 3.
+ * @param indentation - The text before every line.
+ * @returns The function's source lines.
+ * @example
+ * functionOf('pasteItem', 3, '') // => ['function pasteItem() {', '  step(1)', '}']
+ */
+function functionOf(
+  name: string,
+  lineCount: number,
+  indentation = '',
+): string[] {
+  return [
+    `${indentation}function ${name}() {`,
+    ...Array.from(
+      { length: lineCount - 2 },
+      (_, index) => `${indentation}  step(${index + 1})`,
+    ),
+    `${indentation}}`,
+  ]
+}
+
+/**
+ * Builds lines that each match the ordinary term `filler`, so each is a ranked anchor of its own.
+ * @param count - How many lines to build.
+ * @returns The lines `export const filler0 = 0`, `export const filler1 = 1`, and so on.
+ * @example
+ * fillerLines(2) // => ['export const filler0 = 0', 'export const filler1 = 1']
+ */
+function fillerLines(count: number): string[] {
+  return Array.from(
+    { length: count },
+    (_, index) => `export const filler${index} = ${index}`,
+  )
+}
+
+/**
+ * Builds lines that match no test term.
+ * @param count - How many lines to build.
+ * @returns The lines `export const other0 = 0`, and so on.
+ * @example
+ * otherLines(1) // => ['export const other0 = 0']
+ */
+function otherLines(count: number): string[] {
+  return Array.from(
+    { length: count },
+    (_, index) => `export const other${index} = ${index}`,
+  )
+}
+
+// Value: protects=the head of a function just over the 40-line unit cap (P06's 44-line pasteItem): the excerpt takes its first 40 lines, so the branches that create the pasted bookmark and folder reach the editor model; fails_when=a function past the cap falls back to scattered lines again (Cycle 0123 F3, Issue 316), or the head is taken from the comment or past line 40; why_new=Cycle 0123 F3; seam=none; no_claim=that every long function answers from its first 40 lines
+test('a 44-line function matching a route identifier brings its first 40 lines into a long file excerpt', () => {
+  // Arrange
+  const lines = [
+    ...functionOf('pasteItem', 44),
+    ...otherLines(60),
+    ...fillerLines(20),
+    ...otherLines(100),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['filler'], ['pasteitem'])
+
+  // Assert
+  for (let line = 0; line < 40; line++)
+    assert.ok(
+      selected.includes(line),
+      `line ${line + 1} of pasteItem is selected`,
+    )
+  assert.equal(selected.includes(43), false, 'the closing brace stays out')
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=whole units over heads: a whole function ranked after a long function's anchor is placed whole before the long function's head takes what is left; fails_when=heads are placed with the anchors in rank order, so the 40-line head takes the places a whole unit needed and the unit arrives cut; why_new=Cycle 0123 F3 design (second pass after the whole units); seam=none; no_claim=which of the two the model needs more
+test('a whole function ranked after a long function is never displaced by the long function head', () => {
+  // Arrange
+  const lines = [
+    ...functionOf('longPaste', 44),
+    ...functionOf('shortUnit', 30),
+    ...fillerLines(25),
+    ...otherLines(100),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    ['filler', 'shortunit'],
+    ['longpaste'],
+  )
+
+  // Assert
+  for (let line = 44; line < 74; line++)
+    assert.ok(
+      selected.includes(line),
+      `line ${line + 1} of shortUnit is selected`,
+    )
+  assert.ok(selected.includes(0), 'the long function declaration is selected')
+  assert.ok(
+    selected.includes(20),
+    'the long function head is cut to the places left',
+  )
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=the 10-line minimum of a head: with fewer places left only the anchor line comes, so a sliver of a function does not displace matches; fails_when=a head is cut to any length, taking the last places for 4 lines that explain nothing; why_new=Cycle 0123 F3 design (minimum head); seam=none; no_claim=that 10 lines is the best minimum
+test('a long function whose head cannot get 10 lines in the places left brings only its anchor line', () => {
+  // Arrange
+  const lines = [
+    ...functionOf('longPaste', 44),
+    ...fillerLines(75),
+    ...otherLines(50),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['filler'], ['longpaste'])
+
+  // Assert
+  assert.ok(selected.includes(0), 'the anchor line is selected')
+  assert.equal(selected.includes(20), false, 'the function body stays out')
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=a long block left by a dedent: a line less indented than the declaration before the block closes brings no head, as it brought no unit; fails_when=the head is taken for a malformed block, so lines of the next scope enter the excerpt; why_new=Cycle 0123 F3 design (too long versus malformed); seam=none; no_claim=support for unformatted source
+test('a long block left by a dedent before it closes brings no head', () => {
+  // Arrange
+  const body = functionOf('longPaste', 44, '  ')
+  body[10] = 'misplaced()'
+  const lines = [
+    ...body,
+    ...otherLines(60),
+    ...fillerLines(20),
+    ...otherLines(100),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['filler'], ['longpaste'])
+
+  // Assert
+  assert.ok(selected.includes(0), 'the anchor line is selected')
+  assert.equal(selected.includes(30), false, 'the function body stays out')
+})
+
+// Value: protects=the answer to a question about a paste in P06's fullpage.js: with the route identifiers pasteItem and clipboard, the 44-line pasteItem brings the lines that create the bookmark and the folder; fails_when=the create branches fall out of the excerpt as in H1 run 2, so the answer says what is duplicated cannot be determined; why_new=Cycle 0123 F3 end-to-end; seam=none; no_claim=the real file's exact line numbers
+test('a question routed to a 44-line paste function brings the lines that create the bookmark and the folder', () => {
+  // Arrange
+  const pasteItem = [
+    'async function pasteItem() {',
+    '  const folderId = pane.currentFolderId',
+    '  const source = clipboard.item',
+    ...Array.from({ length: 18 }, (_, index) => `  guard(${index})`),
+    '  if (source.url) {',
+    '    await chrome.bookmarks.create({ parentId: folderId, url: source.url })',
+    '  } else {',
+    '    // Copy folder (shallow - just the folder itself)',
+    '    await chrome.bookmarks.create({ parentId: folderId, title: source.title })',
+    '  }',
+    ...Array.from({ length: 17 }, (_, index) => `  refresh(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...Array.from({ length: 30 }, (_, index) => [
+      `clipboardNoise${index}()`,
+      ...otherLines(9),
+    ]).flat(),
+    ...pasteItem,
+    ...Array.from(
+      { length: 200 },
+      (_, index) => `function unrelated${index}() {}`,
+    ),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    ['paste'],
+    ['pasteitem', 'clipboard', 'currentfolderid'],
+  )
+
+  // Assert
+  for (let line = 321; line <= 326; line++)
+    assert.ok(selected.includes(line), `line ${line + 1} is selected`)
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=the boundary between a whole unit and a head: a function of exactly 40 lines is a whole unit with no head, and one of 41 lines has the head of its first 40; fails_when=the boundary moves by one line, so a unit also gets a head or a long function gets none; why_new=Cycle 0123 F3; seam=none; no_claim=lines outside the declaration
+test('a function has a head only when it is longer than 40 lines', () => {
+  // Arrange
+  const exactlyFortyLines = functionOf('fits', 40)
+  const fortyOneLines = functionOf('exceeds', 41)
+
+  // Act
+  const fitsHead = longDeclarationHeadOfLine(exactlyFortyLines, 0)
+  const exceedsHead = longDeclarationHeadOfLine(fortyOneLines, 0)
+
+  // Assert
+  assert.equal(fitsHead, undefined)
+  assert.equal(exceedsHead?.length, 40)
+  assert.equal(exceedsHead?.[39], 39)
 })
