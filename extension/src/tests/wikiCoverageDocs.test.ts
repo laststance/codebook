@@ -311,7 +311,7 @@ test('the README says a matching line in a long source file brings the whole dec
   // Assert
   assert.ok(
     readme.includes(
-      'In a source file longer than 80 lines, each matching line first brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines without pushing out the three best matching lines or a line holding an identifier the editor model named, so an answer sees the code a matching comment describes, not the comment alone; once those whole units are placed, a matching function too long for one brings its first 40 lines, as far as the excerpt has room.',
+      'In a source file longer than 80 lines, each matching line first brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines without pushing out the three best matching lines or a line holding an identifier the editor model named, so an answer sees the code a matching comment describes, not the comment alone; the line that declares a function, class or variable the editor model named comes first, and if that declaration is too long for a whole unit it brings its first 40 lines right there; once those whole units are placed, another matching function too long for one brings its first 40 lines, as far as the excerpt has room.',
     ),
   )
   assert.equal(WIKI_CONTEXT_LINE_LIMIT, 80)
