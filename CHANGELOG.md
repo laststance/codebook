@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.123.0] - 2026-11-12 (development candidate)
+
+Cycle 0121 ([Issue #311](https://github.com/laststance/codebook/issues/311)), a feature cycle. **When an LLM Wiki is updated after a code change, the bundled skill now also corrects the sentences that still state the old rule without naming it: one that says another function or check applies the same rule as the changed code, and one that words the rule differently, which the update now finds by searching every page for single words as well as phrases.** On reduxjs/redux, after `dispatch` began to accept a symbol action type, earlier updates kept "isAction is exported so application code can apply the same rule before calling dispatch" and "a JavaScript caller still gets the plain-object and string-type checks"; with this skill, the updates in VS Code and Cursor corrected every page that still stated the string-only rule.
+
+### Changed
+- **The bundled skill is 1.0.101.** On an update, a sentence that compares another function, check or type with a changed rule (that it applies the same rule, mirrors it or matches it) counts as a statement of that rule, even in a paragraph about something else, and the skill asks the editor AI to correct the comparison or remove it when the change makes it untrue. The update also searches every page for each changed name and for each word of the old rule on its own, not only for whole phrases, and reads every sentence such a search finds, because inline code, links and hyphens split a phrase in a page's markup.
+
+**Compatibility.** No MCP API or study format change. Cursor's managed skill moves to 1.0.101 with **Codebook: Set Up AI Chat** or before the next **Generate LLM Wiki**; VS Code reads the bundled skill directly. Published Wikis are read as they are.
+
 ## [0.2.122.0] - 2026-11-12 (development candidate)
 
 Cycle 0119 ([Issue #306](https://github.com/laststance/codebook/issues/306)), a feature cycle. **A question asked in the browser reader of a large LLM Wiki is now routed through the Wiki's own pages, so it can reach the code that answers it also when it is worded in another language than the code, and Cursor gives each of its two requests up to 5 minutes.** On TanStack/query (2,483 included sources, 27 workspace packages), VS Code's Copilot Chat and Cursor's agent each generated, read, answered questions on and updated a passing Wiki within Codebook's bounds.
