@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.124'
+export const EXTENSION_VERSION = '0.2.125'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1308,6 +1308,8 @@ export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
 /** The most lines one code unit (a declaration with its brace block, and the comment above it when that fits) may bring into a Wiki question's excerpt of a long file: half of {@link WIKI_CONTEXT_LINE_LIMIT}, so one unit never fills an excerpt. Cycle 0122 (F3): a matching doc comment reached the model without the function it documents, and the answer called that function's behavior unknown. */
 export const WIKI_CONTEXT_UNIT_LINE_LIMIT = 40
+/** The fewest lines of a function too long for a whole unit that a Wiki question's excerpt takes as its head (the declaration line and the lines after it, up to {@link WIKI_CONTEXT_UNIT_LINE_LIMIT}); a head that cannot get this many lines in the budget left is not taken, and the anchor line stays alone. Cycle 0123 (F3, Issue #316): P06's 44-line `pasteItem` fell back to scattered lines, and the answer called what a paste creates undeterminable. */
+export const WIKI_CONTEXT_HEAD_MIN_LINES = 10
 /** The best-ranked matching lines of a long file that always keep their places in a Wiki question's excerpt, whatever code units the lines ranked before them bring: two 40-line units would otherwise fill the excerpt and drop the third-best match (Cycle 0122 review round). */
 export const WIKI_CONTEXT_KEPT_ANCHOR_COUNT = 3
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000

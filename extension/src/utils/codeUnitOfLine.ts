@@ -17,6 +17,9 @@ const OBJECT_ARGUMENT_OPENING = /[([,]\s*\{$/
 const DECLARED_NAME =
   /^(?:(?:export|default|declare|async|public|private|protected|static|abstract|override)\s+)*(?:function\s*\*?\s*)?([A-Za-z_$][\w$]*)\s*[<(]/
 
+/** What a declaration scan reports when the block is still open at {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines: the declaration is too long for a whole unit, as opposed to a block that was left by a dedent or a signature that never ends. Cycle 0123 (F3). */
+const DECLARATION_TOO_LONG = 'too-long'
+
 /** Zero-based first and last lines of a run of source lines, both included. */
 interface LineRange {
   first: number
@@ -205,7 +208,10 @@ function declaresSameName(
  * @param lines - Complete source, indexed from zero.
  * @param openLine - The line that ends with the block's `{`.
  * @param declarationLine - The declaration's first line, from which the unit limit counts.
- * @returns The closing line; `undefined` when a non-blank line is indented less than the opening line first, or no closing line comes within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines of the declaration.
+ * @returns
+ * - The closing line
+ * - {@link DECLARATION_TOO_LONG} when the block is still open, at its indentation or deeper, {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines after the declaration
+ * - `undefined` when a non-blank line is indented less than the opening line first, or the source ends first
  * @example
  * blockCloseLine(['if (ready) {', '  run()', '} else {', '  wait()', '}'], 0, 0) // => 4
  */
@@ -213,7 +219,7 @@ function blockCloseLine(
   lines: readonly string[],
   openLine: number,
   declarationLine: number,
-): number | undefined {
+): number | typeof DECLARATION_TOO_LONG | undefined {
   const indentation = indentationOf(lines[openLine]!)
   const limit = Math.min(
     lines.length,
@@ -234,14 +240,17 @@ function blockCloseLine(
     )
       return index
   }
-  return undefined
+  // The unit limit, not the end of the source, stopped the walk: the block is too long, not malformed.
+  return limit === declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT
+    ? DECLARATION_TOO_LONG
+    : undefined
 }
 
 /**
  * Finds the lines of the declaration that begins on a line: its signature, continued over lines, and the brace block it opens. The body's `{` ends the declaration line or a signature line at the declaration's indentation, so a parameter type or default opened on a deeper signature line is part of the signature. Overloads of the same function or method run on to its implementation.
  * @param lines - Complete source, indexed from zero.
  * @param declarationLine - The declaration's first line.
- * @returns The declaration's first and last lines; `undefined` when its block does not close, or its signature does not end, within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines.
+ * @returns The declaration's first and last lines; {@link DECLARATION_TOO_LONG} when its block is still open {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines after the declaration; `undefined` when its block is left by a dedent, or its signature does not end, within that reach.
  * @example
  * declarationRange(['function add(', '  value,', ') {', '  return value + 1', '}'], 0) // => { first: 0, last: 4 }
  * declarationRange(['const limit = 3', 'run()'], 0) // => { first: 0, last: 0 }
@@ -249,7 +258,7 @@ function blockCloseLine(
 function declarationRange(
   lines: readonly string[],
   declarationLine: number,
-): LineRange | undefined {
+): LineRange | typeof DECLARATION_TOO_LONG | undefined {
   const indentation = indentationOf(lines[declarationLine]!)
   const limit = Math.min(
     lines.length,
@@ -263,7 +272,7 @@ function declarationRange(
       (index === declarationLine || indentationOf(line) === indentation)
     ) {
       const last = blockCloseLine(lines, index, declarationLine)
-      return last === undefined ? undefined : { first: declarationLine, last }
+      return typeof last === 'number' ? { first: declarationLine, last } : last
     }
     // A signature that opens no block ends at its last continued line, unless an overload or the implementation of the same name follows.
     if (
@@ -334,7 +343,7 @@ export function codeUnitOfLine(
   const declarationLine = declarationLineOf(lines, anchor, comment)
   if (declarationLine === undefined) return undefined
   const declaration = declarationRange(lines, declarationLine)
-  if (!declaration) return undefined
+  if (!declaration || declaration === DECLARATION_TOO_LONG) return undefined
   const commentFirst = (comment ?? commentAbove(lines, declarationLine))?.first
   // The comment comes along only when it fits in one unit with the declaration.
   const first =
@@ -351,4 +360,38 @@ export function codeUnitOfLine(
   return unitLines.length < WIKI_CONTEXT_UNIT_LINE_LIMIT
     ? [anchor, ...unitLines].sort((one, other) => one - other)
     : undefined
+}
+
+/**
+ * Finds the head of a declaration too long for a whole unit: its first {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines, from the declaration line on, without the comment above it.
+ * Why: Cycle 0123 (F3, Issue #316) — P06's `pasteItem` (44 lines) was just over the unit limit, so its excerpt held scattered lines and the create branches that answer the question were missing.
+ * Only a code line that begins the declaration brings a head; a comment line never does, so a long function's doc comment stays one line (Cycle 0122). A block left by a dedent, or a signature that never ends, brings nothing.
+ * Called by {@link selectWikiSourceLines} after every whole unit is placed, once per ranked anchor, through its head step.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchor - A zero-based line that holds a question word or a route identifier.
+ * @returns
+ * - The head's zero-based lines in order, the declaration line first (shorter only when the source ends first)
+ * - `undefined` when the anchor is a comment line, begins no declaration, or its declaration closes within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines or is malformed
+ * @example
+ * longDeclarationHeadOfLine(['function load() {', ...fortyOneStatements, '}'], 0) // => [0, 1, ..., 39]
+ * longDeclarationHeadOfLine(['function add() {', '  return 1', '}'], 0) // => undefined
+ */
+export function longDeclarationHeadOfLine(
+  lines: readonly string[],
+  anchor: number,
+): number[] | undefined {
+  if (commentAround(lines, anchor)) return undefined
+  const declarationLine = declarationLineOf(lines, anchor, undefined)
+  if (declarationLine === undefined) return undefined
+  if (declarationRange(lines, declarationLine) !== DECLARATION_TOO_LONG)
+    return undefined
+  return Array.from(
+    {
+      length: Math.min(
+        WIKI_CONTEXT_UNIT_LINE_LIMIT,
+        lines.length - declarationLine,
+      ),
+    },
+    (_, offset) => declarationLine + offset,
+  )
 }

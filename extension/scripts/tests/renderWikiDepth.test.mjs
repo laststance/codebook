@@ -318,6 +318,97 @@ test('an 11-file Wiki with one short flat page is rendered because a small repos
   })
 })
 
+/**
+ * Seven code files that hold `totalLines` lines together: `f0.ts` (written by {@link wikiOf}, one line) and six files under `src/` that share the other lines.
+ * Called by the size-condition tests below.
+ * @param totalLines - The lines of all seven files together; at least 7.
+ * @returns The six extra files for {@link wikiOf}'s `extraFiles`, each line ending in a newline.
+ * @example sixFilesHolding(1200)['src/file-0.ts'].split('\n').length - 1 // => 200
+ */
+const sixFilesHolding = (totalLines) => {
+  const extraLines = totalLines - 1
+  const files = {}
+  for (let index = 0; index < 6; index += 1) {
+    // The first files take the remainder, so the six files hold exactly extraLines lines.
+    const lineCount =
+      Math.floor(extraLines / 6) + (index < extraLines % 6 ? 1 : 0)
+    files[`src/file-${index}.ts`] = 'export const value = 1;\n'.repeat(
+      lineCount,
+    )
+  }
+  return files
+}
+
+// Value: protects=the learner of a Chrome extension of 7 code files holding 4,424 lines whose Wiki both hosts published below every depth floor; fails_when=a repository below 12 explained code files that holds 1,200 or more lines is exempt from the depth rules, or its refusal changes; why_new=Cycle 0123 (Issue 316): the 12-file exemption let P06's 7 files through; seam=none (the real renderer); no_claim=that 1,200 lines is the right size for the floors
+test('a 7-file Wiki of 1,200 lines with one page and no chapter tree is refused with the chapter tree sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const extraFiles = sixFilesHolding(1200)
+    // The last file's final line has no newline, and it still counts: a count that drops it would see 1,199 lines and exempt the Wiki.
+    extraFiles['src/file-5.ts'] = extraFiles['src/file-5.ts'].slice(0, -1)
+    const manifest = await wikiOf(root, {
+      fileCount: 1,
+      extraFiles,
+      pageTexts: [3000],
+      childCount: 0,
+      diagramCounts: [2],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki has 0 pages with a parent but needs at least 2: add child pages under subsystem chapters for their modules and flows.',
+    )
+  })
+})
+
+// Value: protects=the small repository whose honest Wiki is short, now that size also decides; fails_when=a repository below 12 explained code files that holds fewer than 1,200 lines is held to the depth rules; why_new=Cycle 0123 (Issue 316): guards the new line condition against rejecting a small repository; seam=none (the real renderer); no_claim=that a short Wiki is enough for 1,199 lines
+test('a 7-file Wiki of 1,199 lines with one short flat page is rendered because a small repository is exempt', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 1,
+      extraFiles: sixFilesHolding(1199),
+      pageTexts: [100],
+      childCount: 0,
+      diagramCounts: [],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=the small repository whose excepted code (a generated client) needs no explanation; fails_when=the 1,200-line condition counts excepted code files or every included file, not only the explained code files; why_new=Cycle 0123 review round (OCR: a fixture of explained files alone let both counts pass); seam=none (the real renderer); no_claim=that the exception's reason is true
+test('a 7-file Wiki whose explained code holds 1,100 lines beside a 200-line excepted file is rendered because excepted code does not count toward the 1,200 lines', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, {
+      fileCount: 1,
+      extraFiles: {
+        ...sixFilesHolding(1100),
+        'gen/api.ts': 'export const api = 1;\n'.repeat(200),
+      },
+      coverageExceptions: [{ path: 'gen/', reason: 'Generated client.' }],
+      pageTexts: [100],
+      childCount: 0,
+      diagramCounts: [],
+    })
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
 // Value: protects=the rule that excepted code needs no explanation and so does not raise the depth bar; fails_when=12 included code files of which one is excepted are held to the depth rules; why_new=Cycle 0113 (C113-W3); seam=none (the real renderer); no_claim=that the exception's reason is true
 test('twelve included code files with one excepted leave eleven explained files and the Wiki is exempt', async () => {
   await inProject(async (root) => {

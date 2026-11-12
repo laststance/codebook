@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.125.0] - 2026-11-13 (development candidate)
+
+Cycle 0123 ([Issue #316](https://github.com/laststance/codebook/issues/316)), a feature cycle. **The LLM Wiki of a small repository whose code sits in a few long files is now held to the same depth as a larger one, and the Wiki of a browser extension gives each runtime context a page of its own.** On laststance/bookmark-xp-explorer, a Chrome extension of 7 code files holding 4,424 lines, both editors published Wikis below every depth floor, because the renderer exempted repositories under 12 explained code files. VS Code's Wiki also gave the service worker no page. After the fixes, both editors' Wikis pass the depth floors and give the worker, the popup, the full page and the tests their own pages. A question's excerpt now also brings the first 40 lines of a long function when the editor model names it.
+
+### Changed
+- **The depth floors also apply below 12 explained code files once those files hold 1,200 or more lines in total.** Every line of the explained code files counts, blank and comment lines included. Excepted files do not count. A genuinely small repository stays exempt.
+- **The generator refuses a browser-extension Wiki that gives a runtime context no page of its own.** For a repository whose `manifest.json` declares `manifest_version` 2 or 3, each runtime context the manifest declares (the service worker or background scripts, the popup, the options page and other extension pages, the content scripts) and each extension page the extension opens itself needs a page whose sources name more of that context's files than of any other context's. A page may still cite another context's files. It also refuses one whose source index leaves out a file the manifest declares and the project holds, unless excludedPaths lists it.
+- **The bundled skill is 1.0.103.** Step 3 plans a chapter or page for each runtime context of a browser extension, including the extension pages the code opens itself, and for its tests. Step 5 states the size condition of the depth floors.
+
+### Fixed
+- **A long function the editor model names now reaches the answer's excerpt.** The line that declares a function, class or variable the editor model named comes first in a question's excerpt. If that declaration is too long for a whole unit, it brings its first 40 lines. Another matching function too long for a whole unit brings its first 40 lines once whole units are placed.
+
+**Compatibility.** No MCP API or study format change. Cursor's managed skill moves to 1.0.103 with **Codebook: Set Up AI Chat** or before the next **Generate LLM Wiki**; VS Code reads the bundled skill directly. Published Wikis are read as they are; a Wiki regenerated or updated with this version is held to the new depth and extension rules.
+
 ## [0.2.124.0] - 2026-11-12 (development candidate)
 
 Cycle 0122 ([Issue #314](https://github.com/laststance/codebook/issues/314)), a bug-fix cycle. **A question asked in an LLM Wiki's reader now gets the code that a matching comment describes, not the comment alone.** When many lines of a long source file matched a question, the excerpt sent to the editor model was those matching lines one by one, so a doc comment could arrive without the function it documents and the answer called that behavior unknown. On reduxjs/redux, VS Code's reader answered a question about the store's observable that way, although `createStore.ts` holds the answer a few lines below the comment. With this fix, VS Code's reader answered the same question correctly in three asks out of three, citing the lines that send the first value and register the later ones, and Cursor's reader answered it correctly too.

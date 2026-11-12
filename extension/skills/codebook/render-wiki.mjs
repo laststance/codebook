@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
@@ -133,8 +133,10 @@ const credentialRefusal = paths => {
   const more = paths.length > MAX_NAMED_UNCOVERED ? `, and ${paths.length - MAX_NAMED_UNCOVERED} more` : '';
   return `The Wiki's source index holds ${paths.length} file${paths.length === 1 ? '' : 's'} that can hold credentials: ${paths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`;
 };
-/** The number of explained code files from which {@link wikiDepthShortfallsOf} applies; a smaller repository is exempt. */
+/** The number of explained code files from which {@link wikiDepthShortfallsOf} applies; a smaller repository is exempt unless its explained code files hold {@link DEPTH_MIN_EXPLAINED_LINES} lines. */
 const DEPTH_MIN_EXPLAINED_FILES = 12;
+/** The number of lines, in total over the explained code files, from which {@link wikiDepthShortfallsOf} applies even below {@link DEPTH_MIN_EXPLAINED_FILES} files. Why: Cycle 0123 found P06 (a Chrome extension of 7 code files holding 4,424 lines) whose Wikis both hosts published below every floor, because 7 files were exempt; 1,200 lines is 12 files of about 100 lines. */
+const DEPTH_MIN_EXPLAINED_LINES = 1200;
 /** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link wikiDepthShortfallsOf} applies. */
 const DEPTH_MIN_CHILD_PAGES = 2;
 /** The Wiki needs at least this many diagrams for each page (rounded up), and a diagram on every page, once {@link wikiDepthShortfallsOf} applies. */
@@ -323,13 +325,22 @@ function textShortfallsOf(measured, explainedCount) {
 function depthShortfallsOf(pages, explainedCount, citedTextsOf) {
   return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(countedTextOf(pages, citedTextsOf), explainedCount)];
 }
-/** Measures a Wiki against the depth rules for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link requireWikiDepthAndWorkspace}, which {@link renderWikiPages} calls right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+/** The number of lines of a text: its text split on `\n` (CRLF read as LF), a final line without a newline counted, an empty text 0. Called by {@link explainedLinesOf}. @example lineCountOf('a\nb') // => 2 @example lineCountOf('a\r\nb\r\n') // => 2 @example lineCountOf('') // => 0 */
+const lineCountOf = text => (text === '' ? 0 : text.replace(/\r\n/g, '\n').split('\n').length - (text.endsWith('\n') ? 1 : 0));
+/** The total lines of the given explained code files, read through `textOf`. Called by {@link wikiDepthShortfallsOf} for a repository below {@link DEPTH_MIN_EXPLAINED_FILES} files, to see whether it reaches {@link DEPTH_MIN_EXPLAINED_LINES}. @param paths - The explained code files ({@link explainedCodeFilesOf}). @param textOf - Reads an included source's text by path. @returns The summed line count ({@link lineCountOf}). @example await explainedLinesOf(['a.ts', 'b.ts'], textOf) // => 4424 */
+async function explainedLinesOf(paths, textOf) {
+  let total = 0;
+  for (const path of paths) total += lineCountOf(await textOf(path));
+  return total;
+}
+/** Measures a Wiki against the depth rules for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers), or fewer files that hold {@link DEPTH_MIN_EXPLAINED_LINES} lines in total, it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link requireWikiDepthAndWorkspace}, which {@link renderWikiPages} calls right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
  * @param citedTextsOf - Answers a page's cited sources as quotable text, for the copied-text rule.
- * @returns One sentence for each failed rule, naming the measured value, the required value and what to add; empty for a deep enough Wiki or a small repository. @example wikiDepthShortfallsOf(manifest, indexedSources, () => []) // => [] */
-function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf) {
+ * @param textOf - Reads an included source's text by path, to count the lines of a repository below the file threshold.
+ * @returns One sentence for each failed rule, naming the measured value, the required value and what to add; empty for a deep enough Wiki or a small repository (below the file threshold and below the line threshold). @example await wikiDepthShortfallsOf(manifest, indexedSources, () => [], textOf) // => [] */
+async function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf, textOf) {
   const explained = explainedCodeFilesOf(manifest, indexedSources);
-  // A small repository is exempt from the depth rules.
-  if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return [];
+  // A repository below both the file and the line threshold is exempt from the depth rules.
+  if (explained.length < DEPTH_MIN_EXPLAINED_FILES && await explainedLinesOf(explained, textOf) < DEPTH_MIN_EXPLAINED_LINES) return [];
   return depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
 }
 /** How many imported names, and how many of a package's pages, one sentence of {@link workspaceShortfallOf} names. */
@@ -473,15 +484,262 @@ async function workspaceShortfallsOf(manifest, indexedSources, textOf, citedPath
   }
   return shortfalls;
 }
+/** The most other runtime contexts' main files a refusal of {@link extensionShortfallsOf} names; the rest are counted. */
+const EXTENSION_MAX_NAMED = 4;
+/** The `manifest_version` values that make a `manifest.json` a browser extension's manifest; a web-app manifest has none. */
+const EXTENSION_MANIFEST_VERSIONS = new Set([2, 3]);
+/** A folder with one of these names, at any depth below the manifest's folder, holds no extension page that owes a Wiki page (test fixtures, documentation, and build output such as `dist`, `build` and `out`; Cycle 0123 /ship review). A page the manifest declares there still counts. */
+const EXTENSION_NON_PAGE_FOLDERS = new Set(['test', 'tests', '__tests__', 'e2e', 'fixtures', 'spec', 'docs', 'examples', 'dist', 'build', 'out']);
+/** The `src` of a `<script>` tag in an extension page's HTML (group 1 double-quoted, group 2 single-quoted). The attribute name must not follow a word character or a hyphen, so `data-src` is skipped while a `src` after whitespace, a newline or `/` still matches (Cycle 0123 /ship hosted review). */
+const SCRIPT_SRC = /<script\b[^>]*?(?<![\w-])src\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+/** An HTML comment; a `<script>` tag inside one loads nothing, so it is removed before {@link SCRIPT_SRC} reads a page (Cycle 0123 /ship review). */
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+/** The manifest keys that declare one HTML page each, with the label the refusal gives it. Read by {@link declaredContextsOf}. */
+const EXTENSION_PAGE_KEYS = [
+  ['the popup', manifest => manifest.action?.default_popup],
+  ['the popup', manifest => manifest.browser_action?.default_popup],
+  ['the popup', manifest => manifest.page_action?.default_popup],
+  ['the options page', manifest => manifest.options_page],
+  ['the options page', manifest => manifest.options_ui?.page],
+  ['the side panel', manifest => manifest.side_panel?.default_path],
+  ['the devtools page', manifest => manifest.devtools_page],
+  ...['newtab', 'bookmarks', 'history'].map(key => [`the ${key} override page`, manifest => manifest.chrome_url_overrides?.[key]]),
+];
+/** The string entries of a manifest value that should be an array. */
+const stringsOf = value => (Array.isArray(value) ? value : []).filter(entry => typeof entry === 'string');
+/** The folder of a path as a prefix: empty for the repository root, else ending with `/`. Called by {@link extensionContextsOf} and {@link pageContextFilesOf}. @example folderPrefixOf('ext/manifest.json') // => 'ext/' */
+const folderPrefixOf = path => (posix.dirname(path) === '.' ? '' : `${posix.dirname(path)}/`);
 /**
- * Refuses a Wiki that fails the depth rules ({@link wikiDepthShortfallsOf}) or the workspace rule ({@link workspaceShortfallsOf}), with one refusal that names everything the Wiki still lacks, so the editor AI fixes both in one pass.
- * Called by {@link renderWikiPages} once every citation has resolved and the code coverage holds, so a refusal comes before anything is written.
- * @param readers - `citedTextsOf` answers a page's cited sources as quotable text, `citedPathsOf` the paths a page cites, `textOf` an included source's text by path.
- * @throws With the depth sentences first, then the workspace sentences.
- * @example await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf })
+ * Resolves a manifest or HTML reference to a repository path: relative to `folder`, query and hash stripped. An absolute path, a URL or a path that climbs out of `folder` answers null.
+ * Called by {@link extensionContextsOf} and {@link pageContextFilesOf}.
+ * @param folder - The folder the reference is relative to ({@link folderPrefixOf}).
+ * @example extensionPathOf('ext/', 'popup/popup.html?x=1') // => 'ext/popup/popup.html'
  */
-async function requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf }) {
-  const shortfalls = [...wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf)];
+function extensionPathOf(folder, value) {
+  if (typeof value !== 'string') return null;
+  const local = posix.normalize(value.replace(/[?#].*$/, ''));
+  // Absolute paths, URLs and values that leave the folder name no file of this extension.
+  if (!local || local === '.' || local.startsWith('/') || local === '..' || local.startsWith('../') || /^[a-z][a-z\d+.-]*:/i.test(local)) return null;
+  return posix.join(folder, local);
+}
+/** The runtime contexts a manifest declares, before any file is checked: `{ label, kind, values }` with `values` the raw file references. Called by {@link extensionContextsOf}. @example declaredContextsOf({ background: { service_worker: 'sw.js' } }) // => [{ label: 'the service worker', kind: 'script', values: ['sw.js'] }, …] */
+function declaredContextsOf(manifest) {
+  const background = manifest.background ?? {};
+  const contentScripts = (Array.isArray(manifest.content_scripts) ? manifest.content_scripts : []).map((group, index) => ({
+    label: `the content scripts for ${stringsOf(group?.matches)[0] ?? `group ${index + 1}`}`,
+    kind: 'script',
+    values: stringsOf(group?.js),
+  }));
+  return [
+    { label: 'the service worker', kind: 'script', values: [background.service_worker] },
+    { label: 'the background scripts', kind: 'script', values: stringsOf(background.scripts) },
+    { label: 'the background page', kind: 'page', values: [background.page] },
+    ...contentScripts,
+    ...EXTENSION_PAGE_KEYS.map(([label, pick]) => ({ label, kind: 'page', values: [pick(manifest)] })),
+  ];
+}
+/**
+ * Resolves a page's `<script src>` to a repository path the way a browser extension page does: relative to the page's own folder (it may climb with `../` up to the extension root, never above), a single leading `/` relative to the extension root (the manifest's folder), query and hash stripped. A URL (a scheme, or a protocol-relative `//host/x.js`) and a path above the root answer null.
+ * Why: Cycle 0123 /ship review found `popup/index.html` loading `../scripts/popup.js` gave the popup only its HTML, because {@link extensionPathOf} rejects every `../`; manifest values keep that stricter rule.
+ * Called by {@link pageContextFilesOf}.
+ * @param rootFolder - The manifest's folder prefix ({@link folderPrefixOf}).
+ * @param pageFolder - The page's folder prefix.
+ * @example pageScriptPathOf('ext/', 'ext/popup/', '../scripts/popup.js') // => 'ext/scripts/popup.js'
+ * @example pageScriptPathOf('ext/', 'ext/popup/', '/scripts/popup.js') // => 'ext/scripts/popup.js'
+ * @example pageScriptPathOf('ext/', 'ext/popup/', '//cdn.example.com/x.js') // => null
+ */
+function pageScriptPathOf(rootFolder, pageFolder, source) {
+  const reference = typeof source === 'string' ? source.replace(/[?#].*$/, '') : '';
+  // Empty references, URLs and protocol-relative URLs name no file of this extension.
+  if (namesNoExtensionFile(reference)) return null;
+  // A single leading slash is the extension root, not the page's folder.
+  const resolved = reference.startsWith('/') ? posix.join(rootFolder, reference.slice(1)) : posix.join(pageFolder, reference);
+  return isInsideExtensionRoot(resolved, rootFolder) ? resolved : null;
+}
+/** Answers whether a page's script reference (query and hash already stripped) names no file of the extension: an empty reference, a URL with a scheme, or a protocol-relative `//host/x.js`. Split out of {@link pageScriptPathOf} to keep it under Fallow's CRAP limit (Cycle 0123 /ship gate). Called by {@link pageScriptPathOf}. @example namesNoExtensionFile('//cdn.example.com/x.js') // => true @example namesNoExtensionFile('../scripts/popup.js') // => false */
+const namesNoExtensionFile = reference => !reference || reference.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(reference);
+/** Answers whether a resolved script path is a file inside the extension root: below the manifest's folder, not the folder itself, and not climbing above the repository. Split out of {@link pageScriptPathOf} to keep it under Fallow's CRAP limit (Cycle 0123 /ship gate). Called by {@link pageScriptPathOf}. @param rootFolder - The manifest's folder prefix ({@link folderPrefixOf}). @example isInsideExtensionRoot('ext/scripts/popup.js', 'ext/') // => true @example isInsideExtensionRoot('scripts/popup.js', 'ext/') // => false */
+const isInsideExtensionRoot = (resolved, rootFolder) => resolved.startsWith(rootFolder) && resolved !== rootFolder && !resolved.startsWith('../') && resolved !== '..';
+/** An extension page's files: its HTML file, then each local included script its `<script src>` tags load (HTML comments ignored, {@link pageScriptPathOf} resolving each `src`). Called by {@link declaredExtensionContextsOf} and {@link undeclaredExtensionPagesOf}. @param rootFolder - The manifest's folder prefix. @example await pageContextFilesOf('popup/popup.html', '', indexedSources, textOf) // => ['popup/popup.html', 'popup/popup.js'] */
+async function pageContextFilesOf(htmlPath, rootFolder, indexedSources, textOf) {
+  const html = (await textOf(htmlPath)).replace(HTML_COMMENT, '');
+  const folder = folderPrefixOf(htmlPath);
+  const scripts = [...html.matchAll(SCRIPT_SRC)].map(match => pageScriptPathOf(rootFolder, folder, match[1] ?? match[2])).filter(path => path && indexedSources.has(path));
+  return [htmlPath, ...new Set(scripts)];
+}
+/**
+ * The runtime contexts of one extension manifest that have files in the Wiki's source index: each declared context ({@link declaredContextsOf}) with an included file, and each included `.html` file below the manifest's folder that no declaration names (outside {@link EXTENSION_NON_PAGE_FOLDERS}), which the extension's code opens in a tab.
+ * Called by {@link extensionShortfallsOf}.
+ * @param manifestPath - The manifest's indexed path.
+ * @returns `{ label, main, files }` per context: its label, its main file and every file it loads.
+ * @example await extensionContextsOf('manifest.json', manifest, indexedSources, textOf) // => [{ label: 'the popup', main: 'popup/popup.html', files: ['popup/popup.html', 'popup/popup.js'] }]
+ */
+async function extensionContextsOf(manifestPath, manifest, indexedSources, textOf) {
+  const folder = folderPrefixOf(manifestPath);
+  const declared = declaredContextsOf(manifest);
+  const claimed = new Set(declared.flatMap(context => context.values).map(value => extensionPathOf(folder, value)).filter(Boolean));
+  const { contexts, seenPages } = await declaredExtensionContextsOf(folder, declared, indexedSources, textOf);
+  return [...contexts, ...await undeclaredExtensionPagesOf(folder, claimed, seenPages, indexedSources, textOf)];
+}
+/** The contexts a manifest declares whose files are included sources, each page counted once (a page declared twice, as `options_page` and `options_ui.page`, is one context). Called by {@link extensionContextsOf}, which adds the undeclared pages after them. @param folder - The manifest's folder prefix ({@link folderPrefixOf}). @param declared - The manifest's declared contexts ({@link declaredContextsOf}). @param indexedSources - The Wiki's indexed sources by path. @param textOf - Reads an included source's text by path. @returns The contexts and the main files of the page contexts kept. @example await declaredExtensionContextsOf('', [{ label: 'the popup', kind: 'page', values: ['popup/popup.html'] }], indexedSources, textOf) // => { contexts: [{ label: 'the popup', main: 'popup/popup.html', files: ['popup/popup.html', 'popup/popup.js'] }], seenPages: Set { 'popup/popup.html' } } */
+async function declaredExtensionContextsOf(folder, declared, indexedSources, textOf) {
+  const contexts = [];
+  const seenPages = new Set();
+  const seenContexts = new Set();
+  for (const { label, kind, values } of declared) {
+    const files = values.map(value => extensionPathOf(folder, value)).filter(path => path && indexedSources.has(path));
+    // A context whose files are not included sources owes no page.
+    if (!files.length) continue;
+    // A page declared twice (options_page and options_ui.page), or script contexts that load the same files (two content_scripts entries with the same `js`), are one context: the first keeps its label (Cycle 0123 /ship review).
+    const identity = kind === 'page' ? `page:${files[0]}` : `script:${[...new Set(files)].sort().join('\n')}`;
+    if (seenContexts.has(identity)) continue;
+    seenContexts.add(identity);
+    if (kind === 'page') seenPages.add(files[0]);
+    contexts.push({ label, main: files[0], files: kind === 'page' ? await pageContextFilesOf(files[0], folder, indexedSources, textOf) : [...new Set(files)] });
+  }
+  return { contexts, seenPages };
+}
+/** The extension pages no manifest key names, each a context of its own: an included HTML file under the manifest's folder, outside the folders {@link EXTENSION_NON_PAGE_FOLDERS} names, that the extension's code opens itself (a full-page or settings page). Called by {@link extensionContextsOf} after the declared contexts. @param folder - The manifest's folder prefix. @param claimed - The paths the manifest's keys name. @param seenPages - The main files of the declared page contexts. @param indexedSources - The Wiki's indexed sources by path. @param textOf - Reads an included source's text by path. @returns One context per undeclared page. @example await undeclaredExtensionPagesOf('', new Set(['popup/popup.html']), new Set(['popup/popup.html']), indexedSources, textOf) // => [{ label: 'the extension page settings/settings.html', main: 'settings/settings.html', files: ['settings/settings.html', 'settings/settings.js'] }] */
+async function undeclaredExtensionPagesOf(folder, claimed, seenPages, indexedSources, textOf) {
+  const pages = [];
+  for (const path of indexedSources.keys()) {
+    // An undeclared page is one the extension's code opens itself.
+    if (isUndeclaredExtensionPage(path, folder, claimed, seenPages)) pages.push({ label: `the extension page ${path}`, main: path, files: await pageContextFilesOf(path, folder, indexedSources, textOf) });
+  }
+  return pages;
+}
+/** Answers whether an indexed path is an extension page no manifest key names: an HTML file under the manifest's folder, outside the folders {@link EXTENSION_NON_PAGE_FOLDERS} names, not claimed by a key and not already a page context. Called by {@link undeclaredExtensionPagesOf} for each indexed path. @example isUndeclaredExtensionPage('settings/settings.html', '', new Set(), new Set()) // => true @example isUndeclaredExtensionPage('tests/fixture.html', '', new Set(), new Set()) // => false */
+function isUndeclaredExtensionPage(path, folder, claimed, seenPages) {
+  if (!path.toLowerCase().endsWith('.html') || !path.startsWith(folder) || claimed.has(path) || seenPages.has(path)) return false;
+  return !posix.dirname(path.slice(folder.length)).split('/').some(segment => EXTENSION_NON_PAGE_FOLDERS.has(segment));
+}
+/** Whether a page is the page of its own for a context: among the page's `sources` files that belong to some context (a shared file, or one two contexts load, counts for none), the context has at least one and strictly more than every other single context, so a tie gives no context the page. Called by {@link ownPageShortfallsOf}. @param owners - The owning context index of each file that exactly one context loads. @example isPageOfContext({ sources: [{ path: 'popup/popup.js' }] }, 0, new Map([['popup/popup.js', 0]])) // => true */
+const isPageOfContext = (page, index, owners) => {
+  const counts = new Map();
+  for (const path of new Set((page.sources ?? []).map(source => source.path))) {
+    const owner = owners.get(path);
+    if (owner !== undefined) counts.set(owner, (counts.get(owner) ?? 0) + 1);
+  }
+  const own = counts.get(index) ?? 0;
+  return own > 0 && [...counts].every(([owner, count]) => owner === index || count < own);
+};
+/** One refusal sentence per context of one manifest that owns a file and that no page is about alone (a context all of whose files another context also loads owes none), naming the context, its main file and up to {@link EXTENSION_MAX_NAMED} other contexts' main files. Called by {@link extensionShortfallsOf}. @example ownPageShortfallsOf(pages, 'manifest.json', contexts) // => ['The Wiki documents a browser extension (manifest.json) but gives the popup (popup.html) no page of its own: …'] */
+function ownPageShortfallsOf(pages, manifestPath, contexts) {
+  const counts = new Map();
+  for (const context of contexts) for (const file of context.files) counts.set(file, (counts.get(file) ?? 0) + 1);
+  const owners = new Map();
+  contexts.forEach((context, index) => context.files.filter(file => counts.get(file) === 1).forEach(file => owners.set(file, index)));
+  const owning = new Set(owners.values());
+  const shortfalls = [];
+  contexts.forEach((context, index) => {
+    // A context whose every file another context also loads owns nothing a page could be about, so it owes no page (Cycle 0123 /ship review).
+    if (!owning.has(index)) return;
+    if (pages.some(page => isPageOfContext(page, index, owners))) return;
+    const others = contexts.filter((_, other) => other !== index).map(other => other.main);
+    const more = others.length > EXTENSION_MAX_NAMED ? `, and ${others.length - EXTENSION_MAX_NAMED} more` : '';
+    const rest = others.length ? ` (${others.slice(0, EXTENSION_MAX_NAMED).join(', ')}${more})` : '';
+    shortfalls.push(`The Wiki documents a browser extension (${manifestPath}) but gives ${context.label} (${context.main}) no page of its own: write a page whose sources name more files of ${context.label} (starting with ${context.main}) than of any other runtime context${rest}.`);
+  });
+  return shortfalls;
+}
+/**
+ * The parsed manifest at `path` when it is a browser extension's (`manifest_version` 2 or 3), else null: a web-app manifest and invalid JSON are none. The read stays outside the `try`, so a manifest whose bytes changed since indexing (or that is gone) refuses the render instead of silently skipping the rule (Cycle 0123 /ship hosted review).
+ * Called by {@link extensionShortfallsOf}.
+ * @param path - The indexed `manifest.json` path.
+ * @param textOf - Reads an included source's text by path; throws when the source changed.
+ * @throws When `textOf` throws, e.g. `Wiki source changed: manifest.json. …`.
+ * @example await extensionManifestOf('manifest.json', textOf) // => { manifest_version: 3, … } or null
+ */
+async function extensionManifestOf(path, textOf) {
+  const text = await textOf(path);
+  try {
+    const parsed = JSON.parse(text);
+    return EXTENSION_MANIFEST_VERSIONS.has(parsed?.manifest_version) ? parsed : null;
+  } catch {
+    // Invalid JSON is not an extension manifest.
+    return null;
+  }
+}
+/**
+ * Answers whether one `excludedPaths` entry covers a path: an entry equal to the path, a folder entry (with or without a trailing `/`) that holds it, or a simple glob matched against the whole path where `**` crosses folders, `*` stays within one folder name and `?` is one character. The skill gives `excludedPaths` no fixed syntax, so all three are accepted (Cycle 0123 /ship hosted review).
+ * Called by {@link isExcludedPath}.
+ * @param path - The repository path.
+ * @param entry - One `excludedPaths` entry.
+ * @example isExcludedEntry('background/sw.js', 'background/') // => true
+ * @example isExcludedEntry('background/sw.js', 'background/**') // => true
+ * @example isExcludedEntry('background/sw.js', '*.js') // => false
+ */
+function isExcludedEntry(path, entry) {
+  const folder = entry.replace(/\/+$/, '');
+  if (path === entry || (folder && path.startsWith(`${folder}/`))) return true;
+  const pattern = entry.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*|\*|\?/g, token => ({ '**': '.*', '*': '[^/]*', '?': '[^/]' })[token]);
+  return new RegExp(`^${pattern}$`).test(path);
+}
+/** Answers whether the Wiki manifest's `excludedPaths` covers a path ({@link isExcludedEntry}); a missing or malformed list covers nothing. Called by {@link leftOutDeclaredFilesOf}. @example isExcludedPath('dist/sw.js', ['dist']) // => true */
+const isExcludedPath = (path, excludedPaths) => Array.isArray(excludedPaths) && excludedPaths.some(entry => typeof entry === 'string' && isExcludedEntry(path, entry));
+/** Answers whether a repository path is a regular file that stays inside the project after symlinks resolve (as {@link renderWikiPages} reads a source); a missing file or an escaping link is none. Called by {@link leftOutDeclaredFilesOf}. @example await isProjectFile('background/sw.js', '/repo') // => true */
+async function isProjectFile(path, projectRoot) {
+  try {
+    const file = await realpath(join(projectRoot, path));
+    const withinRoot = relative(projectRoot, file);
+    if (withinRoot === '..' || withinRoot.startsWith(`..${sep}`) || isAbsolute(withinRoot)) return false;
+    return (await stat(file)).isFile();
+  } catch {
+    return false;
+  }
+}
+/**
+ * One refusal sentence per file a manifest declares for a runtime context that the project holds as a regular file but the Wiki's source index leaves out, unless `excludedPaths` covers it. A declared file absent from the project (a build output that is not checked in) owes nothing.
+ * Why: Cycle 0123 /ship hosted review found a Wiki whose index simply left out the service worker file passed the rule with no worker page, because a context without indexed files owed nothing.
+ * Called by {@link extensionShortfallsOf}.
+ * @param manifestPath - The extension manifest's indexed path.
+ * @param extensionManifest - The parsed extension manifest.
+ * @param wikiManifest - The Wiki manifest, for `excludedPaths`.
+ * @param indexedSources - The Wiki's indexed sources by path.
+ * @param projectRoot - The repository root.
+ * @returns One sentence per left-out file, each file once; empty when none.
+ * @example await leftOutDeclaredFilesOf('manifest.json', extensionManifest, wikiManifest, indexedSources, '/repo') // => ["The Wiki's source index leaves out background/sw.js, which …"]
+ */
+async function leftOutDeclaredFilesOf(manifestPath, extensionManifest, wikiManifest, indexedSources, projectRoot) {
+  const folder = folderPrefixOf(manifestPath);
+  const sentences = new Map();
+  for (const { label, values } of declaredContextsOf(extensionManifest)) {
+    for (const value of values) {
+      const path = extensionPathOf(folder, value);
+      // Indexed files, excluded files and files already reported owe nothing here.
+      if (!path || indexedSources.has(path) || sentences.has(path) || isExcludedPath(path, wikiManifest.excludedPaths)) continue;
+      if (await isProjectFile(path, projectRoot)) sentences.set(path, `The Wiki's source index leaves out ${path}, which the browser extension (${manifestPath}) declares for ${label}: add it to includedSources, or list it under excludedPaths when it is generated output or private.`);
+    }
+  }
+  return [...sentences.values()];
+}
+/**
+ * Measures a Wiki of a browser extension against the runtime-context rule: for each included `manifest.json` with a `manifest_version` of 2 or 3, every runtime context ({@link extensionContextsOf}) needs a page whose `sources` name more files of that context than of any other single context (at least one; a tie gives no context the page), so a page may also cite another context's files. Shared files (the manifest, the README, shared libraries, a script two pages load) belong to no context. A web-app manifest, an unparsable one and a repository without a manifest owe nothing.
+ * Why: the first version refused a popup page that also cited the service worker's message handler and a full-page page that cited the settings script, which pushed agents to drop good cross-context citations. Cycle 0123 found a Wiki that gave the service worker of a Chrome extension no page of its own, beside the settings page it shared one with, though the skill asked for a page per context.
+ * Called by {@link requireWikiDepthAndWorkspace}.
+ * A declared file the project holds but the source index leaves out is refused too ({@link leftOutDeclaredFilesOf}), before that manifest's own-page sentences (Cycle 0123 /ship hosted review).
+ * @param projectRoot - The repository root, to tell a left-out file from a build output that is not checked in.
+ * @returns One sentence per left-out file and per context without a page of its own; empty when every context has one or the repository holds no extension.
+ * @example await extensionShortfallsOf(manifest, indexedSources, textOf, '/repo') // => []
+ */
+async function extensionShortfallsOf(manifest, indexedSources, textOf, projectRoot) {
+  const shortfalls = [];
+  for (const path of indexedSources.keys()) {
+    if (basename(path) !== 'manifest.json') continue;
+    const parsed = await extensionManifestOf(path, textOf);
+    if (parsed) shortfalls.push(...await leftOutDeclaredFilesOf(path, parsed, manifest, indexedSources, projectRoot), ...ownPageShortfallsOf(manifest.pages, path, await extensionContextsOf(path, parsed, indexedSources, textOf)));
+  }
+  return shortfalls;
+}
+/**
+ * Refuses a Wiki that fails the depth rules ({@link wikiDepthShortfallsOf}) the workspace rule ({@link workspaceShortfallsOf}) or the browser-extension rule ({@link extensionShortfallsOf}), with one refusal that names everything the Wiki still lacks, so the editor AI fixes all of them in one pass.
+ * Called by {@link renderWikiPages} once every citation has resolved and the code coverage holds, so a refusal comes before anything is written.
+ * @param readers - `citedTextsOf` answers a page's cited sources as quotable text, `citedPathsOf` the paths a page cites, `textOf` an included source's text by path, `projectRoot` the repository root.
+ * @throws With the depth sentences first, then the workspace sentences, then the extension sentences.
+ * @example await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf, projectRoot })
+ */
+async function requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf, projectRoot }) {
+  const shortfalls = [...await wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf, textOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf), ...await extensionShortfallsOf(manifest, indexedSources, textOf, projectRoot)];
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
 /**
@@ -674,6 +932,6 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   const citedPathsOfPage = page => new Set([...[...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path), ...inlinePathsOf(page)]);
   const citedTextsOf = page => [...citedPathsOfPage(page)].map(quotableTextOf);
   const textOf = async path => (await linesOf(indexedSources.get(path))).join('\n');
-  await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf: citedPathsOfPage, textOf });
+  await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf: citedPathsOfPage, textOf, projectRoot });
   return pages;
 }
