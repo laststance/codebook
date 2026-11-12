@@ -554,24 +554,37 @@ async function extensionContextsOf(manifestPath, manifest, indexedSources, textO
   const folder = folderPrefixOf(manifestPath);
   const declared = declaredContextsOf(manifest);
   const claimed = new Set(declared.flatMap(context => context.values).map(value => extensionPathOf(folder, value)).filter(Boolean));
+  const { contexts, seenPages } = await declaredExtensionContextsOf(folder, declared, indexedSources, textOf);
+  return [...contexts, ...await undeclaredExtensionPagesOf(folder, claimed, seenPages, indexedSources, textOf)];
+}
+/** The contexts a manifest declares whose files are included sources, each page counted once (a page declared twice, as `options_page` and `options_ui.page`, is one context). Called by {@link extensionContextsOf}, which adds the undeclared pages after them. @param folder - The manifest's folder prefix ({@link folderPrefixOf}). @param declared - The manifest's declared contexts ({@link declaredContextsOf}). @param indexedSources - The Wiki's indexed sources by path. @param textOf - Reads an included source's text by path. @returns The contexts and the main files of the page contexts kept. @example await declaredExtensionContextsOf('', [{ label: 'the popup', kind: 'page', values: ['popup/popup.html'] }], indexedSources, textOf) // => { contexts: [{ label: 'the popup', main: 'popup/popup.html', files: ['popup/popup.html', 'popup/popup.js'] }], seenPages: Set { 'popup/popup.html' } } */
+async function declaredExtensionContextsOf(folder, declared, indexedSources, textOf) {
   const contexts = [];
   const seenPages = new Set();
   for (const { label, kind, values } of declared) {
     const files = values.map(value => extensionPathOf(folder, value)).filter(path => path && indexedSources.has(path));
+    // A context whose files are not included sources owes no page.
     if (!files.length) continue;
     // A page declared twice (options_page and options_ui.page) is one context.
     if (kind === 'page' && seenPages.has(files[0])) continue;
     if (kind === 'page') seenPages.add(files[0]);
     contexts.push({ label, main: files[0], files: kind === 'page' ? await pageContextFilesOf(files[0], indexedSources, textOf) : [...new Set(files)] });
   }
+  return { contexts, seenPages };
+}
+/** The extension pages no manifest key names, each a context of its own: an included HTML file under the manifest's folder, outside the folders {@link EXTENSION_NON_PAGE_FOLDERS} names, that the extension's code opens itself (a full-page or settings page). Called by {@link extensionContextsOf} after the declared contexts. @param folder - The manifest's folder prefix. @param claimed - The paths the manifest's keys name. @param seenPages - The main files of the declared page contexts. @param indexedSources - The Wiki's indexed sources by path. @param textOf - Reads an included source's text by path. @returns One context per undeclared page. @example await undeclaredExtensionPagesOf('', new Set(['popup/popup.html']), new Set(['popup/popup.html']), indexedSources, textOf) // => [{ label: 'the extension page settings/settings.html', main: 'settings/settings.html', files: ['settings/settings.html', 'settings/settings.js'] }] */
+async function undeclaredExtensionPagesOf(folder, claimed, seenPages, indexedSources, textOf) {
+  const pages = [];
   for (const path of indexedSources.keys()) {
-    const inside = path.startsWith(folder) && !posix.dirname(path.slice(folder.length)).split('/').some(segment => EXTENSION_NON_PAGE_FOLDERS.has(segment));
     // An undeclared page is one the extension's code opens itself.
-    if (path.toLowerCase().endsWith('.html') && inside && !claimed.has(path) && !seenPages.has(path)) {
-      contexts.push({ label: `the extension page ${path}`, main: path, files: await pageContextFilesOf(path, indexedSources, textOf) });
-    }
+    if (isUndeclaredExtensionPage(path, folder, claimed, seenPages)) pages.push({ label: `the extension page ${path}`, main: path, files: await pageContextFilesOf(path, indexedSources, textOf) });
   }
-  return contexts;
+  return pages;
+}
+/** Answers whether an indexed path is an extension page no manifest key names: an HTML file under the manifest's folder, outside the folders {@link EXTENSION_NON_PAGE_FOLDERS} names, not claimed by a key and not already a page context. Called by {@link undeclaredExtensionPagesOf} for each indexed path. @example isUndeclaredExtensionPage('settings/settings.html', '', new Set(), new Set()) // => true @example isUndeclaredExtensionPage('tests/fixture.html', '', new Set(), new Set()) // => false */
+function isUndeclaredExtensionPage(path, folder, claimed, seenPages) {
+  if (!path.toLowerCase().endsWith('.html') || !path.startsWith(folder) || claimed.has(path) || seenPages.has(path)) return false;
+  return !posix.dirname(path.slice(folder.length)).split('/').some(segment => EXTENSION_NON_PAGE_FOLDERS.has(segment));
 }
 /** Whether a page is the page of its own for a context: among the page's `sources` files that belong to some context (a shared file, or one two contexts load, counts for none), the context has at least one and strictly more than every other single context, so a tie gives no context the page. Called by {@link ownPageShortfallsOf}. @param owners - The owning context index of each file that exactly one context loads. @example isPageOfContext({ sources: [{ path: 'popup/popup.js' }] }, 0, new Map([['popup/popup.js', 0]])) // => true */
 const isPageOfContext = (page, index, owners) => {
