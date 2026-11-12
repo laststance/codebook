@@ -668,3 +668,172 @@ test('an undeclared HTML file under dist/ owes no page', async () => {
     assert.equal(outcome, 'rendered')
   })
 })
+
+/** The Wiki of {@link MV3_FILES} without a worker page whose source index leaves out one file that stays on disk, with the given `excludedPaths`. */
+async function wikiWithoutIndexed(root, leftOut, excludedPaths) {
+  const manifest = await wikiOf(
+    root,
+    MV3_FILES,
+    OWN_PAGES.filter(([path]) => path !== 'worker.html'),
+  )
+  return {
+    ...manifest,
+    includedSources: manifest.includedSources.filter(
+      ({ path }) => path !== leftOut,
+    ),
+    ...(excludedPaths ? { excludedPaths } : {}),
+  }
+}
+
+const LEFT_OUT_WORKER =
+  "The Wiki's source index leaves out background/service-worker.js, which the browser extension (manifest.json) declares for the service worker: add it to includedSources, or list it under excludedPaths when it is generated output or private."
+
+// Value: protects=the learner of an extension whose Wiki index silently omits the service worker file; fails_when=a declared file the project holds but includedSources leaves out is dropped without a refusal; why_new=Cycle 0123 /ship hosted review Major: a context with no indexed file owed nothing; seam=none (the real renderer); no_claim=none beyond protects
+test('a Wiki whose source index leaves out the declared service worker file that exists in the project is refused with the includedSources sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiWithoutIndexed(
+      root,
+      'background/service-worker.js',
+    )
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, LEFT_OUT_WORKER)
+  })
+})
+
+// Value: protects=a Wiki that lists the left-out worker file under excludedPaths as generated or private output; fails_when=an exact entry, a folder entry with or without a trailing slash or a ** glob stops covering the file, or a single-star glob crosses folders; why_new=Cycle 0123 /ship hosted review Major: excludedPaths syntax is unspecified; seam=none (the real renderer); no_claim=none beyond protects
+test('a left-out service worker file that excludedPaths covers by exact entry, folder entry or glob is rendered, and a one-star glob that cannot cross folders still refuses', async () => {
+  const outcomes = []
+  const covers = [
+    ['background/service-worker.js'],
+    ['background'],
+    ['background/'],
+    ['background/**'],
+    ['**/service-worker.j?'],
+    ['*.js'],
+  ]
+  for (const excludedPaths of covers) {
+    await inProject(async (root) => {
+      // Arrange
+      const manifest = await wikiWithoutIndexed(
+        root,
+        'background/service-worker.js',
+        excludedPaths,
+      )
+
+      // Act
+      outcomes.push(await outcomeOf(manifest, root))
+    })
+  }
+
+  // Assert
+  assert.deepEqual(outcomes, [
+    'rendered',
+    'rendered',
+    'rendered',
+    'rendered',
+    'rendered',
+    LEFT_OUT_WORKER,
+  ])
+})
+
+// Value: protects=an extension manifest that names a build output which is not checked in; fails_when=a declared file absent from the project makes the renderer refuse the source index; why_new=Cycle 0123 /ship hosted review Major: the left-out rule must stay satisfiable; seam=none (the real renderer); no_claim=none beyond protects
+test('a declared service worker file that is absent from the project owes nothing', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = { 'manifest.json': MV3_MANIFEST }
+    const manifest = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=a popup whose HTML has a data-src attribute before its real src; fails_when=data-src is read as the script source so the popup takes the service worker's file; why_new=Cycle 0123 /ship hosted review Minor: \bsrc matches inside data-src; seam=none (the real renderer); no_claim=none beyond protects
+test('a popup script tag with a data-src before its src loads only the src file, so the worker keeps its own page', async () => {
+  const files = {
+    'manifest.json': JSON.stringify({
+      manifest_version: 3,
+      name: 'X',
+      background: { service_worker: 'worker.js' },
+      action: { default_popup: 'popup.html' },
+    }),
+    'worker.js': 'export const worker = 1;\n',
+    'popup.html': '<script data-src="worker.js" src="popup.js"></script>\n',
+    'popup.js': 'export const popup = 1;\n',
+  }
+  await inProject(async (root) => {
+    // Arrange
+    const withWorkerPage = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+      ['worker.html', ['worker.js']],
+      ['popup.html', ['popup.js']],
+    ])
+    const withoutWorkerPage = {
+      ...(await wikiOf(root, files, [
+        ['index.html', ['manifest.json']],
+        ['popup.html', ['popup.js']],
+      ])),
+      coverageExceptions: [
+        { path: 'worker.js', reason: 'Left out on purpose.' },
+      ],
+    }
+
+    // Act
+    const outcomes = [
+      await outcomeOf(withWorkerPage, root),
+      await outcomeOf(withoutWorkerPage, root),
+    ]
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'rendered',
+      'The Wiki documents a browser extension (manifest.json) but gives the service worker (worker.js) no page of its own: write a page whose sources name more files of the service worker (starting with worker.js) than of any other runtime context (popup.html).',
+    ])
+  })
+})
+
+// Value: protects=the Wiki refusal when an indexed manifest.json changed after indexing; fails_when=a read error of the manifest is swallowed so the extension rule is silently skipped, or invalid JSON stops meaning not an extension; why_new=Cycle 0123 /ship hosted review Minor: textOf and JSON.parse shared one try; seam=none (the real renderer); no_claim=none beyond protects
+test('an indexed manifest.json whose bytes changed after indexing refuses the render, while an invalid-JSON manifest still renders', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const changed = await wikiOf(
+      root,
+      {
+        'manifest.json': MV3_MANIFEST,
+        'lib/shared.js': 'export const shared = 1;\n',
+      },
+      [['index.html', ['lib/shared.js']]],
+    )
+    await writeFile(join(root, 'manifest.json'), `${MV3_MANIFEST} `)
+    const broken = await wikiOf(
+      root,
+      {
+        'broken/manifest.json': '{ "manifest_version": 3, ',
+        'broken/page.js': 'export const page = 1;\n',
+      },
+      [['index.html', ['broken/page.js']]],
+    )
+
+    // Act
+    const outcomes = [
+      await outcomeOf(changed, root),
+      await outcomeOf(broken, root),
+    ]
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'Wiki source changed: manifest.json. Refresh its content and citations.',
+      'rendered',
+    ])
+  })
+})

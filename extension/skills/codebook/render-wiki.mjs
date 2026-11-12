@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbalancedClauseOf, unreadMarkupOf, withAttributeValues } from './render-wiki-diagrams.mjs';
 
@@ -490,8 +490,8 @@ const EXTENSION_MAX_NAMED = 4;
 const EXTENSION_MANIFEST_VERSIONS = new Set([2, 3]);
 /** A folder with one of these names, at any depth below the manifest's folder, holds no extension page that owes a Wiki page (test fixtures, documentation, and build output such as `dist`, `build` and `out`; Cycle 0123 /ship review). A page the manifest declares there still counts. */
 const EXTENSION_NON_PAGE_FOLDERS = new Set(['test', 'tests', '__tests__', 'e2e', 'fixtures', 'spec', 'docs', 'examples', 'dist', 'build', 'out']);
-/** The `src` of a `<script>` tag in an extension page's HTML (group 1 double-quoted, group 2 single-quoted). */
-const SCRIPT_SRC = /<script\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+/** The `src` of a `<script>` tag in an extension page's HTML (group 1 double-quoted, group 2 single-quoted). The attribute name must not follow a word character or a hyphen, so `data-src` is skipped while a `src` after whitespace, a newline or `/` still matches (Cycle 0123 /ship hosted review). */
+const SCRIPT_SRC = /<script\b[^>]*?(?<![\w-])src\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 /** An HTML comment; a `<script>` tag inside one loads nothing, so it is removed before {@link SCRIPT_SRC} reads a page (Cycle 0123 /ship review). */
 const HTML_COMMENT = /<!--[\s\S]*?-->/g;
 /** The manifest keys that declare one HTML page each, with the label the refusal gives it. Read by {@link declaredContextsOf}. */
@@ -642,40 +642,104 @@ function ownPageShortfallsOf(pages, manifestPath, contexts) {
   });
   return shortfalls;
 }
-/** The parsed manifest at `path` when it is a browser extension's (`manifest_version` 2 or 3), else null: a web-app manifest and unparsable JSON are none. Called by {@link extensionShortfallsOf}. */
+/**
+ * The parsed manifest at `path` when it is a browser extension's (`manifest_version` 2 or 3), else null: a web-app manifest and invalid JSON are none. The read stays outside the `try`, so a manifest whose bytes changed since indexing (or that is gone) refuses the render instead of silently skipping the rule (Cycle 0123 /ship hosted review).
+ * Called by {@link extensionShortfallsOf}.
+ * @param path - The indexed `manifest.json` path.
+ * @param textOf - Reads an included source's text by path; throws when the source changed.
+ * @throws When `textOf` throws, e.g. `Wiki source changed: manifest.json. …`.
+ * @example await extensionManifestOf('manifest.json', textOf) // => { manifest_version: 3, … } or null
+ */
 async function extensionManifestOf(path, textOf) {
+  const text = await textOf(path);
   try {
-    const parsed = JSON.parse(await textOf(path));
+    const parsed = JSON.parse(text);
     return EXTENSION_MANIFEST_VERSIONS.has(parsed?.manifest_version) ? parsed : null;
   } catch {
+    // Invalid JSON is not an extension manifest.
     return null;
   }
+}
+/**
+ * Answers whether one `excludedPaths` entry covers a path: an entry equal to the path, a folder entry (with or without a trailing `/`) that holds it, or a simple glob matched against the whole path where `**` crosses folders, `*` stays within one folder name and `?` is one character. The skill gives `excludedPaths` no fixed syntax, so all three are accepted (Cycle 0123 /ship hosted review).
+ * Called by {@link isExcludedPath}.
+ * @param path - The repository path.
+ * @param entry - One `excludedPaths` entry.
+ * @example isExcludedEntry('background/sw.js', 'background/') // => true
+ * @example isExcludedEntry('background/sw.js', 'background/**') // => true
+ * @example isExcludedEntry('background/sw.js', '*.js') // => false
+ */
+function isExcludedEntry(path, entry) {
+  const folder = entry.replace(/\/+$/, '');
+  if (path === entry || (folder && path.startsWith(`${folder}/`))) return true;
+  const pattern = entry.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*|\*|\?/g, token => ({ '**': '.*', '*': '[^/]*', '?': '[^/]' })[token]);
+  return new RegExp(`^${pattern}$`).test(path);
+}
+/** Answers whether the Wiki manifest's `excludedPaths` covers a path ({@link isExcludedEntry}); a missing or malformed list covers nothing. Called by {@link leftOutDeclaredFilesOf}. @example isExcludedPath('dist/sw.js', ['dist']) // => true */
+const isExcludedPath = (path, excludedPaths) => Array.isArray(excludedPaths) && excludedPaths.some(entry => typeof entry === 'string' && isExcludedEntry(path, entry));
+/** Answers whether a repository path is a regular file that stays inside the project after symlinks resolve (as {@link renderWikiPages} reads a source); a missing file or an escaping link is none. Called by {@link leftOutDeclaredFilesOf}. @example await isProjectFile('background/sw.js', '/repo') // => true */
+async function isProjectFile(path, projectRoot) {
+  try {
+    const file = await realpath(join(projectRoot, path));
+    const withinRoot = relative(projectRoot, file);
+    if (withinRoot === '..' || withinRoot.startsWith(`..${sep}`) || isAbsolute(withinRoot)) return false;
+    return (await stat(file)).isFile();
+  } catch {
+    return false;
+  }
+}
+/**
+ * One refusal sentence per file a manifest declares for a runtime context that the project holds as a regular file but the Wiki's source index leaves out, unless `excludedPaths` covers it. A declared file absent from the project (a build output that is not checked in) owes nothing.
+ * Why: Cycle 0123 /ship hosted review found a Wiki whose index simply left out the service worker file passed the rule with no worker page, because a context without indexed files owed nothing.
+ * Called by {@link extensionShortfallsOf}.
+ * @param manifestPath - The extension manifest's indexed path.
+ * @param extensionManifest - The parsed extension manifest.
+ * @param wikiManifest - The Wiki manifest, for `excludedPaths`.
+ * @param indexedSources - The Wiki's indexed sources by path.
+ * @param projectRoot - The repository root.
+ * @returns One sentence per left-out file, each file once; empty when none.
+ * @example await leftOutDeclaredFilesOf('manifest.json', extensionManifest, wikiManifest, indexedSources, '/repo') // => ["The Wiki's source index leaves out background/sw.js, which …"]
+ */
+async function leftOutDeclaredFilesOf(manifestPath, extensionManifest, wikiManifest, indexedSources, projectRoot) {
+  const folder = folderPrefixOf(manifestPath);
+  const sentences = new Map();
+  for (const { label, values } of declaredContextsOf(extensionManifest)) {
+    for (const value of values) {
+      const path = extensionPathOf(folder, value);
+      // Indexed files, excluded files and files already reported owe nothing here.
+      if (!path || indexedSources.has(path) || sentences.has(path) || isExcludedPath(path, wikiManifest.excludedPaths)) continue;
+      if (await isProjectFile(path, projectRoot)) sentences.set(path, `The Wiki's source index leaves out ${path}, which the browser extension (${manifestPath}) declares for ${label}: add it to includedSources, or list it under excludedPaths when it is generated output or private.`);
+    }
+  }
+  return [...sentences.values()];
 }
 /**
  * Measures a Wiki of a browser extension against the runtime-context rule: for each included `manifest.json` with a `manifest_version` of 2 or 3, every runtime context ({@link extensionContextsOf}) needs a page whose `sources` name more files of that context than of any other single context (at least one; a tie gives no context the page), so a page may also cite another context's files. Shared files (the manifest, the README, shared libraries, a script two pages load) belong to no context. A web-app manifest, an unparsable one and a repository without a manifest owe nothing.
  * Why: the first version refused a popup page that also cited the service worker's message handler and a full-page page that cited the settings script, which pushed agents to drop good cross-context citations. Cycle 0123 found a Wiki that gave the service worker of a Chrome extension no page of its own, beside the settings page it shared one with, though the skill asked for a page per context.
  * Called by {@link requireWikiDepthAndWorkspace}.
- * @returns One sentence per context without a page of its own; empty when every context has one or the repository holds no extension.
- * @example await extensionShortfallsOf(manifest, indexedSources, textOf) // => []
+ * A declared file the project holds but the source index leaves out is refused too ({@link leftOutDeclaredFilesOf}), before that manifest's own-page sentences (Cycle 0123 /ship hosted review).
+ * @param projectRoot - The repository root, to tell a left-out file from a build output that is not checked in.
+ * @returns One sentence per left-out file and per context without a page of its own; empty when every context has one or the repository holds no extension.
+ * @example await extensionShortfallsOf(manifest, indexedSources, textOf, '/repo') // => []
  */
-async function extensionShortfallsOf(manifest, indexedSources, textOf) {
+async function extensionShortfallsOf(manifest, indexedSources, textOf, projectRoot) {
   const shortfalls = [];
   for (const path of indexedSources.keys()) {
     if (basename(path) !== 'manifest.json') continue;
     const parsed = await extensionManifestOf(path, textOf);
-    if (parsed) shortfalls.push(...ownPageShortfallsOf(manifest.pages, path, await extensionContextsOf(path, parsed, indexedSources, textOf)));
+    if (parsed) shortfalls.push(...await leftOutDeclaredFilesOf(path, parsed, manifest, indexedSources, projectRoot), ...ownPageShortfallsOf(manifest.pages, path, await extensionContextsOf(path, parsed, indexedSources, textOf)));
   }
   return shortfalls;
 }
 /**
  * Refuses a Wiki that fails the depth rules ({@link wikiDepthShortfallsOf}) the workspace rule ({@link workspaceShortfallsOf}) or the browser-extension rule ({@link extensionShortfallsOf}), with one refusal that names everything the Wiki still lacks, so the editor AI fixes all of them in one pass.
  * Called by {@link renderWikiPages} once every citation has resolved and the code coverage holds, so a refusal comes before anything is written.
- * @param readers - `citedTextsOf` answers a page's cited sources as quotable text, `citedPathsOf` the paths a page cites, `textOf` an included source's text by path.
+ * @param readers - `citedTextsOf` answers a page's cited sources as quotable text, `citedPathsOf` the paths a page cites, `textOf` an included source's text by path, `projectRoot` the repository root.
  * @throws With the depth sentences first, then the workspace sentences, then the extension sentences.
- * @example await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf })
+ * @example await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf, projectRoot })
  */
-async function requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf }) {
-  const shortfalls = [...await wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf, textOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf), ...await extensionShortfallsOf(manifest, indexedSources, textOf)];
+async function requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf, projectRoot }) {
+  const shortfalls = [...await wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf, textOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf), ...await extensionShortfallsOf(manifest, indexedSources, textOf, projectRoot)];
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
 /**
@@ -868,6 +932,6 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   const citedPathsOfPage = page => new Set([...[...page.sources, ...(page.diagrams ?? []).flatMap(diagram => [...diagram.nodes, ...diagram.edges].flatMap(element => element.sources))].map(reference => reference.path), ...inlinePathsOf(page)]);
   const citedTextsOf = page => [...citedPathsOfPage(page)].map(quotableTextOf);
   const textOf = async path => (await linesOf(indexedSources.get(path))).join('\n');
-  await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf: citedPathsOfPage, textOf });
+  await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf: citedPathsOfPage, textOf, projectRoot });
   return pages;
 }
