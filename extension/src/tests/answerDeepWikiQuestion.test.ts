@@ -1722,6 +1722,92 @@ test('the identifiers a route reply names win the excerpt lines of a long routed
   }
 })
 
+// Value: protects=a Wiki answer about a function whose doc comment matches the question in a long routed file where 100 lines match its words: the excerpt carries the function's body, so the answer's citation of the line that answers stands; fails_when=the excerpt keeps only matching lines once 80 or more lines of the file match, so the comment reaches the model without the body and a citation of the body is refused (Cycle 0121 F3: P03's createStore.ts doc comments at :339 and :351 arrived without :364-372, and the answer called the behavior unknown); why_new=Cycle 0122 F3 (hypothesis A); seam=a stub request function stands in for the editor model; no_claim=that a real model answers correctly from the body
+test('a doc comment matching the question brings the function body into the excerpt of a long routed file', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-code-unit-'))
+  const root = await realpath(directory)
+  const sources = await Promise.all(
+    [
+      'alpha.ts',
+      'beta.ts',
+      'gamma.ts',
+      'delta.ts',
+      'epsilon.ts',
+      'zeta.ts',
+    ].map(async (path) => {
+      const content = 'export const item = 1;\n'
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  const storeLines = [
+    ...Array.from(
+      { length: 100 },
+      (_, index) => `export const storeSetting${index + 1} = ${index + 1}`,
+    ),
+    '/**',
+    ' * Lets observable libraries read the store.',
+    ' * @returns An object whose method sends values to an observer.',
+    ' */',
+    'export function asSource(getState) {',
+    '  return {',
+    '    watch(observer) {',
+    '      observer.next(getState())',
+    '      return () => undefined',
+    '    },',
+    '  }',
+    '}',
+  ]
+  const store = `${storeLines.join('\n')}\n`
+  await mkdir(join(root, 'src'))
+  await writeFile(join(root, 'src/store.ts'), store)
+  sources.push({
+    path: 'src/store.ts',
+    sha256: createHash('sha256').update(store).digest('hex'),
+  })
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {},
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: ['src/store.ts'] }
+        : {
+            answer:
+              'A watcher first receives the current state, sent once when it starts watching.',
+            citations: [{ id: 'S1', line: 108 }],
+          },
+    )
+  }
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'When the store is handed to an observable library, what reaches a watcher first?',
+      'cursor',
+    )
+
+    // Assert
+    assert.equal(prompts.length, 2)
+    assert.match(prompts[1]!, /105: export function asSource\(getState\) \{/)
+    assert.match(prompts[1]!, /107: {5}watch\(observer\) \{/)
+    assert.match(prompts[1]!, /108: {7}observer\.next\(getState\(\)\)/)
+    assert.equal(answer.citations[0]?.path, 'src/store.ts')
+    assert.equal(answer.citations[0]?.line, 108)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
 // Value: protects=a question whose words match no file on a Wiki too large for its page list (400 pages whose summaries take 123,201 bytes): every page stays in the route request by its title and its first source, so a question in another language than the code can still reach the last page's code; fails_when=the route request leaves pages out in the Wiki's order, so the last pages and their code never reach the model when nothing in the question matches (Cycle 0119 hosted review: 319 of 400 pages kept); why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, unverified by the reviewer, pagesThatFit); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the right page from its title
 test('a route request on a Wiki too large for its page list still lists every page by its title and first source', async () => {
   // Arrange

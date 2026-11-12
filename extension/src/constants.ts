@@ -1306,6 +1306,8 @@ export const WIKI_PAGE_GUIDE_LINK_QUERY_CHARS = 2_048
 /** The sources each page offers in a Wiki route request at first; the number doubles while every page still fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}. */
 export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
+/** The most lines one code unit (a declaration with its brace block, and the comment above it when that fits) may bring into a Wiki question's excerpt of a long file: half of {@link WIKI_CONTEXT_LINE_LIMIT}, so one unit never fills an excerpt. Cycle 0122 (F3): a matching doc comment reached the model without the function it documents, and the answer called that function's behavior unknown. */
+export const WIKI_CONTEXT_UNIT_LINE_LIMIT = 40
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
