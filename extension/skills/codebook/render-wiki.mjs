@@ -133,8 +133,10 @@ const credentialRefusal = paths => {
   const more = paths.length > MAX_NAMED_UNCOVERED ? `, and ${paths.length - MAX_NAMED_UNCOVERED} more` : '';
   return `The Wiki's source index holds ${paths.length} file${paths.length === 1 ? '' : 's'} that can hold credentials: ${paths.slice(0, MAX_NAMED_UNCOVERED).join(', ')}${more}. Remove each from includedSources and list it under excludedPaths; a Wiki never indexes environment files, private keys or password files.`;
 };
-/** The number of explained code files from which {@link wikiDepthShortfallsOf} applies; a smaller repository is exempt. */
+/** The number of explained code files from which {@link wikiDepthShortfallsOf} applies; a smaller repository is exempt unless its explained code files hold {@link DEPTH_MIN_EXPLAINED_LINES} lines. */
 const DEPTH_MIN_EXPLAINED_FILES = 12;
+/** The number of lines, in total over the explained code files, from which {@link wikiDepthShortfallsOf} applies even below {@link DEPTH_MIN_EXPLAINED_FILES} files. Why: Cycle 0123 found P06 (a Chrome extension of 7 code files holding 4,424 lines) whose Wikis both hosts published below every floor, because 7 files were exempt; 1,200 lines is 12 files of about 100 lines. */
+const DEPTH_MIN_EXPLAINED_LINES = 1200;
 /** The fewest pages with a `parent` (a chapter tree) a Wiki needs once {@link wikiDepthShortfallsOf} applies. */
 const DEPTH_MIN_CHILD_PAGES = 2;
 /** The Wiki needs at least this many diagrams for each page (rounded up), and a diagram on every page, once {@link wikiDepthShortfallsOf} applies. */
@@ -323,13 +325,22 @@ function textShortfallsOf(measured, explainedCount) {
 function depthShortfallsOf(pages, explainedCount, citedTextsOf) {
   return [...structureShortfallsOf(pages, explainedCount), ...textShortfallsOf(countedTextOf(pages, citedTextsOf), explainedCount)];
 }
-/** Measures a Wiki against the depth rules for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers) it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link requireWikiDepthAndWorkspace}, which {@link renderWikiPages} calls right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
+/** The number of lines of a text: its text split on `\n` (CRLF read as LF), a final line without a newline counted, an empty text 0. Called by {@link explainedLinesOf}. @example lineCountOf('a\nb') // => 2 @example lineCountOf('a\r\nb\r\n') // => 2 @example lineCountOf('') // => 0 */
+const lineCountOf = text => (text === '' ? 0 : text.replace(/\r\n/g, '\n').split('\n').length - (text.endsWith('\n') ? 1 : 0));
+/** The total lines of the given explained code files, read through `textOf`. Called by {@link wikiDepthShortfallsOf} for a repository below {@link DEPTH_MIN_EXPLAINED_FILES} files, to see whether it reaches {@link DEPTH_MIN_EXPLAINED_LINES}. @param paths - The explained code files ({@link explainedCodeFilesOf}). @param textOf - Reads an included source's text by path. @returns The summed line count ({@link lineCountOf}). @example await explainedLinesOf(['a.ts', 'b.ts'], textOf) // => 4424 */
+async function explainedLinesOf(paths, textOf) {
+  let total = 0;
+  for (const path of paths) total += lineCountOf(await textOf(path));
+  return total;
+}
+/** Measures a Wiki against the depth rules for the code it covers: from {@link DEPTH_MIN_EXPLAINED_FILES} explained code files (included code files no `coverageExceptions` entry covers), or fewer files that hold {@link DEPTH_MIN_EXPLAINED_LINES} lines in total, it needs a chapter tree, enough pages, a diagram on every page and enough diagrams in total, enough counted explanation in total (CJK counted twice; {@link countedTextOf}) and no stub page. Called by {@link requireWikiDepthAndWorkspace}, which {@link renderWikiPages} calls right after {@link requireCodeCoverage}, so a refusal comes before anything is written.
  * @param citedTextsOf - Answers a page's cited sources as quotable text, for the copied-text rule.
- * @returns One sentence for each failed rule, naming the measured value, the required value and what to add; empty for a deep enough Wiki or a small repository. @example wikiDepthShortfallsOf(manifest, indexedSources, () => []) // => [] */
-function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf) {
+ * @param textOf - Reads an included source's text by path, to count the lines of a repository below the file threshold.
+ * @returns One sentence for each failed rule, naming the measured value, the required value and what to add; empty for a deep enough Wiki or a small repository (below the file threshold and below the line threshold). @example await wikiDepthShortfallsOf(manifest, indexedSources, () => [], textOf) // => [] */
+async function wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf, textOf) {
   const explained = explainedCodeFilesOf(manifest, indexedSources);
-  // A small repository is exempt from the depth rules.
-  if (explained.length < DEPTH_MIN_EXPLAINED_FILES) return [];
+  // A repository below both the file and the line threshold is exempt from the depth rules.
+  if (explained.length < DEPTH_MIN_EXPLAINED_FILES && await explainedLinesOf(explained, textOf) < DEPTH_MIN_EXPLAINED_LINES) return [];
   return depthShortfallsOf(manifest.pages, explained.length, citedTextsOf);
 }
 /** How many imported names, and how many of a package's pages, one sentence of {@link workspaceShortfallOf} names. */
@@ -481,7 +492,7 @@ async function workspaceShortfallsOf(manifest, indexedSources, textOf, citedPath
  * @example await requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf })
  */
 async function requireWikiDepthAndWorkspace(manifest, indexedSources, { citedTextsOf, citedPathsOf, textOf }) {
-  const shortfalls = [...wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf)];
+  const shortfalls = [...await wikiDepthShortfallsOf(manifest, indexedSources, citedTextsOf, textOf), ...await workspaceShortfallsOf(manifest, indexedSources, textOf, citedPathsOf)];
   if (shortfalls.length) throw new Error(shortfalls.join(' '));
 }
 /**
