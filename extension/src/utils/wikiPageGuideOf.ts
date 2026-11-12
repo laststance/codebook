@@ -105,31 +105,52 @@ function diagramSourcesOf(diagrams: unknown): string[] {
  */
 export function wikiPageGuideOf(pages: unknown[]): WikiPageGuide[] {
   return pages.flatMap((page: unknown) => {
-    if (
-      typeof page !== 'object' ||
-      page === null ||
-      !('title' in page) ||
-      typeof page.title !== 'string'
-    )
-      return []
-    const sources = [
-      ...new Set([
-        ...pathsOf('sources' in page ? page.sources : undefined),
-        ...diagramSourcesOf('diagrams' in page ? page.diagrams : undefined),
-      ]),
-    ]
-    // A page that cites no source cannot route a question to one.
-    if (!sources.length) return []
-    const contentHtml =
-      'contentHtml' in page && typeof page.contentHtml === 'string'
-        ? page.contentHtml
-        : ''
-    return [
-      {
-        title: page.title.slice(0, WIKI_PAGE_GUIDE_TITLE_CHARS),
-        summary: firstParagraphOf(contentHtml),
-        sources,
-      },
-    ]
+    const entry = guideEntryOf(page)
+    return entry ? [entry] : []
   })
+}
+
+/**
+ * The source paths one manifest page cites, each once: its source list, then its diagrams' node and edge sources.
+ * Called by {@link guideEntryOf}.
+ * @param page - One page of the manifest, known to be an object.
+ * @returns The paths in citation order, repeats removed.
+ * @example citedSourcesOf({ sources: [{ path: 'src/a.ts', line: 1 }], diagrams: [] }) // => ['src/a.ts']
+ */
+function citedSourcesOf(page: object): string[] {
+  return [
+    ...new Set([
+      ...pathsOf('sources' in page ? page.sources : undefined),
+      ...diagramSourcesOf('diagrams' in page ? page.diagrams : undefined),
+    ]),
+  ]
+}
+
+/**
+ * The guide entry of one manifest page: its title cut to {@link WIKI_PAGE_GUIDE_TITLE_CHARS} characters, its summary ({@link firstParagraphOf}) and its cited sources ({@link citedSourcesOf}).
+ * Called by {@link wikiPageGuideOf} for each page.
+ * @param page - One entry of the manifest's `pages`, as published.
+ * @returns The entry, or undefined for a page that is no object with a string `title` or that cites no source.
+ * @example guideEntryOf({ title: 'Query', contentHtml: '<p>Fetches.</p>', sources: [{ path: 'src/query.ts', line: 1 }] }) // => { title: 'Query', summary: 'Fetches.', sources: ['src/query.ts'] }
+ */
+function guideEntryOf(page: unknown): WikiPageGuide | undefined {
+  if (
+    typeof page !== 'object' ||
+    page === null ||
+    !('title' in page) ||
+    typeof page.title !== 'string'
+  )
+    return undefined
+  const sources = citedSourcesOf(page)
+  // A page that cites no source cannot route a question to one.
+  if (!sources.length) return undefined
+  const contentHtml =
+    'contentHtml' in page && typeof page.contentHtml === 'string'
+      ? page.contentHtml
+      : ''
+  return {
+    title: page.title.slice(0, WIKI_PAGE_GUIDE_TITLE_CHARS),
+    summary: firstParagraphOf(contentHtml),
+    sources,
+  }
 }
