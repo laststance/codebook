@@ -216,7 +216,7 @@ function orderedPageSources(
 }
 
 /**
- * The route list when every page cannot offer even {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} sources within the byte budget: the pages whose listed sources best match the question are taken first (the Wiki's order among equal scores) while the list fits, a page too long to fit is left out, and the pages taken are listed in the Wiki's order.
+ * The route list when even the shorter index of every page does not fit the byte budget ({@link pageIndexThatFits}): the pages whose listed sources best match the question are taken first (the Wiki's order among equal scores) while the list fits, a page too long to fit is left out, and the pages taken are listed in the Wiki's order.
  * Called by {@link pageRouteList}.
  * @param pages - The guide's pages, each with only its verified sources, best match first ({@link orderedPageSources}).
  * @param scores - Each hash-verified candidate's lexical score by path.
@@ -258,7 +258,21 @@ function pagesThatFit(
 }
 
 /**
- * Serializes the Wiki's own pages for a route request ({@link routePromptOf}): every page that cites a verified source keeps its title, summary and up to a number of its sources, best match to the question first ({@link orderedPageSources}), that number doubling from {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} while the whole list fits the byte budget, so each page stays represented however large the repository is. When even the first number does not fit, the pages whose sources best match the question are kept ({@link pagesThatFit}).
+ * The JSON list of the guide's pages, each with its first `perPage` sources, as a route request offers them.
+ * Called by {@link pageRouteList} and {@link pageIndexThatFits} for each size they try.
+ * @param pages - The guide's pages, each with only its verified sources, best match first ({@link orderedPageSources}).
+ * @param perPage - How many of each page's sources to list.
+ * @returns The JSON array.
+ * @example pageListOf([{ title: 'Query', summary: '', sources: ['src/query.ts', 'src/cache.ts'] }], 1) // => '[{"title":"Query","summary":"","sources":["src/query.ts"]}]'
+ */
+function pageListOf(pages: WikiPageGuide[], perPage: number): string {
+  return JSON.stringify(
+    pages.map((page) => ({ ...page, sources: page.sources.slice(0, perPage) })),
+  )
+}
+
+/**
+ * Serializes the Wiki's own pages for a route request ({@link routePromptOf}): every page that cites a verified source keeps its title, summary and up to a number of its sources, best match to the question first ({@link orderedPageSources}), that number doubling from {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} while the whole list fits the byte budget, so each page stays represented however large the repository is. When even the first number does not fit, every page is listed in a shorter form ({@link pageIndexThatFits}); only when that does not fit either are pages left out, those whose sources best match the question kept first ({@link pagesThatFit}).
  *
  * Why: the candidates' lexical ranking is the one signal of a question that names an identifier; a list cut in the Wiki's order alone dropped the best-matching source when its page came late or its place in the page's list was late (Cycle 0119 `/ship` pass 1, Codex outside voice).
  * Called by {@link routePromptOf} when a question needs routing.
@@ -283,19 +297,51 @@ function pageRouteList(
   if (!pages.length) return undefined
   let list: string | undefined
   for (let perPage = WIKI_PAGE_ROUTE_FIRST_SOURCES; ; perPage *= 2) {
-    const larger = JSON.stringify(
-      pages.map((page) => ({
-        ...page,
-        sources: page.sources.slice(0, perPage),
-      })),
-    )
+    const larger = pageListOf(pages, perPage)
     // The last list that fit stays; a larger one would pass the budget.
     if (Buffer.byteLength(larger, 'utf8') > budgetBytes) break
     list = larger
     // Every page already offers all its sources.
     if (pages.every((page) => page.sources.length <= perPage)) break
   }
-  return list ?? pagesThatFit(pages, scores, budgetBytes)
+  return (
+    list ??
+    pageIndexThatFits(pages, budgetBytes) ??
+    pagesThatFit(pages, scores, budgetBytes)
+  )
+}
+
+/**
+ * The shorter list of every page for a route request whose page list does not fit even at {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} sources per page: every page with fewer of its sources, best match first, down to one, while each keeps its summary; else every page with its title and its best-matching source only.
+ *
+ * Why: leaving pages out in the Wiki's order kept a question whose words match no file, such as a question in Japanese about English code, from ever reaching a later page's code (Cycle 0119 hosted review). A page is left out only when even this index does not fit ({@link pagesThatFit}).
+ * Called by {@link pageRouteList}.
+ * @param pages - The guide's pages, each with only its verified sources, best match first ({@link orderedPageSources}).
+ * @param budgetBytes - The bytes the list may take: {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES} less what the request offers beside it.
+ * @returns The JSON array of every page in its shorter form, or undefined when even the titles with one source each do not fit.
+ * @example pageIndexThatFits([{ title: 'Query', summary: 'Fetches.', sources: ['src/query.ts', 'src/cache.ts', 'src/key.ts'] }], 4096) // => '[{"title":"Query","summary":"Fetches.","sources":["src/query.ts","src/cache.ts"]}]'
+ */
+function pageIndexThatFits(
+  pages: WikiPageGuide[],
+  budgetBytes: number,
+): string | undefined {
+  // Each step halves the sources a page lists; every page keeps its summary and its best match.
+  for (
+    let perPage = Math.floor(WIKI_PAGE_ROUTE_FIRST_SOURCES / 2);
+    perPage >= 1;
+    perPage = Math.floor(perPage / 2)
+  ) {
+    const list = pageListOf(pages, perPage)
+    if (Buffer.byteLength(list, 'utf8') <= budgetBytes) return list
+  }
+  // Without its summary a page still says what it explains by its title.
+  const titles = JSON.stringify(
+    pages.map((page) => ({
+      title: page.title,
+      sources: page.sources.slice(0, 1),
+    })),
+  )
+  return Buffer.byteLength(titles, 'utf8') <= budgetBytes ? titles : undefined
 }
 
 /**

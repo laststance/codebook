@@ -1328,17 +1328,17 @@ test('a route request lists the candidates when no Wiki page cites a verified so
   }
 })
 
-// Value: protects=the question's best lexical match when a route request must leave pages out to stay within its 98,304-byte budget: the page holding it is kept, and the kept pages stay in the Wiki's order; fails_when=the cut keeps pages in Wiki order alone, so the one page whose source holds the question's identifier is dropped because it comes last (Cycle 0119 /ship smoke: 319 of 400 pages kept, the matching one cut); why_new=Cycle 0119 /ship pass 1 (Codex outside voice finding 2; smoke captures 004 and 005); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model then picks the matching source
+// Value: protects=the question's best lexical match when a route request must leave pages out to stay within its 98,304-byte budget (even the short index of every page, titles of 120 characters with one source each, passes it): the page holding the match is kept, and the kept pages stay in the Wiki's order; fails_when=the cut keeps pages in Wiki order alone, so the one page whose source holds the question's identifier is dropped because it comes last (Cycle 0119 /ship smoke: 319 of 400 pages kept, the matching one cut); why_new=Cycle 0119 /ship pass 1 (Codex outside voice finding 2; smoke captures 004 and 005), resized after the hosted review's page index so the cut is still reached; seam=a stub request function stands in for Cursor Agent; no_claim=that a real model then picks the matching source
 test('a route request cut to its budget keeps the page whose source best matches the question', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-rank-'))
   const root = await realpath(directory)
   await mkdir(join(root, 'src'), { recursive: true })
   const sources = await Promise.all(
-    Array.from({ length: 400 }, async (_, index) => {
+    Array.from({ length: 800 }, async (_, index) => {
       const path = `src/module-${String(index).padStart(3, '0')}.ts`
       const content =
-        index === 399
+        index === 799
           ? 'export function refreshAuthToken() {}\n'
           : `export const value${index} = ${index};\n`
       await writeFile(join(root, path), content)
@@ -1348,9 +1348,9 @@ test('a route request cut to its budget keeps the page whose source best matches
       }
     }),
   )
-  // 400 pages of one source each do not fit the budget even at four sources per page.
+  // 800 pages whose titles take the guide's 120 characters do not fit the budget even as titles with one source each.
   const pageGuide = sources.map((source, index) => ({
-    title: `Module ${String(index).padStart(3, '0')}`,
+    title: `Module ${String(index).padStart(3, '0')} ${'t'.repeat(109)}`,
     summary: 's'.repeat(240),
     sources: [source.path],
   }))
@@ -1367,9 +1367,9 @@ test('a route request cut to its budget keeps the page whose source best matches
     prompts.push(prompt)
     return JSON.stringify(
       prompts.length === 1
-        ? { paths: ['src/module-399.ts'] }
+        ? { paths: ['src/module-799.ts'] }
         : {
-            answer: 'It is defined in src/module-399.ts.',
+            answer: 'It is defined in src/module-799.ts.',
             citations: [{ id: 'S1', line: 1 }],
           },
     )
@@ -1391,9 +1391,12 @@ test('a route request cut to its budget keeps the page whose source best matches
       (page) => page.title,
     )
     assert.ok(Buffer.byteLength(pageList, 'utf8') <= 98_304)
-    assert.ok(listedTitles.length < 400)
-    assert.equal(listedTitles[0], 'Module 000')
-    assert.equal(listedTitles[listedTitles.length - 1], 'Module 399')
+    assert.ok(listedTitles.length < 800)
+    assert.equal(listedTitles[0], `Module 000 ${'t'.repeat(109)}`)
+    assert.equal(
+      listedTitles[listedTitles.length - 1],
+      `Module 799 ${'t'.repeat(109)}`,
+    )
   } finally {
     await removeTestFolder(directory)
   }
@@ -1554,16 +1557,19 @@ test('a route request that lists only some sources of each page keeps a document
   }
 })
 
-// Value: protects=a file the question's words match that no Wiki page cites: the route request offers it before the pages, and the offered files and the page list together stay within the 98,304-byte budget; fails_when=a route request offers only the files the pages cite, so the question's best lexical match never reaches the model (Cycle 0119 hosted review), or the offered files are added without taking their bytes from the page list's budget; why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, routePromptOf); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the offered file
+// Value: protects=a file the question's words match that no Wiki page cites: the route request offers it before the pages, and the offered files and the page list together stay within the 98,304-byte budget, the pages then listed with fewer sources each; fails_when=a route request offers only the files the pages cite, so the question's best lexical match never reaches the model (Cycle 0119 hosted review), or the offered files are added without taking their bytes from the page list's budget; why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, routePromptOf); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the offered file
 test('a route request offers the file that best matches the question when no Wiki page cites it, within its budget', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-uncited-'))
   const root = await realpath(directory)
   await mkdir(join(root, 'src'), { recursive: true })
+  await mkdir(join(root, 'lib'), { recursive: true })
+  const citedPaths = ['alpha', 'beta', 'gamma', 'delta'].map(
+    (name) => `src/${name}.ts`,
+  )
+  const content = 'export const item = 1;\n'
   const sources = await Promise.all(
-    Array.from({ length: 400 }, async (_, index) => {
-      const path = `src/module-${String(index).padStart(3, '0')}.ts`
-      const content = `export const value${index} = ${index};\n`
+    [...citedPaths, 'lib/one.ts', 'lib/two.ts'].map(async (path) => {
       await writeFile(join(root, path), content)
       return {
         path,
@@ -1578,12 +1584,11 @@ test('a route request offers the file that best matches the question when no Wik
     path: 'src/retryer.ts',
     sha256: createHash('sha256').update(retryerContent).digest('hex'),
   })
-  // 400 pages of one source each do not fit the budget even at four sources per page, so the page list is cut to what is left of it.
-  // With 244-character summaries the 315 pages that fill the whole budget leave less room than the offered-files line takes, so a list that ignored that line would pass the budget.
-  const pageGuide = sources.slice(0, 400).map((source, index) => ({
-    title: `Module ${String(index).padStart(3, '0')}`,
-    summary: 's'.repeat(244),
-    sources: [source.path],
+  // 252 pages of four sources take 98,281 bytes: within the whole budget, but not once the offered-files line takes its 41 bytes, so a list that ignored that line would pass the budget.
+  const pageGuide = Array.from({ length: 252 }, (_, index) => ({
+    title: `Page ${String(index).padStart(3, '0')}`,
+    summary: 's'.repeat(285),
+    sources: citedPaths,
   }))
   const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
     resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
@@ -1622,6 +1627,7 @@ test('a route request offers the file that best matches the question when no Wik
     const pagesStart = prompt.indexOf('\nPages: ')
     const matchingLine = prompt.slice(matchingStart, pagesStart)
     const pageList = prompt.slice(pagesStart + 8)
+    const listedPages: { sources: string[] }[] = JSON.parse(pageList)
     assert.equal(matchingLine, '\nOther matching files: ["src/retryer.ts"]')
     assert.match(prompt, /or the other files that match the question's words/)
     assert.ok(
@@ -1629,7 +1635,8 @@ test('a route request offers the file that best matches the question when no Wik
         Buffer.byteLength(pageList, 'utf8') <=
         98_304,
     )
-    assert.ok((JSON.parse(pageList) as unknown[]).length < 400)
+    assert.equal(listedPages.length, 252)
+    assert.deepEqual(listedPages[0]!.sources, ['src/alpha.ts', 'src/beta.ts'])
     assert.equal(answer.citations[0]?.path, 'src/retryer.ts')
     assert.equal(answer.citations[0]?.line, 2)
   } finally {
@@ -1710,6 +1717,79 @@ test('the identifiers a route reply names win the excerpt lines of a long routed
     )
     assert.equal(answer.citations[0]?.path, 'query.ts')
     assert.equal(answer.citations[0]?.line, 150)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
+// Value: protects=a question whose words match no file on a Wiki too large for its page list (400 pages whose summaries take 123,201 bytes): every page stays in the route request by its title and its first source, so a question in another language than the code can still reach the last page's code; fails_when=the route request leaves pages out in the Wiki's order, so the last pages and their code never reach the model when nothing in the question matches (Cycle 0119 hosted review: 319 of 400 pages kept); why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, unverified by the reviewer, pagesThatFit); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the right page from its title
+test('a route request on a Wiki too large for its page list still lists every page by its title and first source', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-index-'))
+  const root = await realpath(directory)
+  await mkdir(join(root, 'src'), { recursive: true })
+  const sources = await Promise.all(
+    Array.from({ length: 400 }, async (_, index) => {
+      const path = `src/module-${String(index).padStart(3, '0')}.ts`
+      const content =
+        index === 399
+          ? 'export function refreshAuthToken() {}\n'
+          : `export const value${index} = ${index};\n`
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  // 400 pages with 240-character summaries pass the budget even with one source each; their titles with one source each take 22,001 bytes.
+  const pageGuide = sources.map((source, index) => ({
+    title: `Module ${String(index).padStart(3, '0')}`,
+    summary: 's'.repeat(240),
+    sources: [source.path],
+  }))
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: ['src/module-399.ts'] }
+        : {
+            answer: 'The token is refreshed in src/module-399.ts.',
+            citations: [{ id: 'S1', line: 1 }],
+          },
+    )
+  }
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'トークンの更新はどこで行われますか？',
+      'cursor',
+      pageGuide,
+    )
+
+    // Assert
+    const pageList = prompts[0]!.slice(prompts[0]!.indexOf('\nPages: ') + 8)
+    const listedPages: { title: string; sources: string[] }[] =
+      JSON.parse(pageList)
+    assert.ok(Buffer.byteLength(pageList, 'utf8') <= 98_304)
+    assert.equal(listedPages.length, 400)
+    assert.deepEqual(listedPages[399], {
+      title: 'Module 399',
+      sources: ['src/module-399.ts'],
+    })
+    assert.equal(answer.citations[0]?.path, 'src/module-399.ts')
   } finally {
     await removeTestFolder(directory)
   }
