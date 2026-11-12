@@ -151,7 +151,7 @@ test('the bundled skill routes a Create React App app to react-scripts-dev behin
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.99"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.100"\n'))
   for (const phrase of [
     'goes to the `react-scripts-dev` adapter of the `repository-browser` profile',
     '`reactScriptsQuickStart`',
