@@ -313,5 +313,6 @@ test('a Cursor Agent Wiki request may run 300 seconds, twice the route request m
 
   // Assert
   assert.equal(requestBoundMs, 300_000)
+  // gstack-timing-ok: compares the shipped bound with the route time Cycle 0119 measured; no clock is read
   assert.ok(requestBoundMs >= 2 * measuredRouteRequestMs)
 })

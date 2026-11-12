@@ -90,6 +90,7 @@ test('a first paragraph full of unfinished tags gives its page guide at once', (
 
   // Assert
   assert.equal(entry?.summary, 'Starts here.')
+  // gstack-timing-ok: the bounded scan is the contract; the quadratic stripping took 60 s on this input and the linear one under a millisecond, so a 1 s bound cannot flake
   assert.ok(elapsedMs < 1_000, `the guide took ${elapsedMs} ms`)
 })
 
