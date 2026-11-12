@@ -920,6 +920,7 @@ test('the pre-gate allows a run that holds the package test a silence longer tha
 
   // Assert
   assert.deepEqual(limits, {
+    // pregate-literal: WIKI_CURSOR_REQUEST_TIMEOUT_MS=120_000 the pre-gate runner's own default silence limit, not the Wiki request bound
     product: 120_000,
     package: 300_000,
     windowsPath: 300_000,
@@ -940,6 +941,7 @@ test('the pre-gate runner lets package.test.mjs stay silent longer than the defa
   }
   await shorten(
     'testShardConstants.mjs',
+    // pregate-literal: WIKI_CURSOR_REQUEST_TIMEOUT_MS=120_000 the shard runner's CALL_SILENCE_TIMEOUT_MS, not the Wiki request bound
     'CALL_SILENCE_TIMEOUT_MS = 120_000',
     'CALL_SILENCE_TIMEOUT_MS = 2_000',
   )
@@ -1909,6 +1911,7 @@ test('the pre-gate runner survives a test that prints about 100 MB, as lines and
     {
       cwd: root,
       encoding: 'utf8',
+      // pregate-literal: WIKI_CURSOR_REQUEST_TIMEOUT_MS=120_000 this child process's own spawn timeout, not the Wiki request bound
       timeout: 120_000,
       stdio: ['ignore', outputFile.fd, 'pipe'],
       env: {

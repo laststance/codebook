@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.121'
+export const EXTENSION_VERSION = '0.2.122'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1289,9 +1289,26 @@ export const WIKI_CITATION_LIMIT = 40
 /** Number of citations the Wiki prompt asks the model to aim for (the lines that support the answer most directly). */
 export const WIKI_PROMPT_CITATION_TARGET = 12
 export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304
+/** The most code identifiers a Wiki route reply may name for choosing excerpt lines; more are ignored. */
+export const WIKI_ROUTE_TERM_LIMIT = 8
+/** The longest code identifier, in characters, a Wiki route reply may name; a longer one is ignored. */
+export const WIKI_ROUTE_TERM_MAX_CHARS = 64
+/** The shortest code identifier, in characters, a Wiki route reply may name; a one-character name would match most lines of a file, so it is ignored, as the question's own one-character words are. */
+export const WIKI_ROUTE_TERM_MIN_CHARS = 2
+/** The characters of a Wiki page's first paragraph its route guide entry keeps, enough to say what the page explains. */
+export const WIKI_PAGE_GUIDE_SUMMARY_CHARS = 240
+/** The characters of a Wiki page's title its route guide entry keeps, so one generated title cannot fill a route request. */
+export const WIKI_PAGE_GUIDE_TITLE_CHARS = 120
+/** The characters of a Wiki page's article the route guide reads for its first paragraph, from the paragraph's start: a paragraph that never closes, or holds markup a browser would not read, then costs a bounded scan on every question instead of one over the whole article. */
+export const WIKI_PAGE_GUIDE_SCAN_CHARS = 4_096
+/** The characters of an inline editor source link's query the route guide reads for the link's `path`, enough for a root, a path, a line and a hash; a longer run stops there, so one link costs a bounded read. */
+export const WIKI_PAGE_GUIDE_LINK_QUERY_CHARS = 2_048
+/** The sources each page offers in a Wiki route request at first; the number doubles while every page still fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}. */
+export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
-export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000
+/** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
+export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000

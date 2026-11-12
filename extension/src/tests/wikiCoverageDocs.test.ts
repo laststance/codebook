@@ -285,6 +285,19 @@ test('the README says an answer names files by path, cites at most 40 lines, and
   )
 })
 
+// Value: protects=the learner's README telling how a question on a large Wiki finds its code and how long Cursor may take: the route through the Wiki's own pages and the files each cites (its source list, diagrams and text links), the matching files no page cites, every page kept by its title and best file when a large Wiki's list is too long, the best matches kept first when pages must still be left out, the code identifiers that pick the answering lines before question words, and the 5-minute bound of each cursor-agent request; fails_when=the README loses that sentence, or still says nothing of the two requests and the bound after the Cycle 0119 F1 fix changed both, or of the text links and the ranked cut after the /ship pass 1 fix, or still promises a ranked cut for a question whose words match no file, or that every question in another language reaches its code, or says nothing of the page index, after the hosted review's fix; why_new=Cycle 0119 (H1 E2 step 6, F1; hosted CodeRabbit review of PR #307); seam=none (the packaged README's text); no_claim=that a real model picks the right page or answers within the bound
+test('the README says how a question on a large Wiki is routed through its pages and how long each Cursor request may run', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      "On a Wiki that cites more than six unchanged source files, a question that names none of them by path is answered in two requests: the editor model first picks up to six source files from the Wiki's own pages (each page's title, the start of its first paragraph and the files it cites in its source list, its diagrams or the source links of its text) and from up to six files that no page cites but whose names or lines match the question's words (a Wiki without such pages offers the files with their first lines instead), and names the code identifiers that mark the answering lines, so a question worded in another language than the code can still reach the code that answers it; then it answers from those lines, and in a long file the lines that hold those identifiers are chosen before lines that only match the question's words. When a large Wiki's pages and files do not all fit in that first request, each page lists fewer of its files, those whose names or lines best match the question's words first (among files that match equally, its code before its examples, tests and documentation), down to one file and then its title with that one file alone, so every page stays offered; only when even that does not fit are pages left out, the pages that cite the best matches kept first and otherwise the first pages in the Wiki's order. In Cursor each of the two `cursor-agent` requests may run for up to 5 minutes before the page reports `Cursor Agent timed out answering the Wiki question. Retry or use editor chat.`",
+    ),
+  )
+})
+
 /**
  * Reads the bundled `render-wiki.mjs`, the renderer that enforces the depth floors the skill states, so a test can compare its constants with the skill's sentence.
  *

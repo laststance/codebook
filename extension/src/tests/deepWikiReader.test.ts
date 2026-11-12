@@ -38,6 +38,8 @@ import { readWikiFileToOpen } from '../utils/readWikiFileToOpen'
 import type * as readWikiPublicationIdentityModule from '../utils/readWikiPublicationIdentity'
 import { readWikiPublicationIdentity } from '../utils/readWikiPublicationIdentity'
 import type * as takeWikiPagePlaceModule from '../utils/takeWikiPagePlace'
+import type * as wikiPageGuideOfModule from '../utils/wikiPageGuideOf'
+import { wikiPageGuideOf } from '../utils/wikiPageGuideOf'
 import type * as wikiPageRefusalHtmlModule from '../utils/wikiPageRefusalHtml'
 import {
   wikiPageRefusalHtml,
@@ -404,6 +406,104 @@ test('a failed editor-model answer reaches the browser reader as its message alo
     assert.deepEqual(await response.json(), {
       error: 'The editor model is unavailable.',
     })
+  } finally {
+    await reader.close()
+    await removeTestFolder(projectDirectory)
+  }
+})
+
+// Value: protects=a reader question on a large Wiki can route through the Wiki's own pages: the reader hands the answer each published page's title, the start of its first paragraph and the sources its list and its diagrams cite; fails_when=the answer gets no page guide, or a guide without a page's diagram sources (Cycle 0119 F1: a Cursor question on TanStack/query's Wiki routed through raw paths in path order and never reached the core); why_new=Cycle 0119 (H1 E2 step 6, F1); seam=the reader's real api/ask endpoint with a recording answer function; no_claim=how the answer uses the guide (answerDeepWikiQuestion's tests) or that a real model picks the right page
+test('a reader question hands the answer the guide of the published Wiki pages', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-reader-page-guide-'),
+  )
+  const projectRoot = await realpath(projectDirectory)
+  const output = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(join(output, 'pages'), { recursive: true })
+  await writeFile(
+    join(output, 'index.html'),
+    '<!doctype html><body><form id="qa-form"><textarea></textarea><div class="qa-answer"></div></form></body>',
+  )
+  await writeFile(
+    join(output, 'pages/query.html'),
+    '<!doctype html><body>Query cache</body>',
+  )
+  await writeFile(
+    join(output, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [
+        {
+          path: 'pages/query.html',
+          title: 'Query cache',
+          contentHtml:
+            '<h2>Flow</h2><p>A query fetches once and shares the request.</p>',
+          sources: [{ path: 'src/query.ts', line: 12 }],
+          diagrams: [
+            {
+              nodes: [
+                {
+                  id: 'observer',
+                  sources: [{ path: 'src/observer.ts', line: 4 }],
+                },
+              ],
+              edges: [],
+            },
+          ],
+        },
+      ],
+      assets: [],
+      includedSources: [
+        { path: 'src/query.ts', sha256: 'a'.repeat(64) },
+        { path: 'src/observer.ts', sha256: 'b'.repeat(64) },
+      ],
+    }),
+  )
+  const guides: unknown[] = []
+  const reader = await startDeepWikiReader(
+    output,
+    projectRoot,
+    async (_question, _sources, _signal, pageGuide) => {
+      guides.push(pageGuide)
+      return {
+        answer: 'It shares the request.',
+        citations: [
+          {
+            path: 'src/query.ts',
+            line: 12,
+            uri: 'vscode://laststance.codebook/source',
+          },
+        ],
+        sourceChanged: false,
+      }
+    },
+  )
+  try {
+    // Act
+    const response = await fetch(new URL('api/ask', reader.url), {
+      method: 'POST',
+      headers: {
+        Origin: new URL(reader.url).origin,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        question: 'How many requests does a query send?',
+      }),
+    })
+
+    // Assert
+    assert.equal(response.status, 200)
+    assert.deepEqual(guides, [
+      [
+        {
+          title: 'Query cache',
+          summary: 'A query fetches once and shares the request.',
+          sources: ['src/query.ts', 'src/observer.ts'],
+        },
+      ],
+    ])
   } finally {
     await reader.close()
     await removeTestFolder(projectDirectory)
@@ -938,6 +1038,59 @@ test('a question whose answer is longer than one part of an answer reaches the b
       sourceChanged: false,
     },
   })
+})
+
+// Value: protects=the editor's extension host on every page and asset request: the page guide reads every page's article, so only a question builds it (once), while serving a page or an asset does not; fails_when=the guide is built in the manifest read shared by all requests, so each page request walks every article; why_new=Cycle 0119 (the guide's lazy build is only stated in a comment; the guide test posts one question and counts nothing else); seam=the reader loaded with loadModule and a page guide builder that counts its calls; no_claim=the time a guide takes to build
+test('serving a page builds no page guide, while one question builds it once', async (context) => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-guide-count-')),
+  )
+  context.after(() => removeTestFolder(projectRoot))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let guideBuilds = 0
+  const countingGuide: typeof wikiPageGuideOfModule = {
+    wikiPageGuideOf: (...parameters) => {
+      guideBuilds += 1
+      return wikiPageGuideOf(...parameters)
+    },
+  }
+  const { startDeepWikiReader: startReaderCountingGuides } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    { './utils/wikiPageGuideOf': countingGuide },
+    { URL },
+  )
+  const reader = await startReaderCountingGuides(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const page = await fetch(new URL('index.html', reader.url))
+  await page.text()
+  const buildsAfterPage = guideBuilds
+  await fetch(new URL('api/ask', reader.url), {
+    method: 'POST',
+    headers: {
+      Origin: new URL(reader.url).origin,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ question: 'Where is it?' }),
+  })
+
+  // Assert
+  assert.equal(page.status, 200)
+  assert.deepEqual(
+    { buildsAfterPage, buildsAfterQuestion: guideBuilds },
+    {
+      buildsAfterPage: 0,
+      buildsAfterQuestion: 1,
+    },
+  )
 })
 
 // Value: protects=the editor's extension host against requests to the question route that the reader refuses, and a request to a page by any other method than GET: each is refused by what the request itself says, and a manifest read before those checks would read and parse up to 64 MiB on the host's thread for a request refused anyway; fails_when=the reader reads the manifest for a question of another origin, a question body over WIKI_HTTP_BODY_LIMIT_BYTES, a blank question or a POST to a page, or answers one of them otherwise than with its refusal; why_new=Cycle 0047 row 273 (P3S7-G4): a manifest read moved before the question's checks survived every test; seam=the reader loaded with loadModule and a manifest reader that counts each read after the reader's start; no_claim=the time a manifest read takes (the reads are counted)
