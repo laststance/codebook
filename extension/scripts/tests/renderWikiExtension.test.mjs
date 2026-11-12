@@ -334,3 +334,153 @@ test('a page citing one service worker file and one settings file is refused as 
     )
   })
 })
+
+// Value: protects=each extension page a manifest key declares owes its own Wiki page; fails_when=a key (options, side panel, devtools, overrides, browser or page action) drops out of the renderer's page-key table; why_new=other tests only declare a worker and an action popup; seam=none; no_claim=real browser manifest acceptance (synthetic manifests)
+test('every manifest key that declares an extension page owes that page a Wiki page of its own', async () => {
+  const cases = [
+    [{ options_page: 'p.html' }, 'the options page'],
+    [{ options_ui: { page: 'p.html' } }, 'the options page'],
+    [{ side_panel: { default_path: 'p.html' } }, 'the side panel'],
+    [{ devtools_page: 'p.html' }, 'the devtools page'],
+    [
+      { chrome_url_overrides: { newtab: 'p.html' } },
+      'the newtab override page',
+    ],
+    [
+      { chrome_url_overrides: { bookmarks: 'p.html' } },
+      'the bookmarks override page',
+    ],
+    [
+      { chrome_url_overrides: { history: 'p.html' } },
+      'the history override page',
+    ],
+    [{ browser_action: { default_popup: 'p.html' } }, 'the popup'],
+    [{ page_action: { default_popup: 'p.html' } }, 'the popup'],
+  ]
+  for (const [keys, label] of cases) {
+    await inProject(async (root) => {
+      // Arrange
+      const files = {
+        'manifest.json': JSON.stringify({
+          manifest_version: 2,
+          name: 'X',
+          ...keys,
+        }),
+        'p.html': '<p>page</p>\n',
+      }
+      const manifest = await wikiOf(root, files, [
+        ['index.html', ['manifest.json']],
+      ])
+
+      // Act
+      const outcome = await outcomeOf(manifest, root)
+
+      // Assert
+      assert.equal(
+        outcome,
+        `The Wiki documents a browser extension (manifest.json) but gives ${label} (p.html) no page of its own: write a page whose sources name more files of ${label} (starting with p.html) than of any other runtime context.`,
+        JSON.stringify(keys),
+      )
+    })
+  }
+})
+
+// Value: protects=URL, absolute and escaping manifest values owe no page while a query and hash are stripped from a relative one; fails_when=the path normalizer stops filtering them or stops stripping; why_new=only plain relative paths are exercised; seam=none; no_claim=none beyond protects
+test('a popup declared as a URL, an absolute path or a path above the manifest owes no page, and one with a query and hash still owes its file', async () => {
+  const pages = [['index.html', ['ext/manifest.json']]]
+  const manifestOf = (popup) =>
+    JSON.stringify({
+      manifest_version: 3,
+      name: 'X',
+      action: { default_popup: popup },
+    })
+  await inProject(async (root) => {
+    // Arrange
+    const popups = [
+      'https://example.com/ext/popup.html',
+      '/ext/popup.html',
+      '../popup.html',
+    ]
+
+    // Act
+    const outsideOutcomes = []
+    for (const popup of popups) {
+      const manifest = await wikiOf(
+        root,
+        { 'ext/manifest.json': manifestOf(popup), 'popup.html': '<p>p</p>\n' },
+        pages,
+      )
+      outsideOutcomes.push(await outcomeOf(manifest, root))
+    }
+    const withQuery = await wikiOf(
+      root,
+      {
+        'ext/manifest.json': manifestOf('popup.html?x#y'),
+        'ext/popup.html': '<p>p</p>\n',
+      },
+      pages,
+    )
+    const queryOutcome = await outcomeOf(withQuery, root)
+
+    // Assert
+    assert.deepEqual(outsideOutcomes, ['rendered', 'rendered', 'rendered'])
+    assert.equal(
+      queryOutcome,
+      'The Wiki documents a browser extension (ext/manifest.json) but gives the popup (ext/popup.html) no page of its own: write a page whose sources name more files of the popup (starting with ext/popup.html) than of any other runtime context.',
+    )
+  })
+})
+
+// Value: protects=a page declared twice, as options_page and options_ui.page, is one context; fails_when=the seen-pages dedup is removed so two sentences name one page; why_new=no case declares a page twice; seam=none; no_claim=none beyond protects
+test('an options page declared as options_page and options_ui.page is refused with one sentence', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = {
+      'manifest.json': JSON.stringify({
+        manifest_version: 3,
+        name: 'X',
+        options_page: 'options.html',
+        options_ui: { page: 'options.html' },
+      }),
+      'options.html': '<p>options</p>\n',
+    }
+    const manifest = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki documents a browser extension (manifest.json) but gives the options page (options.html) no page of its own: write a page whose sources name more files of the options page (starting with options.html) than of any other runtime context.',
+    )
+  })
+})
+
+// Value: protects=a single-quoted script src in a popup HTML puts that script in the popup context; fails_when=the script-src pattern loses its single-quote branch so a page citing that script owns nothing; why_new=only double quotes are exercised; seam=none; no_claim=none beyond protects
+test('a popup page citing only the script its HTML loads with a single-quoted src is its own page', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = {
+      'manifest.json': JSON.stringify({
+        manifest_version: 3,
+        name: 'X',
+        action: { default_popup: 'popup/popup.html' },
+      }),
+      'popup/popup.html': "<script src='popup.js'></script>\n",
+      'popup/popup.js': 'export const popup = 1;\n',
+    }
+    const manifest = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+      ['popup.html', ['popup/popup.js']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})

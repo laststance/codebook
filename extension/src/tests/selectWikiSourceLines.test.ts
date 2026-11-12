@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { longDeclarationHeadOfLine } from '../utils/codeUnitOfLine'
+import { declaresPriorityTerm } from '../utils/declaresPriorityTerm'
 import { selectWikiSourceLines } from '../utils/selectWikiSourceLines'
 
 // Value: protects=the excerpt of a long file whose question words match 80 or more lines: a doc comment inside an object literal brings the method it documents, closed by `},`, whole into the excerpt; fails_when=the excerpt keeps only the matching lines, so the comment arrives without the method body (Cycle 0121 F3, P03 createStore.ts:347-374), or the method's block is ended at the object's closing brace instead of its own; why_new=Cycle 0122 F3 (hypothesis A); seam=none; no_claim=that an editor model answers from the body
@@ -928,4 +929,28 @@ test('the declaration of a route identifier outranks call sites of two other rou
       selected.includes(declarationLine + offset),
       `line ${offset + 1} of pasteItem is selected`,
     )
+})
+
+// Value: protects=only a real declaration of a route identifier earns the declaration bonus; fails_when=a callback or call line, or an empty or path-like term, is scored as a declaration, or a function, const or method head is not; why_new=only keyword and dotted cases are hit indirectly; seam=none; no_claim=route ranking quality (pure function)
+test('declaresPriorityTerm accepts function, const and method heads and rejects callbacks and non-identifier terms', () => {
+  // Arrange
+  const cases: [string, string, boolean][] = [
+    ['function f(a) {', 'f', true],
+    ['const f = async () => {', 'f', true],
+    ['  f(a) {', 'f', true],
+    ['  f(() => {', 'f', false],
+    ['function a() {', 'a.', false],
+    ['function a() {', 'a/b', false],
+  ]
+
+  // Act
+  const results = cases.map(([line, term]) =>
+    declaresPriorityTerm(line, [term]),
+  )
+
+  // Assert
+  assert.deepEqual(
+    results,
+    cases.map(([, , expected]) => expected),
+  )
 })

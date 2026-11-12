@@ -427,7 +427,7 @@ test('the bundled skill 1.0.103 asks an update to correct every page that descri
   )
 })
 
-// Value: protects=an update corrects a sentence that says another function or check applies the same rule as the changed code, not only the sentences that name the changed function or quote the rule; fails_when=the bundled skill (from 1.0.103) loses the update step's sentence that a comparison with a changed rule states that rule, even in a paragraph about something else; why_new=Cycle 0121 (H1 run 1, E2 step 7, F1: after dispatch began to accept a symbol type, Cursor's update corrected every explicit string-only statement but kept "isAction is exported so application code can apply the same rule before calling dispatch"); seam=none; no_claim=that the chat AI finds every such comparison
+// Value: protects=an update corrects a sentence that says another function or check applies the same rule as the changed code, not only the sentences that name the changed function or quote the rule; fails_when=the bundled skill (from 1.0.101) loses the update step's sentence that a comparison with a changed rule states that rule, even in a paragraph about something else; why_new=Cycle 0121 (H1 run 1, E2 step 7, F1: after dispatch began to accept a symbol type, Cursor's update corrected every explicit string-only statement but kept "isAction is exported so application code can apply the same rule before calling dispatch"); seam=none; no_claim=that the chat AI finds every such comparison
 test('the bundled skill 1.0.103 asks an update to correct a sentence that compares another function or check with a changed rule, wherever it sits', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
@@ -454,7 +454,7 @@ test('the README says an update also corrects a sentence that says another funct
   )
 })
 
-// Value: protects=an update finds a sentence that words a changed rule differently, by searching pages for single words as well as phrases; fails_when=the bundled skill (from 1.0.103) loses the update step's instruction to search for single words (changed names, the old rule's type name) and to read every sentence a word search finds; why_new=Cycle 0121 (H1 run 2, E2 step 7, F2: after dispatch began to accept a symbol type, Cursor's update ran only phrase searches and kept a sentence that said "string-<code>type</code> checks", which inline code and a hyphen kept from matching); seam=none; no_claim=that an update meets the promise (the native update checks do)
+// Value: protects=an update finds a sentence that words a changed rule differently, by searching pages for single words as well as phrases; fails_when=the bundled skill (from 1.0.101) loses the update step's instruction to search for single words (changed names, the old rule's type name) and to read every sentence a word search finds; why_new=Cycle 0121 (H1 run 2, E2 step 7, F2: after dispatch began to accept a symbol type, Cursor's update ran only phrase searches and kept a sentence that said "string-<code>type</code> checks", which inline code and a hyphen kept from matching); seam=none; no_claim=that an update meets the promise (the native update checks do)
 test('the bundled skill 1.0.103 asks an update to search pages for single words of a changed rule as well as phrases and to read every sentence a word search finds', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
