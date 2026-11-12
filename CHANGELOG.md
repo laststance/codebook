@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.124.0] - 2026-11-12 (development candidate)
+
+Cycle 0122 ([Issue #314](https://github.com/laststance/codebook/issues/314)), a bug-fix cycle. **A question asked in an LLM Wiki's reader now gets the code that a matching comment describes, not the comment alone.** When many lines of a long source file matched a question, the excerpt sent to the editor model was those matching lines one by one, so a doc comment could arrive without the function it documents and the answer called that behavior unknown. On reduxjs/redux, VS Code's reader answered a question about the store's observable that way, although `createStore.ts` holds the answer a few lines below the comment. With this fix, VS Code's reader answered the same question correctly in three asks out of three, citing the lines that send the first value and register the later ones, and Cursor's reader answered it correctly too.
+
+### Fixed
+- **A matching line in a long source file brings its whole declaration into the answer's excerpt.** In a source file longer than 80 lines, a matching line brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines. The three best matching lines and the lines of the identifiers the editor model named for the question keep their places, so a whole function never pushes them out.
+
+**Compatibility.** No MCP API, study format or skill change; the bundled skill stays 1.0.101. Published Wikis are read as they are.
+
 ## [0.2.123.0] - 2026-11-12 (development candidate)
 
 Cycle 0121 ([Issue #311](https://github.com/laststance/codebook/issues/311)), a feature cycle. **When an LLM Wiki is updated after a code change, the bundled skill now also corrects the sentences that still state the old rule without naming it: one that says another function or check applies the same rule as the changed code, and one that words the rule differently, which the update now finds by searching every page for single words as well as phrases.** On reduxjs/redux, after `dispatch` began to accept a symbol action type, earlier updates kept "isAction is exported so application code can apply the same rule before calling dispatch" and "a JavaScript caller still gets the plain-object and string-type checks"; with this skill, the updates in VS Code and Cursor corrected every page that still stated the string-only rule.
