@@ -14,6 +14,7 @@ import {
   WIKI_ROUTE_CANDIDATE_LIMIT_BYTES,
   WIKI_ROUTE_TERM_LIMIT,
   WIKI_ROUTE_TERM_MAX_CHARS,
+  WIKI_ROUTE_TERM_MIN_CHARS,
   WIKI_SOURCE_LIMIT_BYTES,
   WIKI_SOURCE_MATCH_LIMIT,
 } from '../constants'
@@ -210,11 +211,36 @@ function orderedPageSources(
 }
 
 /**
- * Serializes the Wiki's own pages for a route request ({@link routePromptOf}): every page that cites a verified source keeps its title, summary and up to a number of its sources, that number doubling from {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} while the whole list fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}, so each page stays represented however large the repository is. When even the first number does not fit, the leading pages that fit are kept.
+ * The route list when every page cannot offer even {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} sources within {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}: pages are kept in the guide's order while the list fits, and a page too long to fit is left out, in one pass.
+ * Called by {@link pageRouteList}.
+ * @param pages - The guide's pages, each with only its verified sources.
+ * @returns The JSON array of the pages that fit, or undefined when none does (the caller then offers the candidate list).
+ * @example pagesThatFit([{ title: 'Query', summary: 'Fetches.', sources: ['src/query.ts'] }]) // => '[{"title":"Query","summary":"Fetches.","sources":["src/query.ts"]}]'
+ */
+function pagesThatFit(pages: WikiPageGuide[]): string | undefined {
+  const entries: string[] = []
+  let bytes = 2
+  for (const page of pages) {
+    const entry = JSON.stringify({
+      ...page,
+      sources: page.sources.slice(0, WIKI_PAGE_ROUTE_FIRST_SOURCES),
+    })
+    const entryBytes =
+      Buffer.byteLength(entry, 'utf8') + (entries.length ? 1 : 0)
+    // A page that does not fit is left out; a later, shorter one may still fit.
+    if (bytes + entryBytes > WIKI_ROUTE_CANDIDATE_LIMIT_BYTES) continue
+    entries.push(entry)
+    bytes += entryBytes
+  }
+  return entries.length ? `[${entries.join(',')}]` : undefined
+}
+
+/**
+ * Serializes the Wiki's own pages for a route request ({@link routePromptOf}): every page that cites a verified source keeps its title, summary and up to a number of its sources, that number doubling from {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} while the whole list fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}, so each page stays represented however large the repository is. When even the first number does not fit, the pages that fit are kept in order ({@link pagesThatFit}).
  * Called by {@link routePromptOf} when a question needs routing.
  * @param pageGuide - The published Wiki's page guide.
  * @param candidates - Hash-verified question candidates.
- * @returns The JSON array of pages, or undefined when no page cites a verified source.
+ * @returns The JSON array of pages, or undefined when no page cites a verified source or none fits.
  * @example pageRouteList([{ title: 'Query', summary: 'Fetches.', sources: ['src/query.ts'] }], candidates) // => '[{"title":"Query","summary":"Fetches.","sources":["src/query.ts"]}]'
  */
 function pageRouteList(
@@ -227,33 +253,22 @@ function pageRouteList(
     return ordered ? [ordered] : []
   })
   if (!pages.length) return undefined
-  const listWith = (perPage: number, pageCount = pages.length): string =>
-    JSON.stringify(
-      pages
-        .slice(0, pageCount)
-        .map((page) => ({ ...page, sources: page.sources.slice(0, perPage) })),
-    )
-  const fits = (list: string): boolean =>
-    Buffer.byteLength(list, 'utf8') <= WIKI_ROUTE_CANDIDATE_LIMIT_BYTES
   let list: string | undefined
-  for (
-    let perPage = WIKI_PAGE_ROUTE_FIRST_SOURCES;
-    fits(listWith(perPage));
-    perPage *= 2
-  ) {
-    list = listWith(perPage)
+  for (let perPage = WIKI_PAGE_ROUTE_FIRST_SOURCES; ; perPage *= 2) {
+    const larger = JSON.stringify(
+      pages.map((page) => ({
+        ...page,
+        sources: page.sources.slice(0, perPage),
+      })),
+    )
+    // The last list that fit stays; a larger one would pass the budget.
+    if (Buffer.byteLength(larger, 'utf8') > WIKI_ROUTE_CANDIDATE_LIMIT_BYTES)
+      break
+    list = larger
     // Every page already offers all its sources.
     if (pages.every((page) => page.sources.length <= perPage)) break
   }
-  if (list) return list
-  let pageCount = pages.length
-  // Even the first number of sources per page is too long for every page: the leading pages that fit stay.
-  while (
-    pageCount > 1 &&
-    !fits(listWith(WIKI_PAGE_ROUTE_FIRST_SOURCES, pageCount))
-  )
-    pageCount -= 1
-  return listWith(WIKI_PAGE_ROUTE_FIRST_SOURCES, pageCount)
+  return list ?? pagesThatFit(pages)
 }
 
 /**
@@ -278,23 +293,35 @@ function routePromptOf(
 }
 
 /**
- * The code identifiers a route reply names for choosing excerpt lines: up to {@link WIKI_ROUTE_TERM_LIMIT} identifier-shaped strings (letters, digits, `_`, `$` and dots, starting with a letter, `_` or `$`, at most {@link WIKI_ROUTE_TERM_MAX_CHARS} characters), lowercased as the question's own terms are. Anything else is ignored.
+ * The code identifiers a route reply names for choosing excerpt lines: up to {@link WIKI_ROUTE_TERM_LIMIT} identifier-shaped strings (letters, digits, `_`, `$` and dots, starting with a letter, `_` or `$`, {@link WIKI_ROUTE_TERM_MIN_CHARS} to {@link WIKI_ROUTE_TERM_MAX_CHARS} characters), lowercased as the question's own terms are, each once. A dotted name also gives its last part, as a call site spells it (`this.fetchQuery` for `QueryClient.fetchQuery`). Anything else is ignored.
  * Called by {@link routedSources}.
  * @param route - The parsed route reply.
- * @returns The identifiers, in reply order.
- * @example routeTermsOf({ paths: [], terms: ['fetchStatus', '<b>', 7] }) // => ['fetchstatus']
+ * @returns The identifiers, in reply order, each dotted one followed by its last part.
+ * @example routeTermsOf({ paths: [], terms: ['QueryClient.fetchQuery', 'x', '<b>', 7] }) // => ['queryclient.fetchquery', 'fetchquery']
  */
 function routeTermsOf(route: object): string[] {
   if (!('terms' in route) || !Array.isArray(route.terms)) return []
-  return route.terms
+  const identifiers = route.terms
     .filter(
       (term: unknown): term is string =>
         typeof term === 'string' &&
+        term.length >= WIKI_ROUTE_TERM_MIN_CHARS &&
         term.length <= WIKI_ROUTE_TERM_MAX_CHARS &&
         /^[A-Za-z_$][\w$.]*$/.test(term),
     )
     .slice(0, WIKI_ROUTE_TERM_LIMIT)
     .map((term) => term.toLowerCase())
+  return [
+    ...new Set(
+      identifiers.flatMap((term) => {
+        const member = term.slice(term.lastIndexOf('.') + 1)
+        // A dotted name is searched by its last part too, which is how the code calls it.
+        return member !== term && member.length >= WIKI_ROUTE_TERM_MIN_CHARS
+          ? [term, member]
+          : [term]
+      }),
+    ),
+  ]
 }
 
 /**
@@ -349,8 +376,7 @@ async function routedSources(
   return routed.map((source) => ({
     ...source,
     selectedLines: selectWikiSourceLines(source.lines, [
-      ...terms,
-      ...routeTerms,
+      ...new Set([...terms, ...routeTerms]),
     ]),
   }))
 }

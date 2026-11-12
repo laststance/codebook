@@ -178,7 +178,7 @@ const SERVED_PAGE_FETCH_DIRECTIVES =
 /** The policy of every page the reader serves, a refusal page included: a script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries. Everything else the page fetches, frames or submits stays on this origin ({@link SERVED_PAGE_FETCH_DIRECTIVES}). */
 const SERVED_PAGE_POLICY = `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`
 
-/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), and only when there is none at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist, the included sources and the guide of its pages that a routed question lists ({@link wikiPageGuideOf}). @throws When the Wiki folder or a folder on its path in the project is a link, a file, or a folder whose real path leaves the project, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
+/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), and only when there is none at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist, the included sources and the manifest's `pages` as published, from which the question route builds the guide a routed question lists ({@link wikiPageGuideOf}) for questions alone. @throws When the Wiki folder or a folder on its path in the project is a link, a file, or a folder whose real path leaves the project, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
   projectRoot: string,
@@ -187,7 +187,7 @@ export async function readDeepWikiManifest(
   sources: WikiIncludedSource[]
   revision?: string
   excludedPaths: string[]
-  pageGuide: WikiPageGuide[]
+  pages: unknown[]
 }> {
   await assertNoLinkOnWikiPath(outputDirectory, projectRoot)
   // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
@@ -277,7 +277,7 @@ export async function readDeepWikiManifest(
     sources,
     revision,
     excludedPaths,
-    pageGuide: wikiPageGuideOf(pages),
+    pages,
   }
 }
 
@@ -545,9 +545,11 @@ export async function startDeepWikiReader(
       return
     }
     // An agent may publish a new owned directory while this reader stays open: the question is answered from the sources and pages the manifest names now.
-    const { sources, pageGuide } = await readManifestShared()
+    const { sources, pages } = await readManifestShared()
     // A client that went while the body or the manifest was read is closed already, and no model is asked for it; one that goes later stops its question when its answer closes. Both are looked at in one step, so no close falls between them.
     if (response.destroyed) return
+    // The guide reads every page's article, so only a question builds it, never a page or asset request.
+    const pageGuide = wikiPageGuideOf(pages)
     const controller = new AbortController()
     response.on('close', () => {
       if (!response.writableFinished) controller.abort()

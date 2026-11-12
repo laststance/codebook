@@ -1,4 +1,10 @@
-import { WIKI_PAGE_GUIDE_SUMMARY_CHARS } from '../constants'
+import {
+  WIKI_PAGE_GUIDE_SCAN_CHARS,
+  WIKI_PAGE_GUIDE_SUMMARY_CHARS,
+  WIKI_PAGE_GUIDE_TITLE_CHARS,
+} from '../constants'
+
+import { textWithoutTags } from './textWithoutTags'
 
 /** One page of a published Wiki as a reader question's route request sees it: what the page is called, what its first paragraph says and the source paths it cites. */
 export type WikiPageGuide = {
@@ -18,8 +24,8 @@ const CHARACTER_REFERENCES: Record<string, string> = {
 }
 
 /**
- * The plain text of an article's first paragraph, cut to {@link WIKI_PAGE_GUIDE_SUMMARY_CHARS}: tags removed, the common character references decoded and whitespace collapsed.
- * The scan only moves forward (the opening tag, then the next closing tag after it), so an article without a closing tag costs one pass.
+ * The plain text of an article's first paragraph, cut to {@link WIKI_PAGE_GUIDE_SUMMARY_CHARS}: tags removed ({@link textWithoutTags}), the common character references decoded and whitespace collapsed.
+ * Only {@link WIKI_PAGE_GUIDE_SCAN_CHARS} characters after the opening tag are read, and every step moves forward, so a paragraph that never closes or holds unfinished tags costs the same bounded scan as any other.
  * Called by {@link wikiPageGuideOf} for each page.
  * @param contentHtml - The page's article as published.
  * @returns The summary, or an empty string for an article without a paragraph.
@@ -31,13 +37,12 @@ function firstParagraphOf(contentHtml: string): string {
   const tagEnd = contentHtml.indexOf('>', opening.index)
   // An opening tag that never closes holds no paragraph text.
   if (tagEnd < 0) return ''
-  const textStart = tagEnd + 1
-  const closing = /<\/p\s*>/gi
-  closing.lastIndex = textStart
-  const textEnd = closing.exec(contentHtml)?.index ?? contentHtml.length
-  return contentHtml
-    .slice(textStart, textEnd)
-    .replace(/<[^>]*>/g, ' ')
+  const scanned = contentHtml.slice(
+    tagEnd + 1,
+    tagEnd + 1 + WIKI_PAGE_GUIDE_SCAN_CHARS,
+  )
+  const closing = /<\/p\s*>/i.exec(scanned)
+  return textWithoutTags(closing ? scanned.slice(0, closing.index) : scanned)
     .replace(
       /&(?:amp|lt|gt|quot|#39|nbsp);/g,
       (reference) => CHARACTER_REFERENCES[reference] ?? reference,
@@ -90,10 +95,10 @@ function diagramSourcesOf(diagrams: unknown): string[] {
 }
 
 /**
- * Builds the guide of a published Wiki's pages that a reader question routes through: each page's title, the start of its first paragraph and the source paths it cites (its source list, then its diagrams' node and edge sources), each path once.
+ * Builds the guide of a published Wiki's pages that a reader question routes through: each page's title (its first {@link WIKI_PAGE_GUIDE_TITLE_CHARS} characters), the start of its first paragraph and the source paths it cites (its source list, then its diagrams' node and edge sources), each path once.
  *
  * Why: a question whose words match no path or line, such as a Japanese question about English code, ranks every source alike, so on a large repository the route request listed sources in path order and ended before the implementation (Cycle 0119, F1: 298 of TanStack/query's 2,483 sources, none of them its core). The Wiki's own pages say which files explain what.
- * Called by `readDeepWikiManifest` in `deepWikiReader.ts` each time the reader reads the manifest. A page that is no object with a string `title`, or that cites no source, is left out; values that are not strings are skipped.
+ * Called by the reader's question route in `deepWikiReader.ts` for each question, from the manifest it read for that question; other reader requests never build it. A page that is no object with a string `title`, or that cites no source, is left out; values that are not strings are skipped.
  * @param pages - The manifest's `pages` array, as published.
  * @returns One guide entry per page that has a title and cites a source, in page order.
  * @example wikiPageGuideOf([{ title: 'Query', contentHtml: '<p>Fetches &amp; caches.</p>', sources: [{ path: 'src/query.ts', line: 1 }] }]) // => [{ title: 'Query', summary: 'Fetches & caches.', sources: ['src/query.ts'] }]
@@ -120,7 +125,11 @@ export function wikiPageGuideOf(pages: unknown[]): WikiPageGuide[] {
         ? page.contentHtml
         : ''
     return [
-      { title: page.title, summary: firstParagraphOf(contentHtml), sources },
+      {
+        title: page.title.slice(0, WIKI_PAGE_GUIDE_TITLE_CHARS),
+        summary: firstParagraphOf(contentHtml),
+        sources,
+      },
     ]
   })
 }

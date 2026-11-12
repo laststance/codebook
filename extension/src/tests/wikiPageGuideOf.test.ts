@@ -53,7 +53,7 @@ test('the page guide keeps each page title, the start of its first paragraph and
   ])
 })
 
-// Value: protects=the size of a route request on a Wiki of long articles: a page's summary keeps 240 characters of its first paragraph, and an article whose paragraph never closes still gives its text instead of the whole page; fails_when=the summary keeps more than 240 characters or runs on past a missing closing tag into the rest of the article's markup; why_new=Cycle 0119 (F1 fix: page summaries in the route request); seam=none (the real function); no_claim=that 240 characters are enough for every page
+// Value: protects=the size of a route request on a Wiki of long articles: a page's summary keeps at most 240 characters of its first paragraph, also when that paragraph never closes; fails_when=the summary keeps more than 240 characters, or the guide fails on a paragraph without a closing tag; why_new=Cycle 0119 (F1 fix: page summaries in the route request); seam=none (the real function); no_claim=that 240 characters are enough for every page
 test('a page summary keeps 240 characters of a first paragraph that never closes', () => {
   // Arrange
   const pages = [
@@ -70,4 +70,43 @@ test('a page summary keeps 240 characters of a first paragraph that never closes
   // Assert
   assert.equal(entry?.summary.length, 240)
   assert.equal(entry?.summary.startsWith('word word '), true)
+})
+
+// Value: protects=every reader question on a Wiki whose manifest holds a page with markup a browser would not read: the guide reads a bounded part of the first paragraph in one forward pass, so 400,000 `<` without a `>` cost milliseconds and leave no `<` in the summary; fails_when=tags are stripped with a backtracking pattern over the whole unclosed paragraph (the review round measured 15 s for 200,000 such characters), so each question blocks the editor's extension host; why_new=Cycle 0119 review round (guide built from untrusted manifest text); seam=none (the real function, timed); no_claim=the exact time on a given machine, only that it stays far under a second
+test('a first paragraph full of unfinished tags gives its page guide at once', () => {
+  // Arrange
+  const pages = [
+    {
+      title: 'Broken article',
+      contentHtml: `<p>Starts here. ${'<'.repeat(400_000)} tail`,
+      sources: [{ path: 'src/broken.ts', line: 1 }],
+    },
+  ]
+  const started = performance.now()
+
+  // Act
+  const [entry] = wikiPageGuideOf(pages)
+  const elapsedMs = performance.now() - started
+
+  // Assert
+  assert.equal(entry?.summary, 'Starts here.')
+  assert.ok(elapsedMs < 1_000, `the guide took ${elapsedMs} ms`)
+})
+
+// Value: protects=the size of a route request whatever titles a generated Wiki holds: the guide keeps a page title's first 120 characters; fails_when=a long generated title reaches the route request whole and takes its budget from the other pages; why_new=Cycle 0119 review round (route list budget); seam=none (the real function); no_claim=that 120 characters keep every title readable
+test('a page title longer than 120 characters is cut to its first 120 in the page guide', () => {
+  // Arrange
+  const pages = [
+    {
+      title: 'T'.repeat(500),
+      contentHtml: '<p>Short.</p>',
+      sources: [{ path: 'src/long-title.ts', line: 1 }],
+    },
+  ]
+
+  // Act
+  const [entry] = wikiPageGuideOf(pages)
+
+  // Assert
+  assert.equal(entry?.title, 'T'.repeat(120))
 })

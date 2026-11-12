@@ -1293,8 +1293,14 @@ export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304
 export const WIKI_ROUTE_TERM_LIMIT = 8
 /** The longest code identifier, in characters, a Wiki route reply may name; a longer one is ignored. */
 export const WIKI_ROUTE_TERM_MAX_CHARS = 64
+/** The shortest code identifier, in characters, a Wiki route reply may name; a one-character name would match most lines of a file, so it is ignored, as the question's own one-character words are. */
+export const WIKI_ROUTE_TERM_MIN_CHARS = 2
 /** The characters of a Wiki page's first paragraph its route guide entry keeps, enough to say what the page explains. */
 export const WIKI_PAGE_GUIDE_SUMMARY_CHARS = 240
+/** The characters of a Wiki page's title its route guide entry keeps, so one generated title cannot fill a route request. */
+export const WIKI_PAGE_GUIDE_TITLE_CHARS = 120
+/** The characters of a Wiki page's article the route guide reads for its first paragraph, from the paragraph's start: a paragraph that never closes, or holds markup a browser would not read, then costs a bounded scan on every question instead of one over the whole article. */
+export const WIKI_PAGE_GUIDE_SCAN_CHARS = 4_096
 /** The sources each page offers in a Wiki route request at first; the number doubles while every page still fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}. */
 export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
