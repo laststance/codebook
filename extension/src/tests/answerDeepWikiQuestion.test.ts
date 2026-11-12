@@ -1006,7 +1006,7 @@ test('a question whose words match no source routes through the Wiki pages to an
   }
 })
 
-// Value: protects=the excerpt of a routed long file when the question's own words match none of its lines: the identifiers the route reply names choose the lines, a dotted name finds its call site by its last part, and entries that are no identifier or have one character are ignored; fails_when=the excerpt keeps only the file's first 80 lines, so the answer cannot cite the line that answers the question (also when the reply names the identifier only as QueryOptions.cancelRefetch), or `step 1` or `x` is used as a search term and pulls in line 1 or line 2; why_new=Cycle 0119 (F1: a Japanese question's excerpts held only the first lines of each file; review round: one-character and dotted identifiers); seam=a stub editor model; no_claim=that a real model names the right identifiers
+// Value: protects=the excerpt of a routed long file when the question's own words match none of its lines: the identifiers the route reply names choose the lines, a dotted name finds its call site by its last part, and entries that are no identifier or have one character are ignored; fails_when=the excerpt keeps only the file's first 80 lines, so the answer cannot cite the line that answers the question (also when the reply names the identifier only as QueryOptions.cancelRefetch), or `step 1` or `x` is used as a search term and pulls in line 1 or line 2, or the reply's ninth identifier or one of 65 characters is searched (limits of 8 and 64) and pulls in its line; why_new=Cycle 0119 (F1: a Japanese question's excerpts held only the first lines of each file; review round: one-character and dotted identifiers); seam=a stub editor model; no_claim=that a real model names the right identifiers
 test('the identifiers a route reply names choose the answering lines of a long routed file', async () => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-route-terms-'))
@@ -1034,6 +1034,9 @@ test('the identifiers a route reply names choose the answering lines of a long r
   )
   queryLines[1] = '// x marks an early line'
   queryLines[149] = '  const cancelRefetch = options.cancelRefetch ?? true'
+  const longIdentifier = `identifier${'x'.repeat(55)}`
+  queryLines[100] = `  ${longIdentifier}()`
+  queryLines[190] = '  ninthidentifier()'
   const query = `${queryLines.join('\n')}\n`
   await writeFile(join(root, 'query.ts'), query)
   sources.push({
@@ -1056,7 +1059,20 @@ test('the identifiers a route reply names choose the answering lines of a long r
         prompts.length === 1
           ? {
               paths: ['query.ts'],
-              terms: ['step 1', 'x', 'QueryOptions.cancelRefetch'],
+              terms: [
+                'step 1',
+                'x',
+                longIdentifier,
+                'QueryOptions.cancelRefetch',
+                'fillerone',
+                'fillertwo',
+                'fillerthree',
+                'fillerfour',
+                'fillerfive',
+                'fillersix',
+                'fillerseven',
+                'ninthidentifier',
+              ],
             }
           : {
               answer: 'A new fetch cancels the running one by default.',
@@ -1083,6 +1099,8 @@ test('the identifiers a route reply names choose the answering lines of a long r
     assert.match(prompts[1]!, /150:   const cancelRefetch/)
     assert.doesNotMatch(prompts[1]!, /"1: \/\/ step 1\\n/)
     assert.doesNotMatch(prompts[1]!, /2: \/\/ x marks an early line/)
+    assert.doesNotMatch(prompts[1]!, /ninthidentifier/)
+    assert.doesNotMatch(prompts[1]!, /identifierxxxx/)
     assert.equal(answer.citations[0]?.path, 'query.ts')
     assert.equal(answer.citations[0]?.line, 150)
   } finally {
@@ -1168,6 +1186,143 @@ test('a route request keeps the Wiki pages that fit its budget and leaves out a 
       listedTitles.some((title) => title.startsWith('Long ')),
       false,
     )
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
+// Value: protects=the sources a route request keeps for a page when the page list must be cut to its byte budget: implementation sources come before documentation and examples, so the cut drops the supporting files and the model still sees where the code lives; fails_when=a page keeps its sources in manifest order, so a leading docs or examples path takes a place from the implementation (Cycle 0119: a package page cited its README and examples before its source); why_new=Cycle 0119 (route list orders implementation sources first; no other test names a docs or examples path); seam=a stub request function stands in for Cursor Agent; no_claim=which source a real model then chooses
+test('a route request cut to its budget keeps a page implementation sources and drops its docs source', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-order-'))
+  const root = await realpath(directory)
+  const padding = 'p'.repeat(70)
+  const docsPath = `docs/${padding}-guide.md`
+  const implementationPaths = ['a', 'b', 'c', 'd'].map(
+    (name) => `src/${padding}-${name}.ts`,
+  )
+  const fillerPaths = ['one', 'two', 'three'].map((name) => `lib/${name}.ts`)
+  await mkdir(join(root, 'docs'), { recursive: true })
+  await mkdir(join(root, 'src'), { recursive: true })
+  await mkdir(join(root, 'lib'), { recursive: true })
+  const content = 'export const item = 1;\n'
+  const sources = await Promise.all(
+    [docsPath, ...implementationPaths, ...fillerPaths].map(async (path) => {
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  // 150 pages of five sources overflow the budget at eight sources per page but fit at four.
+  const pageGuide = Array.from({ length: 150 }, (_, index) => ({
+    title: `Page ${String(index).padStart(3, '0')}`,
+    summary: 's'.repeat(240),
+    sources: [docsPath, ...implementationPaths],
+  }))
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: [implementationPaths[0]] }
+        : {
+            answer: 'It exports one item.',
+            citations: [{ id: 'S1', line: 1 }],
+          },
+    )
+  }
+  try {
+    // Act
+    await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'どこから読めばよいですか？',
+      'cursor',
+      pageGuide,
+    )
+
+    // Assert
+    const pageList = prompts[0]!.slice(prompts[0]!.indexOf('\nPages: ') + 8)
+    const listedPages: { sources: string[] }[] = JSON.parse(pageList)
+    assert.ok(Buffer.byteLength(pageList, 'utf8') <= 98_304)
+    assert.equal(listedPages.length, 150)
+    assert.deepEqual(listedPages[0]!.sources, implementationPaths)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
+// Value: protects=a route request on a Wiki whose pages cite no source the reader can verify (a page cites a file the published hashes no longer match, or one outside the index): the request falls back to the ranked candidate list instead of an empty page list; fails_when=the route request lists `Pages: []` or no candidates, so the model cannot choose a path and the question is answered from the lexical ranking alone; why_new=Cycle 0119 (pageRouteList returns undefined when no page cites a verified source); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the right candidate
+test('a route request lists the candidates when no Wiki page cites a verified source', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-none-'))
+  const root = await realpath(directory)
+  const content = 'export const item = 1;\n'
+  const sources = await Promise.all(
+    ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta'].map(
+      async (name) => {
+        await writeFile(join(root, `${name}.ts`), content)
+        return {
+          path: `${name}.ts`,
+          sha256: createHash('sha256').update(content).digest('hex'),
+        }
+      },
+    ),
+  )
+  const pageGuide = [
+    {
+      title: 'Removed file',
+      summary: 'Cites a path the index does not hold.',
+      sources: ['removed/gone.ts'],
+    },
+  ]
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: ['alpha.ts'] }
+        : {
+            answer: 'It exports one item.',
+            citations: [{ id: 'S1', line: 1 }],
+          },
+    )
+  }
+  try {
+    // Act
+    await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'どこから読めばよいですか？',
+      'cursor',
+      pageGuide,
+    )
+
+    // Assert
+    assert.match(prompts[0]!, /\nCandidates: \[/)
+    assert.match(prompts[0]!, /"path":"alpha\.ts"/)
+    assert.doesNotMatch(prompts[0]!, /\nPages: /)
+    assert.doesNotMatch(prompts[0]!, /removed\/gone\.ts/)
   } finally {
     await removeTestFolder(directory)
   }

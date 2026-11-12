@@ -94,6 +94,32 @@ test('a first paragraph full of unfinished tags gives its page guide at once', (
   assert.ok(elapsedMs < 1_000, `the guide took ${elapsedMs} ms`)
 })
 
+// Value: protects=the route request's page summaries on a Wiki whose article has no paragraph or whose opening paragraph tag never ends: the page keeps its title and sources with an empty summary, and text before the broken tag does not become the summary; fails_when=the guide throws on an article without a `<p>`, or reads an unfinished `<p` tag as a paragraph and takes the article's leading text as the summary; why_new=Cycle 0119 (no other test holds an article without a paragraph or an unterminated opening tag); seam=none (the real function); no_claim=how a browser would render such an article
+test('an article without a paragraph, or with an opening paragraph tag that never ends, gives an empty summary and keeps its sources', () => {
+  // Arrange
+  const pages = [
+    {
+      title: 'Headings only',
+      contentHtml: '<h2>Flow</h2><ul><li>Fetch</li></ul>',
+      sources: [{ path: 'src/headings.ts', line: 1 }],
+    },
+    {
+      title: 'Unfinished tag',
+      contentHtml: 'Intro text <p class="lead" and more text without an end',
+      sources: [{ path: 'src/unfinished.ts', line: 1 }],
+    },
+  ]
+
+  // Act
+  const guide = wikiPageGuideOf(pages)
+
+  // Assert
+  assert.deepEqual(guide, [
+    { title: 'Headings only', summary: '', sources: ['src/headings.ts'] },
+    { title: 'Unfinished tag', summary: '', sources: ['src/unfinished.ts'] },
+  ])
+})
+
 // Value: protects=the size of a route request whatever titles a generated Wiki holds: the guide keeps a page title's first 120 characters; fails_when=a long generated title reaches the route request whole and takes its budget from the other pages; why_new=Cycle 0119 review round (route list budget); seam=none (the real function); no_claim=that 120 characters keep every title readable
 test('a page title longer than 120 characters is cut to its first 120 in the page guide', () => {
   // Arrange
