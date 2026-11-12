@@ -285,7 +285,7 @@ test('the README says an answer names files by path, cites at most 40 lines, and
   )
 })
 
-// Value: protects=the learner's README telling how a question on a large Wiki finds its code and how long Cursor may take: the route through the Wiki's own pages, the code identifiers that pick the answering lines, and the 5-minute bound of each cursor-agent request; fails_when=the README loses that sentence, or still says nothing of the two requests and the bound after the Cycle 0119 F1 fix changed both; why_new=Cycle 0119 (H1 E2 step 6, F1); seam=none (the packaged README's text); no_claim=that a real model picks the right page or answers within the bound
+// Value: protects=the learner's README telling how a question on a large Wiki finds its code and how long Cursor may take: the route through the Wiki's own pages and the files each cites (its source list, diagrams and text links), the best matches kept first when a large Wiki's list is cut, the code identifiers that pick the answering lines, and the 5-minute bound of each cursor-agent request; fails_when=the README loses that sentence, or still says nothing of the two requests and the bound after the Cycle 0119 F1 fix changed both, or of the text links and the ranked cut after the /ship pass 1 fix; why_new=Cycle 0119 (H1 E2 step 6, F1); seam=none (the packaged README's text); no_claim=that a real model picks the right page or answers within the bound
 test('the README says how a question on a large Wiki is routed through its pages and how long each Cursor request may run', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
@@ -293,7 +293,7 @@ test('the README says how a question on a large Wiki is routed through its pages
   // Assert
   assert.ok(
     readme.includes(
-      "On a Wiki that cites more than six unchanged source files, a question that names none of them by path is answered in two requests: the editor model first picks up to six source files from the Wiki's own pages (each page's title, the start of its first paragraph and the files it cites; a Wiki without such pages offers the files with their first lines instead) and names the code identifiers that mark the answering lines, so a question worded in another language than the code still reaches the code that answers it; then it answers from those lines. In Cursor each of the two `cursor-agent` requests may run for up to 5 minutes before the page reports `Cursor Agent timed out answering the Wiki question. Retry or use editor chat.`",
+      "On a Wiki that cites more than six unchanged source files, a question that names none of them by path is answered in two requests: the editor model first picks up to six source files from the Wiki's own pages (each page's title, the start of its first paragraph and the files it cites in its source list, its diagrams or the source links of its text; a Wiki without such pages offers the files with their first lines instead) and names the code identifiers that mark the answering lines, so a question worded in another language than the code still reaches the code that answers it; then it answers from those lines. When a large Wiki's pages and files do not all fit in that first request, the files whose names or lines match the question's words, and the pages that cite them, are kept first. In Cursor each of the two `cursor-agent` requests may run for up to 5 minutes before the page reports `Cursor Agent timed out answering the Wiki question. Retry or use editor chat.`",
     ),
   )
 })

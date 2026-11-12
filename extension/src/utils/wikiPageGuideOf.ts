@@ -1,4 +1,5 @@
 import {
+  WIKI_PAGE_GUIDE_LINK_QUERY_CHARS,
   WIKI_PAGE_GUIDE_SCAN_CHARS,
   WIKI_PAGE_GUIDE_SUMMARY_CHARS,
   WIKI_PAGE_GUIDE_TITLE_CHARS,
@@ -22,6 +23,15 @@ const CHARACTER_REFERENCES: Record<string, string> = {
   '&#39;': "'",
   '&nbsp;': ' ',
 }
+
+/**
+ * An inline editor source link of an article, the address the renderer counts as a citation of its page (`vscode://` or `cursor://laststance.codebook/source?`, scheme and authority in any case), with its query up to the end of the attribute value or {@link WIKI_PAGE_GUIDE_LINK_QUERY_CHARS} characters.
+ * The pattern holds no nested repetition, and each match moves the search past the characters it read, so a scan of a whole article stays linear in its length.
+ */
+const INLINE_SOURCE_LINK = new RegExp(
+  `(?:vscode|cursor)://laststance\\.codebook/source\\?([^"'<>\\s#]{0,${WIKI_PAGE_GUIDE_LINK_QUERY_CHARS}})`,
+  'gi',
+)
 
 /**
  * The plain text of an article's first paragraph, cut to {@link WIKI_PAGE_GUIDE_SUMMARY_CHARS}: tags removed ({@link textWithoutTags}), the common character references decoded and whitespace collapsed.
@@ -95,7 +105,25 @@ function diagramSourcesOf(diagrams: unknown): string[] {
 }
 
 /**
- * Builds the guide of a published Wiki's pages that a reader question routes through: each page's title (its first {@link WIKI_PAGE_GUIDE_TITLE_CHARS} characters), the start of its first paragraph and the source paths it cites (its source list, then its diagrams' node and edge sources), each path once.
+ * The source paths an article cites with inline editor source links ({@link INLINE_SOURCE_LINK}), which the renderer counts as citations of the page beside its source list and diagrams (`render-wiki.mjs` `citedPathsOfPage`).
+ *
+ * Why: a page may explain a file only through links in its text; without them the guide a routed question lists would never offer that file (Cycle 0119 `/ship` pass 1, Codex outside voice).
+ * Called by {@link citedSourcesOf}. The `&amp;` the publisher writes between parameters is read as `&`; the reader keeps only paths that match a published, unchanged source, so a path here is a hint of what the page explains, not a verified citation.
+ * @param contentHtml - The page's article as published.
+ * @returns The `path` of each link that has one, in article order, repeats included.
+ * @example inlineSourcePathsOf('<a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fauth.ts&amp;line=3">auth</a>') // => ['src/auth.ts']
+ */
+function inlineSourcePathsOf(contentHtml: string): string[] {
+  return [...contentHtml.matchAll(INLINE_SOURCE_LINK)].flatMap((link) => {
+    const path = new URLSearchParams(
+      (link[1] ?? '').replace(/&(?:amp|#38|#x26);/gi, '&'),
+    ).get('path')
+    return path ? [path] : []
+  })
+}
+
+/**
+ * Builds the guide of a published Wiki's pages that a reader question routes through: each page's title (its first {@link WIKI_PAGE_GUIDE_TITLE_CHARS} characters), the start of its first paragraph and the source paths it cites (its source list, its diagrams' node and edge sources and the paths its article links inline), each path once.
  *
  * Why: a question whose words match no path or line, such as a Japanese question about English code, ranks every source alike, so on a large repository the route request listed sources in path order and ended before the implementation (Cycle 0119, F1: 298 of TanStack/query's 2,483 sources, none of them its core). The Wiki's own pages say which files explain what.
  * Called by the reader's question route in `deepWikiReader.ts` for each question, from the manifest it read for that question; other reader requests never build it. A page that is no object with a string `title`, or that cites no source, is left out; values that are not strings are skipped.
@@ -111,17 +139,19 @@ export function wikiPageGuideOf(pages: unknown[]): WikiPageGuide[] {
 }
 
 /**
- * The source paths one manifest page cites, each once: its source list, then its diagrams' node and edge sources.
+ * The source paths one manifest page cites, each once: its source list, then its diagrams' node and edge sources, then the paths its article links inline ({@link inlineSourcePathsOf}), as the renderer counts a page's citations.
  * Called by {@link guideEntryOf}.
  * @param page - One page of the manifest, known to be an object.
+ * @param contentHtml - The page's article, or an empty string when it has none.
  * @returns The paths in citation order, repeats removed.
- * @example citedSourcesOf({ sources: [{ path: 'src/a.ts', line: 1 }], diagrams: [] }) // => ['src/a.ts']
+ * @example citedSourcesOf({ sources: [{ path: 'src/a.ts', line: 1 }], diagrams: [] }, '') // => ['src/a.ts']
  */
-function citedSourcesOf(page: object): string[] {
+function citedSourcesOf(page: object, contentHtml: string): string[] {
   return [
     ...new Set([
       ...pathsOf('sources' in page ? page.sources : undefined),
       ...diagramSourcesOf('diagrams' in page ? page.diagrams : undefined),
+      ...inlineSourcePathsOf(contentHtml),
     ]),
   ]
 }
@@ -141,13 +171,13 @@ function guideEntryOf(page: unknown): WikiPageGuide | undefined {
     typeof page.title !== 'string'
   )
     return undefined
-  const sources = citedSourcesOf(page)
-  // A page that cites no source cannot route a question to one.
-  if (!sources.length) return undefined
   const contentHtml =
     'contentHtml' in page && typeof page.contentHtml === 'string'
       ? page.contentHtml
       : ''
+  const sources = citedSourcesOf(page, contentHtml)
+  // A page that cites no source cannot route a question to one.
+  if (!sources.length) return undefined
   return {
     title: page.title.slice(0, WIKI_PAGE_GUIDE_TITLE_CHARS),
     summary: firstParagraphOf(contentHtml),

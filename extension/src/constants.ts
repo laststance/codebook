@@ -1301,6 +1301,8 @@ export const WIKI_PAGE_GUIDE_SUMMARY_CHARS = 240
 export const WIKI_PAGE_GUIDE_TITLE_CHARS = 120
 /** The characters of a Wiki page's article the route guide reads for its first paragraph, from the paragraph's start: a paragraph that never closes, or holds markup a browser would not read, then costs a bounded scan on every question instead of one over the whole article. */
 export const WIKI_PAGE_GUIDE_SCAN_CHARS = 4_096
+/** The characters of an inline editor source link's query the route guide reads for the link's `path`, enough for a root, a path, a line and a hash; a longer run stops there, so one link costs a bounded read. */
+export const WIKI_PAGE_GUIDE_LINK_QUERY_CHARS = 2_048
 /** The sources each page offers in a Wiki route request at first; the number doubles while every page still fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}. */
 export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80

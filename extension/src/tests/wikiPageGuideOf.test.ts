@@ -137,3 +137,37 @@ test('a page title longer than 120 characters is cut to its first 120 in the pag
   // Assert
   assert.equal(entry?.title, 'T'.repeat(120))
 })
+
+// Value: protects=the files a page cites only through inline editor source links in its article, which the renderer counts as citations of the page: they join the page's guide sources, and a page that cites only inline stays in the guide; fails_when=the guide reads only the page's source list and diagrams, so a routed question is never offered a file the page explains in its text, or a page citing only inline is dropped, or a link of another site or extension is read as a citation; why_new=Cycle 0119 /ship pass 1 (Codex outside voice finding 1; smoke captures 002 and 003 reproduced it through the reader); seam=none (the real function); no_claim=that the linked paths are verified (the reader keeps only published, unchanged sources later)
+test('a page guide offers the files its article cites by inline source links, also for a page that cites only inline', () => {
+  // Arrange
+  const pages = [
+    {
+      title: 'Auth',
+      contentHtml: `<p>Signs a user in.</p><p>See <a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fauth.ts&amp;line=3&amp;sha256=${'a'.repeat(64)}">auth.ts</a>, <a href="CURSOR://laststance.codebook/source?path=src/token.ts&amp;line=1">token.ts</a>, <a href="https://example.com/laststance.codebook/source?path=src/site.ts">a site</a> and <a href="vscode://other.extension/source?path=src/other.ts">another extension</a>.</p>`,
+      sources: [{ path: 'src/index.ts', line: 1 }],
+    },
+    {
+      title: 'Session',
+      contentHtml:
+        '<p>Keeps the session.</p><p><a href="vscode://laststance.codebook/source?path=src%2Fsession.ts&amp;line=2">session.ts</a></p>',
+    },
+  ]
+
+  // Act
+  const guide = wikiPageGuideOf(pages)
+
+  // Assert
+  assert.deepEqual(guide, [
+    {
+      title: 'Auth',
+      summary: 'Signs a user in.',
+      sources: ['src/index.ts', 'src/auth.ts', 'src/token.ts'],
+    },
+    {
+      title: 'Session',
+      summary: 'Keeps the session.',
+      sources: ['src/session.ts'],
+    },
+  ])
+})

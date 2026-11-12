@@ -187,59 +187,81 @@ const SUPPORTING_PATH =
   /(?:^|\/)(?:examples?|docs?|tests?|__tests__|__mocks__|fixtures?|e2e|scripts|integrations)\/|\.(?:test|spec|bench)\.[cm]?[jt]sx?$/i
 
 /**
- * A page's sources that are verified question candidates, implementation sources first and each group in the page's own order.
+ * A page's sources that are verified question candidates: implementation sources first, then supporting ones, each group ordered by how well the source matches the question (its candidate score), the page's own order kept among equal scores, so a cut keeps the implementation and the best match.
  * Called by {@link pageRouteList} for every page of the guide.
  * @param page - One page of the Wiki's guide.
- * @param verified - The paths of the hash-verified candidates.
+ * @param scores - Each hash-verified candidate's lexical score by path.
  * @returns The page with only its verified sources, or undefined when it has none.
- * @example orderedPageSources({ title: 'Query', summary: '', sources: ['docs/a.md', 'src/query.ts'] }, new Set(['docs/a.md', 'src/query.ts'])) // => { title: 'Query', summary: '', sources: ['src/query.ts', 'docs/a.md'] }
+ * @example orderedPageSources({ title: 'Query', summary: '', sources: ['docs/a.md', 'src/b.ts', 'src/query.ts'] }, new Map([['docs/a.md', 0], ['src/b.ts', 0], ['src/query.ts', 1]])) // => { title: 'Query', summary: '', sources: ['src/query.ts', 'src/b.ts', 'docs/a.md'] }
  */
 function orderedPageSources(
   page: WikiPageGuide,
-  verified: Set<string>,
+  scores: Map<string, number>,
 ): WikiPageGuide | undefined {
-  const sources = page.sources.filter((path) => verified.has(path))
+  const sources = page.sources.filter((path) => scores.has(path))
   if (!sources.length) return undefined
+  // The sort is stable, so sources of equal score keep the page's order.
+  const bestFirst = (paths: string[]) =>
+    paths.sort(
+      (first, second) => (scores.get(second) ?? 0) - (scores.get(first) ?? 0),
+    )
   return {
     title: page.title,
     summary: page.summary,
     sources: [
-      ...sources.filter((path) => !SUPPORTING_PATH.test(path)),
-      ...sources.filter((path) => SUPPORTING_PATH.test(path)),
+      ...bestFirst(sources.filter((path) => !SUPPORTING_PATH.test(path))),
+      ...bestFirst(sources.filter((path) => SUPPORTING_PATH.test(path))),
     ],
   }
 }
 
 /**
- * The route list when every page cannot offer even {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} sources within {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}: pages are kept in the guide's order while the list fits, and a page too long to fit is left out, in one pass.
+ * The route list when every page cannot offer even {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} sources within {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}: the pages whose listed sources best match the question are taken first (the Wiki's order among equal scores) while the list fits, a page too long to fit is left out, and the pages taken are listed in the Wiki's order.
  * Called by {@link pageRouteList}.
- * @param pages - The guide's pages, each with only its verified sources.
+ * @param pages - The guide's pages, each with only its verified sources, best match first ({@link orderedPageSources}).
+ * @param scores - Each hash-verified candidate's lexical score by path.
  * @returns The JSON array of the pages that fit, or undefined when none does (the caller then offers the candidate list).
- * @example pagesThatFit([{ title: 'Query', summary: 'Fetches.', sources: ['src/query.ts'] }]) // => '[{"title":"Query","summary":"Fetches.","sources":["src/query.ts"]}]'
+ * @example pagesThatFit([{ title: 'Query', summary: 'Fetches.', sources: ['src/query.ts'] }], new Map([['src/query.ts', 1]])) // => '[{"title":"Query","summary":"Fetches.","sources":["src/query.ts"]}]'
  */
-function pagesThatFit(pages: WikiPageGuide[]): string | undefined {
-  const entries: string[] = []
+function pagesThatFit(
+  pages: WikiPageGuide[],
+  scores: Map<string, number>,
+): string | undefined {
+  const entries = pages.map((page, index) => {
+    const listed = page.sources.slice(0, WIKI_PAGE_ROUTE_FIRST_SOURCES)
+    const text = JSON.stringify({ ...page, sources: listed })
+    const best = listed.reduce(
+      (highest, path) => Math.max(highest, scores.get(path) ?? 0),
+      0,
+    )
+    return { index, text, bytes: Buffer.byteLength(text, 'utf8'), best }
+  })
+  const taken = new Set<number>()
   let bytes = 2
-  for (const page of pages) {
-    const entry = JSON.stringify({
-      ...page,
-      sources: page.sources.slice(0, WIKI_PAGE_ROUTE_FIRST_SOURCES),
-    })
-    const entryBytes =
-      Buffer.byteLength(entry, 'utf8') + (entries.length ? 1 : 0)
+  // The best-matching pages are taken first; the stable sort keeps the Wiki's order among equal scores.
+  for (const entry of [...entries].sort(
+    (first, second) => second.best - first.best,
+  )) {
+    const entryBytes = entry.bytes + (taken.size ? 1 : 0)
     // A page that does not fit is left out; a later, shorter one may still fit.
     if (bytes + entryBytes > WIKI_ROUTE_CANDIDATE_LIMIT_BYTES) continue
-    entries.push(entry)
+    taken.add(entry.index)
     bytes += entryBytes
   }
-  return entries.length ? `[${entries.join(',')}]` : undefined
+  if (!taken.size) return undefined
+  return `[${entries
+    .filter((entry) => taken.has(entry.index))
+    .map((entry) => entry.text)
+    .join(',')}]`
 }
 
 /**
- * Serializes the Wiki's own pages for a route request ({@link routePromptOf}): every page that cites a verified source keeps its title, summary and up to a number of its sources, that number doubling from {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} while the whole list fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}, so each page stays represented however large the repository is. When even the first number does not fit, the pages that fit are kept in order ({@link pagesThatFit}).
+ * Serializes the Wiki's own pages for a route request ({@link routePromptOf}): every page that cites a verified source keeps its title, summary and up to a number of its sources, best match to the question first ({@link orderedPageSources}), that number doubling from {@link WIKI_PAGE_ROUTE_FIRST_SOURCES} while the whole list fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}, so each page stays represented however large the repository is. When even the first number does not fit, the pages whose sources best match the question are kept ({@link pagesThatFit}).
+ *
+ * Why: the candidates' lexical ranking is the one signal of a question that names an identifier; a list cut in the Wiki's order alone dropped the best-matching source when its page came late or its place in the page's list was late (Cycle 0119 `/ship` pass 1, Codex outside voice).
  * Called by {@link routePromptOf} when a question needs routing.
  * @param pageGuide - The published Wiki's page guide.
- * @param candidates - Hash-verified question candidates.
+ * @param candidates - Hash-verified question candidates, best lexical match first.
  * @returns The JSON array of pages, or undefined when no page cites a verified source or none fits.
  * @example pageRouteList([{ title: 'Query', summary: 'Fetches.', sources: ['src/query.ts'] }], candidates) // => '[{"title":"Query","summary":"Fetches.","sources":["src/query.ts"]}]'
  */
@@ -247,9 +269,11 @@ function pageRouteList(
   pageGuide: WikiPageGuide[],
   candidates: SourceCandidate[],
 ): string | undefined {
-  const verified = new Set(candidates.map((candidate) => candidate.path))
+  const scores = new Map(
+    candidates.map((candidate) => [candidate.path, candidate.score]),
+  )
   const pages = pageGuide.flatMap((page) => {
-    const ordered = orderedPageSources(page, verified)
+    const ordered = orderedPageSources(page, scores)
     return ordered ? [ordered] : []
   })
   if (!pages.length) return undefined
@@ -268,7 +292,7 @@ function pageRouteList(
     // Every page already offers all its sources.
     if (pages.every((page) => page.sources.length <= perPage)) break
   }
-  return list ?? pagesThatFit(pages)
+  return list ?? pagesThatFit(pages, scores)
 }
 
 /**
