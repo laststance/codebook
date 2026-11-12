@@ -34,7 +34,7 @@ function linesBetween(first: number, last: number): number[] {
 }
 
 /**
- * Picks the lines a long function brings for the anchors inside it: its head when every anchor lies in its first {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the declaration line and the span of {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} - 1 lines that holds the most anchors, starting {@link WIKI_CONTEXT_WINDOW_LEAD_LINES} lines before one of them (the earliest such anchor on a tie). The closing line cuts the window short; it never shifts it.
+ * Picks the lines a long function brings for the anchors inside it: its head when every anchor lies in its first {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the declaration line and the span of {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} - 1 lines that holds the most anchors, starting up to {@link WIKI_CONTEXT_WINDOW_LEAD_LINES} lines before one of them (on a tie the earliest start, which keeps the longest lead). The closing line cuts the window short; it never shifts it.
  * Why: Cycle 0124 (F3, Issue #318) — the head of P06's 68-line `handleContextAction` (lines 1230-1269) held none of the copy and paste lines that the route identifiers matched (1270-1277).
  * Called by {@link longFunctionWindowsOf} for each function.
  * @param declaration - The function's declaration line and closing line.
@@ -42,6 +42,7 @@ function linesBetween(first: number, last: number): number[] {
  * @returns The window's zero-based lines in order, the declaration line first.
  * @example
  * windowOfLongFunction({ first: 0, last: 149 }, [100, 104]) // => [0, 98, 99, ..., 136]
+ * windowOfLongFunction({ first: 0, last: 120 }, [41, 79]) // => [0, 41, 42, ..., 79]: one span holds both anchors
  */
 function windowOfLongFunction(
   declaration: LineRange,
@@ -54,19 +55,24 @@ function windowOfLongFunction(
   if (!inside.length || inside.at(-1)! <= headLast)
     return linesBetween(first, headLast)
   const spanLength = WIKI_CONTEXT_UNIT_LINE_LIMIT - 1
-  const spanStartOf = (anchor: number): number =>
-    Math.max(first + 1, anchor - WIKI_CONTEXT_WINDOW_LEAD_LINES)
-  const anchorsInSpanOf = (anchor: number): number =>
+  // Each anchor offers the starts from its lead lines down to itself, so two anchors a span apart can share one window.
+  const starts = [
+    ...new Set(
+      inside.flatMap((anchor) =>
+        linesBetween(anchor - WIKI_CONTEXT_WINDOW_LEAD_LINES, anchor).map(
+          (start) => Math.max(first + 1, start),
+        ),
+      ),
+    ),
+  ].sort((one, other) => one - other)
+  const anchorsFrom = (start: number): number =>
     inside.filter(
-      (other) =>
-        other >= spanStartOf(anchor) &&
-        other <= spanStartOf(anchor) + spanLength - 1,
+      (anchor) => anchor >= start && anchor <= start + spanLength - 1,
     ).length
-  // The span holding the most anchors wins; on a tie the earliest stays.
-  const chosen = inside.reduce((best, anchor) =>
-    anchorsInSpanOf(anchor) > anchorsInSpanOf(best) ? anchor : best,
+  // The span holding the most anchors wins; on a tie the earliest start, the one with the longest lead, stays.
+  const start = starts.reduce((best, candidate) =>
+    anchorsFrom(candidate) > anchorsFrom(best) ? candidate : best,
   )
-  const start = spanStartOf(chosen)
   return [first, ...linesBetween(start, Math.min(start + spanLength - 1, last))]
 }
 

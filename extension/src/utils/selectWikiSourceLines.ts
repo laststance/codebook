@@ -23,7 +23,7 @@ interface ExcerptBuild {
   priorityTerms: readonly string[]
   /** Each long function holding route-identifier anchors with its window, ranked ({@link longFunctionWindowsOf}). */
   windows: readonly LongFunctionWindow[]
-  /** Declaration lines whose window a route-named declaration already brought, so their cluster is not admitted again. */
+  /** Declaration lines whose window is in (a route-named declaration's or a cluster's), so neither their cluster nor their head is admitted again. */
   windowedDeclarations: Set<number>
   /** The lines selected so far. */
   selected: Set<number>
@@ -31,7 +31,7 @@ interface ExcerptBuild {
 
 /**
  * Keeps matching source and nearby control flow when Wiki Q&A builds bounded excerpts.
- * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; a route-named function too long for a whole unit brings the window over its own anchors, and before the first single line each long function holding several route-identifier anchors brings its window ({@link longFunctionWindowsOf}, Cycle 0124); then a function too long for a whole unit brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
+ * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; a route-named function too long for a whole unit brings, at its declaration line's rank, the window over its own anchors; before the first anchor that brings only its own line, each long function holding several route-identifier anchors brings its window ({@link longFunctionWindowsOf}, Cycle 0124); then a function too long for a whole unit brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
  * Called by {@link answerDeepWikiQuestionWithPrompt} before optional model routing, and by its route step for a routed file, with the code identifiers the route reply named as priority terms.
  * @param lines - Complete verified source, indexed from zero.
  * @param terms - Normalized words from the repository question.
@@ -173,7 +173,7 @@ function codeUnitsOfAnchors(
   }
   // Every anchor brought a unit or a window, so the clusters still get their turn.
   if (!didAdmitClusters) admitClusterWindows(build)
-  admitLongDeclarationHeads(lines, anchors, keptAnchors, selected)
+  admitLongDeclarationHeads(build, anchors)
   return selected
 }
 
@@ -206,17 +206,15 @@ function routeAnchorsOf(
  * Called by {@link codeUnitsOfAnchors} for each ranked anchor.
  * @param build - The excerpt build; an admitted window's declaration line joins its `windowedDeclarations`.
  * @param anchor - The anchor line.
- * @returns `true` when the anchor has a whole unit (admitted, or given way to its own line) or its window was admitted; `false` when only its own line remains to place.
+ * @returns `true` when the anchor's whole unit or window was admitted; `false` when only its own line remains to place, a unit too big for the places left included.
  * @example
  * admitUnitOrNamedWindow(build, 0) // => false for `const a = 1` with no route identifier
  */
 function admitUnitOrNamedWindow(build: ExcerptBuild, anchor: number): boolean {
   const { lines, keptAnchors, priorityTerms, selected } = build
   const wholeUnit = codeUnitOfLine(lines, anchor)
-  if (wholeUnit) {
-    admitUnitOrLine(anchor, wholeUnit, keptAnchors, selected)
-    return true
-  }
+  // A unit that does not fit leaves the anchor a single line, before which the clusters come.
+  if (wholeUnit) return admitWholeUnit(wholeUnit, keptAnchors, selected)
   if (!declaresPriorityTerm(lines[anchor]!, priorityTerms)) return false
   const head = longDeclarationHeadOfLine(lines, anchor)
   if (!head) return false
@@ -248,13 +246,14 @@ function admitClusterWindows(build: ExcerptBuild): void {
       build.windowedDeclarations.has(candidate.declarationLine)
     )
       continue
-    admitHead(candidate.window, keptAnchors, selected)
+    if (admitHead(candidate.window, keptAnchors, selected))
+      build.windowedDeclarations.add(candidate.declarationLine)
   }
 }
 
 /**
  * Adds an anchor's code unit while the budget allows, and its own line otherwise: always for a kept line, and for another only while the kept lines keep their places.
- * Called by {@link codeUnitsOfAnchors} for each ranked anchor.
+ * Called by {@link codeUnitsOfAnchors} for an anchor that brings only its own line.
  * @param anchor - The anchor line.
  * @param unit - The anchor's code unit; the anchor line alone when it has none.
  * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
@@ -268,50 +267,85 @@ function admitUnitOrLine(
   keptAnchors: readonly number[],
   selected: Set<number>,
 ): void {
-  // How many kept lines still wait for a place, leaving out the given lines.
-  const waitingKept = (excluded: readonly number[]): number =>
-    keptAnchors.filter(
-      (keptAnchor) =>
-        !selected.has(keptAnchor) && !excluded.includes(keptAnchor),
-    ).length
-  const unitLines = unit.filter((index) => !selected.has(index))
-  // A unit is admitted while every kept line not yet selected keeps a place.
-  if (
-    selected.size + unitLines.length + waitingKept(unitLines) <=
-    WIKI_CONTEXT_LINE_LIMIT
-  ) {
-    for (const index of unitLines) selected.add(index)
-    return
-  }
-  // Otherwise the anchor's own line comes.
+  if (admitWholeUnit(unit, keptAnchors, selected)) return
+  // Otherwise the anchor's own line comes: a kept line always, another while the kept lines keep their places.
   if (
     keptAnchors.includes(anchor) ||
-    selected.size + 1 + waitingKept([anchor]) <= WIKI_CONTEXT_LINE_LIMIT
+    selected.size + 1 + waitingKeptCount(keptAnchors, selected, [anchor]) <=
+      WIKI_CONTEXT_LINE_LIMIT
   )
     selected.add(anchor)
 }
 
 /**
- * Gives each ranked anchor that begins a function too long for a whole unit the head of that function ({@link longDeclarationHeadOfLine}), after every whole unit is placed, so a whole unit is never displaced by a head.
- * Why: Cycle 0123 (F3, Issue #316) — P06's 44-line `pasteItem` was just over the unit limit, so the excerpt held 2 to 6 of the lines that create the bookmark and the folder.
- * A head follows the unit budget rule: a place stays for every kept line not yet selected, selected lines cost nothing, and the excerpt never passes {@link WIKI_CONTEXT_LINE_LIMIT}. A head that does not fit whole is cut to the space left, declaration line first, when that holds at least {@link WIKI_CONTEXT_HEAD_MIN_LINES} lines; otherwise the anchor stays alone.
- * Called by {@link codeUnitsOfAnchors} after its whole-unit pass.
- * @param lines - Complete verified source, indexed from zero.
- * @param anchors - Matching zero-based lines, best first.
+ * Adds a whole code unit when it fits while every kept line not yet selected keeps a place; lines already selected cost nothing.
+ * Called by {@link admitUnitOrNamedWindow} for an anchor's unit, and by {@link admitUnitOrLine}.
+ * @param unit - The unit's zero-based lines.
  * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
- * @param selected - The lines selected so far; the admitted head lines are added to it.
+ * @param selected - The lines selected so far; the unit's lines are added to it when it fits.
+ * @returns `true` when the unit was added; `false` when it does not fit.
  * @example
- * admitLongDeclarationHeads(lines, [0], [], selected) // adds lines 0 to 39 of a 44-line function that begins on line 0
+ * admitWholeUnit([0, 1, 2], [], new Set()) // => true
  */
-function admitLongDeclarationHeads(
-  lines: readonly string[],
-  anchors: readonly number[],
+function admitWholeUnit(
+  unit: readonly number[],
   keptAnchors: readonly number[],
   selected: Set<number>,
+): boolean {
+  const unitLines = unit.filter((index) => !selected.has(index))
+  // A unit is admitted while every kept line not yet selected keeps a place.
+  if (
+    selected.size +
+      unitLines.length +
+      waitingKeptCount(keptAnchors, selected, unitLines) >
+    WIKI_CONTEXT_LINE_LIMIT
+  )
+    return false
+  for (const index of unitLines) selected.add(index)
+  return true
+}
+
+/**
+ * Counts the kept lines that still wait for a place, leaving out the given lines.
+ * Called by {@link admitWholeUnit} and {@link admitUnitOrLine} before they spend places.
+ * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
+ * @param selected - The lines selected so far.
+ * @param excluded - Lines about to be added, which take their own places.
+ * @returns How many kept lines are neither selected nor excluded.
+ * @example
+ * waitingKeptCount([1, 2, 3], new Set([1]), [2]) // => 1
+ */
+function waitingKeptCount(
+  keptAnchors: readonly number[],
+  selected: ReadonlySet<number>,
+  excluded: readonly number[],
+): number {
+  return keptAnchors.filter(
+    (keptAnchor) => !selected.has(keptAnchor) && !excluded.includes(keptAnchor),
+  ).length
+}
+
+/**
+ * Gives each ranked anchor that begins a function too long for a whole unit the head of that function ({@link longDeclarationHeadOfLine}), after every whole unit is placed, so a whole unit is never displaced by a head. A function whose window is already in (a route-named declaration's or a cluster's) brings no head: its lines outside the window would only take places the fill needs (Cycle 0124 review round).
+ * Why: Cycle 0123 (F3, Issue #316) — P06's 44-line `pasteItem` was just over the unit limit, so the excerpt held 2 to 6 of the lines that create the bookmark and the folder.
+ * A head follows the unit budget rule: a place stays for every kept line not yet selected, selected lines cost nothing, and the excerpt never passes {@link WIKI_CONTEXT_LINE_LIMIT}. A head that does not fit whole is cut to the space left, declaration line first, when that holds at least {@link WIKI_CONTEXT_HEAD_MIN_LINES} lines; otherwise the anchor stays alone.
+ * Called by {@link codeUnitsOfAnchors} after its whole-unit pass and its windows.
+ * @param build - The excerpt build: its lines, kept lines and windowed declarations, and the selection the admitted head lines join.
+ * @param anchors - Matching zero-based lines, best first.
+ * @example
+ * admitLongDeclarationHeads(build, [0]) // adds lines 0 to 39 of a 44-line function that begins on line 0
+ */
+function admitLongDeclarationHeads(
+  build: ExcerptBuild,
+  anchors: readonly number[],
 ): void {
+  const { lines, keptAnchors, selected, windowedDeclarations } = build
   for (const anchor of anchors) {
     if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
-    admitHead(longDeclarationHeadOfLine(lines, anchor), keptAnchors, selected)
+    const head = longDeclarationHeadOfLine(lines, anchor)
+    // A function whose window is in already shows the lines that hold its anchors.
+    if (head && !windowedDeclarations.has(head[0]!))
+      admitHead(head, keptAnchors, selected)
   }
 }
 

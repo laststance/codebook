@@ -1,8 +1,8 @@
 /** Words that may stand before a declared name: `export default async function run`, `public static run() {`. */
 const DECLARATION_MODIFIERS =
   '(?:(?:export|default|declare|async|public|private|protected|static|abstract|override|readonly)\\s+)*'
-/** The `function` keyword as a word: a line that holds it after a name passes a function expression, as in `pasteItem(function () {`, so it is a call, not a method. Cycle 0124 (Issue #318, PR #317's hosted review). */
-const FUNCTION_KEYWORD = /\bfunction\b/
+/** A `function` expression passed as an argument, right after `(` or `,` (`pasteItem(function () {`, `run(options, async function () {`): such a line is a call, not a method. A `function` inside a string (`kind = 'function'`) is not one. Cycle 0124 (Issue #318, PR #317's hosted review and the review round). */
+const FUNCTION_EXPRESSION_ARGUMENT = /[(,]\s*(?:async\s+)?function\b/
 
 /**
  * Escapes a text for use inside a regular expression.
@@ -41,7 +41,9 @@ function declaresName(line: string, name: string): boolean {
   )
   // A callback after the name (`=>`, or a `function` expression as in `pasteItem(function () {`) makes the line a call.
   return (
-    method.test(text) && !text.includes('=>') && !FUNCTION_KEYWORD.test(text)
+    method.test(text) &&
+    !text.includes('=>') &&
+    !FUNCTION_EXPRESSION_ARGUMENT.test(text)
   )
 }
 
