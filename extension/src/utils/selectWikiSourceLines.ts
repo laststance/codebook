@@ -70,7 +70,7 @@ export function selectWikiSourceLines(
 }
 
 /**
- * Gives each ranked anchor, in rank order, the code unit it documents or opens ({@link codeUnitOfLine}) while the excerpt budget allows, and its own line otherwise.
+ * Gives each ranked anchor, in rank order, the code unit it documents or opens ({@link codeUnitOfLine}) while the excerpt budget allows, and its own line otherwise; an anchor that is not a kept line is left out once the budget left is reserved for kept lines.
  * Why: Cycle 0122 (F3) — when 80 or more lines of a long file matched, the excerpt was 80 single lines, and a matching doc comment reached the model without the function it documents.
  * A unit is admitted only while a place stays for every kept line not yet selected ({@link keptAnchorsOf}: the best-ranked matches and each route identifier's first line), so whole functions never push those out (Cycle 0122 review round).
  * Called by {@link selectWikiSourceLines} before it fills the rest of the budget with lines around the anchors.
@@ -87,6 +87,12 @@ function codeUnitsOfAnchors(
   keptAnchors: readonly number[],
 ): Set<number> {
   const selected = new Set<number>()
+  // How many kept lines still wait for a place, leaving out the given lines.
+  const waitingKept = (excluded: readonly number[]): number =>
+    keptAnchors.filter(
+      (keptAnchor) =>
+        !selected.has(keptAnchor) && !excluded.includes(keptAnchor),
+    ).length
   for (const anchor of anchors) {
     // Once the budget is spent, the remaining anchors are left out.
     if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) break
@@ -94,17 +100,20 @@ function codeUnitsOfAnchors(
     const unitLines = (codeUnitOfLine(lines, anchor) ?? [anchor]).filter(
       (index) => !selected.has(index),
     )
-    // Each kept line not yet selected holds a place, so a unit never pushes it out.
-    const reserved = keptAnchors.filter(
-      (keptAnchor) =>
-        !selected.has(keptAnchor) && !unitLines.includes(keptAnchor),
-    ).length
-    // A unit that does not fit the budget left gives way to its anchor line.
-    const admitted =
-      selected.size + unitLines.length + reserved <= WIKI_CONTEXT_LINE_LIMIT
-        ? unitLines
-        : [anchor]
-    for (const index of admitted) selected.add(index)
+    // A unit is admitted while every kept line not yet selected keeps a place.
+    if (
+      selected.size + unitLines.length + waitingKept(unitLines) <=
+      WIKI_CONTEXT_LINE_LIMIT
+    ) {
+      for (const index of unitLines) selected.add(index)
+      continue
+    }
+    // Otherwise the anchor's own line comes: always for a kept line, and for another only while the kept lines keep their places.
+    if (
+      keptAnchors.includes(anchor) ||
+      selected.size + 1 + waitingKept([anchor]) <= WIKI_CONTEXT_LINE_LIMIT
+    )
+      selected.add(anchor)
   }
   return selected
 }

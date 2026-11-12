@@ -238,7 +238,7 @@ function blockCloseLine(
 }
 
 /**
- * Finds the lines of the declaration that begins on a line: its signature, continued over lines, and the brace block it opens. Overloads of the same function or method run on to its implementation.
+ * Finds the lines of the declaration that begins on a line: its signature, continued over lines, and the brace block it opens. The body's `{` ends the declaration line or a signature line at the declaration's indentation, so a parameter type or default opened on a deeper signature line is part of the signature. Overloads of the same function or method run on to its implementation.
  * @param lines - Complete source, indexed from zero.
  * @param declarationLine - The declaration's first line.
  * @returns The declaration's first and last lines; `undefined` when its block does not close, or its signature does not end, within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines.
@@ -256,8 +256,12 @@ function declarationRange(
     declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT,
   )
   for (let index = declarationLine; index < limit; index++) {
-    // The block opens on the signature line that ends with a block's `{`.
-    if (opensBlock(lines[index]!)) {
+    const line = lines[index]!
+    // The body's `{` ends the declaration line or a signature line at its indentation; a deeper `{` opens a parameter type or a default.
+    if (
+      opensBlock(line) &&
+      (index === declarationLine || indentationOf(line) === indentation)
+    ) {
       const last = blockCloseLine(lines, index, declarationLine)
       return last === undefined ? undefined : { first: declarationLine, last }
     }
@@ -272,7 +276,7 @@ function declarationRange(
 }
 
 /**
- * Finds the line a Wiki excerpt anchor makes a code unit of: for a line inside a comment, the code line right after the comment (past any one-line decorators); for a code line, itself when it begins a declaration or opens a brace block that is no control-flow statement.
+ * Finds the line a Wiki excerpt anchor makes a code unit of: for a line inside a comment, the code line right after the comment (past any one-line decorators); for a code line, itself when it begins a declaration, opens a brace block that is no control-flow statement, or begins a function or method signature that goes on over the next lines.
  * @param lines - Complete source, indexed from zero.
  * @param anchor - The anchor line.
  * @param comment - The comment the anchor lies in, if any.
@@ -290,7 +294,9 @@ function declarationLineOf(
     const line = lines[anchor]!
     const text = line.trim()
     if (DECLARATION_START.test(text)) return anchor
-    return opensBlock(line) && !CONTROL_FLOW_START.test(text)
+    if (CONTROL_FLOW_START.test(text)) return undefined
+    // A block opener, or a function or method signature that goes on over the next lines (`read(`), begins a unit.
+    return opensBlock(line) || (text.endsWith('(') && DECLARED_NAME.test(text))
       ? anchor
       : undefined
   }
@@ -314,7 +320,7 @@ function declarationLineOf(
  * @param anchor - A zero-based line that holds a question word or a route identifier.
  * @returns
  * - The unit's zero-based lines in order, the anchor included
- * - `undefined` when the anchor documents or begins no declaration, the declaration's block does not close at its indentation, or the declaration alone passes {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines
+ * - `undefined` when the anchor documents or begins no declaration, the declaration's block does not close at its indentation, or the unit (a detached anchor line included) passes {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines
  * @example
  * codeUnitOfLine(['/**', ' * Sends the state once.', ' *\/', 'subscribe(observer) {', '  observer.next(state)', '},'], 1)
  * // => [0, 1, 2, 3, 4, 5]
@@ -340,7 +346,9 @@ export function codeUnitOfLine(
     { length: declaration.last - first + 1 },
     (_, offset) => first + offset,
   )
-  return unitLines.includes(anchor)
-    ? unitLines
-    : [anchor, ...unitLines].sort((one, other) => one - other)
+  if (unitLines.includes(anchor)) return unitLines
+  // A detached anchor line counts toward the unit limit too.
+  return unitLines.length < WIKI_CONTEXT_UNIT_LINE_LIMIT
+    ? [anchor, ...unitLines].sort((one, other) => one - other)
+    : undefined
 }

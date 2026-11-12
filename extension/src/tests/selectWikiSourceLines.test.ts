@@ -541,3 +541,91 @@ test('a function that does not fit the budget left gives way to its matching lin
   assert.equal(selected.includes(70), false, 'the function body stays out')
   assert.equal(selected.length, 80)
 })
+
+// Value: protects=a route identifier's only line after many lines of another identifier: ordinary anchors leave the places reserved for kept lines, so `beta()` stays in the excerpt; fails_when=the single-line fallback takes a reserved place anyway, so 50 `alpha()` calls fill the budget and the identifier the route reply named is dropped (Cycle 0122 /ship pass 1, Codex P2 and outside voice, Blocks: yes); why_new=Cycle 0122 /ship pass 1; seam=none; no_claim=which identifiers a real route reply names
+test('ordinary matches leave the reserved place of a route identifier whose only line comes last', () => {
+  // Arrange
+  const lines = [
+    'function alpha() {',
+    ...Array.from({ length: 38 }, () => '  step()'),
+    '}',
+    ...Array.from({ length: 50 }, (_, index) => `alpha(${index})`),
+    'beta()',
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, [], ['alpha', 'beta'])
+
+  // Assert
+  assert.ok(selected.includes(90), "beta()'s line is selected")
+  assert.ok(selected.includes(39), 'the alpha function comes whole')
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=a documented function whose parameter object type opens on an indented line of its multi-line signature: the unit runs past the type's closer to the body; fails_when=the type's `{` is taken as the body's opener and its `},` as the closer, so the body is cut off (Cycle 0122 /ship pass 1, Codex P2 and outside voice, Blocks: yes); why_new=Cycle 0122 /ship pass 1; seam=none; no_claim=type literals nested several levels deep
+test('a documented function whose parameter type opens on an indented signature line comes whole', () => {
+  // Arrange
+  const lines = [
+    '/** observable store */',
+    'export function read(',
+    '  options: {',
+    '    path: string',
+    '  },',
+    ') {',
+    '  return load(options.path)',
+    '}',
+    ...Array.from(
+      { length: 100 },
+      (_, index) => `const store${index} = ${index}`,
+    ),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['observable', 'store'])
+
+  // Assert
+  for (const unitLine of [0, 1, 2, 3, 4, 5, 6, 7])
+    assert.ok(selected.includes(unitLine), `line ${unitLine + 1} is selected`)
+})
+
+// Value: protects=a matching method whose signature goes on over the next lines: the anchor on `observableStore(` brings the method and its body; fails_when=only a keyword declaration or a line ending with `{` begins a unit, so a split method signature stays one line (Cycle 0122 /ship pass 1, Codex P2); why_new=Cycle 0122 /ship pass 1; seam=none; no_claim=method signatures split before the name
+test('a matching method signature split over lines brings the method into the excerpt', () => {
+  // Arrange
+  const lines = [
+    'class Reader {',
+    '  observableStore(',
+    '    options: Options,',
+    '  ) {',
+    '    return load(options.path)',
+    '  }',
+    '}',
+    ...Array.from({ length: 100 }, () => 'store()'),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['observable', 'store'])
+
+  // Assert
+  for (const unitLine of [1, 2, 3, 4, 5])
+    assert.ok(selected.includes(unitLine), `line ${unitLine + 1} is selected`)
+})
+
+// Value: protects=the 40-line unit cap when a matching comment sits above a 40-line function: the comment cannot travel with it, and the anchor line plus the function would make 41 lines, so the anchor stays one line; fails_when=the detached anchor line is added back after the size check, giving a 41-line unit past WIKI_CONTEXT_UNIT_LINE_LIMIT and the README's 40 lines (Cycle 0122 /ship pass 1, Codex P3); why_new=Cycle 0122 /ship pass 1; seam=none; no_claim=which lines of that function would answer
+test('a matching comment above a 40-line function stays one line, keeping units within 40 lines', () => {
+  // Arrange
+  const lines = [
+    '/** observable store */',
+    'function read() {',
+    ...Array.from({ length: 38 }, () => '  step()'),
+    '}',
+    ...Array.from({ length: 100 }, () => 'store()'),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['observable', 'store'])
+
+  // Assert
+  assert.ok(selected.includes(0), 'the matching comment is selected')
+  assert.equal(selected.includes(1), false, 'read() stays out')
+  assert.equal(selected.length, 80)
+})
