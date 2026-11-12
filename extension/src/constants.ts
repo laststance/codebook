@@ -1323,6 +1323,21 @@ export const WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT = 1
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
+/** The Cursor CLI permissions file a Wiki question's temporary workspace holds (`.cursor/cli.json`): every read, write, shell, fetch and MCP tool is denied, so the question agent answers only from the excerpt Codebook sends. Cycle 0125 C1: in Cycle 0124 the question agent read other checkouts and the installed skill outside the opened project; the bounded experiment E0 showed Read answering "Permission denied" and a shell fallback "Command blocked by permissions configuration" under these rules. */
+export const WIKI_CURSOR_QUESTION_PERMISSIONS = {
+  permissions: {
+    allow: [],
+    deny: [
+      'Read(**)',
+      'Read(/**)',
+      'Write(**)',
+      'Write(/**)',
+      'Shell(*)',
+      'WebFetch(*)',
+      'Mcp(*)',
+    ],
+  },
+} as const
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000
