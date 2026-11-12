@@ -747,7 +747,7 @@ test('a long function whose head cannot get 10 lines in the places left brings o
   ]
 
   // Act
-  const selected = selectWikiSourceLines(lines, ['filler'], ['longpaste'])
+  const selected = selectWikiSourceLines(lines, ['filler', 'longpaste'], [])
 
   // Assert
   assert.ok(selected.includes(0), 'the anchor line is selected')
@@ -831,4 +831,101 @@ test('a function has a head only when it is longer than 40 lines', () => {
   assert.equal(fitsHead, undefined)
   assert.equal(exceedsHead?.length, 40)
   assert.equal(exceedsHead?.[39], 39)
+})
+
+// Value: protects=the head of the function a route names when other route identifiers are common members that match many lines (chrome.bookmarks.create and its member create across the file): the declaration of the named function ranks first, so its head is placed before single lines of the members; fails_when=the declaration ranks with the call sites and 60 create lines take every place before pasteItem's head, so its create branches are missing (Cycle 0123 F3, realistic route reply: 2 of 13 lines); why_new=Cycle 0123 F3 design v3; seam=none; no_claim=which identifiers a real route reply names
+test('a route naming a function, a dotted member and its common last part still brings the head of the function', () => {
+  // Arrange
+  const pasteItem = [
+    'async function pasteItem() {',
+    '  const folderId = pane.currentFolderId',
+    ...Array.from({ length: 20 }, (_, index) => `  guard(${index})`),
+    '  if (source.url) {',
+    '    await chrome.bookmarks.create({ parentId: folderId, url: source.url })',
+    '  } else {',
+    '    await chrome.bookmarks.create({ parentId: folderId, title: source.title })',
+    '  }',
+    ...Array.from({ length: 17 }, (_, index) => `  refresh(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...otherLines(10),
+    ...Array.from({ length: 60 }, (_, index) => [
+      `await chrome.bookmarks.create({ title: "other${index}" })`,
+      ...otherLines(5),
+    ]).flat(),
+    ...pasteItem,
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    ['paste'],
+    ['pasteitem', 'chrome.bookmarks.create', 'create', 'currentfolderid'],
+  )
+
+  // Assert
+  const declarationLine = lines.length - pasteItem.length
+  for (let offset = 0; offset < 40; offset++)
+    assert.ok(
+      selected.includes(declarationLine + offset),
+      `line ${offset + 1} of pasteItem is selected`,
+    )
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=a dotted route identifier and its last part counting once on a line: a line holding chrome.bookmarks.create does not score two matches and outrank a line holding two different identifiers; fails_when=the member is counted again, so the call line ties with and beats a line of two identifiers and takes the 80th place; why_new=Cycle 0123 F3 design v3; seam=none; no_claim=which identifiers a real route reply names
+test('a line holding a dotted route identifier counts one match, not one for the identifier and one for its last part', () => {
+  // Arrange
+  const lines = [
+    'await clipboard.read(); const folder = currentFolderId',
+    ...Array.from({ length: 80 }, () => 'clipboard.write()'),
+    ...otherLines(100),
+    'await chrome.bookmarks.create(details)',
+    ...otherLines(100),
+  ]
+  const callLine = lines.length - 101
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['clipboard', 'currentfolderid', 'chrome.bookmarks.create', 'create'],
+  )
+
+  // Assert
+  assert.ok(selected.includes(0), 'the line of two identifiers is selected')
+  assert.equal(
+    selected.includes(callLine),
+    false,
+    'the dotted call line ranks last',
+  )
+})
+
+// Value: protects=the declaration of a route identifier ranking above call sites of two other identifiers: 85 lines that each hold two other identifiers cannot push the named function out of the 80 anchors; fails_when=lines are ranked by the number of identifiers they hold, so the declaration (one identifier) ranks 86th and its whole unit never enters the excerpt; why_new=Cycle 0123 F3 design v3; seam=none; no_claim=which identifiers a real route reply names
+test('the declaration of a route identifier outranks call sites of two other route identifiers', () => {
+  // Arrange
+  const lines = [
+    ...Array.from({ length: 85 }, (_, index) => [
+      `alpha(beta, ${index})`,
+      ...otherLines(2),
+    ]).flat(),
+    ...otherLines(100),
+    ...functionOf('pasteItem', 6),
+  ]
+  const declarationLine = lines.length - 6
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['alpha', 'beta', 'pasteitem'],
+  )
+
+  // Assert
+  for (let offset = 0; offset < 6; offset++)
+    assert.ok(
+      selected.includes(declarationLine + offset),
+      `line ${offset + 1} of pasteItem is selected`,
+    )
 })
