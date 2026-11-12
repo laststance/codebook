@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.123'
+export const EXTENSION_VERSION = '0.2.124'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1306,6 +1306,10 @@ export const WIKI_PAGE_GUIDE_LINK_QUERY_CHARS = 2_048
 /** The sources each page offers in a Wiki route request at first; the number doubles while every page still fits {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES}. */
 export const WIKI_PAGE_ROUTE_FIRST_SOURCES = 4
 export const WIKI_CONTEXT_LINE_LIMIT = 80
+/** The most lines one code unit (a declaration with its brace block, and the comment above it when that fits) may bring into a Wiki question's excerpt of a long file: half of {@link WIKI_CONTEXT_LINE_LIMIT}, so one unit never fills an excerpt. Cycle 0122 (F3): a matching doc comment reached the model without the function it documents, and the answer called that function's behavior unknown. */
+export const WIKI_CONTEXT_UNIT_LINE_LIMIT = 40
+/** The best-ranked matching lines of a long file that always keep their places in a Wiki question's excerpt, whatever code units the lines ranked before them bring: two 40-line units would otherwise fill the excerpt and drop the third-best match (Cycle 0122 review round). */
+export const WIKI_CONTEXT_KEPT_ANCHOR_COUNT = 3
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000

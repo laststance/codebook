@@ -1,7 +1,13 @@
-import { WIKI_CONTEXT_LINE_LIMIT } from '../constants'
+import {
+  WIKI_CONTEXT_KEPT_ANCHOR_COUNT,
+  WIKI_CONTEXT_LINE_LIMIT,
+} from '../constants'
+
+import { codeUnitOfLine } from './codeUnitOfLine'
 
 /**
  * Keeps matching source and nearby control flow when Wiki Q&A builds bounded excerpts.
+ * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; lines around the anchors fill what is left.
  * Called by {@link answerDeepWikiQuestionWithPrompt} before optional model routing, and by its route step for a routed file, with the code identifiers the route reply named as priority terms.
  * @param lines - Complete verified source, indexed from zero.
  * @param terms - Normalized words from the repository question.
@@ -38,7 +44,11 @@ export function selectWikiSourceLines(
   const anchors = matches
     .slice(0, WIKI_CONTEXT_LINE_LIMIT)
     .map((match) => match.index)
-  const selected = new Set(anchors)
+  const selected = codeUnitsOfAnchors(
+    lines,
+    anchors,
+    keptAnchorsOf(lines, anchors, priorityTerms),
+  )
   // Expand all matching regions together so an early function cannot consume every surrounding line.
   for (
     let distance = 1;
@@ -57,4 +67,84 @@ export function selectWikiSourceLines(
     }
   }
   return [...selected].sort((first, second) => first - second)
+}
+
+/**
+ * Gives each ranked anchor, in rank order, the code unit it documents or opens ({@link codeUnitOfLine}) while the excerpt budget allows, and its own line otherwise; an anchor that is not a kept line is left out once the budget left is reserved for kept lines.
+ * Why: Cycle 0122 (F3) — when 80 or more lines of a long file matched, the excerpt was 80 single lines, and a matching doc comment reached the model without the function it documents.
+ * A unit is admitted only while a place stays for every kept line not yet selected ({@link keptAnchorsOf}: the best-ranked matches and each route identifier's first line), so whole functions never push those out (Cycle 0122 review round).
+ * Called by {@link selectWikiSourceLines} before it fills the rest of the budget with lines around the anchors.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchors - Matching zero-based lines, best first.
+ * @param keptAnchors - The anchors whose own lines keep their places ({@link keptAnchorsOf}).
+ * @returns The selected zero-based lines, at most {@link WIKI_CONTEXT_LINE_LIMIT}; lines already selected cost nothing again.
+ * @example
+ * codeUnitsOfAnchors(['// Adds one.', 'function add(value) {', '  return value + 1', '}'], [0], []) // => Set { 0, 1, 2, 3 }
+ */
+function codeUnitsOfAnchors(
+  lines: readonly string[],
+  anchors: readonly number[],
+  keptAnchors: readonly number[],
+): Set<number> {
+  const selected = new Set<number>()
+  // How many kept lines still wait for a place, leaving out the given lines.
+  const waitingKept = (excluded: readonly number[]): number =>
+    keptAnchors.filter(
+      (keptAnchor) =>
+        !selected.has(keptAnchor) && !excluded.includes(keptAnchor),
+    ).length
+  for (const anchor of anchors) {
+    // Once the budget is spent, the remaining anchors are left out.
+    if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) break
+    if (selected.has(anchor)) continue
+    const unitLines = (codeUnitOfLine(lines, anchor) ?? [anchor]).filter(
+      (index) => !selected.has(index),
+    )
+    // A unit is admitted while every kept line not yet selected keeps a place.
+    if (
+      selected.size + unitLines.length + waitingKept(unitLines) <=
+      WIKI_CONTEXT_LINE_LIMIT
+    ) {
+      for (const index of unitLines) selected.add(index)
+      continue
+    }
+    // Otherwise the anchor's own line comes: always for a kept line, and for another only while the kept lines keep their places.
+    if (
+      keptAnchors.includes(anchor) ||
+      selected.size + 1 + waitingKept([anchor]) <= WIKI_CONTEXT_LINE_LIMIT
+    )
+      selected.add(anchor)
+  }
+  return selected
+}
+
+/**
+ * Lists the anchors whose own lines a code unit must never push out of a long file's excerpt: the {@link WIKI_CONTEXT_KEPT_ANCHOR_COUNT} best-ranked matches, and the first-ranked line of each route identifier.
+ * One line per identifier, not every line it matches: an identifier such as `dispatch` matches dozens of lines, and keeping them all would leave no room for the unit that answers (F3 again).
+ * Why: Cycle 0122 review round — two 40-line units could fill the 80-line budget and drop the third-best match or the lines of the other identifiers the route reply named (Cycle 0119's priority rule).
+ * Called by {@link selectWikiSourceLines} before {@link codeUnitsOfAnchors} admits units.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchors - Matching zero-based lines, best first.
+ * @param priorityTerms - The identifiers the route reply named, lowercased.
+ * @returns The kept zero-based lines, each once.
+ * @example
+ * keptAnchorsOf(['run()', 'dispatch(a)', 'dispatch(b)', 'save()'], [1, 2, 3, 0], ['dispatch']) // => [1, 2, 3]
+ */
+function keptAnchorsOf(
+  lines: readonly string[],
+  anchors: readonly number[],
+  priorityTerms: readonly string[],
+): number[] {
+  const identifierAnchors = priorityTerms.flatMap((term) => {
+    const anchor = anchors.find((index) =>
+      lines[index]!.toLowerCase().includes(term),
+    )
+    return anchor === undefined ? [] : [anchor]
+  })
+  return [
+    ...new Set([
+      ...anchors.slice(0, WIKI_CONTEXT_KEPT_ANCHOR_COUNT),
+      ...identifierAnchors,
+    ]),
+  ]
 }

@@ -18,7 +18,7 @@ import { createServer as createHttpsServer } from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, type TestContext } from 'node:test'
+import { before, test, type TestContext } from 'node:test'
 import { promisify } from 'node:util'
 
 import {
@@ -37,15 +37,17 @@ const run = promisify(execFile)
 /** The declared host the tests pin; it resolves nowhere, so only the pin can reach a server. */
 const HOST = 'app.example.test'
 
-/** Bound of one probe in these tests; far above a headless Chrome's start, below the test timeout. */
+/** Bound of one probe in these tests; far above a headless Chrome's start once the machine has started Chrome before ({@link warmUpChrome}), below the test timeout. */
 const PROBE_BOUND_MS = 20_000
 
+/** Bound of the file's one warm-up start of Chrome; a fresh CI runner's first start took longer than {@link PROBE_BOUND_MS} twice (Cycle 0122). */
+const WARM_UP_BOUND_MS = 60_000
+
 /**
- * Finds the Chrome binary of the machine, or says why the test is skipped (a missing Chrome fails in CI).
- * @param context - The test.
- * @returns The binary, or `undefined` after the test was skipped.
+ * Finds the machine's Chrome binary: the one `CODEBOOK_CHROME_EXECUTABLE` names, else the usual install places.
+ * @returns The binary, or `undefined` when the machine has none.
  */
-async function chromeOf(context: TestContext): Promise<string | undefined> {
+async function machineChrome(): Promise<string | undefined> {
   const executable = await resolveChromeExecutable(
     process.env.CODEBOOK_CHROME_EXECUTABLE ?? '',
     process.platform,
@@ -62,11 +64,58 @@ async function chromeOf(context: TestContext): Promise<string | undefined> {
       () => true,
       () => false,
     ))
-  if (exists) return executable
+  return exists ? executable : undefined
+}
+
+/**
+ * Finds the Chrome binary of the machine, or says why the test is skipped (a missing Chrome fails in CI).
+ * @param context - The test.
+ * @returns The binary, or `undefined` after the test was skipped.
+ */
+async function chromeOf(context: TestContext): Promise<string | undefined> {
+  const executable = await machineChrome()
+  if (executable !== undefined) return executable
   if (process.env.CI === 'true') throw new Error('Google Chrome is needed')
   context.skip('Google Chrome is not installed')
   return undefined
 }
+
+/**
+ * Starts the machine's Chrome once, headless on a throwaway profile, and waits for it to print a blank page and exit, so no timed probe pays a fresh machine's first Chrome start.
+ *
+ * Why: Cycle 0122 — on CI the probe test that ran first in its shard paid the runner's cold first Chrome start (0.9 to 7.7 s on green runs), passed the probe's 20 s bound twice and was reported `proof-unclassified` although the probe was right.
+ * Called once by this file's `before` hook.
+ * @param chrome - The Chrome binary.
+ * @returns When Chrome has exited and its profile folder is gone.
+ * @throws When Chrome does not exit within {@link WARM_UP_BOUND_MS} or exits with an error.
+ * @example
+ * await warmUpChrome('/usr/bin/google-chrome') // => resolves once Chrome printed about:blank's DOM and exited
+ */
+async function warmUpChrome(chrome: string): Promise<void> {
+  const profile = await mkdtemp(join(tmpdir(), 'codebook-chrome-warm-up-'))
+  try {
+    await run(
+      chrome,
+      [
+        '--headless=new',
+        '--no-first-run',
+        '--no-default-browser-check',
+        `--user-data-dir=${profile}`,
+        '--dump-dom',
+        'about:blank',
+      ],
+      { timeout: WARM_UP_BOUND_MS },
+    )
+  } finally {
+    await removeTestFolder(profile)
+  }
+}
+
+before(async () => {
+  const chrome = await machineChrome()
+  // A machine without Chrome has nothing to warm: each test skips, or in CI fails, on its own.
+  if (chrome !== undefined) await warmUpChrome(chrome)
+})
 
 /** One server of a test, with the requests it saw. */
 type Listening = {

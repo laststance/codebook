@@ -3,6 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import {
+  WIKI_CONTEXT_LINE_LIMIT,
+  WIKI_CONTEXT_UNIT_LINE_LIMIT,
+} from '../constants'
+
 /**
  * Reads the bundled `SKILL.md`, the skill the extension ships and Cursor's setup copies, so a test can pin a sentence of its Wiki route.
  *
@@ -296,6 +301,21 @@ test('the README says how a question on a large Wiki is routed through its pages
       "On a Wiki that cites more than six unchanged source files, a question that names none of them by path is answered in two requests: the editor model first picks up to six source files from the Wiki's own pages (each page's title, the start of its first paragraph and the files it cites in its source list, its diagrams or the source links of its text) and from up to six files that no page cites but whose names or lines match the question's words (a Wiki without such pages offers the files with their first lines instead), and names the code identifiers that mark the answering lines, so a question worded in another language than the code can still reach the code that answers it; then it answers from those lines, and in a long file the lines that hold those identifiers are chosen before lines that only match the question's words. When a large Wiki's pages and files do not all fit in that first request, each page lists fewer of its files, those whose names or lines best match the question's words first (among files that match equally, its code before its examples, tests and documentation), down to one file and then its title with that one file alone, so every page stays offered; only when even that does not fit are pages left out, the pages that cite the best matches kept first and otherwise the first pages in the Wiki's order. In Cursor each of the two `cursor-agent` requests may run for up to 5 minutes before the page reports `Cursor Agent timed out answering the Wiki question. Retry or use editor chat.`",
     ),
   )
+})
+
+// Value: protects=the learner's README telling that a Wiki answer reads a long file's matching comments together with the code they describe: a matching line brings the whole function, method, class or object it documents or declares, with its body and the comment above it, within the 40-line unit cap, without pushing out the three best matches or a line of a route identifier, and the README's two numbers are the product's constants; fails_when=the README is silent on the rule, names another excerpt size or unit cap, or the constants move away from the 80 and 40 lines the README states; why_new=Cycle 0122 F3 (hypothesis A, criterion 5) and its review round (hard-coded expectation; the identifier reservation); seam=none; no_claim=that the excerpt rule finds every declaration in every formatting style
+test('the README says a matching line in a long source file brings the whole declaration it documents or declares', async () => {
+  // Arrange / Act
+  const readme = await readPackagedReadme()
+
+  // Assert
+  assert.ok(
+    readme.includes(
+      'In a source file longer than 80 lines, each matching line first brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines without pushing out the three best matching lines or a line holding an identifier the editor model named, so an answer sees the code a matching comment describes, not the comment alone.',
+    ),
+  )
+  assert.equal(WIKI_CONTEXT_LINE_LIMIT, 80)
+  assert.equal(WIKI_CONTEXT_UNIT_LINE_LIMIT, 40)
 })
 
 /**
