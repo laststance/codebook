@@ -463,3 +463,81 @@ test('the three best matching lines keep their places when the two best bring 40
   assert.ok(selected.includes(80), 'the third-best match is selected')
   assert.equal(selected.length, 80)
 })
+
+// Value: protects=a matching `type` alias whose declaration opens no brace: its continued union lines come with it into the excerpt; fails_when=a declaration without `{` is read as one line, so the union members that answer the question are dropped; why_new=Cycle 0122 F3 audit: no test reaches DECLARATION_START or a signature with no block; seam=none; no_claim=that every brace-less declaration is complete
+test('a matching type alias brings the union members on its continued lines into a long file excerpt', () => {
+  // Arrange
+  const lines = [
+    'export type StoreObservable =',
+    "  | 'idle'",
+    "  | 'busy'",
+    ...Array.from(
+      { length: 100 },
+      (_, index) => `export const storeSetting${index} = ${index}`,
+    ),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['store'])
+
+  // Assert
+  assert.ok(selected.includes(0), 'the alias line is selected')
+  assert.ok(selected.includes(1), 'the first union member is selected')
+  assert.ok(selected.includes(2), 'the last union member is selected')
+  assert.equal(selected.length, 80)
+})
+
+// Value: protects=a matching block comment followed by a `//` note: the comment documents no code, so the function after the note stays out; fails_when=the code after another comment is taken as the block comment's subject and enters the excerpt; why_new=Cycle 0122 F3 audit: no test covers a comment followed by another comment; seam=none; no_claim=what the note refers to
+test('a matching block comment followed by a line comment brings no code into the excerpt', () => {
+  // Arrange
+  const lines = [
+    '/** The observable store keeps no history. */',
+    '// Kept for later.',
+    'function unrelated() {',
+    '  return 1',
+    '}',
+    ...Array.from(
+      { length: 100 },
+      (_, index) => `export const storeSetting${index} = ${index}`,
+    ),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['store', 'observable'])
+
+  // Assert
+  assert.ok(selected.includes(0), 'the matching comment is selected')
+  assert.equal(
+    selected.includes(1),
+    false,
+    'the line comment after it stays out',
+  )
+  assert.equal(selected.includes(2), false, 'unrelated() stays out')
+  assert.equal(selected.includes(3), false, 'its body stays out')
+})
+
+// Value: protects=a 40-line function whose matching line ranks after 60 better lines: the budget left cannot hold it, so only its anchor line comes and the excerpt stays at 80 lines; fails_when=the budget check is dropped and the unit overfills the excerpt, or the anchor is lost with the unit; why_new=Cycle 0122 F3 audit: no test makes a unit give way to its anchor line for the budget left; seam=none; no_claim=which lines the dropped function would have shown
+test('a function that does not fit the budget left gives way to its matching line', () => {
+  // Arrange
+  const lines = [
+    ...Array.from(
+      { length: 60 },
+      (_, index) => `export const storeObservable${index} = ${index}`,
+    ),
+    'export function storeBridge() {',
+    ...Array.from({ length: 38 }, (_, index) => `  step(${index + 1})`),
+    '}',
+    ...Array.from(
+      { length: 40 },
+      (_, index) => `export const storeSetting${index} = ${index}`,
+    ),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, ['store', 'observable'])
+
+  // Assert
+  assert.ok(selected.includes(60), 'the matching line is selected')
+  assert.equal(selected.includes(70), false, 'the function body stays out')
+  assert.equal(selected.length, 80)
+})
