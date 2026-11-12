@@ -1629,14 +1629,14 @@ test('a route-named function with one anchor in its head and one just past it br
     )
 })
 
-// Value: protects=a route-named long function that holds none of the other identifiers the reply named brings its head only after the long functions holding them, so their windows come first; fails_when=the named function's first 40 lines take places at its rank and a function holding two named-identifier lines gets none (P06 routes naming handleContextAction for a paste question); why_new=Cycle 0124 /ship review (brute force over route replies); seam=none; no_claim=named functions that hold route identifiers
-test('a named long function holding no other route identifier brings its head after the functions holding them', () => {
+// Value: protects=a route-named long function that holds none of the other identifiers the reply named brings its head after the long functions holding two of them, so their windows come first; fails_when=the named function's first 40 lines take places at its rank and a function holding two named identifiers gets none (P06 routes naming handleContextAction for a paste question); why_new=Cycle 0124 /ship review (brute force over route replies); seam=none; no_claim=functions holding one named identifier (the next tests)
+test('a named long function holding no other route identifier brings its head after the functions holding two of them', () => {
   // Arrange
   const worker = (name: string): string[] => [
     `function ${name}() {`,
     '  const token = read()',
     ...Array.from({ length: 19 }, (_, index) => `  prepare(${index})`),
-    '  send(token)',
+    '  send(token, nonce)',
     ...Array.from({ length: 27 }, (_, index) => `  finish(${index})`),
     '}',
   ]
@@ -1646,10 +1646,14 @@ test('a named long function holding no other route identifier brings its head af
     ...worker('secondWorker'),
     ...otherLines(10),
   ]
-  const secondSend = lines.lastIndexOf('  send(token)')
+  const secondSend = lines.lastIndexOf('  send(token, nonce)')
 
   // Act
-  const selected = selectWikiSourceLines(lines, [], ['dispatch', 'token'])
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['dispatch', 'token', 'nonce'],
+  )
 
   // Assert
   assert.ok(
@@ -1661,6 +1665,94 @@ test('a named long function holding no other route identifier brings its head af
     "the second worker's window is selected",
   )
   assert.equal(selected.includes(20), false, "dispatch's body stays out")
+})
+
+// Value: protects=a route naming only a long function keeps that function's head when its two callers each hold its name twice; fails_when=the named head waits until after every caller's window and keeps only its declaration line (Cycle 0124 /ship pass 2, Codex outside voice: 1 of transfer's 60 lines); why_new=Cycle 0124 /ship pass 2; seam=none; no_claim=routes naming more identifiers
+test('a route naming only a long function keeps its head ahead of its callers windows', () => {
+  // Arrange
+  const transfer = [
+    'function transfer(from, to) {',
+    ...Array.from({ length: 19 }, (_, index) => `  validate(${index})`),
+    '  persistTransaction(from, to)',
+    ...Array.from({ length: 38 }, (_, index) => `  audit(${index})`),
+    '}',
+  ]
+  const caller = (name: string): string[] => [
+    `function ${name}() {`,
+    '  transfer(first, second)',
+    ...Array.from({ length: 20 }, (_, index) => `  prepare(${index})`),
+    '  transfer(third, fourth)',
+    ...Array.from({ length: 26 }, (_, index) => `  finish(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...transfer,
+    ...caller('payRent'),
+    ...caller('payBills'),
+    ...otherLines(20),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, [], ['transfer'])
+
+  // Assert
+  assert.ok(selected.includes(20), "transfer's line 21 is selected")
+  assert.ok(selected.includes(39), "transfer's line 40 is selected")
+})
+
+// Value: protects=a route naming only a long function keeps that function's head when its call sites alone could fill the excerpt; fails_when=the named head waits behind the single lines of 80 call sites and the excerpt keeps no line of its body (Cycle 0124 /ship pass 2, Codex structured review: 0 of 42 body lines); why_new=Cycle 0124 /ship pass 2; seam=none; no_claim=which call sites stay
+test('a route naming only a long function keeps its body when its call sites could fill the excerpt', () => {
+  // Arrange
+  const lines = [
+    'async function pasteItem(paneNum) {',
+    ...Array.from({ length: 42 }, (_, index) => `  work(${index})`),
+    '}',
+    ...Array.from({ length: 80 }, (_, index) => `pasteItem(${index})`),
+  ]
+
+  // Act
+  const selected = selectWikiSourceLines(lines, [], ['pasteitem'])
+
+  // Assert
+  for (let line = 1; line <= 39; line++)
+    assert.ok(selected.includes(line), `pasteItem line ${line + 1} is selected`)
+})
+
+// Value: protects=two named dotted identifiers sharing a last part (`left.save`, `right.save`) count each function holding one of them once, whatever their order in the reply; fails_when=the shared member is bound to the first dotted identifier only, so the other function counts 1.5 and the route's term order decides the rank (Cycle 0124 /ship pass 2, Codex outside voice and structured review); why_new=Cycle 0124 /ship pass 2; seam=none; no_claim=members of an unnamed object
+test('dotted identifiers sharing a last part count each holding function once in either order', () => {
+  // Arrange
+  const caller = (name: string, receiver: string): string[] => [
+    `function ${name}() {`,
+    `  ${receiver}.save(first)`,
+    `  ${receiver}.save(second)`,
+    ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
+    '}',
+  ]
+  const lines = [...caller('saveLeft', 'left'), ...caller('saveRight', 'right')]
+  const anchors = [1, 2, 50, 51]
+
+  // Act
+  const counts = [
+    ['left.save', 'save', 'right.save'],
+    ['right.save', 'save', 'left.save'],
+  ].map((terms) =>
+    longFunctionWindowsOf(lines, anchors, terms).map((window) => [
+      window.declarationLine,
+      window.distinctIdentifiers,
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(counts, [
+    [
+      [0, 1],
+      [49, 1],
+    ],
+    [
+      [0, 1],
+      [49, 1],
+    ],
+  ])
 })
 
 // Value: protects=a long function's window past its head ends four lines after the last anchor in its span, so a window does not spend its 39 lines on code that holds no named identifier; fails_when=the window runs on to the end of its 39-line span (window rule version 2); why_new=Cycle 0124 /ship native check (window rule version 3); seam=none; no_claim=heads, which keep their 40 lines

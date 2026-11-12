@@ -115,8 +115,8 @@ function namedWindowOfLongFunction(
 }
 
 /**
- * Counts how many of the route identifiers a function's anchor lines name, each once. A term that is the last part of another listed dotted identifier (the `get` that `routeTermsOf` adds after `chrome.bookmarks.get`) is that identifier's match, not one of its own; when the anchor lines hold the member but never the dotted name, the identifier counts half, since the member may be the identifier reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create` for the named `chrome.bookmarks.create`).
- * Why: Cycle 0124 (F3, Issue #318) — the function that holds the most different identifiers the editor model named is the one that answers, not the one with most lines of one short name. The `/ship` review found that a function calling `save(item)` and `load(item)` for the named `api.save` and `api.load` counted none, so functions holding one `log` or `warn` ranked first; counting such members whole instead let P06's functions calling `chrome.tabs.create` rank above `pasteItem` for 25 of 984 route replies.
+ * Counts how many of the route identifiers a function's anchor lines name, each once. A term that is the last part of listed dotted identifiers (the `get` that `routeTermsOf` adds after `chrome.bookmarks.get`) is their match, not one of its own; when the anchor lines hold the member but none of those dotted names, it counts half, since the member may be one of them reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create` for the named `chrome.bookmarks.create`).
+ * Why: Cycle 0124 (F3, Issue #318) — the function that holds the most different identifiers the editor model named is the one that answers, not the one with most lines of one short name. The `/ship` review found that a function calling `save(item)` and `load(item)` for the named `api.save` and `api.load` counted none, so functions holding one `log` or `warn` ranked first; counting such members whole instead let P06's functions calling `chrome.tabs.create` rank above `pasteItem` for 25 of 984 route replies. Pass 2: a member shared by two named dotted identifiers was bound to the first one only, so `right.save(a)` counted 1.5 and `left.save(a)` 1.
  * Called by {@link longFunctionWindowsOf} to rank functions.
  * @param lines - Complete verified source, indexed from zero.
  * @param anchors - The function's anchors.
@@ -125,6 +125,7 @@ function namedWindowOfLongFunction(
  * @example
  * distinctRouteIdentifierCount(['save(a)', 'x.load(b)'], [0, 1], ['save', 'x.load', 'load']) // => 2
  * distinctRouteIdentifierCount(['save(a)', 'load(b)'], [0, 1], ['api.save', 'save', 'api.load', 'load']) // => 1: two members alone, half each
+ * distinctRouteIdentifierCount(['right.save(a)'], [0], ['left.save', 'save', 'right.save']) // => 1: `save` is right.save's match
  */
 function distinctRouteIdentifierCount(
   lines: readonly string[],
@@ -136,19 +137,22 @@ function distinctRouteIdentifierCount(
       matchesRouteIdentifier(lines[anchor]!.toLowerCase(), term),
     ),
   )
-  const dottedIdentifierOf = (term: string): string | undefined =>
-    priorityTerms.find((other) => other !== term && other.endsWith(`.${term}`))
+  const dottedIdentifiersOf = (term: string): string[] =>
+    priorityTerms.filter(
+      (other) => other !== term && other.endsWith(`.${term}`),
+    )
   const ownIdentifiers = new Set(
-    matchedTerms.filter((term) => !dottedIdentifierOf(term)),
+    matchedTerms.filter((term) => !dottedIdentifiersOf(term).length),
   )
-  // A member matched without its dotted identifier may be that identifier reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create`), so it counts half.
-  const memberOnlyIdentifiers = new Set(
-    matchedTerms.flatMap((term) => {
-      const dotted = dottedIdentifierOf(term)
-      return dotted && !ownIdentifiers.has(dotted) ? [dotted] : []
-    }),
-  )
-  return ownIdentifiers.size + memberOnlyIdentifiers.size / 2
+  // A member none of whose dotted identifiers matched may be one of them reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create`), so it counts half.
+  const memberOnlyTerms = matchedTerms.filter((term) => {
+    const dottedIdentifiers = dottedIdentifiersOf(term)
+    return (
+      dottedIdentifiers.length > 0 &&
+      !dottedIdentifiers.some((identifier) => ownIdentifiers.has(identifier))
+    )
+  })
+  return ownIdentifiers.size + memberOnlyTerms.length / 2
 }
 
 /**

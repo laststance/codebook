@@ -1318,6 +1318,8 @@ export const WIKI_CONTEXT_WINDOW_LEAD_LINES = 2
 export const WIKI_CONTEXT_WINDOW_TRAIL_LINES = 4
 /** The fewest route-identifier anchors a long function must hold for its window to enter a Wiki question's excerpt before single lines; a function holding one anchor keeps that line alone. Cycle 0124 (F3, Issue #318). */
 export const WIKI_CONTEXT_CLUSTER_MIN_ANCHORS = 2
+/** How many route identifiers a route-named long function that holds no other one counts when it competes with the long functions holding route identifiers for a Wiki question's excerpt: its own name. The functions holding more different identifiers bring their windows first; its head comes before those holding as many or fewer. Cycle 0124 `/ship` pass 2: a route naming only the answering function lost its whole body when its head waited until after every caller's window. */
+export const WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT = 1
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000

@@ -3,6 +3,7 @@ import {
   WIKI_CONTEXT_HEAD_MIN_LINES,
   WIKI_CONTEXT_KEPT_ANCHOR_COUNT,
   WIKI_CONTEXT_LINE_LIMIT,
+  WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT,
 } from '../constants'
 
 import {
@@ -31,7 +32,7 @@ interface ExcerptBuild {
 
 /**
  * Keeps matching source and nearby control flow when Wiki Q&A builds bounded excerpts.
- * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; a route-named function too long for a whole unit that holds route-identifier anchors brings, at its declaration line's rank, its named window; before the first anchor that brings only its own line, the named functions still waiting bring theirs, then each long function holding several route-identifier anchors brings its window ({@link longFunctionWindowsOf}, Cycle 0124); then a function too long for a whole unit, a named one holding no other route identifier included, brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
+ * In a long file each ranked anchor first brings the code unit it documents or opens (a declaration with its brace block, {@link codeUnitOfLine}) while the budget allows; a route-named function too long for a whole unit that holds route-identifier anchors brings, at its declaration line's rank, its named window; before the first anchor that brings only its own line, the named functions still waiting bring theirs, then each long function holding several route-identifier anchors brings its window ({@link longFunctionWindowsOf}, Cycle 0124), a named function holding no other route identifier bringing its head among them; then any other function too long for a whole unit brings its first lines ({@link longDeclarationHeadOfLine}, Cycle 0123); lines around the anchors fill what is left.
  * Called by {@link answerDeepWikiQuestionWithPrompt} before optional model routing, and by its route step for a routed file, with the code identifiers the route reply named as priority terms.
  * @param lines - Complete verified source, indexed from zero.
  * @param terms - Normalized words from the repository question.
@@ -128,7 +129,7 @@ function scoreLine(
  * Gives each ranked anchor, in rank order, the code unit it documents or opens ({@link codeUnitOfLine}) while the excerpt budget allows, and its own line otherwise; an anchor that is not a kept line is left out once the budget left is reserved for kept lines.
  * Why: Cycle 0122 (F3) — when 80 or more lines of a long file matched, the excerpt was 80 single lines, and a matching doc comment reached the model without the function it documents.
  * A unit is admitted only while a place stays for every kept line not yet selected ({@link keptAnchorsOf}: the best-ranked matches and each route identifier's first line), so whole functions never push those out (Cycle 0122 review round).
- * A route-named function too long for a whole unit that holds route-identifier anchors brings, in rank order, its named window ({@link admitUnitOrNamedWindow}); just before the first anchor that only brings its own line, the named functions still waiting bring theirs, then each long function holding {@link WIKI_CONTEXT_CLUSTER_MIN_ANCHORS} or more route-identifier anchors brings its window, best first ({@link admitWindowsBeforeSingleLines}, Cycle 0124 F3).
+ * A route-named function too long for a whole unit that holds route-identifier anchors brings, in rank order, its named window ({@link admitUnitOrNamedWindow}); just before the first anchor that only brings its own line, the named functions still waiting bring theirs, then each long function holding {@link WIKI_CONTEXT_CLUSTER_MIN_ANCHORS} or more route-identifier anchors brings its window, best first, a named function holding no other route identifier bringing its head among them ({@link admitWindowsBeforeSingleLines}, Cycle 0124 F3).
  * Called by {@link selectWikiSourceLines} before it fills the rest of the budget with lines around the anchors.
  * @param lines - Complete verified source, indexed from zero.
  * @param anchors - Matching zero-based lines, best first.
@@ -219,7 +220,7 @@ function admitUnitOrNamedWindow(build: ExcerptBuild, anchor: number): boolean {
 }
 
 /**
- * Brings the named window ({@link longFunctionWindowsOf}) of a route-named function too long for a whole unit that holds route-identifier anchors, under the head budget rule ({@link admitHead}). A named function holding none brings its head later, with the other long functions ({@link admitLongDeclarationHeads}).
+ * Brings the named window ({@link longFunctionWindowsOf}) of a route-named function too long for a whole unit that holds route-identifier anchors, under the head budget rule ({@link admitHead}). A named function holding none brings its head just before the first single line, after the long functions holding more route identifiers ({@link admitNamedHeads}).
  * Why: Cycle 0124 `/ship` native check — the head of a named function holding none of the other identifiers the reply named (P06's `handleContextAction` for a paste question) filled the places that the function holding them needed.
  * Called by {@link admitUnitOrNamedWindow} at the declaration line's rank, and by {@link admitWindowsBeforeSingleLines} for each named function still waiting.
  * @param build - The excerpt build; an admitted window's declaration line joins its `windowedDeclarations`.
@@ -237,7 +238,7 @@ function admitNamedWindow(build: ExcerptBuild, anchor: number): boolean {
   const holder = build.windows.find(
     (candidate) => candidate.declarationLine === declarationLine,
   )
-  // A named function holding no other route identifier waits for the head pass.
+  // A named function holding no other route identifier brings its head later, among the clusters.
   if (!holder || !admitHead(holder.namedWindow, keptAnchors, selected))
     return false
   build.windowedDeclarations.add(declarationLine)
@@ -245,13 +246,13 @@ function admitNamedWindow(build: ExcerptBuild, anchor: number): boolean {
 }
 
 /**
- * Brings, just before the first anchor that brings only its own line, the windows of the route-named long functions still waiting, in rank order, then each cluster's window ({@link admitClusterWindows}).
- * Why: Cycle 0124 `/ship` native check — single-line `const currentFolderId = …` declarations tied with the named `pasteItem` and came first by line order; the clusters they let in filled the excerpt before `pasteItem`'s window, and the answer called what a paste creates unknown.
+ * Brings, just before the first anchor that brings only its own line, the windows of the route-named long functions still waiting, in rank order; then the windows of the long functions holding more route identifiers than {@link WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT}, the head of each route-named long function holding no other route identifier ({@link admitNamedHeads}), and the windows of the other long functions holding two or more anchors ({@link admitClusterWindows}).
+ * Why: Cycle 0124 `/ship` native check — single-line `const currentFolderId = …` declarations tied with the named `pasteItem` and came first by line order; the clusters they let in filled the excerpt before `pasteItem`'s window, and the answer called what a paste creates unknown. Pass 2: the head of a named function holding no other identifier must not wait behind its callers' windows.
  * Called by {@link codeUnitsOfAnchors} once.
  * @param build - The excerpt build; admitted window lines join its `selected`.
  * @param anchors - Matching zero-based lines, best first.
  * @example
- * admitWindowsBeforeSingleLines(build, [12, 40]) // adds the named window of line 40's long function, then the clusters' windows
+ * admitWindowsBeforeSingleLines(build, [12, 40]) // adds the named window of line 40's long function, then the other windows and named heads in turn
  */
 function admitWindowsBeforeSingleLines(
   build: ExcerptBuild,
@@ -262,29 +263,70 @@ function admitWindowsBeforeSingleLines(
     if (build.selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
     admitNamedWindow(build, anchor)
   }
-  admitClusterWindows(build)
+  // A named function holding no other identifier counts its own name: the functions holding more come first, the rest after its head.
+  admitClusterWindows(
+    build,
+    (candidate) =>
+      candidate.distinctIdentifiers > WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT,
+  )
+  admitNamedHeads(build, anchors)
+  admitClusterWindows(
+    build,
+    (candidate) =>
+      candidate.distinctIdentifiers <= WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT,
+  )
 }
 
 /**
  * Brings the window of each long function holding {@link WIKI_CONTEXT_CLUSTER_MIN_ANCHORS} or more route-identifier anchors, best first, under the head budget rule ({@link admitHead}); a function whose window a route-named declaration already brought is skipped.
  * Why: Cycle 0124 (F3, Issue #318) — identifiers named inside P06's `pasteItem`, without its name, left 0 to 6 of the 13 lines that create the pasted bookmark and folder.
- * Called by {@link codeUnitsOfAnchors} just before the first anchor that brings only its own line, or after its loop.
+ * Called by {@link admitWindowsBeforeSingleLines}, twice: once for the long functions holding more route identifiers than a named head, once for the rest.
  * @param build - The excerpt build; admitted window lines join its `selected`.
+ * @param isInTurn - Picks the windows of this turn: those of the long functions holding more route identifiers than a named head counts, or the rest.
  * @example
- * admitClusterWindows(build) // adds the window of the long function around two route-identifier anchors
+ * admitClusterWindows(build, (candidate) => candidate.distinctIdentifiers > 1) // adds the window of a long function holding two different route identifiers
  */
-function admitClusterWindows(build: ExcerptBuild): void {
+function admitClusterWindows(
+  build: ExcerptBuild,
+  isInTurn: (candidate: LongFunctionWindow) => boolean,
+): void {
   const { keptAnchors, selected } = build
   for (const candidate of build.windows) {
     if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
-    // A lone anchor stays a single line, and a window already brought is not brought again.
+    // A lone anchor stays a single line, a window already brought is not brought again, and another turn's window waits.
     if (
       candidate.anchors.length < WIKI_CONTEXT_CLUSTER_MIN_ANCHORS ||
-      build.windowedDeclarations.has(candidate.declarationLine)
+      build.windowedDeclarations.has(candidate.declarationLine) ||
+      !isInTurn(candidate)
     )
       continue
     if (admitHead(candidate.window, keptAnchors, selected))
       build.windowedDeclarations.add(candidate.declarationLine)
+  }
+}
+
+/**
+ * Brings the head of each route-named function too long for a whole unit that no window brought yet ({@link admitNamedWindow} brings only those holding route-identifier anchors), in rank order, under the head budget rule ({@link admitHead}).
+ * Why: Cycle 0124 `/ship` pass 2 — a route naming only the answering function (P06's `pasteItem` alone, or a `transfer` with two callers) kept 0 of its body lines when its head waited until after every caller's window and call-site line.
+ * Called by {@link admitWindowsBeforeSingleLines} between the long functions holding more route identifiers than {@link WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT} and the rest.
+ * @param build - The excerpt build; an admitted head's declaration line joins its `windowedDeclarations`.
+ * @param anchors - Matching zero-based lines, best first.
+ * @example
+ * admitNamedHeads(build, [0]) // adds lines 0 to 39 of a 60-line function the route named that holds no other route identifier
+ */
+function admitNamedHeads(
+  build: ExcerptBuild,
+  anchors: readonly number[],
+): void {
+  const { lines, keptAnchors, priorityTerms, selected } = build
+  for (const anchor of anchors) {
+    if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
+    if (!declaresPriorityTerm(lines[anchor]!, priorityTerms)) continue
+    const head = longDeclarationHeadOfLine(lines, anchor)
+    // A function whose window or head is already in is not brought again.
+    if (!head || build.windowedDeclarations.has(head[0]!)) continue
+    if (admitHead(head, keptAnchors, selected))
+      build.windowedDeclarations.add(head[0]!)
   }
 }
 
