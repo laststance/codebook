@@ -55,7 +55,7 @@ async function wikiOf(root, files, pages) {
     readerVersion: 2,
     repositoryRoot: root,
     assets: [],
-    generated: { revision: '1234567890', at: '2026-11-13' },
+    generated: { revision: 'abcdef1234', at: '2026-11-13' },
     includedSources: Object.entries(files).map(([path, text]) => ({
       path,
       sha256: createHash('sha256').update(text).digest('hex'),
