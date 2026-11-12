@@ -303,17 +303,19 @@ test('the README says how a question on a large Wiki is routed through its pages
   )
 })
 
-// Value: protects=the learner's README telling that a Wiki answer reads a long file's matching comments together with the code they describe: a matching line brings the whole function, method or block it documents or opens, with the comment above it, within the unit cap, and the numbers in the sentence follow the product's constants; fails_when=the README is silent on the rule or names another excerpt size or unit cap than WIKI_CONTEXT_LINE_LIMIT and WIKI_CONTEXT_UNIT_LINE_LIMIT; why_new=Cycle 0122 F3 (hypothesis A, criterion 5); seam=none; no_claim=that the excerpt rule finds every function in every formatting style
-test('the README says a matching line in a long source file brings the whole function or block it documents or opens', async () => {
+// Value: protects=the learner's README telling that a Wiki answer reads a long file's matching comments together with the code they describe: a matching line brings the whole function, method, class or object it documents or declares, with its body and the comment above it, within the 40-line unit cap, without pushing out a line of a route identifier, and the README's two numbers are the product's constants; fails_when=the README is silent on the rule, names another excerpt size or unit cap, or the constants move away from the 80 and 40 lines the README states; why_new=Cycle 0122 F3 (hypothesis A, criterion 5) and its review round (hard-coded expectation; the identifier reservation); seam=none; no_claim=that the excerpt rule finds every declaration in every formatting style
+test('the README says a matching line in a long source file brings the whole declaration it documents or declares', async () => {
   // Arrange / Act
   const readme = await readPackagedReadme()
 
   // Assert
   assert.ok(
     readme.includes(
-      `In a source file longer than ${WIKI_CONTEXT_LINE_LIMIT} lines, each matching line first brings the whole function, method or block it documents or opens, with the comment directly above it, when that fits in ${WIKI_CONTEXT_UNIT_LINE_LIMIT} lines, so an answer sees the code a matching comment describes, not the comment alone.`,
+      'In a source file longer than 80 lines, each matching line first brings the whole function, method, class or object it documents or declares, with its body and the comment directly above it, when that fits in 40 lines without pushing out a line holding an identifier the editor model named, so an answer sees the code a matching comment describes, not the comment alone.',
     ),
   )
+  assert.equal(WIKI_CONTEXT_LINE_LIMIT, 80)
+  assert.equal(WIKI_CONTEXT_UNIT_LINE_LIMIT, 40)
 })
 
 /**

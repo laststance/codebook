@@ -1,12 +1,21 @@
-import { WIKI_CONTEXT_UNIT_LINE_LIMIT } from '../constants'
+import {
+  WIKI_CONTEXT_LINE_LIMIT,
+  WIKI_CONTEXT_UNIT_LINE_LIMIT,
+} from '../constants'
 
-/** A line that begins a `function`, `class`, `interface` or `enum` declaration, after any `export`, `default`, `declare`, `abstract` or `async`. */
+/** A line that begins a `function`, `class`, `interface`, `enum`, `namespace`, `module` or `type` declaration, after any `export`, `default`, `declare`, `abstract`, `async` or `const`. */
 const DECLARATION_START =
-  /^(?:(?:export|default|declare|abstract|async)\s+)*(?:function|class|interface|enum)\b/
-/** A signature line indented no deeper than its declaration still continues it when it starts with one of these characters, as `>(`, `): Store {` or `}: Props) {` do. */
+  /^(?:(?:export|default|declare|abstract|async|const)\s+)*(?:function|class|interface|enum|namespace|module|type)\b/
+/** A line that begins a control-flow statement, also after the `}` of the branch before it; such a line on its own brings no unit. */
+const CONTROL_FLOW_START =
+  /^(?:\}\s*)?(?:if|else|for|while|switch|try|catch|finally|do)\b/
+/** A signature line at its declaration's indentation still continues it when it starts with one of these characters, as `>(`, `): Store {` or `}: Props) {` do. */
 const SIGNATURE_CONTINUATION_START = /^[)>\]}.?:|&=]/
 /** A `{` right after `(`, `[` or `,` opens a destructured parameter or an object argument (`>({`, `run(options, {`), not a block. */
 const OBJECT_ARGUMENT_OPENING = /[([,]\s*\{$/
+/** The name a function or method signature declares, after any modifiers: `createStore` in `export function createStore<`, `read` in `public read(id: string): Item`. */
+const DECLARED_NAME =
+  /^(?:(?:export|default|declare|async|public|private|protected|static|abstract|override)\s+)*(?:function\s*\*?\s*)?([A-Za-z_$][\w$]*)\s*[<(]/
 
 /** Zero-based first and last lines of a run of source lines, both included. */
 interface LineRange {
@@ -39,10 +48,21 @@ function opensBlock(line: string): boolean {
 }
 
 /**
- * Finds the run of `//` lines around a line that is one of them.
+ * Tells whether a line is a decorator, such as `@Injectable()` above a class.
+ * @param line - One source line; `undefined` past either end of the source.
+ * @returns `true` when the line's text starts with `@`.
+ * @example
+ * isDecorator('  @Input()') // => true
+ */
+function isDecorator(line: string | undefined): boolean {
+  return line?.trim().startsWith('@') ?? false
+}
+
+/**
+ * Finds the run of `//` lines around a line that is one of them, looking at most {@link WIKI_CONTEXT_LINE_LIMIT} lines each way, since a longer comment cannot travel with its code.
  * @param lines - Complete source, indexed from zero.
  * @param index - A line whose text starts with `//`.
- * @returns The run's first and last lines.
+ * @returns The run's first and last lines within that reach.
  * @example
  * lineCommentRunAround(['// a', '// b', 'run()'], 1) // => { first: 0, last: 1 }
  */
@@ -50,20 +70,22 @@ function lineCommentRunAround(
   lines: readonly string[],
   index: number,
 ): LineRange {
+  const isLineComment = (line: number): boolean =>
+    Math.abs(line - index) <= WIKI_CONTEXT_LINE_LIMIT &&
+    Boolean(lines[line]?.trim().startsWith('//'))
   let first = index
   let last = index
   // Walk outwards while the neighbouring lines are `//` lines too.
-  while (first > 0 && lines[first - 1]!.trim().startsWith('//')) first--
-  while (last < lines.length - 1 && lines[last + 1]!.trim().startsWith('//'))
-    last++
+  while (isLineComment(first - 1)) first--
+  while (isLineComment(last + 1)) last++
   return { first, last }
 }
 
 /**
- * Finds the block comment around a line that starts with `/*` or `*`: from the line that opens it to the line that closes it.
+ * Finds the block comment around a line that starts with `/*` or `*`: from the line that opens it to the line that closes it, looking at most {@link WIKI_CONTEXT_LINE_LIMIT} lines each way.
  * @param lines - Complete source, indexed from zero.
  * @param index - A line whose text starts with `/*` or `*`.
- * @returns The comment's first and last lines; `undefined` when no `/*` line opens it from above (a `*` line of code, such as a continued multiplication) or no `*\/` closes it.
+ * @returns The comment's first and last lines; `undefined` when no `/*` line opens it from above (a `*` line of code, such as a continued multiplication, or a comment that closed above the line), or no `*\/` closes it, within that reach.
  * @example
  * blockCommentAround(['/**', ' * Adds one.', ' *\/', 'function add() {}'], 1) // => { first: 0, last: 2 }
  */
@@ -73,14 +95,21 @@ function blockCommentAround(
 ): LineRange | undefined {
   let first = index
   // Walk up through the comment's `*` lines to the line that opens it.
-  while (!lines[first]!.trim().startsWith('/*')) {
-    if (first === 0 || !lines[first]!.trim().startsWith('*')) return undefined
+  for (;;) {
+    const text = lines[first]!.trim()
+    // A comment that closes above the line does not hold it.
+    if (first < index && text.includes('*/')) return undefined
+    if (text.startsWith('/*')) break
+    if (first === 0 || index - first >= WIKI_CONTEXT_LINE_LIMIT)
+      return undefined
+    if (!text.startsWith('*')) return undefined
     first--
   }
   let last = index
   // Walk down to the line that closes it.
   while (!lines[last]!.includes('*/')) {
-    if (last === lines.length - 1) return undefined
+    if (last === lines.length - 1 || last - index >= WIKI_CONTEXT_LINE_LIMIT)
+      return undefined
     last++
   }
   return { first, last }
@@ -107,22 +136,25 @@ function commentAround(
 }
 
 /**
- * Finds the comment that ends on the line directly above a declaration.
+ * Finds the comment that documents a declaration: the one that closes directly above it, or above the one-line decorators right above it.
  * @param lines - Complete source, indexed from zero.
  * @param declarationLine - The declaration's first line.
- * @returns The comment's first and last lines; `undefined` when the line above is code, blank or missing.
+ * @returns The comment's first and last lines; `undefined` when the line above (past any decorators) is code, blank or missing.
  * @example
- * commentAbove(['/** Adds one. *\/', 'function add() {}'], 1) // => { first: 0, last: 0 }
+ * commentAbove(['/** Adds one. *\/', '@Injectable()', 'class Adder {}'], 2) // => { first: 0, last: 0 }
  */
 function commentAbove(
   lines: readonly string[],
   declarationLine: number,
 ): LineRange | undefined {
-  if (declarationLine === 0) return undefined
-  const above = lines[declarationLine - 1]!.trim()
+  let above = declarationLine - 1
+  // Decorators stand between a class and its comment.
+  while (isDecorator(lines[above])) above--
+  if (above < 0) return undefined
+  const text = lines[above]!.trim()
   // Only a comment that closes right above the declaration documents it.
-  if (above.startsWith('//') || above.endsWith('*/'))
-    return commentAround(lines, declarationLine - 1)
+  if (text.startsWith('//') || text.endsWith('*/'))
+    return commentAround(lines, above)
   return undefined
 }
 
@@ -130,7 +162,7 @@ function commentAbove(
  * Tells whether the line after a signature line continues the signature.
  * @param next - The next line; `undefined` past the end of the source.
  * @param indentation - The declaration's indentation.
- * @returns `true` for a line indented deeper than the declaration, or one starting with `)`, `>`, `]`, `}`, `.`, `?`, `:`, `|`, `&` or `=`; `false` for a blank line, a missing line or a new statement.
+ * @returns `true` for a line indented deeper than the declaration, or one at its indentation starting with `)`, `>`, `]`, `}`, `.`, `?`, `:`, `|`, `&` or `=`; `false` for a blank line, a missing line, a new statement or a line that closes the scope around the declaration.
  * @example
  * continuesSignature('): Store {', 0) // => true
  * continuesSignature('export const next = 1', 0) // => false
@@ -140,29 +172,49 @@ function continuesSignature(
   indentation: number,
 ): boolean {
   if (next === undefined || !next.trim()) return false
+  const nextIndentation = indentationOf(next)
   return (
-    indentationOf(next) > indentation ||
-    SIGNATURE_CONTINUATION_START.test(next.trim())
+    nextIndentation > indentation ||
+    (nextIndentation === indentation &&
+      SIGNATURE_CONTINUATION_START.test(next.trim()))
   )
 }
 
 /**
- * Finds the line that closes a brace block: the first later line at the declaration's indentation that starts with `}`.
+ * Tells whether the line after a signature that opens no block declares the same function or method again: the next overload, or the implementation after the overloads.
+ * @param declaration - The declaration's first line.
+ * @param next - The line after the signature; `undefined` past the end of the source.
+ * @returns `true` when both lines sit at the same indentation and declare the same name.
+ * @example
+ * declaresSameName('export function getStore(): Store', 'export function getStore(name?: string) {') // => true
+ * declaresSameName('export function getStore(): Store', 'export function setStore(store: Store) {') // => false
+ */
+function declaresSameName(
+  declaration: string,
+  next: string | undefined,
+): boolean {
+  if (next === undefined || indentationOf(next) !== indentationOf(declaration))
+    return false
+  const name = DECLARED_NAME.exec(declaration.trim())?.[1]
+  return name !== undefined && DECLARED_NAME.exec(next.trim())?.[1] === name
+}
+
+/**
+ * Finds the line that closes a brace block: the first later line at the opening line's indentation that starts with `}` and does not open another block, so `} else {`, `} catch (error) {` and the `}) {` after a parameter type go on to the final `}`.
  * Braces are not counted, so a brace inside a string or a comment changes nothing; the source is taken to be formatted.
  * @param lines - Complete source, indexed from zero.
- * @param indentation - The declaration's indentation.
  * @param openLine - The line that ends with the block's `{`.
  * @param declarationLine - The declaration's first line, from which the unit limit counts.
- * @returns The closing line; `undefined` when a non-blank line is indented less than the declaration first, or no closing line comes within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines of the declaration.
+ * @returns The closing line; `undefined` when a non-blank line is indented less than the opening line first, or no closing line comes within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines of the declaration.
  * @example
- * blockCloseLine(['run() {', '  step()', '}'], 0, 0, 0) // => 2
+ * blockCloseLine(['if (ready) {', '  run()', '} else {', '  wait()', '}'], 0, 0) // => 4
  */
 function blockCloseLine(
   lines: readonly string[],
-  indentation: number,
   openLine: number,
   declarationLine: number,
 ): number | undefined {
+  const indentation = indentationOf(lines[openLine]!)
   const limit = Math.min(
     lines.length,
     declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT,
@@ -174,13 +226,19 @@ function blockCloseLine(
     if (!text) continue
     const lineIndentation = indentationOf(line)
     if (lineIndentation < indentation) return undefined
-    if (lineIndentation === indentation && text.startsWith('}')) return index
+    // A closer that opens the next branch or the body goes on.
+    if (
+      lineIndentation === indentation &&
+      text.startsWith('}') &&
+      !opensBlock(line)
+    )
+      return index
   }
   return undefined
 }
 
 /**
- * Finds the lines of the declaration that begins on a line: its signature, continued over lines, and the brace block it opens.
+ * Finds the lines of the declaration that begins on a line: its signature, continued over lines, and the brace block it opens. Overloads of the same function or method run on to its implementation.
  * @param lines - Complete source, indexed from zero.
  * @param declarationLine - The declaration's first line.
  * @returns The declaration's first and last lines; `undefined` when its block does not close, or its signature does not end, within {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines.
@@ -198,27 +256,30 @@ function declarationRange(
     declarationLine + WIKI_CONTEXT_UNIT_LINE_LIMIT,
   )
   for (let index = declarationLine; index < limit; index++) {
-    // The block opens on the signature line that ends with the body's `{`.
+    // The block opens on the signature line that ends with a block's `{`.
     if (opensBlock(lines[index]!)) {
-      const last = blockCloseLine(lines, indentation, index, declarationLine)
+      const last = blockCloseLine(lines, index, declarationLine)
       return last === undefined ? undefined : { first: declarationLine, last }
     }
-    // A signature that opens no block ends at its last continued line.
-    if (!continuesSignature(lines[index + 1], indentation))
+    // A signature that opens no block ends at its last continued line, unless an overload or the implementation of the same name follows.
+    if (
+      !continuesSignature(lines[index + 1], indentation) &&
+      !declaresSameName(lines[declarationLine]!, lines[index + 1])
+    )
       return { first: declarationLine, last: index }
   }
   return undefined
 }
 
 /**
- * Finds the line a Wiki excerpt anchor makes a code unit of: for a line inside a comment, the code line right after the comment; for a code line, itself when it opens a brace block or begins a `function`, `class`, `interface` or `enum` declaration.
+ * Finds the line a Wiki excerpt anchor makes a code unit of: for a line inside a comment, the code line right after the comment (past any one-line decorators); for a code line, itself when it begins a declaration or opens a brace block that is no control-flow statement.
  * @param lines - Complete source, indexed from zero.
  * @param anchor - The anchor line.
  * @param comment - The comment the anchor lies in, if any.
- * @returns The declaration's first line; `undefined` when a comment documents no code (a blank line, another comment or the end of the source follows it) or a code line begins no unit.
+ * @returns The declaration's first line; `undefined` when a comment documents no code (a blank line, another comment or the end of the source follows it), or a code line begins no declaration (a control-flow line such as `if (ready) {`, or a plain statement).
  * @example
  * declarationLineOf(['// Adds one.', 'function add() {', '}'], 0, { first: 0, last: 0 }) // => 1
- * declarationLineOf(['run()'], 0, undefined) // => undefined
+ * declarationLineOf(['if (ready) {', '}'], 0, undefined) // => undefined
  */
 function declarationLineOf(
   lines: readonly string[],
@@ -227,11 +288,15 @@ function declarationLineOf(
 ): number | undefined {
   if (!comment) {
     const line = lines[anchor]!
-    return opensBlock(line) || DECLARATION_START.test(line.trim())
+    const text = line.trim()
+    if (DECLARATION_START.test(text)) return anchor
+    return opensBlock(line) && !CONTROL_FLOW_START.test(text)
       ? anchor
       : undefined
   }
-  const next = comment.last + 1
+  let next = comment.last + 1
+  // Decorators stand between a comment and the class it documents.
+  while (isDecorator(lines[next])) next++
   // The comment documents the code that follows it directly.
   return next < lines.length &&
     lines[next]!.trim() &&
@@ -241,15 +306,15 @@ function declarationLineOf(
 }
 
 /**
- * Finds the lines of the code unit a line of a long source belongs to, so a Wiki question's excerpt carries a whole function, class or block instead of one line of it.
- * A line inside a comment brings the declaration the comment documents, with its brace block; a code line that opens a brace block, or begins a `function`, `class`, `interface` or `enum` declaration, brings that declaration and its block. The comment directly above the declaration comes too when both fit in {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the anchor line comes with the declaration alone.
+ * Finds the lines of the code unit a line of a long source belongs to, so a Wiki question's excerpt carries a whole function, class or object instead of one line of it.
+ * A line inside a comment brings the declaration the comment documents, with its brace block; a code line that begins a declaration, or opens a brace block other than a control-flow statement, brings that declaration and its block. The comment directly above the declaration (past one-line decorators) comes too when both fit in {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the anchor line comes with the declaration alone.
  * Why: Cycle 0122 (F3) — the excerpt of P03's `createStore.ts` held the doc comments that matched a question and not the function body that answered it, so the editor model called the behavior unknown.
  * Called by {@link selectWikiSourceLines} for each ranked anchor of a source longer than its excerpt budget.
  * @param lines - Complete verified source, indexed from zero.
  * @param anchor - A zero-based line that holds a question word or a route identifier.
  * @returns
  * - The unit's zero-based lines in order, the anchor included
- * - `undefined` when the anchor documents or opens no declaration, the declaration's block does not close at its indentation, or the declaration alone passes {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines
+ * - `undefined` when the anchor documents or begins no declaration, the declaration's block does not close at its indentation, or the declaration alone passes {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines
  * @example
  * codeUnitOfLine(['/**', ' * Sends the state once.', ' *\/', 'subscribe(observer) {', '  observer.next(state)', '},'], 1)
  * // => [0, 1, 2, 3, 4, 5]

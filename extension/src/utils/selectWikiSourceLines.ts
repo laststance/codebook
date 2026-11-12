@@ -41,7 +41,18 @@ export function selectWikiSourceLines(
   const anchors = matches
     .slice(0, WIKI_CONTEXT_LINE_LIMIT)
     .map((match) => match.index)
-  const selected = codeUnitsOfAnchors(lines, anchors)
+  // Each route identifier's first-ranked line is the one a unit must not push out.
+  const identifierAnchors = [
+    ...new Set(
+      priorityTerms.flatMap((term) => {
+        const anchor = anchors.find((index) =>
+          lines[index]!.toLowerCase().includes(term),
+        )
+        return anchor === undefined ? [] : [anchor]
+      }),
+    ),
+  ]
+  const selected = codeUnitsOfAnchors(lines, anchors, identifierAnchors)
   // Expand all matching regions together so an early function cannot consume every surrounding line.
   for (
     let distance = 1;
@@ -65,16 +76,19 @@ export function selectWikiSourceLines(
 /**
  * Gives each ranked anchor, in rank order, the code unit it documents or opens ({@link codeUnitOfLine}) while the excerpt budget allows, and its own line otherwise.
  * Why: Cycle 0122 (F3) — when 80 or more lines of a long file matched, the excerpt was 80 single lines, and a matching doc comment reached the model without the function it documents.
+ * A unit is admitted only while a place stays for the first-ranked line of every route identifier not yet selected, so whole functions never push out an identifier the route reply named (Cycle 0122 review round). One place per identifier, not per matching line: an identifier such as `dispatch` matches dozens of lines, and reserving them all would leave no room for the unit that answers (F3 again).
  * Called by {@link selectWikiSourceLines} before it fills the rest of the budget with lines around the anchors.
  * @param lines - Complete verified source, indexed from zero.
  * @param anchors - Matching zero-based lines, best first.
+ * @param identifierAnchors - The first-ranked anchor of each route identifier.
  * @returns The selected zero-based lines, at most {@link WIKI_CONTEXT_LINE_LIMIT}; lines already selected cost nothing again.
  * @example
- * codeUnitsOfAnchors(['// Adds one.', 'function add(value) {', '  return value + 1', '}'], [0]) // => Set { 0, 1, 2, 3 }
+ * codeUnitsOfAnchors(['// Adds one.', 'function add(value) {', '  return value + 1', '}'], [0], []) // => Set { 0, 1, 2, 3 }
  */
 function codeUnitsOfAnchors(
   lines: readonly string[],
   anchors: readonly number[],
+  identifierAnchors: readonly number[],
 ): Set<number> {
   const selected = new Set<number>()
   for (const anchor of anchors) {
@@ -84,9 +98,15 @@ function codeUnitsOfAnchors(
     const unitLines = (codeUnitOfLine(lines, anchor) ?? [anchor]).filter(
       (index) => !selected.has(index),
     )
+    // The first line of each route identifier not yet selected keeps a place, so a unit never pushes one out (Cycle 0119's priority rule).
+    const reserved = identifierAnchors.filter(
+      (identifierAnchor) =>
+        !selected.has(identifierAnchor) &&
+        !unitLines.includes(identifierAnchor),
+    ).length
     // A unit that does not fit the budget left gives way to its anchor line.
     const admitted =
-      selected.size + unitLines.length <= WIKI_CONTEXT_LINE_LIMIT
+      selected.size + unitLines.length + reserved <= WIKI_CONTEXT_LINE_LIMIT
         ? unitLines
         : [anchor]
     for (const index of admitted) selected.add(index)
