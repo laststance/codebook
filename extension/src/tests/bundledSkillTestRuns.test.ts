@@ -29,7 +29,7 @@ test('the bundled skill declares version 1.0.74 in its metadata', async () => {
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.102"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.103"\n'))
 })
 
 // Value: protects=a test stop explained in chat, never through codebook_explain, which belongs to the browser profile; fails_when=the skill tells the chat to save every committed pause with codebook_explain, which refuses a test stop; why_new=1.0.45 said codebook_explain at every pause of any run (C49-7, AC9); seam=none; no_claim=the refusal codebook_explain gives a test stop (service tests)
