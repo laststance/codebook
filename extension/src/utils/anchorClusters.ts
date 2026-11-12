@@ -1,6 +1,7 @@
 import {
   WIKI_CONTEXT_UNIT_LINE_LIMIT,
   WIKI_CONTEXT_WINDOW_LEAD_LINES,
+  WIKI_CONTEXT_WINDOW_TRAIL_LINES,
 } from '../constants'
 
 import { enclosingLongDeclarationOf, type LineRange } from './codeUnitOfLine'
@@ -12,9 +13,11 @@ export interface LongFunctionWindow {
   declarationLine: number
   /** The anchors grouped to the function by {@link enclosingLongDeclarationOf}, best-ranked first. */
   anchors: number[]
-  /** The window's zero-based lines in order, the declaration line first: at most {@link WIKI_CONTEXT_UNIT_LINE_LIMIT}, never past the closing line. */
+  /** The lines the function brings when the route reply does not name it ({@link windowOfLongFunction}), in order, the declaration line first: at most {@link WIKI_CONTEXT_UNIT_LINE_LIMIT}, never past the closing line. */
   window: number[]
-  /** How many different route identifiers the anchors name ({@link distinctRouteIdentifierCount}). */
+  /** The lines the function brings when the route reply names it ({@link namedWindowOfLongFunction}), in the same form. */
+  namedWindow: number[]
+  /** How many different route identifiers the anchors name ({@link distinctRouteIdentifierCount}); one matched only through its last part counts half. */
   distinctIdentifiers: number
 }
 
@@ -34,14 +37,14 @@ function linesBetween(first: number, last: number): number[] {
 }
 
 /**
- * Picks the lines a long function brings for the anchors inside it: its head when every anchor lies in its first {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the declaration line and the span of {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} - 1 lines that holds the most anchors, starting up to {@link WIKI_CONTEXT_WINDOW_LEAD_LINES} lines before one of them (on a tie the earliest start, which keeps the longest lead). The closing line cuts the window short; it never shifts it.
- * Why: Cycle 0124 (F3, Issue #318) — the head of P06's 68-line `handleContextAction` (lines 1230-1269) held none of the copy and paste lines that the route identifiers matched (1270-1277).
- * Called by {@link longFunctionWindowsOf} for each function.
+ * Picks the lines a long function brings for the anchors inside it: its head when every anchor lies in its first {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the declaration line and the span of {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} - 1 lines that holds the most anchors, starting up to {@link WIKI_CONTEXT_WINDOW_LEAD_LINES} lines before one of them (on a tie the earliest start, which keeps the longest lead) and ending {@link WIKI_CONTEXT_WINDOW_TRAIL_LINES} lines after the last anchor it holds. The closing line cuts the window short; it never shifts it.
+ * Why: Cycle 0124 (F3, Issue #318) — the head of P06's 68-line `handleContextAction` (lines 1230-1269) held none of the copy and paste lines that the route identifiers matched (1270-1277). Its window then ran on to the function's closing line (1297), and in the `/ship` native check the lines it took cut `pasteItem`'s window inside its create branch.
+ * Called by {@link longFunctionWindowsOf} for each function, directly and through {@link namedWindowOfLongFunction}.
  * @param declaration - The function's declaration line and closing line.
  * @param anchors - The anchors inside the function, in any order.
  * @returns The window's zero-based lines in order, the declaration line first.
  * @example
- * windowOfLongFunction({ first: 0, last: 149 }, [100, 104]) // => [0, 98, 99, ..., 136]
+ * windowOfLongFunction({ first: 0, last: 149 }, [100, 104]) // => [0, 98, 99, ..., 108]
  * windowOfLongFunction({ first: 0, last: 120 }, [41, 79]) // => [0, 41, 42, ..., 79]: one span holds both anchors
  */
 function windowOfLongFunction(
@@ -73,36 +76,79 @@ function windowOfLongFunction(
   const start = starts.reduce((best, candidate) =>
     anchorsFrom(candidate) > anchorsFrom(best) ? candidate : best,
   )
-  return [first, ...linesBetween(start, Math.min(start + spanLength - 1, last))]
+  const spanLast = Math.min(start + spanLength - 1, last)
+  // The window ends a few lines after the last anchor in its span: the lines past it hold no identifier the reply named.
+  const lastAnchor = inside.filter((anchor) => anchor <= spanLast).at(-1)!
+  return [
+    first,
+    ...linesBetween(
+      start,
+      Math.min(spanLast, lastAnchor + WIKI_CONTEXT_WINDOW_TRAIL_LINES),
+    ),
+  ]
 }
 
 /**
- * Counts how many of the route identifiers a function's anchor lines name, each once. A term that is the last part of another listed dotted identifier (the `get` that `routeTermsOf` adds after `chrome.bookmarks.get`) is that identifier's match, not one of its own, as in the line scores.
- * Why: Cycle 0124 (F3, Issue #318) — the function that holds the most different identifiers the editor model named is the one that answers, not the one with most lines of one short name.
+ * Picks the lines a long function brings when the route reply names it: its head (the signature and the opening statements), unless more of its anchors lie past the head than in it; then the window over its anchors ({@link windowOfLongFunction}).
+ * Why: Cycle 0124 (F3, Issue #318) — the head of P06's route-named `handleContextAction` (lines 1230-1269) held none of the copy and paste lines its anchors matched (1270-1277). And in the `/ship` review a named `pasteItem` whose `showToast` anchors lay at lines 1329 and 1339, one inside its head and one a line past it, lost its create branch (1309-1321) to the window over them.
+ * Called by {@link longFunctionWindowsOf} for each function.
+ * @param declaration - The function's declaration line and closing line.
+ * @param anchors - The anchors inside the function, in any order.
+ * @returns The lines in order, the declaration line first.
+ * @example
+ * namedWindowOfLongFunction({ first: 0, last: 43 }, [30, 40]) // => [0, 1, ..., 39]: one anchor in the head, one past it
+ * namedWindowOfLongFunction({ first: 0, last: 67 }, [40, 46]) // => [0, 38, 39, ..., 50]
+ */
+function namedWindowOfLongFunction(
+  declaration: LineRange,
+  anchors: readonly number[],
+): number[] {
+  const headLast = Math.min(
+    declaration.first + WIKI_CONTEXT_UNIT_LINE_LIMIT - 1,
+    declaration.last,
+  )
+  const inHead = anchors.filter((anchor) => anchor <= headLast).length
+  // The head gives way only when most of the anchors lie past it.
+  return inHead >= anchors.length - inHead
+    ? linesBetween(declaration.first, headLast)
+    : windowOfLongFunction(declaration, anchors)
+}
+
+/**
+ * Counts how many of the route identifiers a function's anchor lines name, each once. A term that is the last part of another listed dotted identifier (the `get` that `routeTermsOf` adds after `chrome.bookmarks.get`) is that identifier's match, not one of its own; when the anchor lines hold the member but never the dotted name, the identifier counts half, since the member may be the identifier reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create` for the named `chrome.bookmarks.create`).
+ * Why: Cycle 0124 (F3, Issue #318) — the function that holds the most different identifiers the editor model named is the one that answers, not the one with most lines of one short name. The `/ship` review found that a function calling `save(item)` and `load(item)` for the named `api.save` and `api.load` counted none, so functions holding one `log` or `warn` ranked first; counting such members whole instead let P06's functions calling `chrome.tabs.create` rank above `pasteItem` for 25 of 984 route replies.
  * Called by {@link longFunctionWindowsOf} to rank functions.
  * @param lines - Complete verified source, indexed from zero.
  * @param anchors - The function's anchors.
  * @param priorityTerms - The identifiers the route reply named, lowercased.
- * @returns The number of distinct identifiers the anchor lines hold.
+ * @returns The number of distinct identifiers the anchor lines hold, a half for each one held only through its last part.
  * @example
  * distinctRouteIdentifierCount(['save(a)', 'x.load(b)'], [0, 1], ['save', 'x.load', 'load']) // => 2
+ * distinctRouteIdentifierCount(['save(a)', 'load(b)'], [0, 1], ['api.save', 'save', 'api.load', 'load']) // => 1: two members alone, half each
  */
 function distinctRouteIdentifierCount(
   lines: readonly string[],
   anchors: readonly number[],
   priorityTerms: readonly string[],
 ): number {
-  const ownTerms = priorityTerms.filter(
-    (term) =>
-      !priorityTerms.some(
-        (other) => other !== term && other.endsWith(`.${term}`),
-      ),
-  )
-  return ownTerms.filter((term) =>
+  const matchedTerms = priorityTerms.filter((term) =>
     anchors.some((anchor) =>
       matchesRouteIdentifier(lines[anchor]!.toLowerCase(), term),
     ),
-  ).length
+  )
+  const dottedIdentifierOf = (term: string): string | undefined =>
+    priorityTerms.find((other) => other !== term && other.endsWith(`.${term}`))
+  const ownIdentifiers = new Set(
+    matchedTerms.filter((term) => !dottedIdentifierOf(term)),
+  )
+  // A member matched without its dotted identifier may be that identifier reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create`), so it counts half.
+  const memberOnlyIdentifiers = new Set(
+    matchedTerms.flatMap((term) => {
+      const dotted = dottedIdentifierOf(term)
+      return dotted && !ownIdentifiers.has(dotted) ? [dotted] : []
+    }),
+  )
+  return ownIdentifiers.size + memberOnlyIdentifiers.size / 2
 }
 
 /**
@@ -116,7 +162,7 @@ function distinctRouteIdentifierCount(
  * @returns One entry per long function holding at least one anchor, ranked.
  * @example
  * longFunctionWindowsOf(['function load() {', ...fortyOneStatements, '}'], [20, 25], ['step'])
- * // => [{ declarationLine: 0, anchors: [20, 25], window: [0, 1, ..., 39], distinctIdentifiers: 1 }]
+ * // => [{ declarationLine: 0, anchors: [20, 25], window: [0, 1, ..., 39], namedWindow: [0, 1, ..., 39], distinctIdentifiers: 1 }]
  */
 export function longFunctionWindowsOf(
   lines: readonly string[],
@@ -140,6 +186,7 @@ export function longFunctionWindowsOf(
       declarationLine: declaration.first,
       anchors: inside,
       window: windowOfLongFunction(declaration, inside),
+      namedWindow: namedWindowOfLongFunction(declaration, inside),
       distinctIdentifiers: distinctRouteIdentifierCount(
         lines,
         inside,

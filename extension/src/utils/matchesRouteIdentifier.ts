@@ -5,7 +5,7 @@ const IDENTIFIER_CHARACTER = /[\p{ID_Continue}$\u200C\u200D]/u
  * Tells whether a lowercased source line holds a route identifier as a whole identifier, not inside a longer name.
  * Why: Cycle 0124 (F3, Issue #318) — `get`, the last part of `chrome.bookmarks.get`, matched 178 lines of P06's `fullpage.js` as a substring (`getElementById`, `targetId`) but only 14 as an identifier, and the functions whose names hold `get` filled a Wiki question's excerpt.
  * The identifier's own dots stay part of it, so `state.clipboard` matches in `this.state.clipboard.id`.
- * Identifier characters are those JavaScript allows in a name ({@link IDENTIFIER_CHARACTER}), any script included.
+ * Identifier characters are those JavaScript allows in a name ({@link IDENTIFIER_CHARACTER}), any script included, read as whole characters: `𐐨get` is one name too, although `𐐨` takes two UTF-16 code units.
  * Called by {@link selectWikiSourceLines}'s line scores, kept lines and route anchors, and by the distinct-identifier count of {@link longFunctionWindowsOf}.
  * @param lowercasedLine - One source line, lowercased.
  * @param term - A lowercased route identifier (letters, digits, `_`, `$` and dots), as `routeTermsOf` returns it.
@@ -26,8 +26,15 @@ export function matchesRouteIdentifier(
     start !== -1;
     start = lowercasedLine.indexOf(term, start + 1)
   ) {
-    const before = lowercasedLine[start - 1]
-    const after = lowercasedLine[start + term.length]
+    // Whole characters, not UTF-16 halves: a character outside the Basic Multilingual Plane is two code units (Cycle 0124 /ship review).
+    const before = Array.from(
+      lowercasedLine.slice(Math.max(0, start - 2), start),
+    ).at(-1)
+    const afterCodePoint = lowercasedLine.codePointAt(start + term.length)
+    const after =
+      afterCodePoint === undefined
+        ? undefined
+        : String.fromCodePoint(afterCodePoint)
     if (
       (before === undefined || !IDENTIFIER_CHARACTER.test(before)) &&
       (after === undefined || !IDENTIFIER_CHARACTER.test(after))

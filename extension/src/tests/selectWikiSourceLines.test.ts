@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { longFunctionWindowsOf } from '../utils/anchorClusters'
-import { longDeclarationHeadOfLine } from '../utils/codeUnitOfLine'
+import {
+  enclosingLongDeclarationOf,
+  longDeclarationHeadOfLine,
+} from '../utils/codeUnitOfLine'
 import { declaresPriorityTerm } from '../utils/declaresPriorityTerm'
 import { matchesRouteIdentifier } from '../utils/matchesRouteIdentifier'
 import { selectWikiSourceLines } from '../utils/selectWikiSourceLines'
@@ -1018,6 +1021,7 @@ const PASTE_CREATE_BRANCH_OFFSETS = Array.from(
   (_, index) => 10 + index,
 )
 
+// Value (extra row `x`, empty term): protects=an empty route identifier matches no line; fails_when=the boundary rule treats the empty term as found at every position; why_new=new row in the whole-identifier table below; seam=none; no_claim=none beyond protects
 // Value: protects=a route identifier marks a line only as a whole identifier, so `get` (the last part of `chrome.bookmarks.get`) no longer marks every getElementById or targetId line; fails_when=route identifiers match inside longer names again (Cycle 0124 F3: `get` matched 178 lines of P06's fullpage.js, 14 as an identifier), also names written with letters outside ASCII (review round); why_new=Cycle 0124 F3, new util; seam=none; no_claim=lines the reader has not lowercased
 test('a route identifier matches a line only as a whole identifier', () => {
   // Arrange
@@ -1026,6 +1030,7 @@ test('a route identifier matches a line only as a whole identifier', () => {
     ['const el = document.getelementbyid(x)', 'get', false],
     ['const targetid = 1', 'get', false],
     ['const πget = 1', 'get', false],
+    ['x', '', false],
   ]
 
   // Act
@@ -1034,7 +1039,7 @@ test('a route identifier matches a line only as a whole identifier', () => {
   )
 
   // Assert
-  assert.deepEqual(results, [true, false, false, false])
+  assert.deepEqual(results, [true, false, false, false, false])
 })
 
 // Value: protects=a dotted route identifier read through `this.` still marks its line after the boundary rule; fails_when=the boundary rule treats the `.` before a dotted identifier as part of a longer name and drops the line; why_new=Cycle 0124 F3 compatibility guard (passes before and after); seam=none; no_claim=identifiers that the route reply never names
@@ -1097,7 +1102,7 @@ test('a route naming only identifiers inside a long function brings the window o
     )
 })
 
-// Value: protects=a route-named long function whose anchors lie past its first 40 lines (P06 handleContextAction's copy and paste cases): it brings its declaration and the window around those anchors; fails_when=it brings its first 40 lines, which hold none of the anchors (Cycle 0123's head rule); why_new=Cycle 0124 F3; seam=none; no_claim=where the model looks inside the window
+// Value: protects=a route-named long function whose anchors lie past its first 40 lines (P06 handleContextAction's copy and paste cases): it brings its declaration and the window around those anchors, which ends four lines after the last of them (window rule version 3, Cycle 0124 /ship); fails_when=it brings its first 40 lines, which hold none of the anchors (Cycle 0123's head rule); why_new=Cycle 0124 F3; seam=none; no_claim=where the model looks inside the window
 test('a route-named long function whose anchors lie past its head brings the window around them', () => {
   // Arrange
   const handler = [
@@ -1121,7 +1126,7 @@ test('a route-named long function whose anchors lie past its head brings the win
   )
 
   // Assert
-  for (const line of [0, 47, 52, 69])
+  for (const line of [0, 47, 52, 58])
     assert.ok(selected.includes(line), `line ${line + 1} is selected`)
   assert.equal(
     selected.includes(20),
@@ -1164,18 +1169,16 @@ test('a route-named long function whose window is in brings no head as well', ()
   assert.equal(selected.includes(30), false, "the head's line 31 stays out")
 })
 
-// Value: protects=a long function's window ends at the function's closing line, so it never spends places on the next function (Cycle 0123's prototype window of P06 setupKeyboardShortcuts ran 21 lines past its end); fails_when=the window keeps its full length past the closing line (the window itself is checked, so no budget or fill can hide it), or no window comes; why_new=Cycle 0124 F3; seam=none; no_claim=the lines the fill adds when places remain
+// Value: protects=a long function's window ends at the function's closing line, so it never spends places on the next function (Cycle 0123's prototype window of P06 setupKeyboardShortcuts ran 21 lines past its end); fails_when=the window runs on past the closing line, here the four lines after the last anchor that would reach into the next function (the window itself is checked, so no budget or fill can hide it), or no window comes; why_new=Cycle 0124 F3; seam=none; no_claim=the lines the fill adds when places remain
 test('a long function window stops at the function closing line', () => {
   // Arrange
   const routine = [
     'function longRoutine() {',
     ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
     '  save(record)',
-    '  log(record)',
-    '  check(record)',
-    '  verify(record)',
+    ...Array.from({ length: 10 }, (_, index) => `  check(${index})`),
     '  publish(record)',
-    ...Array.from({ length: 10 }, (_, index) => `  finish(${index})`),
+    '  log(record)',
     '}',
   ]
   const lines = [
@@ -1188,19 +1191,19 @@ test('a long function window stops at the function closing line', () => {
   const selected = selectWikiSourceLines(lines, ['filler'], ['save', 'publish'])
   const [routineWindow] = longFunctionWindowsOf(
     lines,
-    [46, 50],
+    [46, 57],
     ['save', 'publish'],
   )
 
   // Assert
-  for (let line = 44; line <= 61; line++)
+  for (let line = 44; line <= 59; line++)
     assert.ok(
       selected.includes(line),
       `line ${line + 1} of the window is selected`,
     )
   assert.deepEqual(routineWindow?.window, [
     0,
-    ...Array.from({ length: 18 }, (_, offset) => 44 + offset),
+    ...Array.from({ length: 16 }, (_, offset) => 44 + offset),
   ])
 })
 
@@ -1395,4 +1398,401 @@ test('a long function holding one route identifier anchor brings no window', () 
   // Assert
   assert.ok(selected.includes(30), 'the anchor line is selected')
   assert.equal(selected.includes(10), false, 'the function body stays out')
+})
+
+// Value: protects=the long function that holds an anchor is found with its first and closing lines, and no function is claimed when the anchor is at indentation 0 or the block never closes; fails_when=the walk-up claims a function it should not, or loses the closing line (Cycle 0124 F3); why_new=new-code edge cases of enclosingLongDeclarationOf, only reached through whole-selection tests before; seam=none; no_claim=anchors in an indented block after a closed long function (that branch cannot be reached: passing the closer lowers the bound below the declaration)
+test('enclosingLongDeclarationOf names the long function holding an anchor and nothing else', () => {
+  // Arrange
+  const inside = functionOf('load', 50)
+  const dedented = [...functionOf('load', 50, '  ').slice(0, 49), 'tail()']
+  const cases: [
+    string[],
+    number,
+    { first: number; last: number } | undefined,
+  ][] = [
+    // An anchor in the body of a 50-line function.
+    [inside, 20, { first: 0, last: 49 }],
+    // A body left by a dedent before any closing line.
+    [dedented, 20, undefined],
+    // The closing line sits at indentation 0, so no block can hold it.
+    [inside, 49, undefined],
+  ]
+
+  // Act
+  const results = cases.map(([lines, anchor]) =>
+    enclosingLongDeclarationOf(lines, anchor),
+  )
+
+  // Assert
+  assert.deepEqual(results, [{ first: 0, last: 49 }, undefined, undefined])
+})
+
+// Value: protects=only the anchors inside one long function form its group, a top-level anchor joins none; fails_when=an outside anchor is grouped into the function or makes its own group; why_new=new-code edge of longFunctionWindowsOf grouping; seam=none; no_claim=the window lines of the group
+test('a top-level anchor beside anchors inside a long function forms no group of its own', () => {
+  // Arrange
+  const lines = [...functionOf('load', 50), 'const outside = step(0)']
+
+  // Act
+  const windows = longFunctionWindowsOf(lines, [10, 20, 50], ['step'])
+
+  // Assert
+  assert.deepEqual(
+    windows.map(({ declarationLine, anchors }) => ({
+      declarationLine,
+      anchors,
+    })),
+    [{ declarationLine: 0, anchors: [10, 20] }],
+  )
+})
+
+// Value: protects=two long functions with equal identifier and anchor counts rank by their anchors' order, the better-ranked anchor's function first; fails_when=the last tie-break is dropped for declaration order; why_new=new-code tie-break of longFunctionWindowsOf; seam=none; no_claim=ranking when counts differ
+test('long functions with equal counts rank by the better-ranked anchor', () => {
+  // Arrange
+  const lines = [...functionOf('first', 50), ...functionOf('second', 50)]
+
+  // Act
+  const windows = longFunctionWindowsOf(lines, [60, 10], ['step'])
+
+  // Assert
+  assert.deepEqual(
+    windows.map((window) => window.declarationLine),
+    [50, 0],
+  )
+})
+
+// Value: protects=on a span tie in one long function the earliest start (longest lead) is the window, which ends four lines after the anchor it holds; fails_when=the tie goes to a later start or the lead is lost; why_new=new-code tie rule of windowOfLongFunction, asserted on window; seam=none; no_claim=windows when one span holds both anchors
+test('two anchors a span too far apart inside a long function give the window starting at the earlier anchor lead', () => {
+  // Arrange
+  const lines = functionOf('longRoutine', 121)
+
+  // Act
+  const [routineWindow] = longFunctionWindowsOf(lines, [60, 100], ['step'])
+
+  // Assert
+  assert.deepEqual(routineWindow?.window, [
+    0,
+    ...Array.from({ length: 7 }, (_, offset) => 58 + offset),
+  ])
+})
+
+// Value: protects=P06's native 6F route reply (state.clipboard, handleContextAction, state.panes): the named dispatcher's window ends four lines after its paste case, so pasteItem's head fits whole beside it and the keyboard handler's window; fails_when=the dispatcher's window runs on to its closing line and pasteItem's head is cut inside its create branch (Cycle 0124 /ship native check, VS Code: the answer called what a paste creates unknown, citing lines 1302-1310); why_new=Cycle 0124 /ship QA finding; seam=none; no_claim=the routes a real model sends
+test('a route naming the dispatcher, the clipboard and the panes still leaves the paste function its create branch', () => {
+  // Arrange
+  const paneStateLines = (pane: number): string[] => [
+    `    ${pane}: {`,
+    `      currentFolderId: '${pane}',`,
+    `      history: ['${pane}'],`,
+    '      historyIndex: 0,',
+    '      selectedItems: new Set(),',
+    '    },',
+  ]
+  const stateObject = [
+    'const state = {',
+    '  panes: {',
+    ...paneStateLines(1),
+    ...paneStateLines(2),
+    '  },',
+    '  activePane: 1,',
+    "  viewMode: 'single',",
+    '  clipboard: null,',
+    '  undoStack: [],',
+    '}',
+  ]
+  const dispatcher = [
+    'async function handleContextAction(action, targetId, paneNum) {',
+    '  switch (action) {',
+    ...Array.from({ length: 37 }, (_, index) => `    step(${index})`),
+    "    case 'copy':",
+    "      state.clipboard = { action: 'copy', id: targetId }",
+    "      showToast('Item copied to clipboard', 'info')",
+    '      break',
+    "    case 'paste':",
+    '      if (state.clipboard) {',
+    '        await pasteItem(paneNum)',
+    '      }',
+    '      break',
+    ...Array.from({ length: 18 }, (_, index) => `    later(${index})`),
+    '  }',
+    '}',
+  ]
+  const keyboard = [
+    'function setupKeyboardShortcuts() {',
+    "  document.addEventListener('keydown', (e) => {",
+    "    if (e.target.matches('input')) return",
+    '',
+    '    const paneNum = state.activePane',
+    '    const paneState = state.panes[paneNum]',
+    ...Array.from({ length: 38 }, (_, index) => `    check(${index})`),
+    "    if (e.key === 'c') {",
+    "      handleContextAction('copy', firstSelected, paneNum)",
+    '    }',
+    '',
+    "    if (e.key === 'v' && state.clipboard) {",
+    '      pasteItem(paneNum)',
+    '    }',
+    ...Array.from({ length: 8 }, (_, index) => `    tail(${index})`),
+    '  })',
+    '}',
+  ]
+  const lines = [
+    ...otherLines(10),
+    ...stateObject,
+    'const firstPane = state.panes[1]',
+    ...otherLines(20),
+    'const secondPane = state.panes[2]',
+    ...dispatcher,
+    '',
+    ...pasteItemLines(),
+    '',
+    ...keyboard,
+    ...otherLines(20),
+  ]
+  const pasteStart = lines.indexOf('async function pasteItem(paneNum) {')
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    [
+      'state.clipboard',
+      'clipboard',
+      'handlecontextaction',
+      'state.panes',
+      'panes',
+    ],
+  )
+
+  // Assert
+  for (const offset of PASTE_CREATE_BRANCH_OFFSETS)
+    assert.ok(
+      selected.includes(pasteStart + offset),
+      `pasteItem line ${offset + 1} is selected`,
+    )
+})
+
+// Value: protects=a route-named long function holding another named identifier still brings its window when single-line declarations of that identifier tie with it and come first by line order; fails_when=the first of those single lines lets the clusters in, they fill the excerpt and the named function keeps only its declaration line (P06 route pasteItem with currentFolderId: 0 of 13 create lines); why_new=Cycle 0124 /ship review (brute force over route replies); seam=none; no_claim=named functions that hold no other route identifier
+test('a named long function tied with earlier single-line declarations of another route identifier still brings its window', () => {
+  // Arrange
+  const paneOpener = (name: string): string[] => [
+    `function ${name}(paneNum) {`,
+    '  const currentFolderId = state.panes[paneNum].currentFolderId',
+    ...Array.from({ length: 20 }, (_, index) => `  render(${index})`),
+    '  load(currentFolderId)',
+    ...Array.from({ length: 26 }, (_, index) => `  draw(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...otherLines(5),
+    ...paneOpener('openLeftPane'),
+    ...paneOpener('openRightPane'),
+    ...pasteItemLines(),
+    ...otherLines(20),
+  ]
+  const pasteStart = lines.indexOf('async function pasteItem(paneNum) {')
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['pasteitem', 'currentfolderid'],
+  )
+
+  // Assert
+  for (const offset of PASTE_CREATE_BRANCH_OFFSETS)
+    assert.ok(
+      selected.includes(pasteStart + offset),
+      `pasteItem line ${offset + 1} is selected`,
+    )
+})
+
+// Value: protects=a route-named long function with one anchor inside its first 40 lines and one just past them brings its head, the create branch included; fails_when=the window moves to the span over both anchors and leaves the code between the declaration and them out (P06 route pasteItem with showToast: 0 of 13 create lines); why_new=Cycle 0124 /ship review (brute force over route replies); seam=none; no_claim=named functions whose anchors lie mostly past the head (tested above)
+test('a route-named function with one anchor in its head and one just past it brings its head', () => {
+  // Arrange
+  const lines = [
+    ...Array.from(
+      { length: 70 },
+      (_, index) => `showToast('Message ${index}', 'info')`,
+    ),
+    ...pasteItemLines(),
+    ...otherLines(10),
+  ]
+  const pasteStart = lines.indexOf('async function pasteItem(paneNum) {')
+
+  // Act
+  const selected = selectWikiSourceLines(lines, [], ['pasteitem', 'showtoast'])
+
+  // Assert
+  for (const offset of PASTE_CREATE_BRANCH_OFFSETS)
+    assert.ok(
+      selected.includes(pasteStart + offset),
+      `pasteItem line ${offset + 1} is selected`,
+    )
+})
+
+// Value: protects=a route-named long function that holds none of the other identifiers the reply named brings its head only after the long functions holding them, so their windows come first; fails_when=the named function's first 40 lines take places at its rank and a function holding two named-identifier lines gets none (P06 routes naming handleContextAction for a paste question); why_new=Cycle 0124 /ship review (brute force over route replies); seam=none; no_claim=named functions that hold route identifiers
+test('a named long function holding no other route identifier brings its head after the functions holding them', () => {
+  // Arrange
+  const worker = (name: string): string[] => [
+    `function ${name}() {`,
+    '  const token = read()',
+    ...Array.from({ length: 19 }, (_, index) => `  prepare(${index})`),
+    '  send(token)',
+    ...Array.from({ length: 27 }, (_, index) => `  finish(${index})`),
+    '}',
+  ]
+  const lines = [
+    ...functionOf('dispatch', 60),
+    ...worker('firstWorker'),
+    ...worker('secondWorker'),
+    ...otherLines(10),
+  ]
+  const secondSend = lines.lastIndexOf('  send(token)')
+
+  // Act
+  const selected = selectWikiSourceLines(lines, [], ['dispatch', 'token'])
+
+  // Assert
+  assert.ok(
+    selected.includes(secondSend),
+    "the second worker's send line is selected",
+  )
+  assert.ok(
+    selected.includes(secondSend - 10),
+    "the second worker's window is selected",
+  )
+  assert.equal(selected.includes(20), false, "dispatch's body stays out")
+})
+
+// Value: protects=a long function's window past its head ends four lines after the last anchor in its span, so a window does not spend its 39 lines on code that holds no named identifier; fails_when=the window runs on to the end of its 39-line span (window rule version 2); why_new=Cycle 0124 /ship native check (window rule version 3); seam=none; no_claim=heads, which keep their 40 lines
+test('a window past the head ends four lines after its last anchor', () => {
+  // Arrange
+  const lines = functionOf('longRoutine', 150)
+
+  // Act
+  const [routineWindow] = longFunctionWindowsOf(lines, [100, 104], ['step'])
+
+  // Assert
+  assert.deepEqual(routineWindow?.window, [
+    0,
+    ...Array.from({ length: 11 }, (_, offset) => 98 + offset),
+  ])
+})
+
+// Value: protects=a long function whose signature spans several lines groups its anchors under the line where the signature begins, so a route that names it brings one window and the line between its anchors; fails_when=the walk up stops at the signature's `) {`, the named head and the window keyed there both take places, and line 81 is cut (Cycle 0124 /ship review, Codex P1); why_new=Cycle 0124 /ship review; seam=none; no_claim=arrow functions assigned to a const
+test('a long function with a multi-line signature brings one window under its first signature line', () => {
+  // Arrange
+  const routine = [
+    'function longRoutine(',
+    '  input,',
+    ') {',
+    ...Array.from({ length: 120 }, (_, index) => `  step(${index})`),
+    '}',
+  ]
+  routine[65] = '  save(input)'
+  routine[80] = '  const answer = compute(input)'
+  routine[95] = '  publish(input)'
+  const lines = [...routine, ...functionOf('helper', 30), ...otherLines(20)]
+
+  // Act
+  const declaration = enclosingLongDeclarationOf(lines, 65)
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['longroutine', 'save', 'publish', 'helper'],
+  )
+
+  // Assert
+  assert.deepEqual(declaration, { first: 0, last: 123 })
+  assert.ok(selected.includes(80), 'line 81 between the anchors is selected')
+})
+
+// Value: protects=a function whose lines hold the members of two named dotted identifiers (`save(item)` for `api.save`) counts them, half each, so it is not ranked as holding no named identifier; fails_when=members are dropped from the count, and a function holding one other identifier ranks first (Cycle 0124 /ship review, Codex P2); why_new=Cycle 0124 /ship review; seam=none; no_claim=which of two equally counted functions answers
+test('members of named dotted identifiers count half toward a long function rank', () => {
+  // Arrange
+  const caller = [
+    'function syncAll() {',
+    '  save(item)',
+    '  load(item)',
+    ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
+    '}',
+  ]
+  const logger = [
+    'function report() {',
+    '  log(item)',
+    '  log(other)',
+    ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
+    '}',
+  ]
+  const lines = [...caller, ...logger]
+
+  // Act
+  const windows = longFunctionWindowsOf(
+    lines,
+    [1, 2, 50, 51],
+    ['api.save', 'save', 'api.load', 'load', 'log'],
+  )
+
+  // Assert
+  assert.deepEqual(
+    windows.map((window) => [
+      window.declarationLine,
+      window.distinctIdentifiers,
+    ]),
+    [
+      [0, 1],
+      [49, 1],
+    ],
+  )
+})
+
+// Value: protects=another object's member (`chrome.tabs.create` for the named `chrome.bookmarks.create`) never ranks a function level with the one holding the dotted identifier itself; fails_when=a member alone counts as the whole identifier, as the review's alternative proposed (on P06 it moved functions calling chrome.tabs.create above pasteItem for 25 of 984 route replies); why_new=Cycle 0124 /ship review (guard, passes before and after); seam=none; no_claim=members reached through an import
+test('another object member ranks a long function after the one holding the dotted identifier', () => {
+  // Arrange
+  const tabs = [
+    'function openTabs() {',
+    '  chrome.tabs.create(first)',
+    '  chrome.tabs.create(second)',
+    ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
+    '}',
+  ]
+  const bookmarks = [
+    'function addBookmarks() {',
+    '  chrome.bookmarks.create(first)',
+    '  chrome.bookmarks.create(second)',
+    ...Array.from({ length: 45 }, (_, index) => `  step(${index})`),
+    '}',
+  ]
+  const lines = [...tabs, ...bookmarks]
+
+  // Act
+  const windows = longFunctionWindowsOf(
+    lines,
+    [1, 2, 50, 51],
+    ['chrome.bookmarks.create', 'create'],
+  )
+
+  // Assert
+  assert.deepEqual(
+    windows.map((window) => window.declarationLine),
+    [49, 0],
+  )
+})
+
+// Value: protects=a character outside the Basic Multilingual Plane next to a route identifier is read whole, so `get` does not match inside `𐐨get` or `get𐐨`; fails_when=the boundary test reads one UTF-16 half, which is no identifier character (Cycle 0124 /ship review, Codex); why_new=Cycle 0124 /ship review; seam=none; no_claim=scripts the lowercasing changes
+test('a route identifier beside a character outside the Basic Multilingual Plane is part of a longer name', () => {
+  // Arrange
+  const cases: [string, boolean][] = [
+    ['const 𐐨get = 1', false],
+    ['const get𐐨 = 1', false],
+    ['const [node] = await 𐐨.get(id)', true],
+  ]
+
+  // Act
+  const results = cases.map(([line]) => matchesRouteIdentifier(line, 'get'))
+
+  // Assert
+  assert.deepEqual(
+    results,
+    cases.map(([, expected]) => expected),
+  )
 })

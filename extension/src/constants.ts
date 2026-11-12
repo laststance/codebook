@@ -1314,6 +1314,8 @@ export const WIKI_CONTEXT_HEAD_MIN_LINES = 10
 export const WIKI_CONTEXT_KEPT_ANCHOR_COUNT = 3
 /** The lines a long function's window in a Wiki question's excerpt starts before the first anchor of its densest span, so the statement that leads into that anchor comes along. Cycle 0124 (F3, Issue #318): the anchors inside P06's `pasteItem` stayed single lines, and the answer called what a paste creates unknown. */
 export const WIKI_CONTEXT_WINDOW_LEAD_LINES = 2
+/** The lines a long function's window past its head in a Wiki question's excerpt runs after the last anchor in its span, so the statement that anchor begins comes along; the lines after it hold no identifier the route reply named. Cycle 0124 `/ship` native check: windows ran on to their 39th line or their function's closing line, and the places they took cut P06's `pasteItem` head inside its create branch. */
+export const WIKI_CONTEXT_WINDOW_TRAIL_LINES = 4
 /** The fewest route-identifier anchors a long function must hold for its window to enter a Wiki question's excerpt before single lines; a function holding one anchor keeps that line alone. Cycle 0124 (F3, Issue #318). */
 export const WIKI_CONTEXT_CLUSTER_MIN_ANCHORS = 2
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000

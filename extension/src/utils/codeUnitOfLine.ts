@@ -415,6 +415,65 @@ function longDeclarationLastLine(
 }
 
 /**
+ * Finds the signature line above a continued one: the nearest line at the same indentation, past the signature's deeper parameter lines.
+ * Called by {@link signatureStartOf} for each continued signature line it walks up from.
+ * @param lines - Complete source, indexed from zero.
+ * @param line - A signature line that continues the one above it.
+ * @param indentation - The declaration's indentation.
+ * @returns The line above at that indentation; `undefined` when a blank line, a line indented less, or the start of the source comes first.
+ * @example
+ * signatureLineAbove(['function save(', '  item,', ') {'], 2, 0) // => 0
+ */
+function signatureLineAbove(
+  lines: readonly string[],
+  line: number,
+  indentation: number,
+): number | undefined {
+  for (let above = line - 1; above >= 0; above--) {
+    const text = lines[above]!
+    // A blank line ends a signature; its parameter lines are indented deeper.
+    if (!text.trim()) return undefined
+    const aboveIndentation = indentationOf(text)
+    if (aboveIndentation === indentation) return above
+    if (aboveIndentation < indentation) return undefined
+  }
+  return undefined
+}
+
+/**
+ * Finds the first line of the signature that a block-opening line ends: up over the signature's deeper parameter lines and over lines at its indentation that continue a signature (`) {`, `}: Props) {`), to the first line at its indentation that does not.
+ * Why: Cycle 0124 `/ship` review — walking up from a body line meets a multi-line signature's `) {` first, so a function's window started on another line than the head of the same function named by the route reply, and both took places in the excerpt.
+ * Called by {@link enclosingLongDeclarationOf} for the line that opens the enclosing block.
+ * @param lines - Complete source, indexed from zero.
+ * @param openLine - The line that opens the declaration's block.
+ * @param last - The block's closing line.
+ * @returns The signature's first line when the declaration that begins there closes on `last`; `openLine` otherwise, a block opener that continues no signature included.
+ * @example
+ * signatureStartOf(['function save(', '  item,', ') {', ...fortyOneStatements, '}'], 2, 44) // => 0
+ * signatureStartOf(['function load() {', ...fortyOneStatements, '}'], 0, 42) // => 0
+ */
+function signatureStartOf(
+  lines: readonly string[],
+  openLine: number,
+  last: number,
+): number {
+  const indentation = indentationOf(lines[openLine]!)
+  let start: number | undefined = openLine
+  // A line at the opener's indentation starting like `)` or `}` continues a signature that begins above it.
+  while (
+    start !== undefined &&
+    SIGNATURE_CONTINUATION_START.test(lines[start]!.trim())
+  )
+    start = signatureLineAbove(lines, start, indentation)
+  if (start === undefined || start === openLine) return openLine
+  const declaration = declarationRange(lines, start, Infinity)
+  // The start counts only when the declaration that begins there is this one.
+  return typeof declaration === 'object' && declaration.last === last
+    ? start
+    : openLine
+}
+
+/**
  * Finds the declaration too long for a whole unit whose block holds a line, so the anchors inside one long function can be grouped.
  * Walks up from the line above the anchor: each non-blank line indented less than every non-blank line passed so far (the anchor included) may open the block that holds it. The first of those that begins a declaration too long for a whole unit ({@link longDeclarationHeadOfLine}) decides: it encloses the anchor when its block is still open there. A line at indentation 0 is the last one tried.
  * Why: Cycle 0124 (F3, Issue #318) — the route reply named identifiers inside P06's 44-line `pasteItem`, not the function, so its lines stayed scattered single lines in the excerpt.
@@ -422,7 +481,7 @@ function longDeclarationLastLine(
  * @param lines - Complete verified source, indexed from zero; taken to be formatted, as for code units.
  * @param anchor - A zero-based anchor line.
  * @returns
- * - The enclosing declaration's first line and closing line
+ * - The enclosing declaration's first line (where its signature begins, {@link signatureStartOf}) and closing line
  * - `undefined` when the anchor is at indentation 0, no long declaration lies above it within its blocks, or the first one found closes before the anchor or never closes
  * @example
  * enclosingLongDeclarationOf(['function load() {', ...fortyOneStatements, '}'], 20) // => { first: 0, last: 42 }
@@ -441,7 +500,7 @@ export function enclosingLongDeclarationOf(
     const last = longDeclarationLastLine(lines, index)
     // The first long declaration above decides; one that closed above the anchor or never closes encloses nothing.
     return last !== undefined && anchor <= last
-      ? { first: index, last }
+      ? { first: signatureStartOf(lines, index, last), last }
       : undefined
   }
   return undefined
