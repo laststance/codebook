@@ -538,8 +538,8 @@ test('the skill and the README ask a browser extension Wiki for a page per runti
   )
 })
 
-// Value: protects=the Wiki of a browser extension gets a page for each extension page the code opens itself and a page that names no other context's files, and the learner knows the generator refuses a Wiki without them; fails_when=the bundled skill loses the own-page sentence of step 3 or the README loses the refusal sentence; why_new=Cycle 0123 (Issue 316, F2): P06's service worker shared its only page with the settings page's files although the skill asked for a page per context; seam=none; no_claim=that an editor AI follows the sentences
-test('the skill and the README say a browser extension Wiki gives each runtime context and extension page a page that names no other context', async () => {
+// Value: protects=the Wiki of a browser extension gets a page for each extension page the code opens itself and a page that names mostly its own context's files, and the learner knows the generator refuses a Wiki without them; fails_when=the bundled skill loses the own-page sentence of step 3 or the README loses the refusal sentence; why_new=Cycle 0123 (Issue 316, F2): P06's service worker shared its only page with the settings page's files although the skill asked for a page per context; seam=none; no_claim=that an editor AI follows the sentences
+test('the skill and the README say a browser extension Wiki gives each runtime context and extension page a page that names mostly its own context', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
   const readme = await readPackagedReadme()
@@ -547,12 +547,12 @@ test('the skill and the README say a browser extension Wiki gives each runtime c
   // Assert
   assert.ok(
     skill.includes(
-      "Also give each extension page the code opens itself, such as a full-page or settings page that no manifest key declares, a page of its own. A page about one context names in its sources that context's files and no file of another context (shared files such as the manifest, the README or a shared library may be named), and the renderer refuses a Wiki that leaves a context without such a page.",
+      "Also give each extension page the code opens itself, such as a full-page or settings page that no manifest key declares, a page of its own. A page about one context names mostly that context's files, more than any other context's (it may also cite another context's files, and shared files such as the manifest, the README or a shared library count for none), and the renderer refuses a Wiki that leaves a context without such a page.",
     ),
   )
   assert.ok(
     readme.includes(
-      "The generator also refuses a browser-extension Wiki that gives a runtime context or an extension page the extension opens itself no page of its own, one whose sources name that context's files and no file of another context.",
+      "The generator also refuses a browser-extension Wiki that gives a runtime context or an extension page the extension opens itself no page of its own, one whose sources name more of that context's files than of any other context's.",
     ),
   )
 })

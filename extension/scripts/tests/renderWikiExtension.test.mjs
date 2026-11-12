@@ -94,8 +94,8 @@ async function inProject(body) {
   }
 }
 
-// Value: protects=the learner who opens the Wiki of a Chrome extension and finds the service worker only inside a settings page; fails_when=a Wiki whose one page names the service worker with the settings page's files is rendered, or the refusal misses the service worker or the undeclared settings page, or does not name the other contexts' files; why_new=Cycle 0123 (Issue 316, F2): P06's Wiki had one page, 'Service worker and settings'; seam=none (the real renderer); no_claim=that an editor AI writes a good page for each context
-test('a Wiki that documents the service worker only beside the settings page is refused with a sentence for the worker and one for the settings page', async () => {
+// Value: protects=the learner who opens the Wiki of a Chrome extension and finds the service worker only inside a settings page; fails_when=a Wiki whose only page citing the service worker cites one worker file and two settings files (so it is the settings page's own page, not the worker's) is rendered, or the refusal also names the settings page, or misses the service worker, or does not name the other contexts' files; why_new=Cycle 0123 (Issue 316, F2): P06's Wiki had one page, 'Service worker and settings'; seam=none (the real renderer); no_claim=that an editor AI writes a good page for each context
+test('a Wiki whose only page citing the service worker is the settings page, which cites two settings files, is refused with one sentence for the service worker', async () => {
   await inProject(async (root) => {
     // Arrange
     const manifest = await wikiOf(root, MV3_FILES, [
@@ -119,7 +119,7 @@ test('a Wiki that documents the service worker only beside the settings page is 
     // Assert
     assert.equal(
       outcome,
-      'The Wiki documents a browser extension (manifest.json) but gives the service worker (background/service-worker.js) no page of its own: write a page whose sources name background/service-worker.js and no file of another runtime context (popup/popup.html, fullpage/fullpage.html, settings/settings.html). The Wiki documents a browser extension (manifest.json) but gives the extension page settings/settings.html (settings/settings.html) no page of its own: write a page whose sources name settings/settings.html and no file of another runtime context (background/service-worker.js, popup/popup.html, fullpage/fullpage.html).',
+      'The Wiki documents a browser extension (manifest.json) but gives the service worker (background/service-worker.js) no page of its own: write a page whose sources name more files of the service worker (starting with background/service-worker.js) than of any other runtime context (popup/popup.html, fullpage/fullpage.html, settings/settings.html).',
     )
   })
 })
@@ -173,28 +173,24 @@ test('a web-app manifest without manifest_version and an unparsable manifest.jso
   })
 })
 
-// Value: protects=the Wiki of a Manifest V2 extension whose background scripts and content scripts must not share a page; fails_when=the renderer accepts one page for both, or does not name the background scripts and the content scripts of their match pattern; why_new=Cycle 0123 (Issue 316, F2); seam=none (the real renderer); no_claim=none
-test('a Manifest V2 Wiki whose one page covers the background scripts and a content script group is refused naming both', async () => {
+// Value: protects=the Wiki of a Manifest V2 extension whose background scripts and content scripts must not share a page; fails_when=the renderer accepts one page that cites one file of each (a tie gives neither context the page), or does not name the background scripts and the content scripts of their match pattern; why_new=Cycle 0123 (Issue 316, F2); seam=none (the real renderer); no_claim=none
+test('a Manifest V2 Wiki whose one page cites one background script and one content script is refused naming both because the tie gives neither the page', async () => {
   await inProject(async (root) => {
     // Arrange
     const files = {
       'manifest.json': JSON.stringify({
         manifest_version: 2,
         name: 'Old',
-        background: { scripts: ['bg/a.js', 'bg/b.js'] },
+        background: { scripts: ['bg/a.js'] },
         content_scripts: [
           { matches: ['https://example.com/*'], js: ['content/page.js'] },
         ],
       }),
       'bg/a.js': 'export const a = 1;\n',
-      'bg/b.js': 'export const b = 1;\n',
       'content/page.js': 'export const page = 1;\n',
     }
     const manifest = await wikiOf(root, files, [
-      [
-        'index.html',
-        ['manifest.json', 'bg/a.js', 'bg/b.js', 'content/page.js'],
-      ],
+      ['index.html', ['manifest.json', 'bg/a.js', 'content/page.js']],
     ])
 
     // Act
@@ -203,7 +199,7 @@ test('a Manifest V2 Wiki whose one page covers the background scripts and a cont
     // Assert
     assert.equal(
       outcome,
-      'The Wiki documents a browser extension (manifest.json) but gives the background scripts (bg/a.js) no page of its own: write a page whose sources name bg/a.js and no file of another runtime context (content/page.js). The Wiki documents a browser extension (manifest.json) but gives the content scripts for https://example.com/* (content/page.js) no page of its own: write a page whose sources name content/page.js and no file of another runtime context (bg/a.js).',
+      'The Wiki documents a browser extension (manifest.json) but gives the background scripts (bg/a.js) no page of its own: write a page whose sources name more files of the background scripts (starting with bg/a.js) than of any other runtime context (content/page.js). The Wiki documents a browser extension (manifest.json) but gives the content scripts for https://example.com/* (content/page.js) no page of its own: write a page whose sources name more files of the content scripts for https://example.com/* (starting with content/page.js) than of any other runtime context (bg/a.js).',
     )
   })
 })
@@ -263,7 +259,7 @@ test('an HTML file under tests/ owes no page while the same file outside it does
     // Assert
     assert.deepEqual(outcomes, [
       'rendered',
-      'The Wiki documents a browser extension (manifest.json) but gives the extension page extras/page.html (extras/page.html) no page of its own: write a page whose sources name extras/page.html and no file of another runtime context (background/service-worker.js, popup/popup.html).',
+      'The Wiki documents a browser extension (manifest.json) but gives the extension page extras/page.html (extras/page.html) no page of its own: write a page whose sources name more files of the extension page extras/page.html (starting with extras/page.html) than of any other runtime context (background/service-worker.js, popup/popup.html).',
     ])
   })
 })
@@ -288,5 +284,53 @@ test('a service worker page that also cites the manifest and a shared library st
 
     // Assert
     assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=a popup page that also cites the service worker's message handler, which is good cross-context explanation; fails_when=a page citing two popup files and one worker file is refused or stops counting as the popup's own page; why_new=Cycle 0123 (Issue 316, F2): the strict version refused run 1's popup and full-page pages for citing the worker and the settings script; seam=none (the real renderer); no_claim=none
+test('a popup page that also cites the service worker script still counts as the popup page because popup files outnumber worker files', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, MV3_FILES, [
+      ['index.html', ['manifest.json', 'lib/shared.js']],
+      ['worker.html', ['background/service-worker.js']],
+      [
+        'popup.html',
+        ['popup/popup.html', 'popup/popup.js', 'background/service-worker.js'],
+      ],
+      ['fullpage.html', ['fullpage/fullpage.html', 'fullpage/fullpage.js']],
+      ['settings.html', ['settings/settings.html', 'settings/settings.js']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=the rule that a page about two contexts equally is no context's own page; fails_when=a page citing one service worker file and one settings file is accepted as the own page of either; why_new=Cycle 0123 (Issue 316, F2): a tie must not give both contexts a page; seam=none (the real renderer); no_claim=none
+test('a page citing one service worker file and one settings file is refused as the own page of both', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const manifest = await wikiOf(root, MV3_FILES, [
+      ['index.html', ['manifest.json', 'lib/shared.js']],
+      [
+        'worker-and-settings.html',
+        ['background/service-worker.js', 'settings/settings.js'],
+      ],
+      ['popup.html', ['popup/popup.html', 'popup/popup.js']],
+      ['fullpage.html', ['fullpage/fullpage.html', 'fullpage/fullpage.js']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(
+      outcome,
+      'The Wiki documents a browser extension (manifest.json) but gives the service worker (background/service-worker.js) no page of its own: write a page whose sources name more files of the service worker (starting with background/service-worker.js) than of any other runtime context (popup/popup.html, fullpage/fullpage.html, settings/settings.html). The Wiki documents a browser extension (manifest.json) but gives the extension page settings/settings.html (settings/settings.html) no page of its own: write a page whose sources name more files of the extension page settings/settings.html (starting with settings/settings.html) than of any other runtime context (background/service-worker.js, popup/popup.html, fullpage/fullpage.html).',
+    )
   })
 })

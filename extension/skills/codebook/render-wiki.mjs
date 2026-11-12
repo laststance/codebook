@@ -573,10 +573,15 @@ async function extensionContextsOf(manifestPath, manifest, indexedSources, textO
   }
   return contexts;
 }
-/** Whether a page has a context of its own: it names a file only that context owns and no file only another context owns; a file two contexts load belongs to neither. Called by {@link ownPageShortfallsOf}. @param owners - The owning context index of each file that exactly one context loads. */
+/** Whether a page is the page of its own for a context: among the page's `sources` files that belong to some context (a shared file, or one two contexts load, counts for none), the context has at least one and strictly more than every other single context, so a tie gives no context the page. Called by {@link ownPageShortfallsOf}. @param owners - The owning context index of each file that exactly one context loads. @example isPageOfContext({ sources: [{ path: 'popup/popup.js' }] }, 0, new Map([['popup/popup.js', 0]])) // => true */
 const isPageOfContext = (page, index, owners) => {
-  const owned = (page.sources ?? []).map(source => owners.get(source.path)).filter(owner => owner !== undefined);
-  return owned.includes(index) && owned.every(owner => owner === index);
+  const counts = new Map();
+  for (const path of new Set((page.sources ?? []).map(source => source.path))) {
+    const owner = owners.get(path);
+    if (owner !== undefined) counts.set(owner, (counts.get(owner) ?? 0) + 1);
+  }
+  const own = counts.get(index) ?? 0;
+  return own > 0 && [...counts].every(([owner, count]) => owner === index || count < own);
 };
 /** One refusal sentence per context of one manifest that no page is about alone, naming the context, its main file and up to {@link EXTENSION_MAX_NAMED} other contexts' main files. Called by {@link extensionShortfallsOf}. @example ownPageShortfallsOf(pages, 'manifest.json', contexts) // => ['The Wiki documents a browser extension (manifest.json) but gives the popup (popup.html) no page of its own: …'] */
 function ownPageShortfallsOf(pages, manifestPath, contexts) {
@@ -590,7 +595,7 @@ function ownPageShortfallsOf(pages, manifestPath, contexts) {
     const others = contexts.filter((_, other) => other !== index).map(other => other.main);
     const more = others.length > EXTENSION_MAX_NAMED ? `, and ${others.length - EXTENSION_MAX_NAMED} more` : '';
     const rest = others.length ? ` (${others.slice(0, EXTENSION_MAX_NAMED).join(', ')}${more})` : '';
-    shortfalls.push(`The Wiki documents a browser extension (${manifestPath}) but gives ${context.label} (${context.main}) no page of its own: write a page whose sources name ${context.main} and no file of another runtime context${rest}.`);
+    shortfalls.push(`The Wiki documents a browser extension (${manifestPath}) but gives ${context.label} (${context.main}) no page of its own: write a page whose sources name more files of ${context.label} (starting with ${context.main}) than of any other runtime context${rest}.`);
   });
   return shortfalls;
 }
@@ -604,8 +609,8 @@ async function extensionManifestOf(path, textOf) {
   }
 }
 /**
- * Measures a Wiki of a browser extension against the runtime-context rule: for each included `manifest.json` with a `manifest_version` of 2 or 3, every runtime context ({@link extensionContextsOf}) needs a page whose `sources` name a file of that context and no file of another. Shared files (the manifest, the README, shared libraries, a script two pages load) belong to no context. A web-app manifest, an unparsable one and a repository without a manifest owe nothing.
- * Why: Cycle 0123 found a Wiki that gave the service worker of a Chrome extension no page of its own, beside the settings page it shared one with, though the skill asked for a page per context.
+ * Measures a Wiki of a browser extension against the runtime-context rule: for each included `manifest.json` with a `manifest_version` of 2 or 3, every runtime context ({@link extensionContextsOf}) needs a page whose `sources` name more files of that context than of any other single context (at least one; a tie gives no context the page), so a page may also cite another context's files. Shared files (the manifest, the README, shared libraries, a script two pages load) belong to no context. A web-app manifest, an unparsable one and a repository without a manifest owe nothing.
+ * Why: the first version refused a popup page that also cited the service worker's message handler and a full-page page that cited the settings script, which pushed agents to drop good cross-context citations. Cycle 0123 found a Wiki that gave the service worker of a Chrome extension no page of its own, beside the settings page it shared one with, though the skill asked for a page per context.
  * Called by {@link requireWikiDepthAndWorkspace}.
  * @returns One sentence per context without a page of its own; empty when every context has one or the repository holds no extension.
  * @example await extensionShortfallsOf(manifest, indexedSources, textOf) // => []
