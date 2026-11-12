@@ -1475,3 +1475,242 @@ test('a route request that lists only some sources of each page keeps the one th
     await removeTestFolder(directory)
   }
 })
+
+// Value: protects=the question's best lexical match among a page's sources when a route request can list only some sources of each page, also when that source is documentation: the best match comes first, and implementation before documentation only breaks a tie; fails_when=implementation sources always come first, so a page that lists four implementation sources cuts the documentation file holding the question's word (Cycle 0119 hosted review); why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, orderedPageSources); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model then picks the documentation file
+test('a route request that lists only some sources of each page keeps a documentation source that best matches the question', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-docs-'))
+  const root = await realpath(directory)
+  const padding = 'p'.repeat(70)
+  const docsPath = `docs/${padding}-guide.md`
+  const implementationPaths = ['a', 'b', 'c', 'd'].map(
+    (name) => `src/${padding}-${name}.ts`,
+  )
+  const fillerPaths = ['one', 'two', 'three'].map((name) => `lib/${name}.ts`)
+  await mkdir(join(root, 'docs'), { recursive: true })
+  await mkdir(join(root, 'src'), { recursive: true })
+  await mkdir(join(root, 'lib'), { recursive: true })
+  const sources = await Promise.all(
+    [docsPath, ...implementationPaths, ...fillerPaths].map(async (path) => {
+      const content =
+        path === docsPath
+          ? 'Failed queries retry three times before they report an error.\n'
+          : 'export const item = 1;\n'
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  // 150 pages of five sources overflow the budget at eight sources per page but fit at four.
+  const pageGuide = Array.from({ length: 150 }, (_, index) => ({
+    title: `Page ${String(index).padStart(3, '0')}`,
+    summary: 's'.repeat(240),
+    sources: [...implementationPaths, docsPath],
+  }))
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: [docsPath] }
+        : {
+            answer: 'A failed query retries three times.',
+            citations: [{ id: 'S1', line: 1 }],
+          },
+    )
+  }
+  try {
+    // Act
+    await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'retry は何回行われますか？',
+      'cursor',
+      pageGuide,
+    )
+
+    // Assert
+    const pageList = prompts[0]!.slice(prompts[0]!.indexOf('\nPages: ') + 8)
+    const listedPages: { sources: string[] }[] = JSON.parse(pageList)
+    assert.ok(Buffer.byteLength(pageList, 'utf8') <= 98_304)
+    assert.equal(listedPages.length, 150)
+    assert.deepEqual(listedPages[0]!.sources, [
+      docsPath,
+      ...implementationPaths.slice(0, 3),
+    ])
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
+// Value: protects=a file the question's words match that no Wiki page cites: the route request offers it before the pages, and the offered files and the page list together stay within the 98,304-byte budget; fails_when=a route request offers only the files the pages cite, so the question's best lexical match never reaches the model (Cycle 0119 hosted review), or the offered files are added without taking their bytes from the page list's budget; why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, routePromptOf); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model picks the offered file
+test('a route request offers the file that best matches the question when no Wiki page cites it, within its budget', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-page-uncited-'))
+  const root = await realpath(directory)
+  await mkdir(join(root, 'src'), { recursive: true })
+  const sources = await Promise.all(
+    Array.from({ length: 400 }, async (_, index) => {
+      const path = `src/module-${String(index).padStart(3, '0')}.ts`
+      const content = `export const value${index} = ${index};\n`
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  const retryerContent =
+    'export function shouldRetry(failureCount: number, retry: number) {\n  return failureCount < retry\n}\n'
+  await writeFile(join(root, 'src/retryer.ts'), retryerContent)
+  sources.push({
+    path: 'src/retryer.ts',
+    sha256: createHash('sha256').update(retryerContent).digest('hex'),
+  })
+  // 400 pages of one source each do not fit the budget even at four sources per page, so the page list is cut to what is left of it.
+  // With 244-character summaries the 315 pages that fill the whole budget leave less room than the offered-files line takes, so a list that ignored that line would pass the budget.
+  const pageGuide = sources.slice(0, 400).map((source, index) => ({
+    title: `Module ${String(index).padStart(3, '0')}`,
+    summary: 's'.repeat(244),
+    sources: [source.path],
+  }))
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: ['src/retryer.ts'] }
+        : {
+            answer: 'A numeric retry is compared with the failure count.',
+            citations: [{ id: 'S1', line: 2 }],
+          },
+    )
+  }
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'retryer はどの条件で再試行しますか？',
+      'cursor',
+      pageGuide,
+    )
+
+    // Assert
+    const prompt = prompts[0]!
+    const matchingStart = prompt.indexOf('\nOther matching files: ')
+    const pagesStart = prompt.indexOf('\nPages: ')
+    const matchingLine = prompt.slice(matchingStart, pagesStart)
+    const pageList = prompt.slice(pagesStart + 8)
+    assert.equal(matchingLine, '\nOther matching files: ["src/retryer.ts"]')
+    assert.match(prompt, /or the other files that match the question's words/)
+    assert.ok(
+      Buffer.byteLength(matchingLine, 'utf8') +
+        Buffer.byteLength(pageList, 'utf8') <=
+        98_304,
+    )
+    assert.ok((JSON.parse(pageList) as unknown[]).length < 400)
+    assert.equal(answer.citations[0]?.path, 'src/retryer.ts')
+    assert.equal(answer.citations[0]?.line, 2)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})
+
+// Value: protects=the excerpt lines of a long routed file when the question's own words match many of its lines: the line holding an identifier the route reply named comes before lines that only match question words, so the answering line reaches the model and its citation stands; fails_when=route identifiers and question words weigh the same, so 120 lines matching two question words take all 80 excerpt lines and the identifier's line is left out (Cycle 0119 hosted review); why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Major, routedSources and selectWikiSourceLines); seam=a stub request function stands in for Cursor Agent; no_claim=that a real model names the right identifier
+test('the identifiers a route reply names win the excerpt lines of a long routed file over common question words', async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-route-priority-'),
+  )
+  const root = await realpath(directory)
+  const sources = await Promise.all(
+    [
+      'alpha.ts',
+      'beta.ts',
+      'gamma.ts',
+      'delta.ts',
+      'epsilon.ts',
+      'zeta.ts',
+    ].map(async (path) => {
+      const content = 'export const item = 1;\n'
+      await writeFile(join(root, path), content)
+      return {
+        path,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      }
+    }),
+  )
+  const queryLines = Array.from({ length: 200 }, (_, index) =>
+    index < 120
+      ? `// the query cache keeps entry ${index + 1}`
+      : `// step ${index + 1}`,
+  )
+  queryLines[149] = "    this.dispatch({ type: 'invalidate' })"
+  const query = `${queryLines.join('\n')}\n`
+  await writeFile(join(root, 'query.ts'), query)
+  sources.push({
+    path: 'query.ts',
+    sha256: createHash('sha256').update(query).digest('hex'),
+  })
+  const boundary = await loadModule<typeof AnswerDeepWikiQuestionModule>(
+    resolve(__dirname, '../utils/answerDeepWikiQuestion.js'),
+    {
+      vscode: {
+        LanguageModelChatMessage: { User: (text: string) => ({ text }) },
+      },
+    },
+  )
+  const prompts: string[] = []
+  const requestText = async (prompt: string): Promise<string> => {
+    prompts.push(prompt)
+    return JSON.stringify(
+      prompts.length === 1
+        ? { paths: ['query.ts'], terms: ['dispatch'] }
+        : {
+            answer: 'Invalidating dispatches an invalidate action.',
+            citations: [{ id: 'S1', line: 150 }],
+          },
+    )
+  }
+  try {
+    // Act
+    const answer = await boundary.answerDeepWikiQuestionWithPrompt(
+      requestText,
+      root,
+      sources,
+      'query cache を無効にすると何が起きますか？',
+      'cursor',
+    )
+
+    // Assert
+    assert.match(
+      prompts[1]!,
+      /150: {5}this\.dispatch\(\{ type: 'invalidate' \}\)/,
+    )
+    assert.equal(answer.citations[0]?.path, 'query.ts')
+    assert.equal(answer.citations[0]?.line, 150)
+  } finally {
+    await removeTestFolder(directory)
+  }
+})

@@ -25,11 +25,11 @@ const CHARACTER_REFERENCES: Record<string, string> = {
 }
 
 /**
- * An inline editor source link of an article, the address the renderer counts as a citation of its page (`vscode://` or `cursor://laststance.codebook/source?`, scheme and authority in any case), with its query up to the end of the attribute value or {@link WIKI_PAGE_GUIDE_LINK_QUERY_CHARS} characters.
- * The pattern holds no nested repetition, and each match moves the search past the characters it read, so a scan of a whole article stays linear in its length.
+ * An inline editor source link of an article, the address the renderer counts as a citation of its page: an `href` attribute whose value starts with `vscode://` or `cursor://laststance.codebook/source?` (attribute name, scheme and authority in any case), with its query up to the end of the value or {@link WIKI_PAGE_GUIDE_LINK_QUERY_CHARS} characters. The same address in the text, in a code example or in another attribute is no citation, as the renderer reads it (`render-wiki.mjs` `inlineSourceLinksOf`; Cycle 0119 hosted review).
+ * The pattern holds no nested repetition, each optional run of spaces is fenced by a fixed character, and each match moves the search past the characters it read, so a scan of a whole article stays linear in its length.
  */
 const INLINE_SOURCE_LINK = new RegExp(
-  `(?:vscode|cursor)://laststance\\.codebook/source\\?([^"'<>\\s#]{0,${WIKI_PAGE_GUIDE_LINK_QUERY_CHARS}})`,
+  `(?<![\\w-])href\\s*=\\s*(?:["']\\s*)?(?:vscode|cursor)://laststance\\.codebook/source\\?([^"'<>\\s#]{0,${WIKI_PAGE_GUIDE_LINK_QUERY_CHARS}})`,
   'gi',
 )
 
@@ -114,12 +114,15 @@ function diagramSourcesOf(diagrams: unknown): string[] {
  * @example inlineSourcePathsOf('<a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fauth.ts&amp;line=3">auth</a>') // => ['src/auth.ts']
  */
 function inlineSourcePathsOf(contentHtml: string): string[] {
-  return [...contentHtml.matchAll(INLINE_SOURCE_LINK)].flatMap((link) => {
+  const paths: string[] = []
+  // Each link is read as the scan finds it; the matches are never gathered first.
+  for (const link of contentHtml.matchAll(INLINE_SOURCE_LINK)) {
     const path = new URLSearchParams(
       (link[1] ?? '').replace(/&(?:amp|#38|#x26);/gi, '&'),
     ).get('path')
-    return path ? [path] : []
-  })
+    if (path) paths.push(path)
+  }
+  return paths
 }
 
 /**

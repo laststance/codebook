@@ -171,3 +171,28 @@ test('a page guide offers the files its article cites by inline source links, al
     },
   ])
 })
+
+// Value: protects=the renderer's reading of an inline citation, an editor source address in an `href` attribute: the same address written in the article's text, in a code example or in another attribute (`data-href`, `title`) adds no source to the page's guide; fails_when=the guide counts any occurrence of the address in the article, so a page that only quotes a link in prose or code offers the model a file it never cites (Cycle 0119 hosted review: inline links outside href counted as citations); why_new=Cycle 0119 hosted CodeRabbit review of PR #307 (Minor, wikiPageGuideOf.ts); seam=none (the real function); no_claim=that a commented-out link is left out (the renderer skips comments; the guide does not)
+test('a page guide ignores a source address written in the article text, a code example or another attribute', () => {
+  // Arrange
+  const pages = [
+    {
+      title: 'Links',
+      contentHtml:
+        '<p>Explains links.</p><p>The address vscode://laststance.codebook/source?path=src%2Fprose.ts names a file, <code>cursor://laststance.codebook/source?path=src%2Fcode.ts&amp;line=1</code> is an example, <a data-href="vscode://laststance.codebook/source?path=src%2Fdata.ts">data</a> and <a title="vscode://laststance.codebook/source?path=src%2Ftitle.ts" href="https://example.com/">title</a> hold it in other attributes, and <a HREF = \' vscode://laststance.codebook/source?path=src%2Flinked.ts&amp;line=4\'>linked</a> cites it.</p>',
+      sources: [{ path: 'src/index.ts', line: 1 }],
+    },
+  ]
+
+  // Act
+  const guide = wikiPageGuideOf(pages)
+
+  // Assert
+  assert.deepEqual(guide, [
+    {
+      title: 'Links',
+      summary: 'Explains links.',
+      sources: ['src/index.ts', 'src/linked.ts'],
+    },
+  ])
+})
