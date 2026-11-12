@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.125'
+export const EXTENSION_VERSION = '0.2.126'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1312,6 +1312,14 @@ export const WIKI_CONTEXT_UNIT_LINE_LIMIT = 40
 export const WIKI_CONTEXT_HEAD_MIN_LINES = 10
 /** The best-ranked matching lines of a long file that always keep their places in a Wiki question's excerpt, whatever code units the lines ranked before them bring: two 40-line units would otherwise fill the excerpt and drop the third-best match (Cycle 0122 review round). */
 export const WIKI_CONTEXT_KEPT_ANCHOR_COUNT = 3
+/** The lines a long function's window in a Wiki question's excerpt starts before the first anchor of its densest span, so the statement that leads into that anchor comes along. Cycle 0124 (F3, Issue #318): the anchors inside P06's `pasteItem` stayed single lines, and the answer called what a paste creates unknown. */
+export const WIKI_CONTEXT_WINDOW_LEAD_LINES = 2
+/** The lines a long function's window past its head in a Wiki question's excerpt runs after the last anchor in its span, so the statement that anchor begins comes along; the lines after it hold no identifier the route reply named. Cycle 0124 `/ship` native check: windows ran on to their 39th line or their function's closing line, and the places they took cut P06's `pasteItem` head inside its create branch. */
+export const WIKI_CONTEXT_WINDOW_TRAIL_LINES = 4
+/** The fewest route-identifier anchors a long function must hold for its window to enter a Wiki question's excerpt before single lines; a function holding one anchor keeps that line alone. Cycle 0124 (F3, Issue #318). */
+export const WIKI_CONTEXT_CLUSTER_MIN_ANCHORS = 2
+/** How many route identifiers a route-named long function that holds no other one counts when it competes with the long functions holding route identifiers for a Wiki question's excerpt: its own name. The functions holding more different identifiers bring their windows first; its head comes before those holding as many or fewer. Cycle 0124 `/ship` pass 2: a route naming only the answering function lost its whole body when its head waited until after every caller's window. */
+export const WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT = 1
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.126.0] - 2026-11-13 (development candidate)
+
+Cycle 0124 ([Issue #318](https://github.com/laststance/codebook/issues/318)), a bug-fix cycle. **A Wiki answer about a long function now sees the part of it that holds the identifiers the editor model named.** On laststance/bookmark-xp-explorer, a question about pasting a copied bookmark or folder got an answer that called what a paste creates unknown. The editor model had named identifiers used inside the 44-line paste function rather than the function itself, so the excerpt held scattered lines of it. Now the excerpt brings the part of the function that holds those identifiers, and Cursor's answer states what a paste creates and where.
+
+### Fixed
+- **A long function that holds the identifiers the editor model named brings the part of itself that holds them.** Before the first matching line that comes alone, each function too long for a whole unit that holds two or more lines with those identifiers brings its first 40 lines when all those lines lie there. Otherwise it brings its declaration line and the most of those lines that fit in 39 lines, from up to two lines before the first of them to four lines after the last, and never past its closing line. The functions holding more different identifiers come first.
+- **A long function the editor model names brings the lines that hold the other named identifiers.** It brings its first 40 lines, or that same part of itself when more of those lines lie past them. A named function that holds no other named identifier brings its first 40 lines after the functions holding more than one identifier and before the rest.
+- **An identifier the editor model named matches only as a whole name.** `get` no longer matches `getElementById` or `targetId`.
+
+**Compatibility.** No MCP API, study format or skill change. Published Wikis are read as they are; only the lines a question's excerpt takes from a long file change.
+
 ## [0.2.125.0] - 2026-11-13 (development candidate)
 
 Cycle 0123 ([Issue #316](https://github.com/laststance/codebook/issues/316)), a feature cycle. **The LLM Wiki of a small repository whose code sits in a few long files is now held to the same depth as a larger one, and the Wiki of a browser extension gives each runtime context a page of its own.** On laststance/bookmark-xp-explorer, a Chrome extension of 7 code files holding 4,424 lines, both editors published Wikis below every depth floor, because the renderer exempted repositories under 12 explained code files. VS Code's Wiki also gave the service worker no page. After the fixes, both editors' Wikis pass the depth floors and give the worker, the popup, the full page and the tests their own pages. A question's excerpt now also brings the first 40 lines of a long function when the editor model names it.

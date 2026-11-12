@@ -1,0 +1,206 @@
+import {
+  WIKI_CONTEXT_UNIT_LINE_LIMIT,
+  WIKI_CONTEXT_WINDOW_LEAD_LINES,
+  WIKI_CONTEXT_WINDOW_TRAIL_LINES,
+} from '../constants'
+
+import { enclosingLongDeclarationOf, type LineRange } from './codeUnitOfLine'
+import { matchesRouteIdentifier } from './matchesRouteIdentifier'
+
+/** A function too long for a whole unit, the route-identifier anchors inside it, and the lines it brings into a Wiki question's excerpt. */
+export interface LongFunctionWindow {
+  /** Zero-based line of the function's declaration. */
+  declarationLine: number
+  /** The anchors grouped to the function by {@link enclosingLongDeclarationOf}, best-ranked first. */
+  anchors: number[]
+  /** The lines the function brings when the route reply does not name it ({@link windowOfLongFunction}), in order, the declaration line first: at most {@link WIKI_CONTEXT_UNIT_LINE_LIMIT}, never past the closing line. */
+  window: number[]
+  /** The lines the function brings when the route reply names it ({@link namedWindowOfLongFunction}), in the same form. */
+  namedWindow: number[]
+  /** How many different route identifiers the anchors name ({@link distinctRouteIdentifierCount}); one matched only through its last part counts half. */
+  distinctIdentifiers: number
+}
+
+/**
+ * Builds the zero-based lines from one line to another, both included.
+ * @param first - The first line.
+ * @param last - The last line; nothing when it is before `first`.
+ * @returns The lines in order.
+ * @example
+ * linesBetween(3, 5) // => [3, 4, 5]
+ */
+function linesBetween(first: number, last: number): number[] {
+  return Array.from(
+    { length: Math.max(0, last - first + 1) },
+    (_, offset) => first + offset,
+  )
+}
+
+/**
+ * Picks the lines a long function brings for the anchors inside it: its head when every anchor lies in its first {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} lines; otherwise the declaration line and the span of {@link WIKI_CONTEXT_UNIT_LINE_LIMIT} - 1 lines that holds the most anchors, starting up to {@link WIKI_CONTEXT_WINDOW_LEAD_LINES} lines before one of them (on a tie the earliest start, which keeps the longest lead) and ending {@link WIKI_CONTEXT_WINDOW_TRAIL_LINES} lines after the last anchor it holds. The closing line cuts the window short; it never shifts it.
+ * Why: Cycle 0124 (F3, Issue #318) — the head of P06's 68-line `handleContextAction` (lines 1230-1269) held none of the copy and paste lines that the route identifiers matched (1270-1277). Its window then ran on to the function's closing line (1297), and in the `/ship` native check the lines it took cut `pasteItem`'s window inside its create branch.
+ * Called by {@link longFunctionWindowsOf} for each function, directly and through {@link namedWindowOfLongFunction}.
+ * @param declaration - The function's declaration line and closing line.
+ * @param anchors - The anchors inside the function, in any order.
+ * @returns The window's zero-based lines in order, the declaration line first.
+ * @example
+ * windowOfLongFunction({ first: 0, last: 149 }, [100, 104]) // => [0, 98, 99, ..., 108]
+ * windowOfLongFunction({ first: 0, last: 120 }, [41, 79]) // => [0, 41, 42, ..., 79]: one span holds both anchors
+ */
+function windowOfLongFunction(
+  declaration: LineRange,
+  anchors: readonly number[],
+): number[] {
+  const { first, last } = declaration
+  const inside = [...anchors].sort((one, other) => one - other)
+  const headLast = Math.min(first + WIKI_CONTEXT_UNIT_LINE_LIMIT - 1, last)
+  // Every anchor within the first unit's worth of lines: the head covers them all.
+  if (!inside.length || inside.at(-1)! <= headLast)
+    return linesBetween(first, headLast)
+  const spanLength = WIKI_CONTEXT_UNIT_LINE_LIMIT - 1
+  // Each anchor offers the starts from its lead lines down to itself, so two anchors a span apart can share one window.
+  const starts = [
+    ...new Set(
+      inside.flatMap((anchor) =>
+        linesBetween(anchor - WIKI_CONTEXT_WINDOW_LEAD_LINES, anchor).map(
+          (start) => Math.max(first + 1, start),
+        ),
+      ),
+    ),
+  ].sort((one, other) => one - other)
+  const anchorsFrom = (start: number): number =>
+    inside.filter(
+      (anchor) => anchor >= start && anchor <= start + spanLength - 1,
+    ).length
+  // The span holding the most anchors wins; on a tie the earliest start, the one with the longest lead, stays.
+  const start = starts.reduce((best, candidate) =>
+    anchorsFrom(candidate) > anchorsFrom(best) ? candidate : best,
+  )
+  const spanLast = Math.min(start + spanLength - 1, last)
+  // The window ends a few lines after the last anchor in its span: the lines past it hold no identifier the reply named.
+  const lastAnchor = inside.filter((anchor) => anchor <= spanLast).at(-1)!
+  return [
+    first,
+    ...linesBetween(
+      start,
+      Math.min(spanLast, lastAnchor + WIKI_CONTEXT_WINDOW_TRAIL_LINES),
+    ),
+  ]
+}
+
+/**
+ * Picks the lines a long function brings when the route reply names it: its head (the signature and the opening statements), unless more of its anchors lie past the head than in it; then the window over its anchors ({@link windowOfLongFunction}).
+ * Why: Cycle 0124 (F3, Issue #318) — the head of P06's route-named `handleContextAction` (lines 1230-1269) held none of the copy and paste lines its anchors matched (1270-1277). And in the `/ship` review a named `pasteItem` whose `showToast` anchors lay at lines 1329 and 1339, one inside its head and one a line past it, lost its create branch (1309-1321) to the window over them.
+ * Called by {@link longFunctionWindowsOf} for each function.
+ * @param declaration - The function's declaration line and closing line.
+ * @param anchors - The anchors inside the function, in any order.
+ * @returns The lines in order, the declaration line first.
+ * @example
+ * namedWindowOfLongFunction({ first: 0, last: 43 }, [30, 40]) // => [0, 1, ..., 39]: one anchor in the head, one past it
+ * namedWindowOfLongFunction({ first: 0, last: 67 }, [40, 46]) // => [0, 38, 39, ..., 50]
+ */
+function namedWindowOfLongFunction(
+  declaration: LineRange,
+  anchors: readonly number[],
+): number[] {
+  const headLast = Math.min(
+    declaration.first + WIKI_CONTEXT_UNIT_LINE_LIMIT - 1,
+    declaration.last,
+  )
+  const inHead = anchors.filter((anchor) => anchor <= headLast).length
+  // The head gives way only when most of the anchors lie past it.
+  return inHead >= anchors.length - inHead
+    ? linesBetween(declaration.first, headLast)
+    : windowOfLongFunction(declaration, anchors)
+}
+
+/**
+ * Counts how many of the route identifiers a function's anchor lines name, each once. A term that is the last part of listed dotted identifiers (the `get` that `routeTermsOf` adds after `chrome.bookmarks.get`) is their match, not one of its own; when the anchor lines hold the member but none of those dotted names, it counts half, since the member may be one of them reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create` for the named `chrome.bookmarks.create`).
+ * Why: Cycle 0124 (F3, Issue #318) — the function that holds the most different identifiers the editor model named is the one that answers, not the one with most lines of one short name. The `/ship` review found that a function calling `save(item)` and `load(item)` for the named `api.save` and `api.load` counted none, so functions holding one `log` or `warn` ranked first; counting such members whole instead let P06's functions calling `chrome.tabs.create` rank above `pasteItem` for 25 of 984 route replies. Pass 2: a member shared by two named dotted identifiers was bound to the first one only, so `right.save(a)` counted 1.5 and `left.save(a)` 1.
+ * Called by {@link longFunctionWindowsOf} to rank functions.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchors - The function's anchors.
+ * @param priorityTerms - The identifiers the route reply named, lowercased.
+ * @returns The number of distinct identifiers the anchor lines hold, a half for each one held only through its last part.
+ * @example
+ * distinctRouteIdentifierCount(['save(a)', 'x.load(b)'], [0, 1], ['save', 'x.load', 'load']) // => 2
+ * distinctRouteIdentifierCount(['save(a)', 'load(b)'], [0, 1], ['api.save', 'save', 'api.load', 'load']) // => 1: two members alone, half each
+ * distinctRouteIdentifierCount(['right.save(a)'], [0], ['left.save', 'save', 'right.save']) // => 1: `save` is right.save's match
+ */
+function distinctRouteIdentifierCount(
+  lines: readonly string[],
+  anchors: readonly number[],
+  priorityTerms: readonly string[],
+): number {
+  const matchedTerms = priorityTerms.filter((term) =>
+    anchors.some((anchor) =>
+      matchesRouteIdentifier(lines[anchor]!.toLowerCase(), term),
+    ),
+  )
+  const dottedIdentifiersOf = (term: string): string[] =>
+    priorityTerms.filter(
+      (other) => other !== term && other.endsWith(`.${term}`),
+    )
+  const ownIdentifiers = new Set(
+    matchedTerms.filter((term) => !dottedIdentifiersOf(term).length),
+  )
+  // A member none of whose dotted identifiers matched may be one of them reached another way (`save` after `import { save }`) or another object's member (`chrome.tabs.create`), so it counts half.
+  const memberOnlyTerms = matchedTerms.filter((term) => {
+    const dottedIdentifiers = dottedIdentifiersOf(term)
+    return (
+      dottedIdentifiers.length > 0 &&
+      !dottedIdentifiers.some((identifier) => ownIdentifiers.has(identifier))
+    )
+  })
+  return ownIdentifiers.size + memberOnlyTerms.length / 2
+}
+
+/**
+ * Groups a long file's route-identifier anchors by the function too long for a whole unit that encloses each of them, and gives each function its window, best function first.
+ * Functions rank by the different route identifiers their anchors name ({@link distinctRouteIdentifierCount}), then by how many anchors they hold, then by their best anchor's rank. An anchor that no long function encloses belongs to no group.
+ * Why: Cycle 0124 (F3, Issue #318) — when the editor model named identifiers inside a long function rather than the function, the excerpt held 0 to 6 of the 13 lines that answered, scattered among single lines of other matches.
+ * Called by {@link selectWikiSourceLines} once per long source, before it places code units.
+ * @param lines - Complete verified source, indexed from zero.
+ * @param anchors - The anchors that match a route identifier (every anchor when the reply named none), best first.
+ * @param priorityTerms - The identifiers the route reply named, lowercased; empty when the question alone ranked the lines.
+ * @returns One entry per long function holding at least one anchor, ranked.
+ * @example
+ * longFunctionWindowsOf(['function load() {', ...fortyOneStatements, '}'], [20, 25], ['step'])
+ * // => [{ declarationLine: 0, anchors: [20, 25], window: [0, 1, ..., 39], namedWindow: [0, 1, ..., 39], distinctIdentifiers: 1 }]
+ */
+export function longFunctionWindowsOf(
+  lines: readonly string[],
+  anchors: readonly number[],
+  priorityTerms: readonly string[],
+): LongFunctionWindow[] {
+  const groups = new Map<
+    number,
+    { declaration: LineRange; anchors: number[] }
+  >()
+  for (const anchor of anchors) {
+    const declaration = enclosingLongDeclarationOf(lines, anchor)
+    // An anchor outside every long function stays a single line.
+    if (!declaration) continue
+    const group = groups.get(declaration.first)
+    if (group) group.anchors.push(anchor)
+    else groups.set(declaration.first, { declaration, anchors: [anchor] })
+  }
+  return [...groups.values()]
+    .map(({ declaration, anchors: inside }) => ({
+      declarationLine: declaration.first,
+      anchors: inside,
+      window: windowOfLongFunction(declaration, inside),
+      namedWindow: namedWindowOfLongFunction(declaration, inside),
+      distinctIdentifiers: distinctRouteIdentifierCount(
+        lines,
+        inside,
+        priorityTerms,
+      ),
+    }))
+    .sort(
+      (one, other) =>
+        other.distinctIdentifiers - one.distinctIdentifiers ||
+        other.anchors.length - one.anchors.length ||
+        anchors.indexOf(one.anchors[0]!) - anchors.indexOf(other.anchors[0]!),
+    )
+}
