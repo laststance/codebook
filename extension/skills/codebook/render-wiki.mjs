@@ -488,10 +488,12 @@ async function workspaceShortfallsOf(manifest, indexedSources, textOf, citedPath
 const EXTENSION_MAX_NAMED = 4;
 /** The `manifest_version` values that make a `manifest.json` a browser extension's manifest; a web-app manifest has none. */
 const EXTENSION_MANIFEST_VERSIONS = new Set([2, 3]);
-/** A folder with one of these names, at any depth below the manifest's folder, holds no extension page that owes a Wiki page. */
-const EXTENSION_NON_PAGE_FOLDERS = new Set(['test', 'tests', '__tests__', 'e2e', 'fixtures', 'spec', 'docs', 'examples']);
+/** A folder with one of these names, at any depth below the manifest's folder, holds no extension page that owes a Wiki page (test fixtures, documentation, and build output such as `dist`, `build` and `out`; Cycle 0123 /ship review). A page the manifest declares there still counts. */
+const EXTENSION_NON_PAGE_FOLDERS = new Set(['test', 'tests', '__tests__', 'e2e', 'fixtures', 'spec', 'docs', 'examples', 'dist', 'build', 'out']);
 /** The `src` of a `<script>` tag in an extension page's HTML (group 1 double-quoted, group 2 single-quoted). */
 const SCRIPT_SRC = /<script\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+/** An HTML comment; a `<script>` tag inside one loads nothing, so it is removed before {@link SCRIPT_SRC} reads a page (Cycle 0123 /ship review). */
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
 /** The manifest keys that declare one HTML page each, with the label the refusal gives it. Read by {@link declaredContextsOf}. */
 const EXTENSION_PAGE_KEYS = [
   ['the popup', manifest => manifest.action?.default_popup],
@@ -536,11 +538,30 @@ function declaredContextsOf(manifest) {
     ...EXTENSION_PAGE_KEYS.map(([label, pick]) => ({ label, kind: 'page', values: [pick(manifest)] })),
   ];
 }
-/** An extension page's files: its HTML file, then each local included script its `<script src>` tags load. Called by {@link extensionContextsOf}. @example await pageContextFilesOf('popup/popup.html', indexedSources, textOf) // => ['popup/popup.html', 'popup/popup.js'] */
-async function pageContextFilesOf(htmlPath, indexedSources, textOf) {
-  const html = await textOf(htmlPath);
+/**
+ * Resolves a page's `<script src>` to a repository path the way a browser extension page does: relative to the page's own folder (it may climb with `../` up to the extension root, never above), a single leading `/` relative to the extension root (the manifest's folder), query and hash stripped. A URL (a scheme, or a protocol-relative `//host/x.js`) and a path above the root answer null.
+ * Why: Cycle 0123 /ship review found `popup/index.html` loading `../scripts/popup.js` gave the popup only its HTML, because {@link extensionPathOf} rejects every `../`; manifest values keep that stricter rule.
+ * Called by {@link pageContextFilesOf}.
+ * @param rootFolder - The manifest's folder prefix ({@link folderPrefixOf}).
+ * @param pageFolder - The page's folder prefix.
+ * @example pageScriptPathOf('ext/', 'ext/popup/', '../scripts/popup.js') // => 'ext/scripts/popup.js'
+ * @example pageScriptPathOf('ext/', 'ext/popup/', '/scripts/popup.js') // => 'ext/scripts/popup.js'
+ * @example pageScriptPathOf('ext/', 'ext/popup/', '//cdn.example.com/x.js') // => null
+ */
+function pageScriptPathOf(rootFolder, pageFolder, source) {
+  const reference = typeof source === 'string' ? source.replace(/[?#].*$/, '') : '';
+  // Empty references, URLs and protocol-relative URLs name no file of this extension.
+  if (!reference || reference.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(reference)) return null;
+  // A single leading slash is the extension root, not the page's folder.
+  const resolved = reference.startsWith('/') ? posix.join(rootFolder, reference.slice(1)) : posix.join(pageFolder, reference);
+  // A path that climbs above the manifest's folder is no file of this extension.
+  return resolved.startsWith(rootFolder) && resolved !== rootFolder && !resolved.startsWith('../') && resolved !== '..' ? resolved : null;
+}
+/** An extension page's files: its HTML file, then each local included script its `<script src>` tags load (HTML comments ignored, {@link pageScriptPathOf} resolving each `src`). Called by {@link declaredExtensionContextsOf} and {@link undeclaredExtensionPagesOf}. @param rootFolder - The manifest's folder prefix. @example await pageContextFilesOf('popup/popup.html', '', indexedSources, textOf) // => ['popup/popup.html', 'popup/popup.js'] */
+async function pageContextFilesOf(htmlPath, rootFolder, indexedSources, textOf) {
+  const html = (await textOf(htmlPath)).replace(HTML_COMMENT, '');
   const folder = folderPrefixOf(htmlPath);
-  const scripts = [...html.matchAll(SCRIPT_SRC)].map(match => extensionPathOf(folder, match[1] ?? match[2])).filter(path => path && indexedSources.has(path));
+  const scripts = [...html.matchAll(SCRIPT_SRC)].map(match => pageScriptPathOf(rootFolder, folder, match[1] ?? match[2])).filter(path => path && indexedSources.has(path));
   return [htmlPath, ...new Set(scripts)];
 }
 /**
@@ -561,14 +582,17 @@ async function extensionContextsOf(manifestPath, manifest, indexedSources, textO
 async function declaredExtensionContextsOf(folder, declared, indexedSources, textOf) {
   const contexts = [];
   const seenPages = new Set();
+  const seenContexts = new Set();
   for (const { label, kind, values } of declared) {
     const files = values.map(value => extensionPathOf(folder, value)).filter(path => path && indexedSources.has(path));
     // A context whose files are not included sources owes no page.
     if (!files.length) continue;
-    // A page declared twice (options_page and options_ui.page) is one context.
-    if (kind === 'page' && seenPages.has(files[0])) continue;
+    // A page declared twice (options_page and options_ui.page), or script contexts that load the same files (two content_scripts entries with the same `js`), are one context: the first keeps its label (Cycle 0123 /ship review).
+    const identity = kind === 'page' ? `page:${files[0]}` : `script:${[...new Set(files)].sort().join('\n')}`;
+    if (seenContexts.has(identity)) continue;
+    seenContexts.add(identity);
     if (kind === 'page') seenPages.add(files[0]);
-    contexts.push({ label, main: files[0], files: kind === 'page' ? await pageContextFilesOf(files[0], indexedSources, textOf) : [...new Set(files)] });
+    contexts.push({ label, main: files[0], files: kind === 'page' ? await pageContextFilesOf(files[0], folder, indexedSources, textOf) : [...new Set(files)] });
   }
   return { contexts, seenPages };
 }
@@ -577,7 +601,7 @@ async function undeclaredExtensionPagesOf(folder, claimed, seenPages, indexedSou
   const pages = [];
   for (const path of indexedSources.keys()) {
     // An undeclared page is one the extension's code opens itself.
-    if (isUndeclaredExtensionPage(path, folder, claimed, seenPages)) pages.push({ label: `the extension page ${path}`, main: path, files: await pageContextFilesOf(path, indexedSources, textOf) });
+    if (isUndeclaredExtensionPage(path, folder, claimed, seenPages)) pages.push({ label: `the extension page ${path}`, main: path, files: await pageContextFilesOf(path, folder, indexedSources, textOf) });
   }
   return pages;
 }
@@ -596,14 +620,17 @@ const isPageOfContext = (page, index, owners) => {
   const own = counts.get(index) ?? 0;
   return own > 0 && [...counts].every(([owner, count]) => owner === index || count < own);
 };
-/** One refusal sentence per context of one manifest that no page is about alone, naming the context, its main file and up to {@link EXTENSION_MAX_NAMED} other contexts' main files. Called by {@link extensionShortfallsOf}. @example ownPageShortfallsOf(pages, 'manifest.json', contexts) // => ['The Wiki documents a browser extension (manifest.json) but gives the popup (popup.html) no page of its own: …'] */
+/** One refusal sentence per context of one manifest that owns a file and that no page is about alone (a context all of whose files another context also loads owes none), naming the context, its main file and up to {@link EXTENSION_MAX_NAMED} other contexts' main files. Called by {@link extensionShortfallsOf}. @example ownPageShortfallsOf(pages, 'manifest.json', contexts) // => ['The Wiki documents a browser extension (manifest.json) but gives the popup (popup.html) no page of its own: …'] */
 function ownPageShortfallsOf(pages, manifestPath, contexts) {
   const counts = new Map();
   for (const context of contexts) for (const file of context.files) counts.set(file, (counts.get(file) ?? 0) + 1);
   const owners = new Map();
   contexts.forEach((context, index) => context.files.filter(file => counts.get(file) === 1).forEach(file => owners.set(file, index)));
+  const owning = new Set(owners.values());
   const shortfalls = [];
   contexts.forEach((context, index) => {
+    // A context whose every file another context also loads owns nothing a page could be about, so it owes no page (Cycle 0123 /ship review).
+    if (!owning.has(index)) return;
     if (pages.some(page => isPageOfContext(page, index, owners))) return;
     const others = contexts.filter((_, other) => other !== index).map(other => other.main);
     const more = others.length > EXTENSION_MAX_NAMED ? `, and ${others.length - EXTENSION_MAX_NAMED} more` : '';

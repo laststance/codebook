@@ -484,3 +484,187 @@ test('a popup page citing only the script its HTML loads with a single-quoted sr
     assert.equal(outcome, 'rendered')
   })
 })
+
+/** The files of a popup under `popup/` that loads its script from `scripts/`, beside a service worker, under the given manifest path folder. */
+function scriptsFolderFiles(prefix, popupScriptSrc) {
+  return {
+    [`${prefix}manifest.json`]: MV3_MANIFEST,
+    [`${prefix}background/service-worker.js`]: 'export const worker = 1;\n',
+    [`${prefix}popup/popup.html`]: `<script src="${popupScriptSrc}"></script>\n`,
+    [`${prefix}scripts/popup.js`]: 'export const popup = 1;\n',
+  }
+}
+
+// Value: protects=a popup whose HTML loads its script from a sibling folder (../scripts/popup.js) or from the extension root (/scripts/popup.js); fails_when=the page's script resolver rejects ../ or treats a leading / as no file, so a page citing scripts/popup.js is refused as not the popup's page; why_new=Cycle 0123 /ship review P1: extensionPathOf rejected every ../; seam=none (the real renderer); no_claim=none beyond protects
+test('a popup page citing the script its HTML loads through ../scripts/ or /scripts/ is the popup page', async () => {
+  const pages = [
+    ['index.html', ['manifest.json']],
+    ['worker.html', ['background/service-worker.js']],
+    ['popup.html', ['scripts/popup.js']],
+  ]
+  const outcomes = []
+  for (const src of ['../scripts/popup.js', '/scripts/popup.js']) {
+    await inProject(async (root) => {
+      // Arrange
+      const manifest = await wikiOf(root, scriptsFolderFiles('', src), pages)
+
+      // Act
+      outcomes.push(await outcomeOf(manifest, root))
+    })
+  }
+
+  // Assert
+  assert.deepEqual(outcomes, ['rendered', 'rendered'])
+})
+
+// Value: protects=a script reference that is no file of the extension (a protocol-relative URL, or ../ climbing above the manifest's folder) must not join the popup; fails_when=either reference gives the popup a file, so the page citing it is accepted; why_new=Cycle 0123 /ship review P1: the new resolver must keep the extension root as its ceiling; seam=none (the real renderer); no_claim=none beyond protects
+test('a popup page citing a file its HTML reaches only through a protocol-relative URL or a ../ above the manifest folder is refused', async () => {
+  const refusal =
+    'The Wiki documents a browser extension (ext/manifest.json) but gives the popup (ext/popup/popup.html) no page of its own: write a page whose sources name more files of the popup (starting with ext/popup/popup.html) than of any other runtime context (ext/background/service-worker.js).'
+  const outcomes = []
+  for (const [src, cited] of [
+    ['//cdn.example.com/x.js', 'x.js'],
+    ['../../outside.js', 'outside.js'],
+  ]) {
+    await inProject(async (root) => {
+      // Arrange
+      const files = {
+        ...scriptsFolderFiles('ext/', src),
+        [cited]: 'export const reached = 1;\n',
+      }
+      const manifest = await wikiOf(root, files, [
+        // The index page explains the script the popup's HTML does not reach, so only the popup's own page is missing.
+        ['index.html', ['ext/manifest.json', 'ext/scripts/popup.js']],
+        ['worker.html', ['ext/background/service-worker.js']],
+        ['popup.html', [cited]],
+      ])
+
+      // Act
+      outcomes.push(await outcomeOf(manifest, root))
+    })
+  }
+
+  // Assert
+  assert.deepEqual(outcomes, [refusal, refusal])
+})
+
+// Value: protects=two content_scripts entries that load the same js file (one per match pattern); fails_when=the shared file makes both contexts own nothing so no page can satisfy them, or the duplicate is not one context; why_new=Cycle 0123 /ship review P1; seam=none (the real renderer); no_claim=none beyond protects
+test('two content script entries loading the same file are one context that a page citing that file satisfies', async () => {
+  const files = {
+    'manifest.json': JSON.stringify({
+      manifest_version: 3,
+      name: 'X',
+      content_scripts: [
+        { matches: ['https://a.example/*'], js: ['content.js'] },
+        { matches: ['https://b.example/*'], js: ['content.js'] },
+      ],
+    }),
+    'content.js': 'export const content = 1;\n',
+  }
+  await inProject(async (root) => {
+    // Arrange
+    const withPage = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+      ['content.html', ['content.js']],
+    ])
+    const withoutPage = {
+      ...(await wikiOf(root, files, [['index.html', ['manifest.json']]])),
+      coverageExceptions: [
+        { path: 'content.js', reason: 'Left out on purpose.' },
+      ],
+    }
+
+    // Act
+    const outcomes = [
+      await outcomeOf(withPage, root),
+      await outcomeOf(withoutPage, root),
+    ]
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'rendered',
+      'The Wiki documents a browser extension (manifest.json) but gives the content scripts for https://a.example/* (content.js) no page of its own: write a page whose sources name more files of the content scripts for https://a.example/* (starting with content.js) than of any other runtime context.',
+    ])
+  })
+})
+
+// Value: protects=a content script entry whose files another entry also loads owns nothing a page could be about; fails_when=the subset entry [a.js] beside [a.js, b.js] is refused though no page can be about it alone; why_new=Cycle 0123 /ship review P1: every refusal must be satisfiable by writing pages; seam=none (the real renderer); no_claim=none beyond protects
+test('a content script entry whose files another entry also loads owes no page of its own', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = {
+      'manifest.json': JSON.stringify({
+        manifest_version: 3,
+        name: 'X',
+        content_scripts: [
+          { matches: ['https://a.example/*'], js: ['a.js'] },
+          { matches: ['https://b.example/*'], js: ['a.js', 'b.js'] },
+        ],
+      }),
+      'a.js': 'export const a = 1;\n',
+      'b.js': 'export const b = 1;\n',
+    }
+    const manifest = await wikiOf(root, files, [
+      ['index.html', ['manifest.json', 'a.js']],
+      ['content.html', ['b.js']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=a popup whose HTML holds a commented-out script tag for the service worker's file; fails_when=the commented tag gives the popup the worker's file so the worker's page is refused or the file belongs to no context; why_new=Cycle 0123 /ship review P2; seam=none (the real renderer); no_claim=none beyond protects
+test('a script tag inside an HTML comment in the popup does not move the service worker file into the popup', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = {
+      'manifest.json': JSON.stringify({
+        manifest_version: 3,
+        name: 'X',
+        background: { service_worker: 'worker.js' },
+        action: { default_popup: 'popup.html' },
+      }),
+      'worker.js': 'export const worker = 1;\n',
+      'popup.html':
+        '<!-- <script src="worker.js"></script> -->\n<script src="popup.js"></script>\n',
+      'popup.js': 'export const popup = 1;\n',
+    }
+    const manifest = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+      ['worker.html', ['worker.js']],
+      ['popup.html', ['popup.js']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
+
+// Value: protects=a bundler's output folder holding HTML copies of the extension's pages; fails_when=an undeclared dist/index.html makes the renderer demand a page of its own; why_new=Cycle 0123 /ship review Low; seam=none (the real renderer); no_claim=none beyond protects
+test('an undeclared HTML file under dist/ owes no page', async () => {
+  await inProject(async (root) => {
+    // Arrange
+    const files = {
+      'manifest.json': MV3_MANIFEST,
+      'background/service-worker.js': 'export const worker = 1;\n',
+      'dist/index.html': '<p>build output</p>\n',
+    }
+    const manifest = await wikiOf(root, files, [
+      ['index.html', ['manifest.json']],
+      ['worker.html', ['background/service-worker.js']],
+    ])
+
+    // Act
+    const outcome = await outcomeOf(manifest, root)
+
+    // Assert
+    assert.equal(outcome, 'rendered')
+  })
+})
