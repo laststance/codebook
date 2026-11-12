@@ -551,12 +551,15 @@ function declaredContextsOf(manifest) {
 function pageScriptPathOf(rootFolder, pageFolder, source) {
   const reference = typeof source === 'string' ? source.replace(/[?#].*$/, '') : '';
   // Empty references, URLs and protocol-relative URLs name no file of this extension.
-  if (!reference || reference.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(reference)) return null;
+  if (namesNoExtensionFile(reference)) return null;
   // A single leading slash is the extension root, not the page's folder.
   const resolved = reference.startsWith('/') ? posix.join(rootFolder, reference.slice(1)) : posix.join(pageFolder, reference);
-  // A path that climbs above the manifest's folder is no file of this extension.
-  return resolved.startsWith(rootFolder) && resolved !== rootFolder && !resolved.startsWith('../') && resolved !== '..' ? resolved : null;
+  return isInsideExtensionRoot(resolved, rootFolder) ? resolved : null;
 }
+/** Answers whether a page's script reference (query and hash already stripped) names no file of the extension: an empty reference, a URL with a scheme, or a protocol-relative `//host/x.js`. Split out of {@link pageScriptPathOf} to keep it under Fallow's CRAP limit (Cycle 0123 /ship gate). Called by {@link pageScriptPathOf}. @example namesNoExtensionFile('//cdn.example.com/x.js') // => true @example namesNoExtensionFile('../scripts/popup.js') // => false */
+const namesNoExtensionFile = reference => !reference || reference.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(reference);
+/** Answers whether a resolved script path is a file inside the extension root: below the manifest's folder, not the folder itself, and not climbing above the repository. Split out of {@link pageScriptPathOf} to keep it under Fallow's CRAP limit (Cycle 0123 /ship gate). Called by {@link pageScriptPathOf}. @param rootFolder - The manifest's folder prefix ({@link folderPrefixOf}). @example isInsideExtensionRoot('ext/scripts/popup.js', 'ext/') // => true @example isInsideExtensionRoot('scripts/popup.js', 'ext/') // => false */
+const isInsideExtensionRoot = (resolved, rootFolder) => resolved.startsWith(rootFolder) && resolved !== rootFolder && !resolved.startsWith('../') && resolved !== '..';
 /** An extension page's files: its HTML file, then each local included script its `<script src>` tags load (HTML comments ignored, {@link pageScriptPathOf} resolving each `src`). Called by {@link declaredExtensionContextsOf} and {@link undeclaredExtensionPagesOf}. @param rootFolder - The manifest's folder prefix. @example await pageContextFilesOf('popup/popup.html', '', indexedSources, textOf) // => ['popup/popup.html', 'popup/popup.js'] */
 async function pageContextFilesOf(htmlPath, rootFolder, indexedSources, textOf) {
   const html = (await textOf(htmlPath)).replace(HTML_COMMENT, '');
