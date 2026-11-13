@@ -227,7 +227,7 @@ test('each library-stop refusal recovery links its own help section', () => {
   assert.deepEqual(anchors, [...reasons])
 })
 
-// protects=the help names browser library stops of a nested Pages app, keeps App Router, root and version 2 refused, and says a browser stop declares afterOperation from 1 with the two routes to entry-load library code (D13); fails_when=the rule keeps saying browser-side library stops stay outside the range or drops the afterOperation limit or either route; no_claim=that the run pauses (libraryBrowserStop tests)
+// protects=the help names browser library stops of a nested Pages app, keeps App Router, root and version 2 refused, and says a browser library stop declares afterOperation from 1 with the two routes to entry-load library code (D13), the entry-load browser stop of API 1.45 being for the app's own client code; fails_when=the rule keeps saying browser-side library stops stay outside the range, drops the afterOperation limit or either route, or says again that every browser stop refuses afterOperation 0; no_claim=that the run pauses (libraryBrowserStop tests)
 test('the help rule names browser library stops of a nested Pages app and the afterOperation limit', async (context) => {
   // Arrange
   const help = await readHelp(context)
@@ -239,14 +239,16 @@ test('the help rule names browser library stops of a nested Pages app and the af
     'a packageRoot other than "."',
     'entry chunks of the route and _app',
     'library-not-in-build',
-    'declares afterOperation from 1 (afterOperation 0 is refused)',
+    'A browser library stop declares afterOperation from 1',
     'observed through a server library stop, or after a client navigation',
+    "never through a browser stop at the entry load, whose afterOperation 0 (API 1.45) is for the app's own client code",
     'study format 9 with no new field',
     'A library stop of an app with both routers keeps the outside-package refusal; a root app (packageRoot absent or ".") has no files outside the app and a version 2 configuration cannot carry packageRoot, so the app readers refuse such a stop as not in the code the page loads at start',
   ])
     assert.ok(rule.includes(phrase), phrase)
   assert.ok(limits.includes('or since API 1.22 a browser stop'))
   assert.equal(limits.includes('browser-side library stops'), false)
+  assert.equal(rule.includes('like every browser stop'), false)
 })
 
 // protects=each library refusal entry words both participants and none still says a library stop is server-only; fails_when=a stale, unmapped, not-in-build or changed entry names only the server; no_claim=which participant a run refuses for

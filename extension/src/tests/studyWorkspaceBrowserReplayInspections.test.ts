@@ -49,12 +49,13 @@ test('a browser replay presents the recorded inspections of its stop to the nati
   }
 })
 
-// Value: protects=presenting the same browser stop again is no new native selection; fails_when=each presentation derives a new inspections array, so the debugger re-selects the shown stop; no_claim=the rows themselves
+// Value: protects=presenting the same browser stop again is no new native selection; fails_when=each presentation derives a new inspections array, so the debugger re-selects the shown stop, or the seek presents nothing again (the comparison would then read the first presentation only); no_claim=the rows themselves
 test('presenting the same browser stop twice hands the debugger the same inspections array', async () => {
   // Arrange
   const { harness, recordedStops } = await openRecordedStop()
   try {
     const first = recordedStops().at(-1)?.inspections
+    const presentationsBefore = recordedStops().length
 
     // Act: a seek inside the same stop presents it again.
     harness.controller.command({
@@ -65,8 +66,9 @@ test('presenting the same browser stop twice hands the debugger the same inspect
     })
     await harness.controller.settle()
 
-    // Assert
+    // Assert: the stop was presented again, with the array of its first presentation
     assert.equal(first?.length, 4)
+    assert.equal(recordedStops().length, presentationsBefore + 1)
     assert.equal(recordedStops().at(-1)?.inspections, first)
   } finally {
     await harness.close()

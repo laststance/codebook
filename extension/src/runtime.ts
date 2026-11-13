@@ -598,7 +598,7 @@ export type ConfiguredRuntimeView = {
     outputTail?: string
   }
   status: string
-  /** The milliseconds preparation was held at continued preparation pauses (Cycle 0086): the setup deadline moved by that much, so the run resource's `preparationDeadlineAt` moves with it. Absent until such a pause was continued. */
+  /** The milliseconds preparation was held at continued preparation pauses (Cycle 0086) and entry-load pauses (Cycle 0129): the setup deadline moved by that much, so the run resource's `preparationDeadlineAt` moves with it. Absent until such a pause was continued. */
   preparationHeldMs?: number
   /** Present as `false` when the configuration declares a server stop: Codebook loads the page once before it arms a render stop, so the render code of that load (a first cache fill included) is not observed; a module evaluation that paused in the preparation window is observed and has its own pause. */
   firstExecutionObserved?: false

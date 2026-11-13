@@ -5472,7 +5472,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Gives the time a learner held an entry-load pause back to the setup budget, for {@link beginAfter}: the budget did not run while the pause was held, so the next entry stop's page load keeps what was left before the pause.
+   * Gives the time a learner held an entry-load pause back to the setup budget, for {@link beginAfter}: the budget did not run while the pause was held, so the next entry stop's page load keeps what was left before the pause. The hold also counts as held preparation time ({@link preparationHeldView}), so the run resource's `preparationDeadlineAt` moves by the same amount.
    * A pause in Codebook's own request is credited by {@link finishPreparationPause}, never here.
    * @param continuedStop - The stop just continued.
    * @example this.creditEntryPauseHold(this.stops[0]!) // moves the setup deadline by the time the pause was held
@@ -5481,7 +5481,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const heldAtMs = this.entryPauseHeldAtMs
     this.entryPauseHeldAtMs = undefined
     if (heldAtMs === undefined || continuedStop.preparationRequest) return
-    this.preparationDeadlineAt += Date.now() - heldAtMs
+    const heldMs = Date.now() - heldAtMs
+    // The run resource's setup deadline moves with the runtime's own: both count the hold once.
+    this.preparationDeadlineAt += heldMs
+    this.preparationHeldMs += heldMs
   }
 
   /**
@@ -18475,7 +18478,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return allCaptured ? 'complete' : 'incomplete'
   }
   /**
-   * The run resource's held preparation time, left out until a preparation pause was continued.
+   * The run resource's held preparation time, left out until a preparation pause or an entry-load pause was continued.
    * @returns `{ preparationHeldMs }` or an empty object.
    * @example this.preparationHeldView() // => { preparationHeldMs: 120000 } after a preparation pause held for two minutes
    */

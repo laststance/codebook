@@ -21,6 +21,8 @@ import { entryControl } from './utils/entryRenderHarness'
 const SETUP_BUDGET_MS = 3000
 /** How long that test holds the server pause: longer than the whole budget. */
 const HELD_MS = 3500
+/** How long the reported-hold test holds the server pause: any real moment does, as the test compares two amounts of the same hold. */
+const SHORT_HOLD_MS = 200
 
 /** A click that the page answers. */
 const OPEN: RepositoryOperation = {
@@ -428,6 +430,55 @@ test('a server pause of the entry load held for 3.5 s moves the setup budget by 
   )
   assert.equal(harness.run.view().failures.length, 0)
   assert.equal(harness.run.view().snapshots.length, 2)
+})
+
+// Value: protects=the time a learner holds a server pause of the entry load is reported as the run's preparationHeldMs by the same amount that moved the runtime's setup deadline, so the run resource's preparationDeadlineAt and the remaining preparation time the chat polls by move with the deadline the run keeps; fails_when=the hold moves only the runtime's own deadline (the run resource then shows a setup deadline that passed while the run still prepares) or the two amounts differ; no_claim=the length of the credit (the 3.5 s hold test above)
+test('a held server pause of the entry load reports its hold as held preparation time, by the amount that moved the setup deadline', async (context) => {
+  // Arrange
+  const harness = await serverThenBrowserHarness(context, {
+    ...entryControl(context),
+    preparationDeadlineAt: Date.now() + SETUP_BUDGET_MS,
+  })
+  // The test sends the browser stop's pause itself: the continuation of the browser stop must not send another.
+  harness.suppressNextPause()
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedServerThenBrowser(harness)
+  harness.commitMainFrame('/dashboard')
+  harness.server!.hit({ route: '/dashboard' })
+  const serverPause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published server pause',
+  )
+  // gstack-timing-ok: the hold is measured with the run's wall clock (the run's module does not see a mocked Date), so a real moment passes; the assertions compare two amounts of the same hold, not its length
+  await sleep(SHORT_HOLD_MS)
+  const deadlineBeforeContinue = Number(
+    Reflect.get(harness.run, 'preparationDeadlineAt'),
+  )
+  const heldBeforeContinue = harness.run.view().preparationHeldMs ?? 0
+  // Act: the learner continues the held pause
+  await harness.run.continue('server', serverPause.pause)
+  const deadlineMovedMs =
+    Number(Reflect.get(harness.run, 'preparationDeadlineAt')) -
+    deadlineBeforeContinue
+  const reportedHeldMs =
+    (harness.run.view().preparationHeldMs ?? 0) - heldBeforeContinue
+  // The page's client code then reaches the browser stop, which the learner continues at once.
+  harness.advance(100)
+  harness.emitPause(1, 3)
+  const browserPause = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the published entry-load browser pause',
+  )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('browser', browserPause.pause)
+  await prepared
+  // Assert
+  assert.ok(
+    deadlineMovedMs >= SHORT_HOLD_MS,
+    `the hold of ${SHORT_HOLD_MS} ms moved the setup deadline by ${deadlineMovedMs} ms`,
+  )
+  assert.equal(reportedHeldMs, deadlineMovedMs)
+  assert.equal(harness.run.view().failures.length, 0)
 })
 
 // Value: protects=a second browser stop that arrives while the entry load's last browser stop is being continued fails the run with the recovery that names the entry-load option, not the bare sentence; fails_when=the queued-stop failure of a continuation keeps the plain "Unexpected or additional" sentence; no_claim=a real page whose client code pauses again during the continue
