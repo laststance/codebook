@@ -7879,7 +7879,7 @@ export class StudyWorkspace {
 
   /**
    * Brings the kept Application pane back in front of the paused file the ended run left in front of it ({@link rememberLeftoverStopTab}), so the next run's view is shown instead of refused; called through the lease's `keepsPaneOpen` of {@link leaseApplicationViewport} when a run attaches, before the view's first reveal.
-   * Without it the reveal's guard ({@link assertApplicationReveal}) refused the next run's view over that file, and the run went on without frames (Cycle 0132 task 8, E2 run 2). Only that noted tab is covered, and only while it is still in front, unedited; its tab stays in the group, unmoved. The pane takes the keyboard only when that file's own editor has it, by the pause reveal's rule ({@link keepsKeyboardFromPane}); an editor of another group keeps it. Any other front tab is left in front and the guard refuses as before, as it does when the editor does not bring the pane to the front in time. The note is read once: a later run notes its own.
+   * Without it the reveal's guard ({@link assertApplicationReveal}) refused the next run's view over that file, and the run went on without frames (Cycle 0132 task 8, E2 run 2). Only that noted tab is covered, and only while it is still in front, unedited; its tab stays in the group, unmoved. The pane takes the keyboard only when that file's own editor has it, by the pause reveal's rule ({@link keepsKeyboardFromPane}), and still has it once the rule answered; an editor of another group keeps it, also one the learner chose while the rule answered. Any other front tab is left in front and the guard refuses as before, as it does when the editor does not bring the pane to the front in time. The note is read once: a later run notes its own.
    * The run's own paused-file watch ({@link keepPausedSourceOutOfApplication}) is told to leave that file behind the pane before the pane comes forward: a run that also stops in the file would otherwise move it, and Cursor 3.30.8, whose Agent chat still holds the keyboard, answers that show by bringing the file's copy in the pane's group to the front again, so the attach's reveal refused after all (Cycle 0132 E4, E2-2 run 2). Once the run's own stop shows the file in front again, the watch moves it as any paused file. The notes are read live during the keyboard question, so a tab the learner closes and opens again meanwhile is not covered.
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
@@ -7924,13 +7924,18 @@ export class StudyWorkspace {
     }
     const covered = coveringLeftover()
     if (column === undefined || !covered) return
-    const active = vscode.window.activeTextEditor
-    // Only the covered file's own editor can lose the keyboard to the pane; a learner typing in another group keeps it.
-    const comesWithoutKeyboard =
-      active?.viewColumn === column &&
-      active.document.uri.toString() === covered.toString()
-        ? await this.keepsKeyboardFromPane()
-        : true
+    /** Tells that the covered file's own editor is the active text editor, the only editor that can lose the keyboard to the pane. */
+    const coveredEditorIsActive = (): boolean => {
+      const active = vscode.window.activeTextEditor
+      return (
+        active?.viewColumn === column &&
+        active.document.uri.toString() === covered.toString()
+      )
+    }
+    // A learner typing in another group keeps the keyboard; only the covered file's editor asks the pause reveal's rule.
+    const comesWithoutKeyboard = coveredEditorIsActive()
+      ? await this.keepsKeyboardFromPane()
+      : true
     signal.throwIfAborted()
     // Read again after the keyboard's answer: the pane may be gone or moved, or the learner may have changed the group meanwhile.
     if (
@@ -7939,9 +7944,11 @@ export class StudyWorkspace {
       !coveringLeftover()
     )
       return
+    // An editor the learner chose while the rule answered keeps the keyboard (CodeRabbit, PR 331).
+    const takesKeyboard = !comesWithoutKeyboard && coveredEditorIsActive()
     leaveBehind(covered)
-    this.revealPane(panel, column, comesWithoutKeyboard)
-    if (!comesWithoutKeyboard) this.tellPaneTookKeyboard()
+    this.revealPane(panel, column, !takesKeyboard)
+    if (takesKeyboard) this.tellPaneTookKeyboard()
     try {
       await waitUntil(
         () => {

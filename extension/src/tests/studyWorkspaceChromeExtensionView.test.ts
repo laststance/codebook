@@ -928,6 +928,74 @@ test('the next extension run takes the keyboard for its view from the learner ty
   }
 })
 
+// Value: protects=the learner who clicks into a file of another group while the next extension run asks the pause reveal's keyboard rule keeps the keyboard there, and is told nothing about the pane; fails_when=the attach decides from the editor it read before the rule's answer and reveals the pane with the keyboard, taking it from the file the learner chose meanwhile (CodeRabbit, PR 331); why_new=the keyboard test where the pane takes the keyboard keeps the covered file's editor active throughout; seam=the rule's answer is wrapped so the learner's click lands while it is on its way; no_claim=which editor the debugger gives the keyboard at the run's own stops
+test('the next extension run leaves the keyboard in the file the learner chose while its keyboard rule answered', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const applicationColumn = await endRunWithPausedFileInFront(
+      harness,
+      'switching-run-1',
+      'settings.js',
+    )
+    const learnerColumn = groupShowing(harness, 'popup.js')?.viewColumn
+    assert.ok(learnerColumn)
+    assert.notEqual(learnerColumn, applicationColumn)
+    harness.clickFrontTextTab(applicationColumn)
+    harness.workInActiveTextEditor('keyboard')
+    const askKeyboardRule = harness.reader['keepsKeyboardFromPane'].bind(
+      harness.reader,
+    )
+    harness.reader['keepsKeyboardFromPane'] = async () => {
+      const answer = await askKeyboardRule()
+      // The learner clicks into the file of another group while the rule's answer is on its way.
+      harness.focusMutableDraft('popup.js', learnerColumn)
+      return answer
+    }
+    const second = await openView(harness, 'switching-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const revealsBefore = harness.panelReveals().length
+    // Act
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application switchin',
+    )
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [true],
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+        '/popup.js',
+      ),
+      true,
+    )
+    assert.equal(
+      harness.informationMessages.some(
+        ({ message }) => message === PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+      ),
+      false,
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the stop file an extension run left in front is covered by one next run only; fails_when=the note outlives the attach that read it, so a later run covers the same file again after the learner brought that tab to the front on purpose; why_new=the covering test spans one next run, so a note kept past its read is unseen; seam=none; no_claim=a learner who closes the tab (the closed-tab test covers that)
 test('a third extension run refuses its view over the earlier stop file the learner brought to the front again', async () => {
   // Arrange
