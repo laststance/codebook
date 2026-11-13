@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.129.0] - 2026-11-13 (development candidate)
+
+Cycle 0129 ([Issue #326](https://github.com/laststance/codebook/issues/326)), a bug-fix cycle for the two defects that Cycle 0128's native check found. **In a Next app the chat can now pause the client code that runs while the page first loads, and the saved replay of a browser run shows the values the chat cited at each stop.** On reduxjs/redux-toolkit's Next Example run on the checked-out library, Cursor's chat paused twice while the page loaded: once in the component that renders the post before its data arrived, and once after. The replay, reopened after a window reload, showed both stops' values in the native debugger.
+
+### Added
+- **A browser stop at the entry load (MCP API 1.45).** In a `next-dev-webpack` run with a version 3 configuration, a stop with `participant: "browser"` and `afterOperation: 0` pauses client code that runs while the entry page loads, such as a fetch that starts on mount.
+  - Codebook arms the stop before the page's first navigation, so it binds before the module runs. The pause is labelled `attribution: "entry-load"`.
+  - Server stops of the entry load are declared before its browser stops.
+  - The server's render of the same client component pauses at that line too. That pause is resumed and journaled, never recorded.
+  - When no pause comes within 20 s of the later of the page finishing and the continue of an earlier stop of the entry load, the run ends with a sentence that names the stop.
+  - Other adapters keep refusing `afterOperation: 0` on a browser stop, and the refusal now names the adapter.
+- **Study format 25.** A run with a browser stop at the entry load is saved as format 25 (`.study.v25.json`), whatever else it declares. Codebook 0.2.128 and older list it as saved by a newer Codebook.
+- **The bundled skill (1.0.105) tells the chat to use that stop for a line of the app's own client code that runs while the page loads.** On an older API, it tells the chat to ask the learner to update Codebook. After installing, run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to 1.0.105; VS Code reads the bundled skill directly.
+
+### Fixed
+- **A browser run's learning replay lists the values the run inspected at each stop** in the native debugger's **Recorded inspections** scope, as a test replay does. A value the chat cited stays readable after the original debugger has exited.
+- A browser stop declared after an operation still fails the run when its line runs before that operation's input. Its failure text now names the entry-load option.
+
+**Compatibility.** MCP API 1.45 is additive. Study format 25 is new, and older formats are read as before. The bundled skill moves to 1.0.105.
+
 ## [0.2.128.0] - 2026-11-13 (development candidate)
 
 Cycle 0127 ([Issue #323](https://github.com/laststance/codebook/issues/323)), a feature cycle. **When you ask how a library behaves, the bundled skill now asks the chat to pause inside the library's own code, not only in its test.** On reduxjs/redux, VS Code's chat first stopped only in the test file and explained the library from its source alone. With the new rule, the chats in VS Code and Cursor ran the library's tests, paused in the library source those tests call and showed the library's values at those moments; a saved learning replay from each editor reopened with the same values.
