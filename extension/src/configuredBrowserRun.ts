@@ -5776,7 +5776,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // A verdict that resumes nothing after the idle bound passed drops the pause (`undefined`), as the bound would have without the wait.
     if (libraryCopy || this.dropAfterClassification(held)) return libraryCopy
     // The server's render of a client component that holds a browser stop of the entry load pauses at the editor's breakpoint too: nobody's stop.
-    const entryCopy = await this.entryBrowserCopyVerdictOf(session, event)
+    const entryCopy = await this.entryBrowserCopyVerdictOf(session, event, held)
     return entryCopy ?? this.heldPauseVerdictOf(session, event, held)
   }
 
@@ -5785,17 +5785,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Why it exists: the editor sends a browser stop's breakpoint to every session, and Next renders a client component on the server too, so the server session pauses at the stop's file and line; that pause is nobody's stop (a declared server stop always takes precedence: it was admitted before it could be held, and a client component's file cannot hold one). Called by {@link unexpectedHitVerdict}.
    * @param session - The server session.
    * @param event - The `stopped` event.
-   * @returns The resume verdict naming the stop's file and line; `undefined` for any other pause, a pause that also hit a breakpoint of the learner's, or a stack that cannot be read in time.
-   * @example await this.entryBrowserCopyVerdictOf(session, event) // { action: 'resume', event: 'breakpoint.server-copy-resumed', file: 'app/ui/Posts.tsx', line: 14 }
+   * @param held - The pause held for it; after the stack read the verdict stands only while it is still the held one.
+   * @returns The resume verdict naming the stop's file and line; `'gone'` when the pause left the held slot while the stack was read (resumed by the adapter, or another pause is held now), so nothing is resumed; `undefined` for any other pause, a pause that also hit a breakpoint of the learner's, a run with no entry browser stop left, or a stack that cannot be read in time.
+   * @example await this.entryBrowserCopyVerdictOf(session, event, held) // { action: 'resume', event: 'breakpoint.server-copy-resumed', file: 'app/ui/Posts.tsx', line: 14 }
    */
   private async entryBrowserCopyVerdictOf(
     session: vscode.DebugSession,
     event: DebugProtocol.Event,
-  ): Promise<EntryBrowserServerCopyVerdict | undefined> {
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): Promise<EntryBrowserServerCopyVerdict | 'gone' | undefined> {
     const threadId = event.body?.threadId
-    const entryStops = this.stops.filter((stop) =>
-      this.isEntryBrowserStop(stop),
-    )
+    // Only an entry browser stop not yet continued can have a server copy; once they are behind the run the pause takes the previous path unchanged.
+    const entryStops = this.stops
+      .slice(this.stopIndex)
+      .filter((stop) => this.isEntryBrowserStop(stop))
     if (
       !entryStops.length ||
       !Number.isInteger(threadId) ||
@@ -5819,16 +5822,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.abort.signal,
           SERVER_RENDER_CLASSIFICATION_MS,
         )
+      // The pause may have left the held slot while the stack was read: a verdict for it would resume whatever is paused now.
+      if (this.participants.server.unannouncedPause !== held) return 'gone'
       const frame = stack.stackFrames[0]
       if (!frame?.source?.path) return undefined
       const framePath = resolve(frame.source.path)
+      // The server adapter may have slid the breakpoint to another line than the browser's: its own verified place decides first.
       const stop = entryStops.find(
         (candidate) =>
           resolve(candidate.bundle.sourcePath) === framePath &&
           frame.line ===
             (
-              candidate.bound ??
               candidate.breakpoint?.verifiedPlace(session) ??
+              candidate.bound ??
               candidate.armed
             ).line,
       )

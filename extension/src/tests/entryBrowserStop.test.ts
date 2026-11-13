@@ -404,3 +404,106 @@ test('a pause at another column of the declared line is not recorded as the entr
     'Error: DAP frame differs from the bound configured source position',
   )
 })
+
+/**
+ * Drives a server-then-browser entry load to the point where the server stop was continued and the browser stop is still awaited.
+ * @param context - The test.
+ * @returns The harness, its prepare promise and the id of the editor's breakpoint of the browser stop.
+ * @example const { harness, prepared, browserStopBreakpointId } = await serverStopContinued(context)
+ */
+async function serverStopContinued(context: TestContext) {
+  const harness = await serverThenBrowserHarness(context)
+  // The test sends the browser stop's pause itself: the continuation of the browser stop must not send another.
+  harness.suppressNextPause()
+  const prepared = harness.run.prepare()
+  await armedServerThenBrowser(harness)
+  harness.commitMainFrame('/dashboard')
+  harness.server!.hit({ route: '/dashboard' })
+  const serverPause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published server pause',
+  )
+  await harness.run.continue('server', serverPause.pause)
+  const browserStopBreakpointId = harness.breakpoints.find((breakpoint) =>
+    breakpoint.id.startsWith('owned-breakpoint-'),
+  )!.id
+  return { harness, prepared, browserStopBreakpointId }
+}
+
+// Value: protects=a stack answer that arrives after the held server copy pause was resumed by the adapter and another pause is held resumes nothing: only the pause that is held decides; fails_when=the stale answer resumes the thread again, so the later pause is resumed twice or a pause the learner should see is resumed for a verdict about another one; no_claim=a real adapter's resume timing (native H1)
+test('a stale stack answer for an earlier server copy pause does not resume the pause held after it', async (context) => {
+  // Arrange
+  const { harness, prepared, browserStopBreakpointId } =
+    await serverStopContinued(context)
+  const resumesBefore = harness.server!.continues.length
+  const copyHit = {
+    route: '/dashboard',
+    generated: { line: 2, column: 0 },
+    source: { line: 3, column: 1 },
+    hitBreakpoints: [browserStopBreakpointId],
+  }
+  const releaseFirstStack = harness.server!.holdNextStackTrace()
+  // Act: the first copy pause waits for its stack, the adapter resumes it, and a second copy pause is held and resumed on its own stack
+  harness.server!.hit(copyHit)
+  harness.server!.emitResumed()
+  harness.server!.hit(copyHit)
+  await waitUntil(
+    () => harness.server!.continues.length === resumesBefore + 1,
+    'the second server copy was resumed',
+  )
+  releaseFirstStack()
+  // The stale answer is processed before the run goes on.
+  await waitUntil(
+    () =>
+      harness.server!.commands.filter((command) => command === 'stackTrace')
+        .length >= 2,
+    'both stacks were read',
+  )
+  harness.emitPause(1, 3)
+  const browserPause = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the published entry-load browser pause',
+  )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('browser', browserPause.pause)
+  await prepared
+  // Assert
+  assert.equal(harness.server!.continues.length, resumesBefore + 1)
+  assert.equal(harness.run.view().failures.length, 0)
+})
+
+// Value: protects=once every browser stop of the entry load is continued, a held server pause takes the path it had before the feature: no stack is read to look for a browser stop's server copy and nothing is journaled as one; fails_when=the pause is classified as an entry-browser copy after its stops are behind the run; no_claim=a pause in a run that declares no entry browser stop at all (the same guard)
+test('a held server pause after the entry browser stop was continued is not classified as its server copy', async (context) => {
+  // Arrange
+  const { harness, prepared, browserStopBreakpointId } =
+    await serverStopContinued(context)
+  harness.emitPause(1, 3)
+  const browserPause = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the published entry-load browser pause',
+  )
+  // The page is still loading: the run has not finished preparing, so the browser stop's breakpoint is still the run's own.
+  await harness.run.continue('browser', browserPause.pause)
+  const stackReadsBefore = harness.server!.commands.filter(
+    (command) => command === 'stackTrace',
+  ).length
+  // Act: a repeat hit of the server stop's place (held by the run) that also names the browser stop's breakpoint, after every entry stop is behind the run
+  harness.server!.hit({
+    route: '/dashboard',
+    source: { line: 1, column: 1 },
+    hitBreakpoints: [browserStopBreakpointId],
+  })
+  await waitUntil(
+    () => harness.server!.continues.length >= 2,
+    'the repeat hit was resumed',
+  )
+  harness.setDocumentReadyState('complete')
+  await prepared
+  // Assert
+  assert.equal(
+    harness.server!.commands.filter((command) => command === 'stackTrace')
+      .length,
+    stackReadsBefore,
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.server-copy-resumed'), [])
+})
