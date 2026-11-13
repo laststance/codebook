@@ -1053,6 +1053,8 @@ export async function configuredRuntimeHarness(
   let bindingLookupFailure: string | undefined
   // Whether the adapter leaves the next binding lookup of an owned breakpoint without an answer.
   let isNextBindingLookupUnanswered = false
+  // Whether the editor answers an owned breakpoint's binding verified with its line only, as both editors do once the adapter sent news about a breakpoint requested at column 1.
+  let isBindingAnsweredWithoutColumn = false
   // The sentence the wait for the before conditions words its timeout with instead of its own.
   let beforeTimeoutSentence: string | undefined
   // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
@@ -1278,8 +1280,13 @@ export async function configuredRuntimeHarness(
             id: browserAdapterIdOf(owned.id),
             verified: true,
             line: reported?.line ?? owned.location.range.start.line + 1,
-            column:
-              reported?.column ?? owned.location.range.start.character + 1,
+            ...(isBindingAnsweredWithoutColumn
+              ? {}
+              : {
+                  column:
+                    reported?.column ??
+                    owned.location.range.start.character + 1,
+                }),
           }
         : undefined
     },
@@ -2914,10 +2921,13 @@ export async function configuredRuntimeHarness(
     },
     /**
      * Sends the page session's `setBreakpoints` for the editor's owned breakpoints, each at its own file, and the adapter's verified answer, as the editor sends every breakpoint to the page's session too; the page's adapter numbers them from 101.
+     * @param options - `withoutPlace` acknowledges each registration as pending, with its id and no line or column.
      * @returns The page adapter's ids of the owned breakpoints, in the editor's order.
      * @example const ids = harness.acknowledgeOwnedBreakpointsInPage() // [101]
      */
-    acknowledgeOwnedBreakpointsInPage(): number[] {
+    acknowledgeOwnedBreakpointsInPage(
+      options: { withoutPlace?: boolean } = {},
+    ): number[] {
       const owned = breakpoints.filter((breakpoint) =>
         breakpoint.id.startsWith('owned-breakpoint'),
       )
@@ -2950,9 +2960,14 @@ export async function configuredRuntimeHarness(
           body: {
             breakpoints: inFile.map((entry, index) => ({
               id: fileIds[index],
-              verified: true,
-              line: entry.location.range.start.line + 1,
-              column: entry.location.range.start.character + 1,
+              // An adapter that acknowledges the registration as pending and names no place, as one does for a module it has not parsed.
+              verified: !options.withoutPlace,
+              ...(options.withoutPlace
+                ? {}
+                : {
+                    line: entry.location.range.start.line + 1,
+                    column: entry.location.range.start.character + 1,
+                  }),
             })),
           },
         })
@@ -3265,6 +3280,10 @@ export async function configuredRuntimeHarness(
     },
     rejectBreakpointBinding(): void {
       rejectBinding = true
+    },
+    /** Makes the editor answer every owned breakpoint's binding verified with its line and no column. @example harness.answerBindingWithoutColumn() */
+    answerBindingWithoutColumn(): void {
+      isBindingAnsweredWithoutColumn = true
     },
     /** The budget the run gave each binding wait that {@link rejectBreakpointBinding} ended at once, in milliseconds. */
     bindingWaitBudgetsMs,

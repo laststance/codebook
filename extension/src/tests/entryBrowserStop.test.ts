@@ -11,6 +11,10 @@ import {
   configuredRuntimeHarness,
   type ConfiguredRuntimeHarness,
 } from './utils/configuredRuntimeHarness'
+import {
+  armedBrowserEntry,
+  entryBrowserHarness,
+} from './utils/entryBrowserStopHarness'
 import { entryControl } from './utils/entryRenderHarness'
 
 /** The setup budget of the held-pause test, in real milliseconds. */
@@ -40,50 +44,6 @@ function journaled(harness: ConfiguredRuntimeHarness, type: string): unknown[] {
     .view()
     .events.filter((event) => event.type === type)
     .map((event) => JSON.parse(JSON.stringify(event.detail)))
-}
-
-/**
- * Opens a `next-dev-webpack` run whose only stop is a browser stop at the entry load (`afterOperation: 0`), the page that has not finished loading.
- * @param context - The test.
- * @param extra - Harness options that replace the defaults.
- * @returns The configured runtime harness.
- * @example const harness = await entryBrowserHarness(context)
- */
-async function entryBrowserHarness(
-  context: TestContext,
-  extra: Partial<Parameters<typeof configuredRuntimeHarness>[3]> = {},
-): Promise<ConfiguredRuntimeHarness> {
-  return configuredRuntimeHarness(context, entryControl(context), [], {
-    participant: 'browser',
-    entryPath: '/dashboard',
-    documentReadyState: 'loading',
-    operations: {
-      operations: [],
-      stopOperations: [0],
-      stopParticipants: ['browser'],
-    },
-    ...extra,
-  })
-}
-
-/**
- * Waits until the browser-only run requested its stop, acknowledges it in the page's session and waits for the entry navigation.
- * @param harness - The entry-browser harness whose run is preparing.
- * @example await armedBrowserEntry(harness)
- */
-async function armedBrowserEntry(
-  harness: ConfiguredRuntimeHarness,
-): Promise<void> {
-  await waitUntil(
-    () => harness.ownedBreakpointsRequested() >= 1,
-    'the entry-load browser stop was requested',
-  )
-  // The adapter acknowledges the registration while the page's module is not parsed yet (pending is accepted).
-  harness.acknowledgeOwnedBreakpointsInPage()
-  await waitUntil(
-    () => harness.navigations.length >= 1,
-    'the entry navigation started',
-  )
 }
 
 /**

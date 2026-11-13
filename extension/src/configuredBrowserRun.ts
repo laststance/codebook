@@ -16995,7 +16995,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Binds a paused browser stop at its pause when it was adopted away from the binding verified at arming or was armed before its module and has none yet, for {@link inspect}.
-   * The debugger may have moved a verified binding since arming, so it is read again and named; a stop armed before its module ({@link armBrowserEntryStop}) takes the place the editor names or, when the editor names none, the place of the paused frame.
+   * The debugger may have moved a verified binding since arming, so it is read again and named; a stop armed before its module ({@link armBrowserEntryStop}) takes the place the editor names or, when the editor names none, the place of the paused frame. For a stop not bound yet, a place whose column was only borrowed from the paused frame ({@link CompletedBindingPlace}) counts only when {@link ownedPausedPlaceOf} confirms the owned breakpoint caused the pause; a column the editor or the adapter named is taken as it is.
    * @param stop - The paused browser stop.
    * @param stopped - The accepted pause, whose `adopted` flag says whether it was adopted away from the verified binding.
    * @param pausedAt - The generated place of the paused top frame.
@@ -17010,9 +17010,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     current: () => void,
   ): Promise<void> {
     if (!stopped.adopted && stop.bound) return
-    const moved =
-      (await this.movedBrowserBinding(stop, pausedAt)) ??
-      (stop.bound ? undefined : this.ownedPausedPlaceOf(stop, pausedAt))
+    const read = await this.movedBrowserBinding(stop, pausedAt)
+    // A stop not bound yet whose editor binding borrowed its column from the paused frame has nothing of its own at that column: a learner's breakpoint at another column of the line would pass for it, so only a confirmed owned pause lends it.
+    const isBorrowedFromPause =
+      !stop.bound && read?.columnFrom === 'paused-frame'
+    const moved = isBorrowedFromPause
+      ? this.ownedPausedPlaceOf(stop, pausedAt)
+      : (read ??
+        (stop.bound ? undefined : this.ownedPausedPlaceOf(stop, pausedAt)))
     current()
     if (moved) await this.bindAtPause(stop, moved, pausedAt, current)
   }
