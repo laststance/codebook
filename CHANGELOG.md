@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.128.0] - 2026-11-13 (development candidate)
+
+Cycle 0127 ([Issue #323](https://github.com/laststance/codebook/issues/323)), a feature cycle. **When you ask how a library behaves, the bundled skill now asks the chat to pause inside the library's own code, not only in its test.** On reduxjs/redux, VS Code's chat first stopped only in the test file and explained the library from its source alone. With the new rule, the chats in VS Code and Cursor ran the library's tests, paused in the library source those tests call and showed the library's values at those moments; a saved learning replay from each editor reopened with the same values.
+
+### Changed
+- **For a question about library behavior, the bundled skill (1.0.104) asks the chat for at least one stop in the library source the test calls.** A stop in the test file shows what the test sees; a stop in the library shows the library's own values, in the run and in its replay. After installing, run **Codebook: Set Up AI Chat** so Cursor's managed skill updates to 1.0.104; VS Code reads the bundled skill directly.
+
+### Fixed
+- The README's Cursor setup step said to look for 6 resources; it now names the 16 tools and 9 resources the server lists, as **Customize > MCPs** shows them for the connected Codebook entry.
+
+**Compatibility.** No MCP API or study format change. Only the bundled skill's text and the README change.
+
 ## [0.2.127.0] - 2026-11-13 (development candidate)
 
 Cycle 0125 ([Issue #320](https://github.com/laststance/codebook/issues/320)), a bug-fix cycle. **A Wiki question can now reach a function that no Wiki page mentions, and Cursor's question agent no longer reads files outside what Codebook sends it.** On laststance/bookmark-xp-explorer, VS Code's reader could not route a question about pasting a copied bookmark or folder to the paste function. The editor model sees only the Wiki's pages, and no page names that function, so the answer called what a paste creates unknown. In Cursor, the question agent found the function only by reading other checkouts of the repository and the installed skill, outside the opened project. Now the first request lists the functions each long source declares, and Cursor's agent runs with every tool denied. Both editors' readers answered the question correctly, citing the paste function.

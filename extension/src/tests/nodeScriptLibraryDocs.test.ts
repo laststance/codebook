@@ -136,7 +136,7 @@ test('the bundled skill 1.0.82 routes a library Example to library.packageRoot b
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.103"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
   for (const phrase of [
     'declare `library.packageRoot` so the Example runs the checked-out library',
     'only when `codebook_status` reports API 1.33 or later',
@@ -170,7 +170,7 @@ test('the README documents the library route, its facts, refusals, limits and di
     '`repositoryPackageCopies`',
     '`Ran on the checked-out <name> <version> built from <revision>',
     'Since skill 1.0.82',
-    "so Cursor's managed skill updates to **1.0.103**",
+    "so Cursor's managed skill updates to **1.0.104**",
   ])
     assert.ok(readme.includes(phrase), phrase)
 })
