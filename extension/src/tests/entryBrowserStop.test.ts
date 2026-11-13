@@ -377,3 +377,30 @@ test('a browser stop at the entry load whose module the page parses again fails 
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
+
+// Value: protects=a learner's own breakpoint at another column of the declared line is never committed as the entry-load browser stop when the editor names no binding and nothing confirms the run's own breakpoint paused; fails_when=the paused frame is adopted as the stop's binding and the pause is recorded as the declared stop; no_claim=a real js-debug answer for the learner's breakpoint (native H1)
+test('a pause at another column of the declared line is not recorded as the entry-load browser stop when the editor names no binding', async (context) => {
+  // Arrange
+  // The map has a second segment on line 1 (generated column 4 is source column 5), where the learner's breakpoint pauses.
+  const harness = await entryBrowserHarness(context, {
+    mappings: 'AAAA,IAAI',
+  })
+  harness.rejectBreakpointBinding()
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedBrowserEntry(harness)
+  harness.commitMainFrame('/dashboard')
+  // Act: a pause on line 1 at column 5, not where the run's own breakpoint was verified
+  harness.emitPause(5, 1)
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the pause that is not the stop failed the run',
+  )
+  await prepared
+  // Assert
+  const view = harness.run.view()
+  assert.equal(view.snapshots.length, 0)
+  assert.equal(
+    view.failures[0],
+    'Error: DAP frame differs from the bound configured source position',
+  )
+})

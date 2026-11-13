@@ -1175,6 +1175,8 @@ type DebugParticipant = {
     /** Set when the pause was held elsewhere in the stop's module and taken as the announced one after the wait for the stop's own pause ({@link ConfiguredBrowserRun.adoptPauseHeldInModule}). */
     adopted?: true
   }
+  /** The adapter's ids of the breakpoints the accepted stop's `stopped` event named, kept for {@link ConfiguredBrowserRun.inspect} to confirm that a stop armed before its module was parsed paused at its own owned breakpoint. */
+  hitBreakpointIds?: readonly number[]
   /** A pause away from the expected declared stop that no debugger stop was accepted for, with the stop that was expected when it arrived (none between a snapshot and its continuation). The debug adapter makes such pauses for itself and resumes them; the resume retires it, and a deadline that expires meanwhile names it. */
   unannouncedPause?: {
     event: Protocol.Debugger.PausedEvent
@@ -15766,6 +15768,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // The accepted stop ends its causal window: the session's next stop needs an input, a continuation or a resume of the run's own.
       codebookStopLedger.closeWindow([session.id])
       const pause = participant.gate.stop(session.id, body.threadId!)
+      participant.hitBreakpointIds = body.hitBreakpointIds
       // The run's status stays what it was until inspect has committed the observation: a read in between must not answer a pause it can neither read nor continue.
       this.holdPauseDeadline()
       this.evidence.record('dap.stopped', {
@@ -16991,9 +16994,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!stopped.adopted && stop.bound) return
     const moved =
       (await this.movedBrowserBinding(stop, pausedAt)) ??
-      (stop.bound ? undefined : this.pausedPlaceOf(stop, pausedAt))
+      (stop.bound ? undefined : this.ownedPausedPlaceOf(stop, pausedAt))
     current()
     if (moved) await this.bindAtPause(stop, moved, pausedAt, current)
+  }
+
+  /**
+   * Gives the place of the paused frame as the binding of a browser stop that is not bound yet, only when the run's own breakpoint is confirmed as the one that paused, for {@link bindBrowserStopAtPause}.
+   * Why it exists: a learner's own breakpoint at another column of the declared line pauses on that line too, and the paused frame alone must not become the declared stop's binding. The confirmation is the `stopped` event naming the owned breakpoint's acknowledged id, or the adapter's verified place of that breakpoint being the paused place.
+   * @param stop - The paused browser stop, not bound yet.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @returns The paused place when the owned breakpoint is confirmed; `undefined` when nothing confirms it (the pause then fails the frame check like any pause that is not at the stop's bound place).
+   * @example this.ownedPausedPlaceOf(stop, pausedAt) // undefined for a pause at another column than the owned breakpoint's verified one that names no owned id
+   */
+  private ownedPausedPlaceOf(
+    stop: PreparedStop,
+    pausedAt: Protocol.Debugger.Location | undefined,
+  ): { line: number; column: number } | undefined {
+    const participant = this.participants.browser
+    const session = participant.selected
+    const paused = this.pausedPlaceOf(stop, pausedAt)
+    if (!paused || !session || !stop.breakpoint) return undefined
+    const ownedId = stop.breakpoint.acknowledgedId(session)
+    const verified = stop.breakpoint.verifiedPlace(session)
+    const isNamed =
+      ownedId !== undefined && participant.hitBreakpointIds?.includes(ownedId)
+    const isVerifiedHere =
+      verified?.line === paused.line && verified.column === paused.column
+    return isNamed || isVerifiedHere ? paused : undefined
   }
 
   /**
