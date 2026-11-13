@@ -472,14 +472,23 @@ async function endRunWithPausedFileInFrontWhileShowsLandThere(
   return { applicationColumn, endRedirect }
 }
 
-// protects=Cycle 0132 task 8 (E4, Cursor 3.30.8): the next extension run that also stops in the file the earlier run left in front of the kept Application pane leaves that file behind its view once the attach brought the view forward, so no show of the run brings the file back in front of the view; fails_when=the next run's paused-file watch moves that file, and Cursor, while its Agent chat holds the keyboard, answers the show by bringing the file's copy in the view's group to the front again, so the attach's reveal refuses with "Application ownership changed" and the run records no frame (E2-2 run 2); no_claim=the covering at the next run's own pause in that file, where its debugger shows the file, or why Cursor answers shows that way
+/** Counts the shows of a document that the workspace asked the editor for, as it notes each one when it sends it (before the editor answers). */
+function showsAskedOf(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  uri: string,
+): number {
+  return harness.reader['documentsShownByCodebook'].filter(
+    (shown) => shown.uri === uri,
+  ).length
+}
+
+// protects=Cycle 0132 task 8 (E4, Cursor 3.30.8): the next extension run that also stops in the file the earlier run left in front of the kept Application pane leaves that file behind its view once the attach brought the view forward, so no show of the run brings the file back in front of the view; fails_when=the next run's paused-file watch moves that file when the editor reports the view's new state, and Cursor, while its Agent chat holds the keyboard, answers the show by bringing the file's copy in the view's group to the front again, so the attach's reveal refuses with "Application ownership changed" and the run records no frame (E2-2 run 2); no_claim=the run's own later stop in that file (the next test), or why Cursor answers shows that way
 test('the next extension run that also stops in the earlier run’s file leaves that file behind its view while every show of it lands in the view’s group', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
     await writeRepositoryFile(harness, 'settings.js')
-    await writeRepositoryFile(harness, 'service-worker.js')
     harness.focusMutableDraft('popup.js', 1)
     const { applicationColumn, endRedirect } =
       await endRunWithPausedFileInFrontWhileShowsLandThere(
@@ -488,60 +497,150 @@ test('the next extension run that also stops in the earlier run’s file leaves 
         'settings.js',
       )
     try {
-      const second = await openView(harness, 'same-file-run-2', [
-        'settings.js',
-        'service-worker.js',
-      ])
+      const second = await openView(harness, 'same-file-run-2', ['settings.js'])
       const viewport = harness.reader['viewport']
       assert.ok(viewport)
       const application = harness
         .nativePanels()
         .find((panel) => panel.kind === 'codebook.scopedBrowser')
       assert.ok(application)
+      const settingsUri = harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString()
+      const showsAskedBefore = showsAskedOf(harness, settingsUri)
+      // Act: the run attaches its surface and brings its view forward, and the editor then reports the view's state, as Cursor 3.30.8 does a moment after the reveal.
       await viewport.attach(
         SILENT_SCREENCAST,
         new AbortController().signal,
         'popup',
       )
       await harness.revealApplicationPaneOverPausedFile()
+      application.notifyViewState()
+      // Assert: the watch, which decides at once on each tab or view report, asked no show of the earlier run's file, and the file stays behind the view.
+      assert.equal(showsAskedOf(harness, settingsUri), showsAskedBefore)
+      const applicationGroup = applicationGroupOf(harness, applicationColumn)
       assert.equal(
-        applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+        applicationGroup?.activeTab?.label,
         'codebook · Application same-fil',
       )
-      const settingsShowsBefore = harness
-        .textDocumentShows()
-        .filter((show) => show.name === 'settings.js').length
-      // Act: the editor reports the view's state after it came forward, as Cursor 3.30.8 does a moment after the reveal (the fake reports none for a reveal in place), and the run's first pause then opens its other stop file in front of the view.
-      application.notifyViewState()
-      harness.openPausedFileInLockedGroup(
-        'service-worker.js',
-        applicationColumn,
-      )
-      // Assert: the watch, which handles one file at a time, moved the paused file out, and asked no show of the earlier run's file before or after it.
-      await waitUntil(
-        () =>
-          groupShowing(harness, 'service-worker.js') !== undefined &&
-          groupShowing(harness, 'service-worker.js')?.viewColumn !==
-            applicationColumn,
-        'the run’s paused file moves out of the Application group',
-        5_000,
-      )
-      assert.equal(
-        harness
-          .textDocumentShows()
-          .filter((show) => show.name === 'settings.js').length,
-        settingsShowsBefore,
-      )
-      assert.equal(
-        applicationGroupOf(harness, applicationColumn)?.tabs.some(
-          (tab) => tab.label === 'settings.js',
-        ),
-        true,
+      assert.deepEqual(
+        applicationGroup?.tabs.map((tab) => tab.label),
+        ['codebook · Application same-fil', 'settings.js'],
       )
       second.close()
     } finally {
       endRedirect()
     }
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0132 task 8 (/ship review: Codex structured P1, outside voice 1): the earlier run's file that the next run left behind its view moves out of the view's group once the next run's own stop shows it in front, so the stop's source and the view are seen side by side as at any pause; fails_when=the file stays marked as left for the rest of the run, like a file the watch gave up, so the stop in it covers the view although a move would succeed; no_claim=Cursor's answer to that move while its Agent chat holds the keyboard (the test above models it)
+test('the next extension run moves the earlier run’s file out of the view’s group once its own stop shows that file in front', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const { applicationColumn, endRedirect } =
+      await endRunWithPausedFileInFrontWhileShowsLandThere(
+        harness,
+        'left-file-run-1',
+        'settings.js',
+      )
+    const second = await openView(harness, 'left-file-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+    // The editor reports the view's state after it came forward, with the file behind the view.
+    application.notifyViewState()
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application left-fil',
+    )
+    // The keyboard is back in the main editor, so a show lands where it is asked.
+    endRedirect()
+    // Act: the run's own stop in that file reveals its tab in front of the view.
+    harness.debuggerOpensStopFile('settings.js', applicationColumn)
+    // Assert
+    await waitUntil(
+      () =>
+        !applicationGroupOf(harness, applicationColumn)?.tabs.some(
+          (tab) => tab.label === 'settings.js',
+        ) &&
+        harness.groups.some(
+          (group) =>
+            group.viewColumn !== applicationColumn &&
+            group.tabs.some((tab) => tab.label === 'settings.js'),
+        ),
+      'the stop’s file moves out of the Application group',
+      5_000,
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0132 task 8 (/ship review: Codex outside voice 2): closing another copy of the file the earlier run left in front of the kept Application pane keeps that run's note, so the next extension run still shows its view; fails_when=the tab listener drops the note for any closed tab of the same file, also a copy in another group, so the next run's attach refuses with "Application ownership changed" over the run's own tab that still stands in front of the pane; no_claim=a close the editor never reports
+test('the next extension run still shows its view after the learner closed another copy of the file the earlier run left in front of it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const applicationColumn = await endRunWithPausedFileInFront(
+      harness,
+      'other-copy-run-1',
+      'settings.js',
+    )
+    const otherColumn = harness.groups.find(
+      (group) => group.viewColumn !== applicationColumn,
+    )?.viewColumn
+    assert.ok(otherColumn)
+    await harness.editor.window.showTextDocument(
+      harness.editor.Uri.file(join(harness.directory, 'settings.js')),
+      { viewColumn: otherColumn, preserveFocus: true, preview: false },
+    )
+    const otherCopy = harness.groups
+      .find((group) => group.viewColumn === otherColumn)
+      ?.tabs.find((tab) => tab.label === 'settings.js')
+    assert.ok(otherCopy)
+    harness.closeTabByHand(otherCopy)
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'settings.js',
+    )
+    const second = await openView(harness, 'other-copy-run-2', [
+      'service-worker.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    // Act
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application other-co',
+    )
+    second.close()
   } finally {
     await harness.close()
   }

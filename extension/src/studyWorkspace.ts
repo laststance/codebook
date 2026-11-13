@@ -495,6 +495,9 @@ type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
 /** How {@link StudyWorkspace}'s return to a test replay's committed moment ended: the slot shows that moment again, a newer selection took over, or the slot could not show it (its row says why). */
 type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 
+/** Where a file a paused-file watch left behind the Application pane stands in its skip ({@link StudyWorkspace}'s `refreshLeftBehindFiles`): `until-hidden` while the pane has not yet been seen in front of it, `until-front` while it stays behind the pane. */
+type LeftBehindFileState = 'until-hidden' | 'until-front'
+
 /** What the native surfaces present for an Extension replay's moment; see {@link StudyWorkspace.extensionMomentOf}. */
 type ExtensionMomentPresentation = {
   moment: ExtensionReplayPresentation['model']['moments'][number]
@@ -7824,6 +7827,26 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the Application pane's group still holds a text tab of a document; read by the tab listener of {@link installReaders}, which keeps a leftover note while a copy of its file stays in that group.
+   * @param uri - The document.
+   * @returns `true` when the pane is open and its group holds a text tab of `uri`.
+   * @example this.applicationGroupHolds(settingsUri) // => true while settings.js still stands behind or in front of the kept pane
+   */
+  private applicationGroupHolds(uri: vscode.Uri): boolean {
+    const column = this.app && this.viewColumnOf(this.app)
+    if (column === undefined) return false
+    return Boolean(
+      vscode.window.tabGroups.all
+        .find((group) => group.viewColumn === column)
+        ?.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === uri.toString(),
+        ),
+    )
+  }
+
+  /**
    * Names the unedited `file:` text tab in front of the Application tab in the Application's own group; read by {@link rememberLeftoverStopTab} and {@link uncoverApplicationFromLeftoverStopTab}.
    * @param column - The Application pane's column; `undefined` when it has none.
    * @returns The front tab and its document, when the group holds the one Application tab behind such a tab; `undefined` otherwise (the Application in front, an edited or non-file tab in front, no single Application tab in that group).
@@ -7857,7 +7880,7 @@ export class StudyWorkspace {
   /**
    * Brings the kept Application pane back in front of the paused file the ended run left in front of it ({@link rememberLeftoverStopTab}), so the next run's view is shown instead of refused; called through the lease's `keepsPaneOpen` of {@link leaseApplicationViewport} when a run attaches, before the view's first reveal.
    * Without it the reveal's guard ({@link assertApplicationReveal}) refused the next run's view over that file, and the run went on without frames (Cycle 0132 task 8, E2 run 2). Only that noted tab is covered, and only while it is still in front, unedited; its tab stays in the group, unmoved. The pane takes the keyboard only when that file's own editor has it, by the pause reveal's rule ({@link keepsKeyboardFromPane}); an editor of another group keeps it. Any other front tab is left in front and the guard refuses as before, as it does when the editor does not bring the pane to the front in time. The note is read once: a later run notes its own.
-   * The run's own paused-file watch ({@link keepPausedSourceOutOfApplication}) is told to leave that file behind the pane before the pane comes forward: a run that also stops in the file would otherwise move it, and Cursor 3.30.8, whose Agent chat still holds the keyboard, answers that show by bringing the file's copy in the pane's group to the front again, so the attach's reveal refused after all (Cycle 0132 E4, E2-2 run 2).
+   * The run's own paused-file watch ({@link keepPausedSourceOutOfApplication}) is told to leave that file behind the pane before the pane comes forward: a run that also stops in the file would otherwise move it, and Cursor 3.30.8, whose Agent chat still holds the keyboard, answers that show by bringing the file's copy in the pane's group to the front again, so the attach's reveal refused after all (Cycle 0132 E4, E2-2 run 2). Once the run's own stop shows the file in front again, the watch moves it as any paused file. The notes are read live during the keyboard question, so a tab the learner closes and opens again meanwhile is not covered.
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
    * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
@@ -7870,12 +7893,32 @@ export class StudyWorkspace {
     signal: AbortSignal,
     leaveBehind: (uri: vscode.Uri) => void,
   ): Promise<void> {
-    const leftovers = new Set(this.leftoverStopTabUris)
-    this.leftoverStopTabUris.clear()
+    try {
+      await this.uncoverNotedLeftover(panel, signal, leaveBehind)
+    } finally {
+      // The note is read once, whatever the attach did with it: a later run notes its own.
+      this.leftoverStopTabUris.clear()
+    }
+  }
+
+  /**
+   * The body of {@link uncoverApplicationFromLeftoverStopTab}: reads the notes live, so a tab the learner closes meanwhile (the tab listener drops its note) is not covered when it is opened again.
+   * @param panel - The lease's Application pane.
+   * @param signal - The attach's cancellation.
+   * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
+   * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
+   * @throws The signal's reason when the run was cancelled.
+   * @example await this.uncoverNotedLeftover(panel, signal, (uri) => watch.leave(uri))
+   */
+  private async uncoverNotedLeftover(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal,
+    leaveBehind: (uri: vscode.Uri) => void,
+  ): Promise<void> {
     const column = this.viewColumnOf(panel)
     const coveringLeftover = (): vscode.Uri | undefined => {
       const covering = this.coveringTabOfApplication(column)
-      return covering && leftovers.has(covering.uri.toString())
+      return covering && this.leftoverStopTabUris.has(covering.uri.toString())
         ? covering.uri
         : undefined
     }
@@ -7925,7 +7968,7 @@ export class StudyWorkspace {
    * @param panel - The lease's Application pane.
    * @param isCurrent - Whether the lease is still the workspace's current one.
    * @param isStopFile - Whether a file (its `fsPath`) is one of this run's declared stop files; only such a file moves, so a file the learner opens there as a preview during the run stays, and nothing moves before the run's stops are known.
-   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while its copy stays in the Application group, as it marks one it gave up ({@link uncoverApplicationFromLeftoverStopTab}).
+   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while it stays behind the pane, until a stop shows it in front again ({@link uncoverApplicationFromLeftoverStopTab}, {@link refreshLeftBehindFiles}).
    * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId, (fsPath) => stopFiles.has(fsPath)); watch.leave(settingsUri)
    */
   private keepPausedSourceOutOfApplication(
@@ -7936,13 +7979,17 @@ export class StudyWorkspace {
     let isMoving = false,
       isDisposed = false
     const failedMoves = new Map<string, number>()
+    // Files left behind the pane on purpose, by document URI: kept until the pane is seen in front of them, then until a stop brings them in front again.
+    const leftBehind = new Map<string, LeftBehindFileState>()
     const isWatching = (): boolean => !isDisposed && isCurrent()
     const isGivenUp = (uri: vscode.Uri): boolean =>
-      (failedMoves.get(uri.toString()) ?? 0) >= PAUSED_SOURCE_MOVE_ATTEMPTS
+      (failedMoves.get(uri.toString()) ?? 0) >= PAUSED_SOURCE_MOVE_ATTEMPTS ||
+      leftBehind.has(uri.toString())
     const moveCoveringSource = (): void => {
       if (isMoving || !isWatching()) return
       // A copy that left the Application group ends its file's failed moves, so a later stop of the same file can move again.
       this.forgetMovesOfLeftCopies(panel, failedMoves)
+      this.refreshLeftBehindFiles(panel, leftBehind)
       const move = this.coveringSourceMove(panel, isGivenUp, isStopFile)
       if (!move) return
       isMoving = true
@@ -7974,11 +8021,46 @@ export class StudyWorkspace {
     }
     // A pane the learner closes while the run goes on ends the watch: a disposed pane has no group to keep clear.
     watches.push(panel.onDidDispose(dispose))
-    // A left file counts as given up: once its copy leaves the Application group, a later stop that opens it there again moves it.
     const leave = (uri: vscode.Uri): void => {
-      failedMoves.set(uri.toString(), PAUSED_SOURCE_MOVE_ATTEMPTS)
+      leftBehind.set(uri.toString(), 'until-hidden')
     }
     return { dispose, leave }
+  }
+
+  /**
+   * Updates the files a paused-file watch leaves behind the Application pane ({@link keepPausedSourceOutOfApplication}'s `leave`), at each event of the watch before it looks for a file to move.
+   * A left file is skipped while the pane has not yet been seen in front of it (the pane is still coming forward), and while it stays behind the pane; once a stop brings it in front of the pane again, it is a paused file like any other and the watch moves it as before (Cursor 3.30.8 answers that move by showing the file in the pane's group again only while its Agent chat holds the keyboard). A left file whose copy left the Application group is dropped.
+   * @param panel - The lease's Application pane.
+   * @param leftBehind - The watch's left files by document URI; changed in place.
+   * @example this.refreshLeftBehindFiles(panel, leftBehind) // settings.js, behind the pane since the attach, moves once a stop shows it in front
+   */
+  private refreshLeftBehindFiles(
+    panel: vscode.WebviewPanel,
+    leftBehind: Map<string, LeftBehindFileState>,
+  ): void {
+    if (!leftBehind.size) return
+    const column = this.viewColumnOf(panel)
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
+    const frontInput = group?.activeTab?.input
+    const frontUri =
+      frontInput instanceof vscode.TabInputText
+        ? frontInput.uri.toString()
+        : undefined
+    const groupUris = new Set(
+      group?.tabs.flatMap((tab) =>
+        tab.input instanceof vscode.TabInputText
+          ? [tab.input.uri.toString()]
+          : [],
+      ),
+    )
+    for (const [uri, state] of [...leftBehind]) {
+      // Gone from the Application group, or back in front after the pane was seen in front of it: no longer left.
+      if (!groupUris.has(uri) || (frontUri === uri && state === 'until-front'))
+        leftBehind.delete(uri)
+      else if (frontUri !== uri) leftBehind.set(uri, 'until-front')
+    }
   }
 
   /**
@@ -17776,9 +17858,12 @@ export class StudyWorkspace {
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabs((event) => {
         this.notePlacementTabEvent(event)
-        // A closed run tab is no leftover any more: a tab the learner opens again in its place is theirs.
+        // A closed run tab is no leftover any more: a tab the learner opens again in its place is theirs. A closed copy in another group leaves the note of the one still in front of the pane.
         for (const tab of event.closed)
-          if (tab.input instanceof vscode.TabInputText)
+          if (
+            tab.input instanceof vscode.TabInputText &&
+            !this.applicationGroupHolds(tab.input.uri)
+          )
             this.leftoverStopTabUris.delete(tab.input.uri.toString())
         // Real closure ends every existing focus receipt for that type; wrapper refresh alone does not close a tab.
         for (const tab of event.closed)
