@@ -1325,7 +1325,11 @@ export const WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT = 1
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
-/** The Cursor CLI permissions file a Wiki question's temporary workspace holds (`.cursor/cli.json`): every read, write, shell, fetch and MCP tool is denied, so the question agent answers only from the excerpt Codebook sends. Cycle 0125 C1: in Cycle 0124 the question agent read other checkouts and the installed skill outside the opened project; the bounded experiment E0 showed Read answering "Permission denied" and a shell fallback "Command blocked by permissions configuration" under these rules. */
+/**
+ * The Cursor CLI permissions file a Wiki question's temporary workspace holds (`.cursor/cli.json`): every read, write, shell, fetch and MCP tool is denied, so the question agent answers only from the excerpt Codebook sends.
+ *
+ * Cycle 0125 C1: in Cycle 0124 the question agent read other checkouts and the installed skill outside the opened project. The rules use Cursor CLI's documented formats (`Read(pathOrGlob)`, `Write(pathOrGlob)`, `Shell(commandBase)`, `WebFetch(domain)` and `Mcp(server:tool)`, where `Mcp(*:*)` is every tool of every server; https://cursor.com/docs/cli/reference/permissions). They were verified with cursor-agent `2026.11.11-043ef28` (Issue #320 bounded experiment E0: Read answered "Permission denied" and a shell fallback "Command blocked by permissions configuration"; criterion 6's E1 probes cover the rest), so a Cursor CLI update calls for a native recheck.
+ */
 export const WIKI_CURSOR_QUESTION_PERMISSIONS = {
   permissions: {
     allow: [],
@@ -1336,7 +1340,7 @@ export const WIKI_CURSOR_QUESTION_PERMISSIONS = {
       'Write(/**)',
       'Shell(*)',
       'WebFetch(*)',
-      'Mcp(*)',
+      'Mcp(*:*)',
     ],
   },
 } as const

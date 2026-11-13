@@ -76,7 +76,7 @@ export function terminateCursorAgentProcess(
  *
  * @param workspace - The question's fresh temporary workspace, also the agent's working directory.
  * @returns Resolves once `.cursor/cli.json` holds {@link WIKI_CURSOR_QUESTION_PERMISSIONS}.
- * @throws A learner-facing Error when the permissions file cannot be written; no agent has started then.
+ * @throws A learner-facing Error (the write failure kept as its `cause`) when the permissions file cannot be written; no agent has started then.
  * @example
  * await denyEveryCursorTool('/tmp/codebook-wiki-question-abc') // => writes /tmp/codebook-wiki-question-abc/.cursor/cli.json
  */
@@ -87,15 +87,16 @@ async function denyEveryCursorTool(workspace: string): Promise<void> {
       join(workspace, '.cursor', 'cli.json'),
       JSON.stringify(WIKI_CURSOR_QUESTION_PERMISSIONS),
     )
-  } catch {
+  } catch (cause) {
     // Without the deny rules the agent could read other checkouts, so never start it.
     throw new Error(
       'Codebook could not restrict the Cursor Agent for this Wiki question, so it did not start. Ask again or use editor chat.',
+      { cause },
     )
   }
 }
 
-/** Requests a source-excerpt answer from Cursor Agent when its editor model API is unavailable. @param prompt - Verified bounded excerpt prompt; never placed in process arguments. @param cancellationToken - Browser request cancellation. @returns Raw model text for {@link answerDeepWikiQuestionWithPrompt} to validate. @example await requestCursorWikiText('Question: ...', token) // => '{"answer":"...","citations":[...]}' */
+/** Requests a source-excerpt answer from Cursor Agent when its editor model API is unavailable. Called by the Wiki question flow; a cancellation seen at any point before the process spawns (including during the permissions write and the executable lookup) starts no agent. @param prompt - Verified bounded excerpt prompt; never placed in process arguments. @param cancellationToken - Browser request cancellation. @returns Raw model text for {@link answerDeepWikiQuestionWithPrompt} to validate. @example await requestCursorWikiText('Question: ...', token) // => '{"answer":"...","citations":[...]}' */
 export async function requestCursorWikiText(
   prompt: string,
   cancellationToken?: Pick<
@@ -115,6 +116,9 @@ export async function requestCursorWikiText(
   try {
     await denyEveryCursorTool(temporaryWorkspace)
     const executable = await resolveCursorAgentExecutable()
+    // A cancellation that landed during the config write or executable lookup has no listener yet, so stop before any agent starts
+    if (cancellationToken?.isCancellationRequested)
+      throw new Error('The Wiki question was cancelled.')
     const output = await new Promise<string>((resolve, reject) => {
       const child = spawn(
         executable,

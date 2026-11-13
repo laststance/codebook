@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import * as childProcess from 'node:child_process'
 import { existsSync } from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
@@ -80,8 +81,7 @@ test('a failed Cursor Agent response leaves the browser without a fabricated Wik
     `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({type:'result',subtype:'error',is_error:true,result:'Authentication failed'})));\n`,
     { mode: 0o755 },
   )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
+  const restoreHome = replaceHome(fakeHome)
   try {
     // Act / Assert
     await assert.rejects(
@@ -89,8 +89,7 @@ test('a failed Cursor Agent response leaves the browser without a fabricated Wik
       /could not answer/,
     )
   } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
+    restoreHome()
     await removeTestFolder(fakeHome)
   }
 })
@@ -105,8 +104,7 @@ test('excess Cursor Agent output terminates the isolated Wiki request', async ()
     `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => { process.stdout.write('x'.repeat(65537)); setInterval(() => {}, 1000); });\n`,
     { mode: 0o755 },
   )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
+  const restoreHome = replaceHome(fakeHome)
   const started = Date.now()
   try {
     // Act / Assert
@@ -116,11 +114,36 @@ test('excess Cursor Agent output terminates the isolated Wiki request', async ()
     )
     assert.ok(Date.now() - started < 5_000)
   } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
+    restoreHome()
     await removeTestFolder(fakeHome)
   }
 })
+
+/**
+ * Points the home folder at a fake one for a test: sets `HOME` and `USERPROFILE` together, because Node on Windows reads `USERPROFILE` for `os.homedir()`, which the Cursor Agent lookup uses.
+ *
+ * Every fake-agent helper and test of this file calls it, and calls the returned function in its `finally`.
+ *
+ * @param fakeHome - The temporary folder that holds the fake `.local/bin/cursor-agent`.
+ * @returns A function that puts both variables back as they were.
+ * @example
+ * const restoreHome = replaceHome(fakeHome)
+ * restoreHome()
+ */
+function replaceHome(fakeHome: string): () => void {
+  const previous = {
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+  }
+  process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome
+  return (): void => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+}
 
 /**
  * Creates a Wiki request cancellation token that keeps VS Code's promise for late listeners.
@@ -179,11 +202,9 @@ async function installHangingCursorAgent() {
     `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(startedMarker)}, ''); process.stdin.resume(); setInterval(() => {}, 1000);\n`,
     { mode: 0o755 },
   )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
+  const restoreHome = replaceHome(fakeHome)
   const restore = async (): Promise<void> => {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
+    restoreHome()
     await removeTestFolder(fakeHome)
   }
   return { startedMarker, restore }
@@ -195,7 +216,7 @@ const questionWorkspaces = async () =>
     .sort()
 
 const DENY_RULES =
-  '{"permissions":{"allow":[],"deny":["Read(**)","Read(/**)","Write(**)","Write(/**)","Shell(*)","WebFetch(*)","Mcp(*)"]}}'
+  '{"permissions":{"allow":[],"deny":["Read(**)","Read(/**)","Write(**)","Write(/**)","Shell(*)","WebFetch(*)","Mcp(*:*)"]}}'
 
 /** Installs a fake `cursor-agent` that records the permissions file it finds at start, then answers with a valid result envelope. */
 async function installRecordingCursorAgent() {
@@ -209,14 +230,12 @@ async function installRecordingCursorAgent() {
     `#!${process.execPath}\nconst fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(startedMarker)}, 'started'); let seen; try { seen = fs.readFileSync(require('node:path').join(process.cwd(), '.cursor', 'cli.json'), 'utf8') } catch { seen = 'MISSING' } fs.writeFileSync(${JSON.stringify(seenConfig)}, seen); process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'ok'})));\n`,
     { mode: 0o755 },
   )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
+  const restoreHome = replaceHome(fakeHome)
   return {
     startedMarker,
     seenConfig,
     async restore(): Promise<void> {
-      if (previousHome === undefined) delete process.env.HOME
-      else process.env.HOME = previousHome
+      restoreHome()
       await removeTestFolder(fakeHome)
     },
   }
@@ -225,8 +244,8 @@ async function installRecordingCursorAgent() {
 // protects=a Wiki question's Cursor Agent starts only with every read, write, shell, fetch and MCP tool denied by the workspace's .cursor/cli.json, so it cannot read other checkouts or the installed skill (Cycle 0124 C1); fails_when=the agent starts before the file exists or the file lacks a rule, or the workspace stays behind after the answer; why_new=Cycle 0125 C1 (Issue #320 E0); seam=a node script stands in for cursor-agent; no_claim=that a real Cursor Agent enforces the rules (bounded experiment E0 observed that)
 test('a Cursor Wiki question agent finds the deny-every-tool permissions in its workspace when it starts, and the workspace is removed after the answer', async () => {
   // Arrange
-  const agent = await installRecordingCursorAgent()
   const before = await questionWorkspaces()
+  const agent = await installRecordingCursorAgent()
   try {
     // Act
     const answer = await requestCursorWikiText('Question: test')
@@ -246,14 +265,15 @@ test('a Cursor Wiki question agent finds the deny-every-tool permissions in its 
 // protects=a Wiki question whose permissions file cannot be written never starts the agent and says so; fails_when=the agent starts anyway with its tools open, the learner sees no clear error, or the temporary workspace stays behind; why_new=Cycle 0125 C1 (Issue #320); seam=loadModule stands in a node:fs/promises whose writeFile rejects; no_claim=which real disk failure happens
 test('a Cursor Wiki question whose permissions file cannot be written starts no agent and removes its workspace', async () => {
   // Arrange
-  const agent = await installRecordingCursorAgent()
   const before = await questionWorkspaces()
+  const agent = await installRecordingCursorAgent()
+  const diskError = new Error('EACCES: disk is read-only')
   const boundary = await loadModule<typeof RequestCursorWikiTextModule>(
     join(__dirname, '../utils/requestCursorWikiText.js'),
     {
       'node:fs/promises': {
         ...fsPromises,
-        writeFile: () => Promise.reject(new Error('EACCES: disk is read-only')),
+        writeFile: () => Promise.reject(diskError),
       },
     },
   )
@@ -261,7 +281,11 @@ test('a Cursor Wiki question whose permissions file cannot be written starts no 
     // Act / Assert
     await assert.rejects(
       boundary.requestCursorWikiText('Question: test'),
-      /could not restrict the Cursor Agent/,
+      (error: Error) => {
+        assert.match(error.message, /could not restrict the Cursor Agent/)
+        assert.equal(error.cause, diskError)
+        return true
+      },
     )
     assert.equal(existsSync(agent.startedMarker), false)
     assert.deepEqual(await questionWorkspaces(), before)
@@ -273,6 +297,7 @@ test('a Cursor Wiki question whose permissions file cannot be written starts no 
 // protects=a failed Cursor Agent run removes the Wiki question's temporary workspace with its permissions file; fails_when=the workspace stays behind after the agent exits with an error; why_new=Cycle 0125 C1 (the file now lives in the workspace); seam=a node script stands in for cursor-agent; no_claim=a real Cursor Agent
 test('a failed Cursor Agent run leaves no Wiki question workspace behind', async () => {
   // Arrange
+  const before = await questionWorkspaces()
   const fakeHome = await mkdtemp(join(tmpdir(), 'codebook-failed-clean-'))
   const binaryDirectory = join(fakeHome, '.local', 'bin')
   await mkdir(binaryDirectory, { recursive: true })
@@ -281,9 +306,7 @@ test('a failed Cursor Agent run leaves no Wiki question workspace behind', async
     `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => process.exit(1));\n`,
     { mode: 0o755 },
   )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
-  const before = await questionWorkspaces()
+  const restoreHome = replaceHome(fakeHome)
   try {
     // Act
     await assert.rejects(
@@ -293,8 +316,7 @@ test('a failed Cursor Agent run leaves no Wiki question workspace behind', async
     // Assert
     assert.deepEqual(await questionWorkspaces(), before)
   } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
+    restoreHome()
     await removeTestFolder(fakeHome)
   }
 })
@@ -302,8 +324,8 @@ test('a failed Cursor Agent run leaves no Wiki question workspace behind', async
 // protects=a Wiki question cancelled while Cursor Agent runs stops it and removes the temporary workspace; fails_when=the cancellation is ignored until the request times out, or the workspace stays behind; no_claim=a real Cursor Agent: a node script stands in for the CLI and a VS Code-like token for the editor's
 test('cancelling an active Cursor Agent request removes its temporary workspace', async () => {
   // Arrange
-  const agent = await installHangingCursorAgent()
   const before = await questionWorkspaces()
+  const agent = await installHangingCursorAgent()
   const { token, cancel } = cancellationTokenLikeVsCode()
   try {
     // Act
@@ -328,8 +350,8 @@ test('cancelling an active Cursor Agent request removes its temporary workspace'
 // protects=a Wiki question cancelled while the request still prepares (before it subscribes to the token) stops at once; fails_when=the request waits for its 120 s timeout or leaves its temporary workspace; no_claim=a real Cursor Agent: a node script stands in for the CLI and a VS Code-like token for the editor's
 test('cancelling a Cursor Agent request before the agent starts stops it without waiting for the timeout', async () => {
   // Arrange
-  const agent = await installHangingCursorAgent()
   const before = await questionWorkspaces()
+  const agent = await installHangingCursorAgent()
   const { token, cancel } = cancellationTokenLikeVsCode()
   const startedMs = performance.now()
   try {
@@ -345,14 +367,57 @@ test('cancelling a Cursor Agent request before the agent starts stops it without
   }
 })
 
+// protects=a Wiki question cancelled while its permissions file is being written starts no Cursor Agent; fails_when=the token was cancelled before the request subscribed, so no listener fires, and the agent spawns anyway and runs to the 300 s timeout; why_new=review round of Cycle 0125 C1 (Issue #320); seam=loadModule stands in a node:fs/promises whose writeFile cancels the token, then writes; no_claim=a real Cursor Agent or editor token
+test('a Cursor Wiki question cancelled while its permissions file is written starts no agent and removes its workspace', async () => {
+  // Arrange
+  const before = await questionWorkspaces()
+  const agent = await installHangingCursorAgent()
+  const { token, cancel } = cancellationTokenLikeVsCode()
+  const spawnedExecutables: string[] = []
+  const boundary = await loadModule<typeof RequestCursorWikiTextModule>(
+    join(__dirname, '../utils/requestCursorWikiText.js'),
+    {
+      'node:child_process': {
+        ...childProcess,
+        spawn: (executable: string, ...spawnArguments: unknown[]) => {
+          spawnedExecutables.push(executable)
+          return Reflect.apply(childProcess.spawn, childProcess, [
+            executable,
+            ...spawnArguments,
+          ])
+        },
+      },
+      'node:fs/promises': {
+        ...fsPromises,
+        writeFile: async (...writeArguments: Parameters<typeof writeFile>) => {
+          cancel()
+          await writeFile(...writeArguments)
+        },
+      },
+    },
+  )
+  try {
+    // Act / Assert
+    await assert.rejects(
+      boundary.requestCursorWikiText('Question: test', token),
+      /The Wiki question was cancelled\./,
+    )
+    // The spawn call itself is counted: a killed-at-once agent may not have written its marker yet
+    assert.deepEqual(spawnedExecutables, [])
+    assert.equal(existsSync(agent.startedMarker), false)
+    assert.deepEqual(await questionWorkspaces(), before)
+  } finally {
+    await agent.restore()
+  }
+})
+
 test('a missing Cursor Agent CLI reports the prerequisite without starting Wiki Q&A', async () => {
   // Arrange
   const fakeHome = await mkdtemp(join(tmpdir(), 'codebook-missing-agent-'))
   const emptyPath = join(fakeHome, 'bin')
   await mkdir(emptyPath)
-  const previousHome = process.env.HOME
+  const restoreHome = replaceHome(fakeHome)
   const previousPath = process.env.PATH
-  process.env.HOME = fakeHome
   process.env.PATH = emptyPath
   try {
     // Act / Assert
@@ -361,8 +426,7 @@ test('a missing Cursor Agent CLI reports the prerequisite without starting Wiki 
       /CLI is not installed/,
     )
   } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
+    restoreHome()
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
     await removeTestFolder(fakeHome)
@@ -371,6 +435,7 @@ test('a missing Cursor Agent CLI reports the prerequisite without starting Wiki 
 
 test('a stalled Cursor Agent request times out and leaves no Wiki workspace', async () => {
   // Arrange
+  const before = await questionWorkspaces()
   const fakeHome = await mkdtemp(join(tmpdir(), 'codebook-timeout-agent-'))
   const binaryDirectory = join(fakeHome, '.local', 'bin')
   await mkdir(binaryDirectory, { recursive: true })
@@ -379,13 +444,6 @@ test('a stalled Cursor Agent request times out and leaves no Wiki workspace', as
     `#!${process.execPath}\nprocess.stdin.resume(); setInterval(() => {}, 1000);\n`,
     { mode: 0o755 },
   )
-  const previousHome = process.env.HOME
-  process.env.HOME = fakeHome
-  const questionWorkspaces = async () =>
-    (await readdir(tmpdir()))
-      .filter((name) => name.startsWith('codebook-wiki-question-'))
-      .sort()
-  const before = await questionWorkspaces()
   const boundary = await loadModule<typeof RequestCursorWikiTextModule>(
     join(__dirname, '../utils/requestCursorWikiText.js'),
     {
@@ -399,6 +457,7 @@ test('a stalled Cursor Agent request times out and leaves no Wiki workspace', as
       },
     },
   )
+  const restoreHome = replaceHome(fakeHome)
   try {
     // Act / Assert
     await assert.rejects(
@@ -407,8 +466,7 @@ test('a stalled Cursor Agent request times out and leaves no Wiki workspace', as
     )
     assert.deepEqual(await questionWorkspaces(), before)
   } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
+    restoreHome()
     await removeTestFolder(fakeHome)
   }
 })
