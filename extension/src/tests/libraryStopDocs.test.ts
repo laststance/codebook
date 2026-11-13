@@ -518,3 +518,13 @@ test('the help words the App Router server library stop in library-not-in-build 
     ),
   )
 })
+
+// Value: protects=the packaged README tells learners that the bundled skill (since 1.0.104) asks the chat for a stop in the library source a node-test question's test calls, so the run and its replay show the library's own values; fails_when=the README sentence is dropped or loses the library stop, the since-1.0.104 version or the replay clause while the skill still requires it; why_new=the skill pin and the README 1.0.104 version pin do not cover this sentence; seam=none; no_claim=what the chat model does at run time
+test('the README tells learners the skill since 1.0.104 puts a stop in the library source a test calls', async () => {
+  // Arrange
+  const readme = await readPackaged('README.md')
+  const sentence =
+    "For a question about library behavior, the bundled skill (since 1.0.104) tells the chat to put at least one stop in the library source the test calls, not only in the test file, so that, when that stop is reached, the run and its replay show the library's own values at that moment and not only what the test sees."
+  // Act / Assert
+  assert.ok(readme.includes(sentence), sentence)
+})
