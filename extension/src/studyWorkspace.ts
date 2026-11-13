@@ -7756,7 +7756,11 @@ export class StudyWorkspace {
         keepsPaneOpen: async (attachSignal) => {
           await this.keepMovedApplicationTab(panel, attachSignal)
           // An earlier run's paused file can still cover the kept pane; the run's first reveal would refuse over it (Cycle 0132 task 8).
-          await this.uncoverApplicationFromLeftoverStopTab(panel, attachSignal)
+          await this.uncoverApplicationFromLeftoverStopTab(
+            panel,
+            attachSignal,
+            (uri) => pausedSourceWatch?.leave(uri),
+          )
           await this.openRunStopFilesBesideApplication(
             panel,
             attachSignal,
@@ -7853,15 +7857,18 @@ export class StudyWorkspace {
   /**
    * Brings the kept Application pane back in front of the paused file the ended run left in front of it ({@link rememberLeftoverStopTab}), so the next run's view is shown instead of refused; called through the lease's `keepsPaneOpen` of {@link leaseApplicationViewport} when a run attaches, before the view's first reveal.
    * Without it the reveal's guard ({@link assertApplicationReveal}) refused the next run's view over that file, and the run went on without frames (Cycle 0132 task 8, E2 run 2). Only that noted tab is covered, and only while it is still in front, unedited; its tab stays in the group, unmoved. The pane takes the keyboard only when that file's own editor has it, by the pause reveal's rule ({@link keepsKeyboardFromPane}); an editor of another group keeps it. Any other front tab is left in front and the guard refuses as before, as it does when the editor does not bring the pane to the front in time. The note is read once: a later run notes its own.
+   * The run's own paused-file watch ({@link keepPausedSourceOutOfApplication}) is told to leave that file behind the pane before the pane comes forward: a run that also stops in the file would otherwise move it, and Cursor 3.30.8, whose Agent chat still holds the keyboard, answers that show by bringing the file's copy in the pane's group to the front again, so the attach's reveal refused after all (Cycle 0132 E4, E2-2 run 2).
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
+   * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
    * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.uncoverApplicationFromLeftoverStopTab(panel, signal) // settings.js of run 1 stays behind run 2's view
+   * @example await this.uncoverApplicationFromLeftoverStopTab(panel, signal, (uri) => watch.leave(uri)) // settings.js of run 1 stays behind run 2's view
    */
   private async uncoverApplicationFromLeftoverStopTab(
     panel: vscode.WebviewPanel,
     signal: AbortSignal,
+    leaveBehind: (uri: vscode.Uri) => void,
   ): Promise<void> {
     const leftovers = new Set(this.leftoverStopTabUris)
     this.leftoverStopTabUris.clear()
@@ -7889,6 +7896,7 @@ export class StudyWorkspace {
       !coveringLeftover()
     )
       return
+    leaveBehind(covered)
     this.revealPane(panel, column, comesWithoutKeyboard)
     if (!comesWithoutKeyboard) this.tellPaneTookKeyboard()
     try {
@@ -7917,14 +7925,14 @@ export class StudyWorkspace {
    * @param panel - The lease's Application pane.
    * @param isCurrent - Whether the lease is still the workspace's current one.
    * @param isStopFile - Whether a file (its `fsPath`) is one of this run's declared stop files; only such a file moves, so a file the learner opens there as a preview during the run stays, and nothing moves before the run's stops are known.
-   * @returns The watch, which the lease's release disposes.
-   * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId, (fsPath) => stopFiles.has(fsPath))
+   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while its copy stays in the Application group, as it marks one it gave up ({@link uncoverApplicationFromLeftoverStopTab}).
+   * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId, (fsPath) => stopFiles.has(fsPath)); watch.leave(settingsUri)
    */
   private keepPausedSourceOutOfApplication(
     panel: vscode.WebviewPanel,
     isCurrent: () => boolean,
     isStopFile: (fsPath: string) => boolean,
-  ): vscode.Disposable {
+  ): { dispose: () => void; leave: (uri: vscode.Uri) => void } {
     let isMoving = false,
       isDisposed = false
     const failedMoves = new Map<string, number>()
@@ -7966,7 +7974,11 @@ export class StudyWorkspace {
     }
     // A pane the learner closes while the run goes on ends the watch: a disposed pane has no group to keep clear.
     watches.push(panel.onDidDispose(dispose))
-    return { dispose }
+    // A left file counts as given up: once its copy leaves the Application group, a later stop that opens it there again moves it.
+    const leave = (uri: vscode.Uri): void => {
+      failedMoves.set(uri.toString(), PAUSED_SOURCE_MOVE_ATTEMPTS)
+    }
+    return { dispose, leave }
   }
 
   /**

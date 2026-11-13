@@ -442,6 +442,111 @@ async function endRunWithPausedFileInFront(
   return applicationColumn
 }
 
+/**
+ * Ends a first extension run with its paused file in front of the kept Application pane, as {@link endRunWithPausedFileInFront} does, but keeps every show of that file landing in the Application's group afterwards: Cursor 3.30.8 answers each show that way for as long as its Agent chat holds the keyboard, through the next run too.
+ * @returns The Application's column and the function that ends the redirect.
+ */
+async function endRunWithPausedFileInFrontWhileShowsLandThere(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  runId: string,
+  filename: string,
+): Promise<{ applicationColumn: number; endRedirect: () => void }> {
+  const first = await openView(harness, runId, [filename])
+  const applicationColumn = harness.reader['app']?.viewColumn
+  assert.ok(applicationColumn)
+  const endRedirect = harness.redirectEveryTextDocumentShow(
+    harness.editor.Uri.file(join(harness.directory, filename)).toString(),
+    applicationColumn,
+  )
+  harness.openPausedFileInLockedGroup(filename, applicationColumn)
+  // The watch gives up after its second refused move, so no later show of the first run moves the file.
+  await waitUntil(
+    () =>
+      harness.textDocumentShows().filter((show) => show.name === filename)
+        .length >= 2,
+    'the first run’s watch tries its two moves',
+    5_000,
+  )
+  first.end('The first run ended.')
+  first.close()
+  return { applicationColumn, endRedirect }
+}
+
+// protects=Cycle 0132 task 8 (E4, Cursor 3.30.8): the next extension run that also stops in the file the earlier run left in front of the kept Application pane leaves that file behind its view once the attach brought the view forward, so no show of the run brings the file back in front of the view; fails_when=the next run's paused-file watch moves that file, and Cursor, while its Agent chat holds the keyboard, answers the show by bringing the file's copy in the view's group to the front again, so the attach's reveal refuses with "Application ownership changed" and the run records no frame (E2-2 run 2); no_claim=the covering at the next run's own pause in that file, where its debugger shows the file, or why Cursor answers shows that way
+test('the next extension run that also stops in the earlier run’s file leaves that file behind its view while every show of it lands in the view’s group', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'service-worker.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const { applicationColumn, endRedirect } =
+      await endRunWithPausedFileInFrontWhileShowsLandThere(
+        harness,
+        'same-file-run-1',
+        'settings.js',
+      )
+    try {
+      const second = await openView(harness, 'same-file-run-2', [
+        'settings.js',
+        'service-worker.js',
+      ])
+      const viewport = harness.reader['viewport']
+      assert.ok(viewport)
+      const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')
+      assert.ok(application)
+      await viewport.attach(
+        SILENT_SCREENCAST,
+        new AbortController().signal,
+        'popup',
+      )
+      await harness.revealApplicationPaneOverPausedFile()
+      assert.equal(
+        applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+        'codebook · Application same-fil',
+      )
+      const settingsShowsBefore = harness
+        .textDocumentShows()
+        .filter((show) => show.name === 'settings.js').length
+      // Act: the editor reports the view's state after it came forward, as Cursor 3.30.8 does a moment after the reveal (the fake reports none for a reveal in place), and the run's first pause then opens its other stop file in front of the view.
+      application.notifyViewState()
+      harness.openPausedFileInLockedGroup(
+        'service-worker.js',
+        applicationColumn,
+      )
+      // Assert: the watch, which handles one file at a time, moved the paused file out, and asked no show of the earlier run's file before or after it.
+      await waitUntil(
+        () =>
+          groupShowing(harness, 'service-worker.js') !== undefined &&
+          groupShowing(harness, 'service-worker.js')?.viewColumn !==
+            applicationColumn,
+        'the run’s paused file moves out of the Application group',
+        5_000,
+      )
+      assert.equal(
+        harness
+          .textDocumentShows()
+          .filter((show) => show.name === 'settings.js').length,
+        settingsShowsBefore,
+      )
+      assert.equal(
+        applicationGroupOf(harness, applicationColumn)?.tabs.some(
+          (tab) => tab.label === 'settings.js',
+        ),
+        true,
+      )
+      second.close()
+    } finally {
+      endRedirect()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0132 task 8 (E2, Cursor 3.30.8): the next extension run of a window shows its Application view, so its history takes frames, when the earlier run's paused file is still in front of the kept Application pane in its group; fails_when=the next run's attach refuses with "Application ownership changed" over a stop file an earlier run of the window declared, so the run goes on without its view and records no frame; no_claim=why Cursor shows the paused file in the Application group (its Agent part holds the keyboard), or the covering during the first run's own pause
 test('the next extension run shows its Application view over a stop file the earlier run left in front of it', async () => {
   // Arrange
