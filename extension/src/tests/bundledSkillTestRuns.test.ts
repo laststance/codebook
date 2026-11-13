@@ -36,7 +36,7 @@ test('the bundled skill puts a stop in the library source a test calls when the 
 })
 
 // Value: protects=the skill's version being the one the release names, in one place; fails_when=the skill text changes without its version moving, or the version moves without this pin; why_new=F86 (the version was pinned inside the routing test); seam=none; no_claim=the wording of the skill
-test('the bundled skill declares version 1.0.74 in its metadata', async () => {
+test('the bundled skill declares the release version in its metadata', async () => {
   // Arrange / Act
   const skill = await readBundledSkill()
 
