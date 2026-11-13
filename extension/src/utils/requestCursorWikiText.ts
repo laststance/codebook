@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,6 +8,7 @@ import type * as vscode from 'vscode'
 import {
   WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES,
   WIKI_CURSOR_PROMPT_LIMIT_BYTES,
+  WIKI_CURSOR_QUESTION_PERMISSIONS,
   WIKI_CURSOR_REQUEST_TIMEOUT_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_ANSWER_LIMIT_CHARS,
@@ -68,7 +69,34 @@ export function terminateCursorAgentProcess(
   child.kill('SIGTERM')
 }
 
-/** Requests a source-excerpt answer from Cursor Agent when its editor model API is unavailable. @param prompt - Verified bounded excerpt prompt; never placed in process arguments. @param cancellationToken - Browser request cancellation. @returns Raw model text for {@link answerDeepWikiQuestionWithPrompt} to validate. @example await requestCursorWikiText('Question: ...', token) // => '{"answer":"...","citations":[...]}' */
+/**
+ * Writes the project-level Cursor CLI permissions that deny every tool into a Wiki question's temporary workspace.
+ *
+ * Runs in {@link requestCursorWikiText} before the agent spawns, so the agent never starts with access to files outside the excerpt Codebook sends (Cycle 0125 C1).
+ *
+ * @param workspace - The question's fresh temporary workspace, also the agent's working directory.
+ * @returns Resolves once `.cursor/cli.json` holds {@link WIKI_CURSOR_QUESTION_PERMISSIONS}.
+ * @throws A learner-facing Error (the write failure kept as its `cause`) when the permissions file cannot be written; no agent has started then.
+ * @example
+ * await denyEveryCursorTool('/tmp/codebook-wiki-question-abc') // => writes /tmp/codebook-wiki-question-abc/.cursor/cli.json
+ */
+async function denyEveryCursorTool(workspace: string): Promise<void> {
+  try {
+    await mkdir(join(workspace, '.cursor'), { recursive: true })
+    await writeFile(
+      join(workspace, '.cursor', 'cli.json'),
+      JSON.stringify(WIKI_CURSOR_QUESTION_PERMISSIONS),
+    )
+  } catch (cause) {
+    // Without the deny rules the agent could read other checkouts, so never start it.
+    throw new Error(
+      'Codebook could not restrict the Cursor Agent for this Wiki question, so it did not start. Ask again or use editor chat.',
+      { cause },
+    )
+  }
+}
+
+/** Requests a source-excerpt answer from Cursor Agent when its editor model API is unavailable. Called by the Wiki question flow; a cancellation seen at any point before the process spawns (including during the permissions write and the executable lookup) starts no agent. @param prompt - Verified bounded excerpt prompt; never placed in process arguments. @param cancellationToken - Browser request cancellation. @returns Raw model text for {@link answerDeepWikiQuestionWithPrompt} to validate. @example await requestCursorWikiText('Question: ...', token) // => '{"answer":"...","citations":[...]}' */
 export async function requestCursorWikiText(
   prompt: string,
   cancellationToken?: Pick<
@@ -86,7 +114,11 @@ export async function requestCursorWikiText(
     join(tmpdir(), 'codebook-wiki-question-'),
   )
   try {
+    await denyEveryCursorTool(temporaryWorkspace)
     const executable = await resolveCursorAgentExecutable()
+    // A cancellation that landed during the config write or executable lookup has no listener yet, so stop before any agent starts
+    if (cancellationToken?.isCancellationRequested)
+      throw new Error('The Wiki question was cancelled.')
     const output = await new Promise<string>((resolve, reject) => {
       const child = spawn(
         executable,

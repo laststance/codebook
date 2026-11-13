@@ -1718,6 +1718,70 @@ test('a route naming only a long function keeps its body when its call sites cou
     assert.ok(selected.includes(line), `pasteItem line ${line + 1} is selected`)
 })
 
+// Value: protects=when the route names several long functions that hold no other route identifier, the one the reply names first brings its head first, so an earlier declaration of a name the reply gives later never takes its room; fails_when=the named heads come in line order, and the function declared first in the file fills the excerpt (Cycle 0125 /ship native check, Cursor 6F: the reply named pasteItem first and handlePaneAction last, handlePaneAction's head came first and pasteItem kept only its declaration line); why_new=Cycle 0125 /ship native check; seam=none; no_claim=named functions holding other route identifiers, which keep their rank order
+test('the long function the route reply names first brings its head before an earlier-declared one it names later', () => {
+  // Arrange
+  const lines = [
+    ...functionOf('handlePaneAction', 50),
+    ...functionOf('loadSettings', 50),
+    ...functionOf('pasteItem', 50),
+  ]
+  const pasteItemLine21 = 120
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['pasteitem', 'loadsettings', 'handlepaneaction'],
+  )
+
+  // Assert
+  assert.ok(
+    selected.includes(pasteItemLine21),
+    "pasteItem's line 21 is selected",
+  )
+  assert.ok(selected.includes(70), "loadSettings's line 21 is selected")
+  assert.equal(
+    selected.includes(20),
+    false,
+    "handlePaneAction's line 21 stays out",
+  )
+})
+
+// Value: protects=a declaration the route reply names first outranks equally matching declarations of identifiers it names later, so whole units of earlier-declared small functions never take the room of the named function that answers; fails_when=equal declarations rank by line order, two earlier small named functions fill 73 of the 80 places as whole units, and the first-named long function keeps only its declaration line (Cycle 0125 /ship native check, Cursor 6F on 6ce3779c: loadPaneContent and setupContextMenu came before pasteItem); why_new=Cycle 0125 /ship native check; seam=none; no_claim=declarations that match more identifiers, which still rank higher
+test('the declaration the route reply names first outranks equally matching declarations of identifiers it names later', () => {
+  // Arrange
+  const lines = [
+    ...functionOf('loadPane', 35),
+    ...functionOf('setupMenu', 38),
+    'function pasteItem() {',
+    ...Array.from({ length: 10 }, (_, index) => `  prepare(${index})`),
+    '  loadPane()',
+    ...Array.from({ length: 37 }, (_, index) => `  create(${index})`),
+    '}',
+  ]
+  const pasteItemLine31 = 103
+  const setupMenuLine21 = 55
+
+  // Act
+  const selected = selectWikiSourceLines(
+    lines,
+    [],
+    ['pasteitem', 'loadpane', 'setupmenu'],
+  )
+
+  // Assert
+  assert.ok(
+    selected.includes(pasteItemLine31),
+    "pasteItem's line 31 is selected",
+  )
+  assert.equal(
+    selected.includes(setupMenuLine21),
+    false,
+    "setupMenu's line 21 stays out",
+  )
+})
+
 // Value: protects=two named dotted identifiers sharing a last part (`left.save`, `right.save`) count each function holding one of them once, whatever their order in the reply; fails_when=the shared member is bound to the first dotted identifier only, so the other function counts 1.5 and the route's term order decides the rank (Cycle 0124 /ship pass 2, Codex outside voice and structured review); why_new=Cycle 0124 /ship pass 2; seam=none; no_claim=members of an unnamed object
 test('dotted identifiers sharing a last part count each holding function once in either order', () => {
   // Arrange

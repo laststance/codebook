@@ -53,9 +53,16 @@ export function selectWikiSourceLines(
       score: scoreLine(lines[index]!, terms, priorityTerms),
     }))
     .filter((match) => match.score > 0)
+    .map((match) => ({
+      ...match,
+      place: replyPlaceOf(lines[match.index]!, priorityTerms),
+    }))
+    // Equal scores go to the declaration of the identifier the reply names first, then to line order.
     .sort(
       (first, second) =>
-        second.score - first.score || first.index - second.index,
+        second.score - first.score ||
+        first.place - second.place ||
+        first.index - second.index,
     )
   if (!matches.length) return indices.slice(0, WIKI_CONTEXT_LINE_LIMIT)
   const anchors = matches
@@ -328,6 +335,23 @@ function admitNamedHeads(
     if (admitHead(head, keptAnchors, selected))
       build.windowedDeclarations.add(head[0]!)
   }
+}
+
+/**
+ * Gives a source line the place the route reply names the identifier it declares, so lines with equal scores rank the declaration of the earlier-named identifier first.
+ * Why: Cycle 0125 `/ship` native checks (Cursor, 6F): the reply named `pasteItem` first, yet declarations of identifiers it named later (`handlePaneAction`; then `loadPaneContent` and `setupContextMenu`, whole units) tied with `pasteItem`'s, came first by line order and took the places its head or window needed, so the answer called what a paste creates unknown.
+ * Called by {@link selectWikiSourceLines} for each matching line before the anchors are ranked.
+ * @param line - One source line.
+ * @param priorityTerms - The route reply's identifiers, lowercased, in the reply's order.
+ * @returns The index of the first identifier the line declares; `priorityTerms.length` for a line that declares none.
+ * @example
+ * replyPlaceOf('async function pasteItem(paneNum) {', ['handlecontextaction', 'pasteitem']) // => 1
+ * replyPlaceOf('  pasteItem(paneNum)', ['pasteitem']) // => 1
+ */
+function replyPlaceOf(line: string, priorityTerms: readonly string[]): number {
+  // Only a declaration of a named identifier has a place; every other line ties at the end.
+  if (!declaresPriorityTerm(line, priorityTerms)) return priorityTerms.length
+  return priorityTerms.findIndex((term) => declaresPriorityTerm(line, [term]))
 }
 
 /**

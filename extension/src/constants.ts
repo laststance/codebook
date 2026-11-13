@@ -411,7 +411,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.126'
+export const EXTENSION_VERSION = '0.2.127'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -1289,6 +1289,8 @@ export const WIKI_CITATION_LIMIT = 40
 /** Number of citations the Wiki prompt asks the model to aim for (the lines that support the answer most directly). */
 export const WIKI_PROMPT_CITATION_TARGET = 12
 export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304
+/** The most UTF-8 bytes of the `Declared in long sources: {…}` line of a Wiki route request, so the names each long source declares (Cycle 0125 F3b, Issue #320) stay inside {@link WIKI_CURSOR_PROMPT_LIMIT_BYTES} beside the page list of {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES} and the question. */
+export const WIKI_ROUTE_DECLARED_NAMES_LIMIT_BYTES = 16_384
 /** The most code identifiers a Wiki route reply may name for choosing excerpt lines; more are ignored. */
 export const WIKI_ROUTE_TERM_LIMIT = 8
 /** The longest code identifier, in characters, a Wiki route reply may name; a longer one is ignored. */
@@ -1323,6 +1325,25 @@ export const WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT = 1
 export const WIKI_ANSWER_LIMIT_CHARS = 12_000
 /** How long one Cursor Agent request of a Wiki question may run. Cycle 0119 measured a route request of 98,611 bytes taking 148.5 s on TanStack/query's Wiki with Grok 4.6 High, so the bound is twice that. */
 export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 300_000
+/**
+ * The Cursor CLI permissions file a Wiki question's temporary workspace holds (`.cursor/cli.json`): every read, write, shell, fetch and MCP tool is denied, so the question agent answers only from the excerpt Codebook sends.
+ *
+ * Cycle 0125 C1: in Cycle 0124 the question agent read other checkouts and the installed skill outside the opened project. The rules use Cursor CLI's documented formats (`Read(pathOrGlob)`, `Write(pathOrGlob)`, `Shell(commandBase)`, `WebFetch(domain)` and `Mcp(server:tool)`, where `Mcp(*:*)` is every tool of every server; https://cursor.com/docs/cli/reference/permissions). They were verified with cursor-agent `2026.11.11-043ef28` (Issue #320 bounded experiment E0: Read answered "Permission denied" and a shell fallback "Command blocked by permissions configuration"; criterion 6's E1 probes cover the rest), so a Cursor CLI update calls for a native recheck.
+ */
+export const WIKI_CURSOR_QUESTION_PERMISSIONS = {
+  permissions: {
+    allow: [],
+    deny: [
+      'Read(**)',
+      'Read(/**)',
+      'Write(**)',
+      'Write(/**)',
+      'Shell(*)',
+      'WebFetch(*)',
+      'Mcp(*:*)',
+    ],
+  },
+} as const
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000
