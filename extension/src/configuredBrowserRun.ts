@@ -811,8 +811,8 @@ type EntryLoadState = {
   startedAtMs: number
   /** The entry-render stops that paused and were continued, as `path:line`. */
   pausedStops: string[]
-  /** When the page was last seen loaded while only entry-load browser stops remain (their wait starts here), on the run's monotonic clock; reset by each continue of an earlier entry stop. */
-  settledAtMs?: number
+  /** When the poll first saw the page loaded while only entry-load browser stops remained, on the run's monotonic clock; set once, so a page that completed before the continue of an earlier entry stop keeps the 20 s wait that continue started ({@link ConfiguredBrowserRun.armEntryBrowserWait}). */
+  completedAtMs?: number
   /** Whether a `document.readyState` read is pending, so the poll starts no second one. */
   readInFlight?: boolean
   /** The poll that reads the document state. */
@@ -5407,7 +5407,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.entryLoad !== entry ||
       entry.loaderId === undefined ||
       this.status === 'failed' ||
-      this.status.startsWith('paused-')
+      this.status.startsWith('paused-') ||
+      this.isEntryPauseAcceptedOrHeld()
     )
       return
     // A read still pending (the page's JS is paused) is not stacked with another one.
@@ -5429,7 +5430,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (
       this.entryLoad !== entry ||
       entry.loaderId !== readLoaderId ||
-      this.status.startsWith('paused-')
+      this.status.startsWith('paused-') ||
+      this.isEntryPauseAcceptedOrHeld()
     )
       return
     if (read.result.value !== 'complete') return
@@ -5447,6 +5449,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     if (entry.finishing) entry.done.resolve()
+  }
+
+  /**
+   * Tells whether a stop was accepted or its pause hold runs, for {@link pollEntryLoad}: the run's status stays `preparing` or `acting` until {@link inspect} commits the observation, and Chrome answers a `document.readyState` read while the page is paused, so a poll in that window must neither act nor replace the hold deadline.
+   * @returns `true` between the acceptance of a stop and its continue or automatic resume.
+   * @example this.isEntryPauseAcceptedOrHeld() // true while the learner reads an entry-load pause
+   */
+  private isEntryPauseAcceptedOrHeld(): boolean {
+    return this.acceptedStop || this.holdingPause
   }
 
   /**
@@ -5474,7 +5485,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Bounds the page load by what is left of the setup budget while the entry-load phase waits for a browser stop, for {@link loadEntryWithRenderStops} and {@link beginAfter}.
+   * Bounds the page load by what is left of the setup budget while the entry-load phase waits for the page's first load with only browser stops declared, for {@link loadEntryWithRenderStops}; a continue of an entry stop starts a 20 s wait instead ({@link armEntryBrowserWait}).
    * Why it exists: a browser stop at the entry load has no pause to wait for until the page's own code runs, so the 20 s bound of a server stop does not start at the navigation or at the continue; {@link waitForEntryBrowserStop} starts it once the page finished loading.
    * @example this.holdEntryBrowserLoadDeadline()
    */
@@ -5486,7 +5497,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Starts the 20 s wait for a browser stop of the entry load once the page was seen loaded, for {@link pollEntryLoad}: the bound counts from the later of that moment and the last continue of an earlier entry stop ({@link beginAfter} resets it), and a pause's own time is never counted (the hold deadline replaces it).
+   * Starts the 20 s wait for a browser stop of the entry load once the page was seen loaded, for {@link pollEntryLoad}: the bound counts from the later of that moment and the last continue of an earlier entry stop ({@link beginAfter} starts a wait at the continue, and the first sight of the page loaded restarts it), and a pause's own time is never counted (the hold deadline replaces it).
    * @param entry - The phase's state.
    * @param stop - The first browser stop of the entry load not yet paused.
    * @example this.waitForEntryBrowserStop(entry, this.stops[1]!)
@@ -5495,10 +5506,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     entry: EntryLoadState,
     stop: PreparedStop,
   ): void {
-    if (entry.settledAtMs !== undefined) return
-    entry.settledAtMs = performance.now()
+    if (entry.completedAtMs !== undefined) return
+    entry.completedAtMs = performance.now()
+    this.armEntryBrowserWait(entry, stop)
+  }
+
+  /**
+   * Starts a 20 s wait for a browser stop of the entry load now, for {@link waitForEntryBrowserStop} (the page completed) and {@link beginAfter} (an earlier entry stop was continued): D4 counts the wait from the later of the two, and the setup budget never bounds it, because it is not credited for the compile before the first pause.
+   * At expiry a page that never completed fails with {@link entryLoadTimeoutText}, a completed page with the stop unreached with {@link entryBrowserNotReachedText}.
+   * @param entry - The phase's state.
+   * @param stop - The first browser stop of the entry load not yet paused.
+   * @example this.armEntryBrowserWait(entry, this.stops[this.stopIndex]!)
+   */
+  private armEntryBrowserWait(entry: EntryLoadState, stop: PreparedStop): void {
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
-      this.entryBrowserNotReachedText(stop),
+      entry.completedAtMs === undefined
+        ? this.entryLoadTimeoutText()
+        : this.entryBrowserNotReachedText(stop),
     )
   }
 
@@ -6829,6 +6853,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The pause is nobody's stop: the accepted-stop state returns to what it was before the hit.
     participant.stopped = undefined
     this.acceptedStop = false
+    // An automatic resume is no learner hold: the setup budget is not credited for it.
+    this.entryPauseHeldAtMs = undefined
     await this.sendOwnedResume(participant.selected!, pause.threadId)
     // The next hit of the same render is caused by the run's own resume; the stop's bound runs on from the arming or the last continue.
     this.openCausalWindow(stop.participant)
@@ -17712,11 +17738,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A later stop is armed only inside the preceding continuation, so its line pauses as that stop only after it; a pause on that line before its turn is held as unannounced and never adopted ({@link pauseHeldForStop}). Say which stop and why.
       const nextStop = this.stops[this.stopIndex]!
       this.entryLoad?.pausedStops.push(this.declaredAt(continuedStop!))
-      // The wait for a browser stop of the entry load counts from the page's completion or this continue, whichever comes later.
-      if (this.entryLoad && this.isEntryBrowserStop(nextStop)) {
-        this.entryLoad.settledAtMs = undefined
-        this.holdEntryBrowserLoadDeadline()
-      } else
+      // The wait for a browser stop of the entry load counts from the page's completion or this continue, whichever comes later: it starts here, and a page that completes later restarts it ({@link waitForEntryBrowserStop}).
+      if (this.entryLoad && this.isEntryBrowserStop(nextStop))
+        this.armEntryBrowserWait(this.entryLoad, nextStop)
+      else
         this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
           this.nextStopNotReachedText(nextStop),
         )

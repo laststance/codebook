@@ -940,6 +940,9 @@ export async function configuredRuntimeHarness(
   let readyStateReadsStarted = 0
   let rejectNextReadyStateRead = false
   let readyStateHold: Promise<void> | undefined
+  // How many paused-frame evaluations the run started, and the promise a held one waits on.
+  let callFrameEvaluationsStarted = 0
+  let callFrameEvaluationHold: Promise<void> | undefined
   let documentReadyState: 'loading' | 'complete' =
     options.documentReadyState ?? 'complete'
   let navigationCount = 0
@@ -1857,6 +1860,9 @@ export async function configuredRuntimeHarness(
       if (method === 'Debugger.getScriptSource')
         return { scriptSource: executedScriptSource ?? servedJavascript }
       if (method === 'Debugger.evaluateOnCallFrame') {
+        callFrameEvaluationsStarted++
+        // A held evaluation answers only after the test releases it: the pause is accepted but its observation is not committed yet.
+        if (callFrameEvaluationHold) await callFrameEvaluationHold
         try {
           return {
             result: { value: evaluateInspection(parameters?.expression) },
@@ -2898,6 +2904,19 @@ export async function configuredRuntimeHarness(
     /** Makes the next `document.readyState` read reject, as one does when the execution context is gone in a commit. @example harness.rejectNextReadyStateRead() */
     rejectNextReadyStateRead(): void {
       rejectNextReadyStateRead = true
+    },
+    /** How many paused-frame evaluations (the stop's inspections) the run started so far. @example harness.callFrameEvaluations() */
+    callFrameEvaluations: (): number => callFrameEvaluationsStarted,
+    /** Holds every later paused-frame evaluation unanswered until the returned function is called, so an accepted pause stays uninspected (status not yet `paused-*`) while the page answers other reads. @returns The release. @example const release = harness.holdCallFrameEvaluations() */
+    holdCallFrameEvaluations(): () => void {
+      let release = (): void => {}
+      callFrameEvaluationHold = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return (): void => {
+        callFrameEvaluationHold = undefined
+        release()
+      }
     },
     /** Holds every later `document.readyState` read unanswered until the returned function is called, as a paused page does. @returns The release. @example const release = harness.holdReadyStateReads() */
     holdReadyStateReads(): () => void {

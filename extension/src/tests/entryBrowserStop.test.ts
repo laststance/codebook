@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict'
-import { test, type TestContext } from 'node:test'
+import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
-import type { RuntimeControl } from '../runtime'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
-import {
-  configuredRuntimeHarness,
-  type ConfiguredRuntimeHarness,
-} from './utils/configuredRuntimeHarness'
+import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import {
   armedBrowserEntry,
+  armedServerThenBrowser,
   entryBrowserHarness,
+  journaled,
+  serverStopContinued,
+  serverThenBrowserHarness,
 } from './utils/entryBrowserStopHarness'
 import { entryControl } from './utils/entryRenderHarness'
 
@@ -22,81 +22,11 @@ const SETUP_BUDGET_MS = 3000
 /** How long that test holds the server pause: longer than the whole budget. */
 const HELD_MS = 3500
 
-/** A source of three statements, so a server stop and a browser stop can sit on different lines of one file. */
-const THREE_LINE_SOURCE =
-  'var nextTheme = "dark";\nvar between = 1;\nvar enabled = false;\n'
-/** The map of {@link THREE_LINE_SOURCE}: generated line n is source line n + 1. */
-const THREE_LINE_MAP = 'AAAA;AACA;AACA'
-/** A required value of the harness page at the browser stop on line 3. */
-const ENABLED_STOP = [
-  { path: 'enabled', mode: 'value', required: true },
-] as const
 /** A click that the page answers. */
 const OPEN: RepositoryOperation = {
   kind: 'click',
   title: 'Open',
   selector: '#open',
-}
-
-/** Reads the details of every journal entry of one type as plain data. @example journaled(harness, 'breakpoint.server-copy-resumed') */
-function journaled(harness: ConfiguredRuntimeHarness, type: string): unknown[] {
-  return harness.run
-    .view()
-    .events.filter((event) => event.type === type)
-    .map((event) => JSON.parse(JSON.stringify(event.detail)))
-}
-
-/**
- * Opens a `next-dev-webpack` run with a server stop on line 1 and a browser stop on line 3, both at the entry load, the server stop first.
- * @param context - The test.
- * @returns The configured runtime harness with a scripted server participant.
- * @example const harness = await serverThenBrowserHarness(context)
- */
-async function serverThenBrowserHarness(
-  context: TestContext,
-  control: RuntimeControl = entryControl(context),
-): Promise<ConfiguredRuntimeHarness> {
-  return configuredRuntimeHarness(
-    context,
-    control,
-    [{ line: 3, column: 1, inspections: [...ENABLED_STOP] }],
-    {
-      participant: 'server',
-      serverSeal: 'rsc',
-      serverRuntime: { route: '/dashboard' },
-      entryPath: '/dashboard',
-      documentReadyState: 'loading',
-      mappings: THREE_LINE_MAP,
-      fixture: { source: THREE_LINE_SOURCE, citationEndLine: 3 },
-      operations: {
-        operations: [],
-        stopOperations: [0, 0],
-        stopParticipants: ['server', 'browser'],
-      },
-    },
-  )
-}
-
-/**
- * Waits until both entry-load stops were requested, acknowledges them in the page's session and waits for the entry navigation.
- * @param harness - The server-then-browser harness whose run is preparing.
- * @example await armedServerThenBrowser(harness)
- */
-async function armedServerThenBrowser(
-  harness: ConfiguredRuntimeHarness,
-): Promise<void> {
-  await waitUntil(
-    () =>
-      harness.breakpoints.filter((breakpoint) =>
-        breakpoint.id.startsWith('owned-breakpoint'),
-      ).length >= 2,
-    'both entry-load stops were requested',
-  )
-  harness.acknowledgeOwnedBreakpointsInPage()
-  await waitUntil(
-    () => harness.navigations.length >= 1,
-    'the entry navigation started',
-  )
 }
 
 // Value: protects=client code that runs while the entry page loads pauses in a browser stop declared afterOperation 0, armed before the first navigation and accepted with no input sent, labelled entry-load; fails_when=the stop is armed only after its module loaded (the code already ran), the pause before input fails the run, or the label lacks entry-load or carries an operationIndex; no_claim=a real js-debug binding before the module runs (native H1)
@@ -376,31 +306,6 @@ test('a pause at another column of the declared line is not recorded as the entr
   )
 })
 
-/**
- * Drives a server-then-browser entry load to the point where the server stop was continued and the browser stop is still awaited.
- * @param context - The test.
- * @returns The harness, its prepare promise and the id of the editor's breakpoint of the browser stop.
- * @example const { harness, prepared, browserStopBreakpointId } = await serverStopContinued(context)
- */
-async function serverStopContinued(context: TestContext) {
-  const harness = await serverThenBrowserHarness(context)
-  // The test sends the browser stop's pause itself: the continuation of the browser stop must not send another.
-  harness.suppressNextPause()
-  const prepared = harness.run.prepare()
-  await armedServerThenBrowser(harness)
-  harness.commitMainFrame('/dashboard')
-  harness.server!.hit({ route: '/dashboard' })
-  const serverPause = await waitUntil(
-    () => harness.run.view().participants.server?.snapshot,
-    'the published server pause',
-  )
-  await harness.run.continue('server', serverPause.pause)
-  const browserStopBreakpointId = harness.breakpoints.find((breakpoint) =>
-    breakpoint.id.startsWith('owned-breakpoint-'),
-  )!.id
-  return { harness, prepared, browserStopBreakpointId }
-}
-
 // Value: protects=a stack answer that arrives after the held server copy pause was resumed by the adapter and another pause is held resumes nothing: only the pause that is held decides; fails_when=the stale answer resumes the thread again, so the later pause is resumed twice or a pause the learner should see is resumed for a verdict about another one; no_claim=a real adapter's resume timing (native H1)
 test('a stale stack answer for an earlier server copy pause does not resume the pause held after it', async (context) => {
   // Arrange
@@ -479,12 +384,13 @@ test('a held server pause after the entry browser stop was continued is not clas
   assert.deepEqual(journaled(harness, 'breakpoint.server-copy-resumed'), [])
 })
 
-// Value: protects=the time a learner holds the server pause of the entry load is not charged to the setup budget of the browser stop that follows: a hold longer than the budget that was left still reaches the browser stop; fails_when=the next stop's page-load bound is 1 ms after the continue and the run fails with the setup-budget sentence before the browser stop pauses; no_claim=a hold near the 300 s pause bound (that bound is the hold deadline's own)
-test('a server pause of the entry load held longer than the setup budget still reaches the browser stop that follows', async (context) => {
-  // Arrange: 3 s of setup budget (real time: the budget reads the wall clock), a 3.5 s hold
+// Value: protects=the time a learner holds the server pause of the entry load is given back to the setup budget that the rest of the preparation (a later preparation window, the stable-page wait) runs under, and the browser stop that follows is still reached; fails_when=the budget is not moved by the hold (it would run out while the learner reads) or the hold's credit differs from its length; no_claim=how long the browser stop may take after the continue (that is the 20 s wait, tested in entryBrowserStopDeadlines)
+test('a server pause of the entry load held for 3.5 s moves the setup budget by about 3.5 s and the browser stop that follows is still reached', async (context) => {
+  // Arrange
+  const budgetEndsAtMs = Date.now() + SETUP_BUDGET_MS
   const harness = await serverThenBrowserHarness(context, {
     ...entryControl(context),
-    preparationDeadlineAt: Date.now() + SETUP_BUDGET_MS,
+    preparationDeadlineAt: budgetEndsAtMs,
   })
   // The test sends the browser stop's pause itself: the continuation of the browser stop must not send another.
   harness.suppressNextPause()
@@ -497,8 +403,13 @@ test('a server pause of the entry load held longer than the setup budget still r
     'the published server pause',
   )
   // Act: the learner holds the pause past the whole budget, continues, and the page's client code reaches the browser stop a moment later
+  // gstack-timing-ok: the setup budget reads the run's wall clock (the run's module does not see a mocked Date), so the hold is real
   await sleep(HELD_MS)
   await harness.run.continue('server', serverPause.pause)
+  const creditedBudgetEndsAtMs: unknown = Reflect.get(
+    harness.run,
+    'preparationDeadlineAt',
+  )
   harness.advance(100)
   harness.emitPause(1, 3)
   const browserPause = await waitUntil(
@@ -509,6 +420,11 @@ test('a server pause of the entry load held longer than the setup budget still r
   await harness.run.continue('browser', browserPause.pause)
   await prepared
   // Assert
+  const creditedMs = Number(creditedBudgetEndsAtMs) - budgetEndsAtMs
+  assert.ok(
+    creditedMs >= HELD_MS && creditedMs < HELD_MS + 1000,
+    `the hold of ${HELD_MS} ms was credited as ${creditedMs} ms`,
+  )
   assert.equal(harness.run.view().failures.length, 0)
   assert.equal(harness.run.view().snapshots.length, 2)
 })
