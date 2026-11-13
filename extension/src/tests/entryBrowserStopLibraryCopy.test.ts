@@ -3,10 +3,12 @@ import { test, type TestContext } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
+import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import {
-  configuredRuntimeHarness,
-  type ConfiguredRuntimeHarness,
-} from './utils/configuredRuntimeHarness'
+  journaled,
+  THREE_LINE_MAP,
+  THREE_LINE_SOURCE,
+} from './utils/entryBrowserStopHarness'
 import { entryControl } from './utils/entryRenderHarness'
 import {
   compilerFolders,
@@ -14,20 +16,6 @@ import {
   PACKAGE_ROOT,
   writeReport,
 } from './utils/nextLibraryRunHarness'
-
-/** A source of three statements, so a browser stop can sit on line 1 and another place on line 3. */
-const THREE_LINE_SOURCE =
-  'var nextTheme = "dark";\nvar between = 1;\nvar enabled = false;\n'
-/** The map of {@link THREE_LINE_SOURCE}: generated line n is source line n + 1. */
-const THREE_LINE_MAP = 'AAAA;AACA;AACA'
-
-/** Reads the details of every journal entry of one type as plain data. @example journaled(harness, 'breakpoint.server-copy-resumed') */
-function journaled(harness: ConfiguredRuntimeHarness, type: string): unknown[] {
-  return harness.run
-    .view()
-    .events.filter((event) => event.type === type)
-    .map((event) => JSON.parse(JSON.stringify(event.detail)))
-}
 
 /**
  * Opens a `next-dev-webpack` run that declares `library` (the pack route) with only a browser stop at the entry load, on line 1, and a scripted server session the route attaches although no server stop is declared; prepares it and waits until the browser stop is armed and the entry navigation started.

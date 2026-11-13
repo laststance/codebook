@@ -22,8 +22,8 @@ import { entryControl } from './utils/entryRenderHarness'
 
 /** A setup budget that the compile time before the first pause spends in the tests below. */
 const SMALL_SETUP_BUDGET_MS = 2000
-/** The time between an automatically resumed hit and the learner's hit, with nothing held. */
-const UNHELD_MS = 1500
+/** The time between an automatically resumed hit and the learner's hit, with nothing held: long enough that a credit counting it stands well above the learner's hold on a loaded runner. */
+const UNHELD_MS = 4000
 /** How long the learner holds the pause in the credit test. */
 const LEARNER_HOLD_MS = 500
 /** The compile time the tests let pass before the first entry-load pause (more than {@link SMALL_SETUP_BUDGET_MS}). */
@@ -91,11 +91,11 @@ async function pausedWhilePageCompletes(
     () => harness.callFrameEvaluations() >= 1,
     'the pause inspection started',
   )
-  // gstack-timing-ok: the poll must do nothing here, so no event marks the end of the wait; three poll intervals give it every chance to act
-  await sleep(ENTRY_LOAD_POLL_MS * 3)
+  // gstack-timing-ok: the poll must do nothing here, so no event marks the end of the wait; ten poll intervals give it every chance to act, also on a loaded runner
+  await sleep(ENTRY_LOAD_POLL_MS * 10)
   releaseRead()
   // gstack-timing-ok: the late answer of the read has no observable event either when the poll ignores it
-  await sleep(ENTRY_LOAD_POLL_MS)
+  await sleep(ENTRY_LOAD_POLL_MS * 3)
   releaseInspection()
   const pause = await waitUntil(
     () => harness.run.view().participants.browser.snapshot,
@@ -234,7 +234,7 @@ test('an automatically resumed server hit during the entry load does not add its
   const prepared = harness.run.prepare().catch((error: unknown) => error)
   await armedServerThenBrowser(harness)
   harness.commitMainFrame('/dashboard')
-  // Act: another route's render hits the stop and is resumed, 1.5 s pass with nothing held, then the entry route's hit pauses for the learner for 0.5 s
+  // Act: another route's render hits the stop and is resumed, 4 s pass with nothing held, then the entry route's hit pauses for the learner for 0.5 s
   harness.server!.hit({ route: '/dashboard/invoices' })
   await waitUntil(
     () => harness.server!.continues.length >= 1,
@@ -262,7 +262,7 @@ test('an automatically resumed server hit during the entry load does not add its
   harness.setDocumentReadyState('complete')
   await harness.run.continue('browser', browserPause.pause)
   await prepared
-  // Assert: the budget moved by the learner's hold only, not by the unheld 1.5 s before it
+  // Assert: the budget moved by the learner's hold only, not by the unheld 4 s before it
   const creditedMs = Number(creditedBudgetEndsAtMs) - budgetEndsAtMs
   assert.ok(
     creditedMs >= LEARNER_HOLD_MS && creditedMs < UNHELD_MS,

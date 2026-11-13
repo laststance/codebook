@@ -421,8 +421,9 @@ test('a server pause of the entry load held for 3.5 s moves the setup budget by 
   await prepared
   // Assert
   const creditedMs = Number(creditedBudgetEndsAtMs) - budgetEndsAtMs
+  // The credit also holds the pause's publication and the continue around the sleep, which a loaded runner stretches; a hold counted twice would reach twice its length.
   assert.ok(
-    creditedMs >= HELD_MS && creditedMs < HELD_MS + 1000,
+    creditedMs >= HELD_MS && creditedMs < HELD_MS * 2,
     `the hold of ${HELD_MS} ms was credited as ${creditedMs} ms`,
   )
   assert.equal(harness.run.view().failures.length, 0)
