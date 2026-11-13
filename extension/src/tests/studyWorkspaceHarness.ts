@@ -23,6 +23,7 @@ import type {
   PresentationPoseRestore,
 } from '../presentationSchemas'
 import { RecordingStore } from '../recordingStore'
+import type { ReplayRecordedInspection } from '../replayDebugAdapter'
 import type { ReplayInspection, ReplayRetrievalStage } from '../replayDebugger'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { RepositoryBookStore } from '../repositoryBook'
@@ -934,6 +935,7 @@ export async function workspaceHarness(
     snapshot: ReplayDebugSnapshot | undefined
     label: string
     sourceDocument?: { uri: string; hash: string }
+    inspections?: readonly ReplayRecordedInspection[]
   }> = []
   let historicalDebugInvalidations = 0
   /** What each invalidation told the fake historical debugger its emptied session reads in Run and Debug, in order. */
@@ -959,6 +961,7 @@ export async function workspaceHarness(
       snapshot: ReplayDebugSnapshot | undefined
       label: string
       sourceUri?: string
+      inspections?: readonly ReplayRecordedInspection[]
     }
     /** The selection whose native model this fake selected, or for which the host registers no command, as the real owner keeps `modelSelectionSettledFor` (F6): a later presentation of the same selection selects nothing again. */
     private modelSelectionSettledFor?: TestReplayDebugger['selection']
@@ -998,6 +1001,7 @@ export async function workspaceHarness(
       label: string,
       signal: AbortSignal,
       sourceDocument?: { uri: string; hash: string },
+      inspections?: readonly ReplayRecordedInspection[],
     ): Promise<ReplayInspection> {
       signal.throwIfAborted()
       // Mirrors the real owner: a learner-stopped session never silently relaunches.
@@ -1007,15 +1011,26 @@ export async function workspaceHarness(
         )
       const pendingFailure = pendingHistoricalDebugFailures.shift()
       if (pendingFailure) throw pendingFailure
-      historicalDebugPresentations.push({ snapshot, label, sourceDocument })
-      // As for the real owner, a new snapshot, label or source is a new selection; the same one keeps its object.
+      historicalDebugPresentations.push({
+        snapshot,
+        label,
+        sourceDocument,
+        inspections,
+      })
+      // As for the real owner, a new snapshot, label, source or inspections array is a new selection; the same one keeps its object.
       if (
         !this.selection ||
         this.selection.snapshot !== snapshot ||
         this.selection.label !== label ||
-        this.selection.sourceUri !== sourceDocument?.uri
+        this.selection.sourceUri !== sourceDocument?.uri ||
+        this.selection.inspections !== inspections
       )
-        this.selection = { snapshot, label, sourceUri: sourceDocument?.uri }
+        this.selection = {
+          snapshot,
+          label,
+          sourceUri: sourceDocument?.uri,
+          inspections,
+        }
       // A stop with values selects the native model once per selection, as the real owner does before it waits for Variables (row 721, F6).
       if (
         snapshot?.frames.some((frame) => frame.scopes.length) &&

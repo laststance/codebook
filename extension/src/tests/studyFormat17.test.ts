@@ -116,7 +116,7 @@ test('format 17 is a stored and readable format', () => {
     archiveSuffix: '.study.v17.json',
     metadataSuffix: '.study.meta.v17.json',
   })
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.equal(isOperationsStudyFormat(17), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 17 }))
 })

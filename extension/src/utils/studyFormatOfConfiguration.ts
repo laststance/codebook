@@ -1,6 +1,7 @@
 import type { ConfiguredStudy } from '../configuredStudySchemas'
 import {
   API_ROUTE_STUDY_VERSION,
+  ENTRY_BROWSER_STUDY_VERSION,
   EXPO_WEB_API_SERVER_STUDY_VERSION,
   EXPO_WEB_STUDY_VERSION,
   HOLD_STUDY_VERSION,
@@ -31,6 +32,7 @@ type OperationsConfiguration = Extract<
 
 import { afterOperationOf } from './afterOperationOf'
 import { configuredStops } from './configuredStops'
+import { declaresEntryBrowserStop } from './declaresEntryBrowserStop'
 import { declaresPressOperation } from './declaresPressOperation'
 import { declaresReverseProxy } from './declaresReverseProxy'
 import { declaresStopHold } from './declaresStopHold'
@@ -212,6 +214,12 @@ function keyOnlyFormatOf(
 export function studyFormatOfConfiguration(
   configuration: ConfiguredStudy['configuration'],
 ): ConfiguredStudy['version'] {
+  // A browser stop at the entry load makes the study format 25 whatever else the run declares (a `hold` included): an older Codebook refuses the stop, and format 25 keeps every fact of the underlying run.
+  if (
+    configuration.version === OPERATIONS_CONFIG_VERSION &&
+    declaresEntryBrowserStop(configuration)
+  )
+    return ENTRY_BROWSER_STUDY_VERSION
   // A stop that declares `hold` makes the study format 24 whatever else the run declares (a static-page run included): an older Codebook refuses the key, and format 24 keeps every fact of the underlying run.
   if (
     configuration.version === OPERATIONS_CONFIG_VERSION &&
@@ -231,7 +239,7 @@ export function studyFormatOfConfiguration(
 }
 
 /**
- * Gives the format whose configuration-derived rules a saved study follows: its own version, except that a format 21, 22 or 24 study follows the rules of the format its configuration takes without the press.
+ * Gives the format whose configuration-derived rules a saved study follows: its own version, except that a format 21, 22, 24 or 25 study follows the rules of the format its configuration takes without the press.
  * Why it exists: formats 21 and 22 keep every fact the underlying run's format keeps (`apiRequest`, library facts, evidence rules); the sites that compare a study version with a specific format for such a rule ask here instead of reading `study.version`. Called by {@link evidenceFormatOfStudy}, {@link assertObservationFormatFields}, {@link observationOfFormat}, {@link captureStudy} and {@link validateConfiguredStudyEvidence}.
  * @param study - The saved study, or anything with its `version` and `configuration`.
  * @returns `study.version`, or for format 21 and 22 the format {@link studyFormatWithoutPress} gives its configuration.
@@ -242,7 +250,8 @@ export function studyFormatOfConfiguration(
 export function studyRulesVersionOf(study: StudyFormatSubject): number {
   return study.version === PRESS_STUDY_VERSION ||
     study.version === REVERSE_PROXY_STUDY_VERSION ||
-    study.version === HOLD_STUDY_VERSION
+    study.version === HOLD_STUDY_VERSION ||
+    study.version === ENTRY_BROWSER_STUDY_VERSION
     ? studyFormatWithoutPress(study.configuration)
     : study.version
 }
@@ -407,14 +416,48 @@ export function usesServerRenderEvidence(study: StudyFormatSubject): boolean {
 }
 
 /**
- * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 24), which no study of version 1 or 2 may carry.
+ * Says whether a saved format number is written only from a version 3 configuration (formats 7 to 25), which no study of version 1 or 2 may carry.
  * Called by {@link validateConfiguredStudyEvidence} for the version 1 and 2 configurations.
  * @param version - The study's saved format.
  * @returns `true` for the formats written only from a version 3 configuration.
  * @example isOperationsStudyFormat(8) // => true
  */
 export function isOperationsStudyFormat(version: number): boolean {
-  return version >= OPERATIONS_STUDY_VERSION && version <= HOLD_STUDY_VERSION
+  return (
+    version >= OPERATIONS_STUDY_VERSION &&
+    version <= ENTRY_BROWSER_STUDY_VERSION
+  )
+}
+
+/**
+ * Gives the one format a version 3 configuration is readable in when a feature of its own decides it: 25 for a browser stop at the entry load, 24 for a stop `hold`, 23 for the static-page adapter, in that order of precedence.
+ * Called by {@link isReadableStudyFormatOfConfiguration}.
+ * @param configuration - A version 3 configuration.
+ * @returns The only readable format; `undefined` when none of those features is declared.
+ * @example onlyReadableFormatOf({ adapter: 'static-page' }) // => 23
+ */
+function onlyReadableFormatOf(
+  configuration: OperationsConfiguration,
+): number | undefined {
+  if (declaresEntryBrowserStop(configuration))
+    return ENTRY_BROWSER_STUDY_VERSION
+  if (declaresStopHold(configuration)) return HOLD_STUDY_VERSION
+  return configuration.adapter === 'static-page'
+    ? STATIC_PAGE_STUDY_VERSION
+    : undefined
+}
+
+/**
+ * Says whether a saved format number is one of the compatibility formats (21 press, 22 reverse proxy, 23 static page, 24 hold, 25 entry-load browser stop), which hold a configuration only when its own feature is declared.
+ * Called by {@link isReadableStudyFormatOfConfiguration}.
+ * @param version - The study's saved format.
+ * @returns `true` for 21 to 25.
+ * @example isCompatibilityOnlyFormat(24) // => true
+ */
+function isCompatibilityOnlyFormat(version: number): boolean {
+  return (
+    version >= PRESS_STUDY_VERSION && version <= ENTRY_BROWSER_STUDY_VERSION
+  )
 }
 
 /**
@@ -452,21 +495,13 @@ export function isReadableStudyFormatOfConfiguration(
 ): boolean {
   if (configuration.version !== OPERATIONS_CONFIG_VERSION)
     return version === studyFormatWithoutPress(configuration)
-  // A configuration in which a stop declares `hold` is readable as format 24 only, and format 24 holds no other configuration.
-  if (declaresStopHold(configuration)) return version === HOLD_STUDY_VERSION
-  // A static-page configuration is readable as format 23 only, and format 23 holds no other configuration.
-  if (configuration.adapter === 'static-page')
-    return version === STATIC_PAGE_STUDY_VERSION
+  // A configuration with a browser stop at the entry load (25), a stop `hold` (24) or the static-page adapter (23) is readable as that format only, and that format holds no other configuration.
+  const onlyFormat = onlyReadableFormatOf(configuration)
+  if (onlyFormat !== undefined) return version === onlyFormat
   // A configuration that declares `reverseProxy` is readable as format 22 only and one that declares a press as format 21 only; each format holds only such a configuration.
   const keyOnlyFormat = keyOnlyFormatOf(configuration)
   if (keyOnlyFormat !== undefined) return version === keyOnlyFormat
-  if (
-    version === PRESS_STUDY_VERSION ||
-    version === REVERSE_PROXY_STUDY_VERSION ||
-    version === STATIC_PAGE_STUDY_VERSION ||
-    version === HOLD_STUDY_VERSION
-  )
-    return false
+  if (isCompatibilityOnlyFormat(version)) return false
   if (version === studyFormatWithoutPress(configuration)) return true
   // A react-scripts-dev configuration is readable as format 11 (or 17 with `library`, the equality above) only, also without a packageRoot, so the format 7 fallback below never accepts it (DX-10).
   if (configuration.adapter === 'react-scripts-dev') return false

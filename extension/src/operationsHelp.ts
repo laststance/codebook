@@ -288,7 +288,7 @@ export function operationsHelp() {
       ],
       limits: `Up to ${REPOSITORY_OPERATION_LIMIT} operations; titles are distinct; a text or choose selector must match one visible enabled control, otherwise the operation answers INPUT_NOT_ACCEPTED and nothing is sent. An optional after on an operation is checked before the next operation is offered.`,
       afterOperation:
-        "Each stop (the first and every additionalStops entry) declares afterOperation, from 1 to the number of operations, never lower than the stop before it. Stops of different operations are armed one operation at a time, so a stop's line cannot pause the run before its turn.",
+        "Each stop (the first and every additionalStops entry) declares afterOperation, from 1 to the number of operations, never lower than the stop before it; under next-dev-webpack, afterOperation 0 on a browser stop pauses client code that runs while the entry page loads (declare it after every server stop of the entry load). Stops of different operations are armed one operation at a time, so a stop's line cannot pause the run before its turn.",
       navigation: [
         "Client-side navigation within the app's origin between operations is followed.",
         'A full document load before the last operation fails a Next run with NAVIGATION_BEFORE_LAST_OPERATION: the next operation would act on another page. A load after the last operation is the result (a redirect, for example) and is accepted. Split a flow that navigates in the middle into two runs, the first ending with the operation that navigates. The vite-dev adapter keeps its own reload handling.',

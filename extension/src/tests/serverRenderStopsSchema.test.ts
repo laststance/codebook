@@ -61,43 +61,78 @@ test('a version 3 configuration with operations accepts entry-render server stop
   assert.deepEqual(issues, [])
 })
 
-// protects=afterOperation 0 is a server-only pause of the entry render; fails_when=a browser stop declared afterOperation 0 is accepted or the refusal does not name the field; no_claim=none beyond protects
-test('afterOperation 0 on a browser stop is refused and names the field', () => {
+/** Supplies an additional browser stop at the entry load. @example browserEntryStop().afterOperation // 0 */
+function browserEntryStop(): Record<string, unknown> {
+  return {
+    participant: 'browser',
+    source: { path: 'app/ui/a.tsx', hash: 'b'.repeat(64), line: 3, column: 1 },
+    anchorIndex: 0,
+    inspections: [{ path: 'a', mode: 'value', required: true }],
+    afterOperation: 0,
+  }
+}
+
+// protects=a Next run can pause client code that runs while the entry page loads; fails_when=a browser stop at afterOperation 0 under next-dev-webpack is refused (the #325 E2 refusal); no_claim=the run pauses there (run tests)
+test('afterOperation 0 on a browser stop is accepted under next-dev-webpack', () => {
   // Arrange, Act
   const issues = issuesOf((configuration) => {
+    configuration.participant = 'browser'
+  })
+  // Assert
+  assert.deepEqual(issues, [])
+})
+
+// protects=an additional browser stop after the server stop may also pause the entry load; fails_when=an additionalStops browser stop at 0 is refused under next-dev-webpack; no_claim=none beyond protects
+test('afterOperation 0 on an additional browser stop after a server stop is accepted under next-dev-webpack', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.additionalStops = [browserEntryStop()]
+  })
+  // Assert
+  assert.deepEqual(issues, [])
+})
+
+// protects=only next-dev-webpack pauses browser code at the entry load, other adapters keep a refusal naming the adapter; fails_when=vite-dev accepts a browser stop at 0 or the refusal omits the adapter or the field; no_claim=none beyond protects
+test('afterOperation 0 on a browser stop under another adapter is refused and names the adapter and the field', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.adapter = 'vite-dev'
     configuration.participant = 'browser'
     configuration.operations = [clickOperation]
   })
   // Assert
   assert.deepEqual(issues, [
-    'afterOperation: afterOperation 0 (the entry render) is declared at configuration.afterOperation, but only a server stop can pause the entry render; declare afterOperation 1 or more for a browser stop.',
+    'afterOperation: afterOperation 0 (the entry load) is declared at configuration.afterOperation on a browser stop under adapter "vite-dev", but only adapter "next-dev-webpack" supports a browser stop at the entry load; declare afterOperation 1 or more for a browser stop.',
   ])
 })
 
-// protects=an additional browser stop cannot pause the entry render either; fails_when=afterOperation 0 on an additional browser stop is accepted; no_claim=none beyond protects
-test('afterOperation 0 on an additional browser stop is refused and names its index', () => {
+// protects=the server response precedes the client code it renders, so a server stop cannot follow a browser stop at 0; fails_when=a server stop declared after a browser stop at 0 is accepted or the refusal omits the field; no_claim=none beyond protects
+test('a server stop at afterOperation 0 after a browser stop at 0 is refused and names the field', () => {
   // Arrange, Act
   const issues = issuesOf((configuration) => {
+    configuration.participant = 'browser'
     configuration.additionalStops = [
-      {
-        participant: 'browser',
-        source: {
-          path: 'app/ui/a.tsx',
-          hash: 'b'.repeat(64),
-          line: 3,
-          column: 1,
-        },
-        anchorIndex: 0,
-        inspections: [{ path: 'a', mode: 'value', required: true }],
-        afterOperation: 0,
-      },
+      { ...browserEntryStop(), participant: 'server' },
     ]
+  })
+  // Assert
+  assert.deepEqual(issues, [
+    'additionalStops.0.afterOperation: afterOperation 0 at configuration.additionalStops.0.afterOperation is a server stop declared after a browser stop at afterOperation 0; declare every server stop of the entry load before its browser stops: the server response precedes the client code it renders.',
+  ])
+})
+
+// protects=a browser stop at the entry load still has no request to record against; fails_when=hold "record" on a browser stop at 0 is accepted or loses its field name; no_claim=none beyond protects
+test('hold record on a browser stop at afterOperation 0 is refused and names the field', () => {
+  // Arrange, Act
+  const issues = issuesOf((configuration) => {
+    configuration.participant = 'browser'
+    configuration.hold = 'record'
   })
   // Assert
   assert.equal(issues.length, 1)
   assert.match(
     issues[0]!,
-    /^additionalStops\.0\.afterOperation: .*configuration\.additionalStops\.0\.afterOperation/,
+    /^hold: hold "record" is declared at configuration\.hold/,
   )
 })
 

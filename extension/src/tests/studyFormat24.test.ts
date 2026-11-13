@@ -166,8 +166,8 @@ test('only format 24 holds a configuration that declares hold, and format 24 hol
   )
 })
 
-// Value: protects=a format 24 study is stored in .study.v24.json beside its metadata, this Codebook reads 24 and refuses 25 as newer, and Codebook 0.2.107 (readable up to 23) lists a .study.v24.json archive as saved by a newer Codebook; fails_when=the storage table lacks v24, the readable limit stays 23, or the file name rule stops recognising v24; no_claim=disk errors
-test('format 24 is stored and readable, 25 is saved by a newer Codebook and a reader limited to 23 lists v24 as newer', async () => {
+// Value: protects=a format 24 study is stored in .study.v24.json beside its metadata, this Codebook reads 24 and refuses 26 as newer, and Codebook 0.2.107 (readable up to 23) lists a .study.v24.json archive as saved by a newer Codebook; fails_when=the storage table lacks v24, the readable limit stays 23, or the file name rule stops recognising v24; no_claim=disk errors
+test('format 24 is stored and readable, 26 is saved by a newer Codebook and a reader limited to 23 lists v24 as newer', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 23 }
   const newerStudyArchive = await loadModule<typeof NewerStudyArchiveModule>(
@@ -186,13 +186,13 @@ test('format 24 is stored and readable, 25 is saved by a newer Codebook and a re
     metadataSuffix: '.study.meta.v24.json',
   })
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 24 })
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.equal(isOperationsStudyFormat(24), true)
-  assert.equal(isOperationsStudyFormat(25), false)
+  assert.equal(isOperationsStudyFormat(26), false)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 24 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 25 }),
-    /saved in format 25 by a newer Codebook; this Codebook reads formats up to 24/,
+    () => assertReadableStudyFormat({ version: 26 }),
+    /saved in format 26 by a newer Codebook; this Codebook reads formats up to 25/,
   )
 })
 

@@ -6,6 +6,7 @@ import {
   MODULE_EVALUATION_STUDY_VERSION,
   NEXT_LIBRARY_STUDY_VERSION,
   OPERATIONS_CONFIG_VERSION,
+  ENTRY_BROWSER_STUDY_VERSION,
   HOLD_STUDY_VERSION,
   PRESS_STUDY_VERSION,
   REVERSE_PROXY_STUDY_VERSION,
@@ -69,6 +70,9 @@ function assertFormat8Observation(
     assertRouteHandlerObservation(observation, group)
   else if (execution === 'api-route')
     assertApiRouteObservation(observation, group)
+  // A browser stop at the entry load (format 25) is the one browser pause with an attribution: the page load, with no operation and no scope.
+  else if (isEntryBrowserObservation(observation, group))
+    assertEntryBrowserObservation(observation)
   else assertAttributionFitsGroup(observation, group)
 }
 
@@ -126,6 +130,39 @@ function assertApiRouteObservation(
   )
     throw new Error(
       'An API-route observation needs an apiRoute and has no routeHandler or scope.',
+    )
+}
+
+/**
+ * Says whether an observation is a browser pause at a stop declared `afterOperation: 0`, the entry load of a format 25 study.
+ * Called by {@link assertFormat8Observation}.
+ * @param observation - The observation.
+ * @param group - The stop's `afterOperation`.
+ * @returns `true` for a browser observation of group 0.
+ * @example isEntryBrowserObservation({ execution: 'browser' }, 0) // => true
+ */
+function isEntryBrowserObservation(
+  observation: Observation,
+  group: number,
+): boolean {
+  return observation.execution === 'browser' && group === 0
+}
+
+/**
+ * Checks a browser observation of a stop at the entry load (format 25): it is attributed `entry-load` and has no operation index and no module scope.
+ * Called by {@link assertFormat8Observation}.
+ * @param observation - The observation, whose `execution` is `browser` and whose stop is declared `afterOperation: 0`.
+ * @throws When the attribution is not `entry-load`, or an operation index or a scope is present.
+ * @example assertEntryBrowserObservation({ execution: 'browser', attribution: 'entry-load' })
+ */
+function assertEntryBrowserObservation(observation: Observation): void {
+  if (
+    observation.attribution !== 'entry-load' ||
+    observation.operationIndex !== undefined ||
+    observation.scope !== undefined
+  )
+    throw new Error(
+      'An entry-load browser observation is attributed entry-load and has no operationIndex or scope.',
     )
 }
 
@@ -362,6 +399,24 @@ export function assertObservationFormatFields(
 }
 
 /**
+ * Says whether a format holds the fields of formats 12 to 14 itself, so the observation fields move it to no other format.
+ * Called by {@link assertFormatHoldsItsFields}.
+ * @param version - The study's saved format.
+ * @returns `true` for formats 18 to 20 and the compatibility formats 21, 22, 24 and 25.
+ * @example holdsEveryFieldItself(25) // => true
+ */
+function holdsEveryFieldItself(version: number): boolean {
+  return (
+    version === NEXT_LIBRARY_STUDY_VERSION ||
+    version === PRESS_STUDY_VERSION ||
+    version === REVERSE_PROXY_STUDY_VERSION ||
+    version === HOLD_STUDY_VERSION ||
+    version === ENTRY_BROWSER_STUDY_VERSION ||
+    isApiServerStudyFormat(version)
+  )
+}
+
+/**
  * Pairs a format 12, 13 or 14 study with the fields only it keeps (a format 18, 19 or 20 study, which may hold any of them, is exempt): format 12 is written only for a study that holds a module-evaluation or preparation observation, format 13 only for one that holds a route-handler observation (and keeps format 12's fields too), format 14 only for one that holds an API-route observation (and keeps the fields of 12 and 13).
  * Called by {@link assertObservationFormatFields}.
  * @param study - The saved study, without its images; it follows the format 8 rules.
@@ -378,14 +433,7 @@ function assertFormatHoldsItsFields(
   const holdsApiRoute = study.observations.some(isApiRouteObservation)
   // Format 18 (`next-dev-webpack` with `library`) holds the fields of formats 12 to 14 itself and moves to none of them, so it may hold any of them or none.
   // Formats 21 (a press) and 22 (a reverse proxy) hold those fields themselves, like formats 18 to 20: the observation fields do not move them to another format.
-  if (
-    study.version === NEXT_LIBRARY_STUDY_VERSION ||
-    study.version === PRESS_STUDY_VERSION ||
-    study.version === REVERSE_PROXY_STUDY_VERSION ||
-    study.version === HOLD_STUDY_VERSION ||
-    isApiServerStudyFormat(study.version)
-  )
-    return
+  if (holdsEveryFieldItself(study.version)) return
   // The scope and the preparation attribution belong to formats 12 to 14.
   if (
     holdsModuleEvaluation &&

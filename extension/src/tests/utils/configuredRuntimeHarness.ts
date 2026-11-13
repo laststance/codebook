@@ -940,6 +940,9 @@ export async function configuredRuntimeHarness(
   let readyStateReadsStarted = 0
   let rejectNextReadyStateRead = false
   let readyStateHold: Promise<void> | undefined
+  // How many paused-frame evaluations the run started, and the promise a held one waits on.
+  let callFrameEvaluationsStarted = 0
+  let callFrameEvaluationHold: Promise<void> | undefined
   let documentReadyState: 'loading' | 'complete' =
     options.documentReadyState ?? 'complete'
   let navigationCount = 0
@@ -1053,6 +1056,8 @@ export async function configuredRuntimeHarness(
   let bindingLookupFailure: string | undefined
   // Whether the adapter leaves the next binding lookup of an owned breakpoint without an answer.
   let isNextBindingLookupUnanswered = false
+  // Whether the editor answers an owned breakpoint's binding verified with its line only, as both editors do once the adapter sent news about a breakpoint requested at column 1.
+  let isBindingAnsweredWithoutColumn = false
   // The sentence the wait for the before conditions words its timeout with instead of its own.
   let beforeTimeoutSentence: string | undefined
   // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
@@ -1278,8 +1283,13 @@ export async function configuredRuntimeHarness(
             id: browserAdapterIdOf(owned.id),
             verified: true,
             line: reported?.line ?? owned.location.range.start.line + 1,
-            column:
-              reported?.column ?? owned.location.range.start.character + 1,
+            ...(isBindingAnsweredWithoutColumn
+              ? {}
+              : {
+                  column:
+                    reported?.column ??
+                    owned.location.range.start.character + 1,
+                }),
           }
         : undefined
     },
@@ -1850,6 +1860,9 @@ export async function configuredRuntimeHarness(
       if (method === 'Debugger.getScriptSource')
         return { scriptSource: executedScriptSource ?? servedJavascript }
       if (method === 'Debugger.evaluateOnCallFrame') {
+        callFrameEvaluationsStarted++
+        // A held evaluation answers only after the test releases it: the pause is accepted but its observation is not committed yet.
+        if (callFrameEvaluationHold) await callFrameEvaluationHold
         try {
           return {
             result: { value: evaluateInspection(parameters?.expression) },
@@ -2892,6 +2905,19 @@ export async function configuredRuntimeHarness(
     rejectNextReadyStateRead(): void {
       rejectNextReadyStateRead = true
     },
+    /** How many paused-frame evaluations (the stop's inspections) the run started so far. @example harness.callFrameEvaluations() */
+    callFrameEvaluations: (): number => callFrameEvaluationsStarted,
+    /** Holds every later paused-frame evaluation unanswered until the returned function is called, so an accepted pause stays uninspected (status not yet `paused-*`) while the page answers other reads. @returns The release. @example const release = harness.holdCallFrameEvaluations() */
+    holdCallFrameEvaluations(): () => void {
+      let release = (): void => {}
+      callFrameEvaluationHold = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return (): void => {
+        callFrameEvaluationHold = undefined
+        release()
+      }
+    },
     /** Holds every later `document.readyState` read unanswered until the returned function is called, as a paused page does. @returns The release. @example const release = harness.holdReadyStateReads() */
     holdReadyStateReads(): () => void {
       let release = (): void => {}
@@ -2914,10 +2940,13 @@ export async function configuredRuntimeHarness(
     },
     /**
      * Sends the page session's `setBreakpoints` for the editor's owned breakpoints, each at its own file, and the adapter's verified answer, as the editor sends every breakpoint to the page's session too; the page's adapter numbers them from 101.
+     * @param options - `withoutPlace` acknowledges each registration as pending, with its id and no line or column.
      * @returns The page adapter's ids of the owned breakpoints, in the editor's order.
      * @example const ids = harness.acknowledgeOwnedBreakpointsInPage() // [101]
      */
-    acknowledgeOwnedBreakpointsInPage(): number[] {
+    acknowledgeOwnedBreakpointsInPage(
+      options: { withoutPlace?: boolean } = {},
+    ): number[] {
       const owned = breakpoints.filter((breakpoint) =>
         breakpoint.id.startsWith('owned-breakpoint'),
       )
@@ -2950,9 +2979,14 @@ export async function configuredRuntimeHarness(
           body: {
             breakpoints: inFile.map((entry, index) => ({
               id: fileIds[index],
-              verified: true,
-              line: entry.location.range.start.line + 1,
-              column: entry.location.range.start.character + 1,
+              // An adapter that acknowledges the registration as pending and names no place, as one does for a module it has not parsed.
+              verified: !options.withoutPlace,
+              ...(options.withoutPlace
+                ? {}
+                : {
+                    line: entry.location.range.start.line + 1,
+                    column: entry.location.range.start.character + 1,
+                  }),
             })),
           },
         })
@@ -3265,6 +3299,10 @@ export async function configuredRuntimeHarness(
     },
     rejectBreakpointBinding(): void {
       rejectBinding = true
+    },
+    /** Makes the editor answer every owned breakpoint's binding verified with its line and no column. @example harness.answerBindingWithoutColumn() */
+    answerBindingWithoutColumn(): void {
+      isBindingAnsweredWithoutColumn = true
     },
     /** The budget the run gave each binding wait that {@link rejectBreakpointBinding} ended at once, in milliseconds. */
     bindingWaitBudgetsMs,

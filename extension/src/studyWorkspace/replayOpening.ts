@@ -75,6 +75,7 @@ import {
   presentServerHistory,
 } from '../utils/presentServerHistory'
 import { type NodeLearningMaterialOfHistory } from '../utils/projectNodeLearningSummary'
+import { recordedInspectionsOfObservation } from '../utils/recordedInspectionsOfObservation'
 import { sanitizeCause } from '../utils/sanitizeCause'
 import { sanitizedStack } from '../utils/sanitizedStack'
 import { selectStudy } from '../utils/selectStudy'
@@ -1545,6 +1546,8 @@ export class ReplayOpening {
               hash: this.host.message().model.source.hash,
             }
           : undefined,
+        // The stop's recorded inspections, so a declared value outside the captured scopes stays inspectable; one array per stop, so presenting it again is no new selection.
+        recordedInspectionsOfObservation(bundle.projection.observation),
       )
     }
     // Committing without native values stays truthful only with a visible way to load them in Run and Debug; later ticks of this stop keep it.

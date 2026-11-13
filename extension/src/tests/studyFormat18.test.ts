@@ -441,12 +441,12 @@ test('format 18 is a stored and readable format and a format above the readable 
     metadataSuffix: '.study.meta.v18.json',
   })
   assert.equal(NEXT_LIBRARY_STUDY_VERSION, 18)
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.equal(isOperationsStudyFormat(18), true)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 18 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 25 }),
-    /saved in format 25 by a newer Codebook; this Codebook reads formats up to 24/,
+    () => assertReadableStudyFormat({ version: 26 }),
+    /saved in format 26 by a newer Codebook; this Codebook reads formats up to 25/,
   )
 })
 

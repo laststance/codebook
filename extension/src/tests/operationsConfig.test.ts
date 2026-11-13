@@ -233,10 +233,12 @@ test('a version 3 configuration refuses initialInputs and action and requires ru
   assert.equal(withoutAfter.length > 0, true)
 })
 
-// protects=every stop names an existing operation and the stops follow the order of their operations; fails_when=afterOperation 0, one past the operation count, a missing afterOperation or a decreasing order is accepted; no_claim=the run arms stops by it (runtime tests)
+// protects=every stop names an existing operation and the stops follow the order of their operations; fails_when=afterOperation 0 on a browser stop outside next-dev-webpack, one past the operation count, a missing afterOperation or a decreasing order is accepted; no_claim=the run arms stops by it (runtime tests)
 test('a stop declares afterOperation within the operation count in non-decreasing order', () => {
   // Arrange, Act
+  // A browser stop at the entry load is accepted only under next-dev-webpack, so the refusal is asked of another adapter.
   const zero = issuesOf((configuration) => {
+    configuration.adapter = 'vite-dev'
     configuration.afterOperation = 0
   })
   const pastTheEnd = issuesOf((configuration) => {

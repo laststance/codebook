@@ -154,7 +154,12 @@ test('studyFormatOfConfiguration gives 8 for a server stop, an entry-render stop
     throw new Error('A version 3 configuration is needed.')
   const withoutServer = { ...browserOnly, additionalStops: [] }
   const withServer = browserOnly
-  const entryRender = { ...withoutServer, afterOperation: 0 }
+  // A server stop at the entry render; a browser stop at afterOperation 0 is a format 25 run (studyFormat25.test.ts).
+  const entryRender = {
+    ...withoutServer,
+    participant: 'server',
+    afterOperation: 0,
+  }
   const withoutOperations = { ...withoutServer, operations: undefined }
   // Act
   const formats = [
@@ -179,7 +184,7 @@ test('STUDY_STORAGE_FORMATS, READABLE_STUDY_VERSION and the study schema agree',
   const numbered = STUDY_STORAGE_FORMATS.filter((row) => row.version >= 3)
   const schemaVersion = configuredStudySchema.shape.version
   // Assert
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.equal(SERVER_RENDER_STUDY_VERSION, 8)
   assert.equal(Math.max(...versions), READABLE_STUDY_VERSION)
   for (const row of numbered) {
