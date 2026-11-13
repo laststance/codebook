@@ -1432,6 +1432,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private apiCleanupFailure?: { pid: number }
   /** The time preparation was held at continued preparation pauses, by which the setup deadline moved; the run resource's deadline adds it. */
   private preparationHeldMs = 0
+  /** The time an entry-load pause (server or browser) started being held, so {@link creditEntryPauseHold} gives the hold back to the setup budget at its continue; `undefined` while none is held. */
+  private entryPauseHeldAtMs?: number
   /** Whether the viewport was attached, so a warm-up pause cannot be drawn before it. */
   private viewportAttached = false
   /** The render stops that already published a pause; a later hit of one is a repeat and is resumed. */
@@ -5458,6 +5460,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private isEntryBrowserStop(stop: PreparedStop): boolean {
     return stop.participant === 'browser' && afterOperationOf(stop) === 0
+  }
+
+  /**
+   * Gives the time a learner held an entry-load pause back to the setup budget, for {@link beginAfter}: the budget did not run while the pause was held, so the next entry stop's page load keeps what was left before the pause.
+   * A pause in Codebook's own request is credited by {@link finishPreparationPause}, never here.
+   * @param continuedStop - The stop just continued.
+   * @example this.creditEntryPauseHold(this.stops[0]!) // moves the setup deadline by the time the pause was held
+   */
+  private creditEntryPauseHold(continuedStop: PreparedStop): void {
+    const heldAtMs = this.entryPauseHeldAtMs
+    this.entryPauseHeldAtMs = undefined
+    if (heldAtMs === undefined || continuedStop.preparationRequest) return
+    this.preparationDeadlineAt += Date.now() - heldAtMs
   }
 
   /**
@@ -17632,6 +17647,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     continuation.afterStarted = true
     this.recordContinuedPause(continuation.pause)
     const continuedStop = this.stops[this.stopIndex]
+    this.creditEntryPauseHold(continuedStop!)
     const followingStop = this.stops[this.stopIndex + 1]
     // A version 3 run advances within an operation only to a stop declared for the same operation; otherwise the operation is done with its stops.
     const advancesToNextStop = this.operationsConfiguration
@@ -19012,6 +19028,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'Repository pause hold deadline exceeded',
     )
     this.holdingPause = true
+    // The hold of an entry-load pause does not run the setup budget; the first hold of a pause keeps its start across renewals.
+    if (this.entryLoad) this.entryPauseHeldAtMs ??= Date.now()
     // The active bound stays until {@link inspect} decides the hit is the learner's pause: an automatic resume gives it back ({@link restoreActiveBound}).
   }
   /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. Every deadline started here is no pause hold; {@link holdPauseDeadline} marks the one that is. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */

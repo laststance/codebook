@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 import type { RepositoryOperation } from '../repositoryConfigSchemas'
+import type { RuntimeControl } from '../runtime'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
@@ -10,6 +12,11 @@ import {
   type ConfiguredRuntimeHarness,
 } from './utils/configuredRuntimeHarness'
 import { entryControl } from './utils/entryRenderHarness'
+
+/** The setup budget of the held-pause test, in real milliseconds. */
+const SETUP_BUDGET_MS = 3000
+/** How long that test holds the server pause: longer than the whole budget. */
+const HELD_MS = 3500
 
 /** A source of three statements, so a server stop and a browser stop can sit on different lines of one file. */
 const THREE_LINE_SOURCE =
@@ -87,10 +94,11 @@ async function armedBrowserEntry(
  */
 async function serverThenBrowserHarness(
   context: TestContext,
+  control: RuntimeControl = entryControl(context),
 ): Promise<ConfiguredRuntimeHarness> {
   return configuredRuntimeHarness(
     context,
-    entryControl(context),
+    control,
     [{ line: 3, column: 1, inspections: [...ENABLED_STOP] }],
     {
       participant: 'server',
@@ -506,4 +514,38 @@ test('a held server pause after the entry browser stop was continued is not clas
     stackReadsBefore,
   )
   assert.deepEqual(journaled(harness, 'breakpoint.server-copy-resumed'), [])
+})
+
+// Value: protects=the time a learner holds the server pause of the entry load is not charged to the setup budget of the browser stop that follows: a hold longer than the budget that was left still reaches the browser stop; fails_when=the next stop's page-load bound is 1 ms after the continue and the run fails with the setup-budget sentence before the browser stop pauses; no_claim=a hold near the 300 s pause bound (that bound is the hold deadline's own)
+test('a server pause of the entry load held longer than the setup budget still reaches the browser stop that follows', async (context) => {
+  // Arrange: 3 s of setup budget (real time: the budget reads the wall clock), a 3.5 s hold
+  const harness = await serverThenBrowserHarness(context, {
+    ...entryControl(context),
+    preparationDeadlineAt: Date.now() + SETUP_BUDGET_MS,
+  })
+  // The test sends the browser stop's pause itself: the continuation of the browser stop must not send another.
+  harness.suppressNextPause()
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedServerThenBrowser(harness)
+  harness.commitMainFrame('/dashboard')
+  harness.server!.hit({ route: '/dashboard' })
+  const serverPause = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published server pause',
+  )
+  // Act: the learner holds the pause past the whole budget, continues, and the page's client code reaches the browser stop a moment later
+  await sleep(HELD_MS)
+  await harness.run.continue('server', serverPause.pause)
+  harness.advance(100)
+  harness.emitPause(1, 3)
+  const browserPause = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the published entry-load browser pause',
+  )
+  harness.setDocumentReadyState('complete')
+  await harness.run.continue('browser', browserPause.pause)
+  await prepared
+  // Assert
+  assert.equal(harness.run.view().failures.length, 0)
+  assert.equal(harness.run.view().snapshots.length, 2)
 })
