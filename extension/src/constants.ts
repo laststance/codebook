@@ -1289,6 +1289,8 @@ export const WIKI_CITATION_LIMIT = 40
 /** Number of citations the Wiki prompt asks the model to aim for (the lines that support the answer most directly). */
 export const WIKI_PROMPT_CITATION_TARGET = 12
 export const WIKI_ROUTE_CANDIDATE_LIMIT_BYTES = 98_304
+/** The most UTF-8 bytes of the `Declared in long sources: {…}` line of a Wiki route request, so the names each long source declares (Cycle 0125 F3b, Issue #320) stay inside {@link WIKI_CURSOR_PROMPT_LIMIT_BYTES} beside the page list of {@link WIKI_ROUTE_CANDIDATE_LIMIT_BYTES} and the question. */
+export const WIKI_ROUTE_DECLARED_NAMES_LIMIT_BYTES = 16_384
 /** The most code identifiers a Wiki route reply may name for choosing excerpt lines; more are ignored. */
 export const WIKI_ROUTE_TERM_LIMIT = 8
 /** The longest code identifier, in characters, a Wiki route reply may name; a longer one is ignored. */
