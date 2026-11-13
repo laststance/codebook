@@ -6,9 +6,9 @@ const FUNCTION_OR_CLASS_DECLARATION = new RegExp(
 )
 /** A parameter list of a function value: parentheses with one level of nested parentheses (`(cb: (v: string) => void)`). */
 const PARAMETER_LIST = '\\((?:[^()]|\\([^()]*\\))*\\)'
-/** A `const`, `let` or `var` whose value is a function: `function`, an arrow whose own parameter list (a generic `<T,>` may come first, a `: type` may follow) is followed by `=>`, or a single-parameter arrow. The `=>` must follow the value's own parameters, so `const result = (items.map(item => item))` is a value, not a function. An optional `: type` holding no `=` may precede the `=`. */
+/** A `const`, `let` or `var` whose value is a function: `function`, an arrow whose own parameter list (a generic `<T,>` may come first, a `: type` may follow) is followed by `=>`, or a single-parameter arrow. The `=>` must follow the value's own parameters, so `const result = (items.map(item => item))` is a value, not a function. An optional `: type` holding no `=` may precede the `=`. Only one `\s*` may read the spaces after the parameters (the return type's `[^=]*?` takes its own), because two in a row retried every split of a long run of spaces and stalled the extension host (Cycle 0125 `/ship` review). */
 const FUNCTION_VALUE_DECLARATION = new RegExp(
-  `^${DECLARATION_MODIFIERS}(?:const|let|var)\\s+([\\w$]+)\\s*(?::[^=]*)?=\\s*(?:async\\s+)?(?:function\\b|(?:<[^>]*>\\s*)?${PARAMETER_LIST}\\s*(?::[^=]*?)?\\s*=>|[\\w$]+\\s*=>)`,
+  `^${DECLARATION_MODIFIERS}(?:const|let|var)\\s+([\\w$]+)\\s*(?::[^=]*)?=\\s*(?:async\\s+)?(?:function\\b|(?:<[^>]*>\\s*)?${PARAMETER_LIST}\\s*(?::[^=]*?)?=>|[\\w$]+\\s*=>)`,
 )
 /** The start of a method head: modifiers, an optional accessor word, a name and the opening parenthesis of its parameters (a generic `<T>` may come between). */
 const METHOD_HEAD = new RegExp(

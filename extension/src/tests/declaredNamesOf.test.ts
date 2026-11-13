@@ -319,3 +319,27 @@ test('a source lists its declared names in source order, once each, with their c
   // Assert
   assert.deepEqual(names, ['zeta', 'Alpha', 'pasteItem', 'Beta'])
 })
+
+// Value: protects=a Wiki question's route request reads a long source line in linear time; fails_when=two quantifiers compete for one run of spaces after a parameter list again, so a 120 KB source stalls the extension host for seconds before the request (Cycle 0125 /ship review: 5.2 s here, 7.5 s in Codex's reproduction); why_new=no test fed a long run of spaces; seam=none; no_claim=the time of other regular expressions on other shapes (the review timed them separately)
+test('a line with a long run of spaces after a parameter list is read without stalling the Wiki question', () => {
+  // Arrange
+  const lines = ['const x = 1;', `const f = (x)${' '.repeat(100_000)};`]
+  const fastestOf = (run: () => string[]) => {
+    let names = run(),
+      fastestMs = Number.POSITIVE_INFINITY
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const started = performance.now()
+      names = run()
+      fastestMs = Math.min(fastestMs, performance.now() - started)
+    }
+    return { names, fastestMs }
+  }
+
+  // Act
+  const { names, fastestMs } = fastestOf(() => declaredNamesOf(lines))
+
+  // Assert
+  assert.deepEqual(names, [])
+  // gstack-timing-ok: the quadratic pattern took 5.2 s for this line on the Mac (Cycle 0125 /ship review); the linear one takes under 1 ms, so the 1 s bound leaves a wide margin under load
+  assert.ok(fastestMs < 1_000, `the line took ${fastestMs.toFixed(0)} ms`)
+})
