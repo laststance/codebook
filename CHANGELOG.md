@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.127.0] - 2026-11-13 (development candidate)
+
+Cycle 0125 ([Issue #320](https://github.com/laststance/codebook/issues/320)), a bug-fix cycle. **A Wiki question can now reach a function that no Wiki page mentions, and Cursor's question agent no longer reads files outside what Codebook sends it.** On laststance/bookmark-xp-explorer, VS Code's reader could not route a question about pasting a copied bookmark or folder to the paste function. The editor model sees only the Wiki's pages, and no page names that function, so the answer called what a paste creates unknown. In Cursor, the question agent found the function only by reading other checkouts of the repository and the installed skill, outside the opened project. Now the first request lists the functions each long source declares, and Cursor's agent runs with every tool denied. Both editors' readers answered the question correctly, citing the paste function.
+
+### Fixed
+- **A question's first request lists the functions, classes and methods each long source declares.** A long source is one longer than 80 lines, and functions assigned to a variable count. Up to 16,384 bytes of names are listed, whole sources in the order the request offers them. So the editor model can name the function that does the work even when no page mentions it.
+- **Cursor's Wiki question agent can read no file.** It runs in a temporary folder that holds only its Cursor CLI permissions file. That file denies reading files, writing, running commands, fetching and MCP tools, so the agent answers only from what Codebook sends.
+- **Of two matching declarations, the one for the identifier the editor model named first comes first.** In a long file, when two lines that declare named functions match equally, the excerpt takes the declaration of the identifier the editor model named first.
+
+**Compatibility.** No MCP API, study format or skill change. Published Wikis are read as they are. Only the first request of a Wiki question and the lines its excerpt takes from a long file change.
+
 ## [0.2.126.0] - 2026-11-13 (development candidate)
 
 Cycle 0124 ([Issue #318](https://github.com/laststance/codebook/issues/318)), a bug-fix cycle. **A Wiki answer about a long function now sees the part of it that holds the identifiers the editor model named.** On laststance/bookmark-xp-explorer, a question about pasting a copied bookmark or folder got an answer that called what a paste creates unknown. The editor model had named identifiers used inside the 44-line paste function rather than the function itself, so the excerpt held scattered lines of it. Now the excerpt brings the part of the function that holds those identifiers, and Cursor's answer states what a paste creates and where.
