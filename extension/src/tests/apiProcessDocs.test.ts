@@ -16,7 +16,9 @@ function readPackaged(...segments: string[]): Promise<string> {
   return readFile(join(__dirname, '..', '..', ...segments), 'utf8')
 }
 
+// pregate-literal: API_VERSION=1.44 the API 1.44 note this test reads is the note of the API that added details.apiProcess, which stays 1.44 after the current API moved on
 // Value: protects=the API 1.44 note name details.apiProcess, its three states and the 5 s bound of the probe; fails_when=the version stays 1.43, or the note omits the field, a state or the bound constant; no_claim=that a run measures the state (the run tests do)
+// pregate-literal: API_VERSION=1.44 the title names the API 1.44 note, the history of details.apiProcess, not the current API
 test('API 1.44 note names details.apiProcess with its three states', async () => {
   // Arrange
   const constants = await readFile(
@@ -25,6 +27,7 @@ test('API 1.44 note names details.apiProcess with its three states', async () =>
   )
   // Act
   const missing = [
+    // pregate-literal: API_VERSION=1.44 the opening words of the API 1.44 note in constants.ts, which keeps its version after the current API moved on
     ' * 1.44 is additive: the `SERVER_STOP_NOT_REACHED` error of an API stop',
     '`details.apiProcess`',
     '{ state: "paused" | "not-paused" | "unknown", at?: { path, line } }',
@@ -71,6 +74,7 @@ test('the skill and the README describe details.apiProcess of an unreached API s
   ].filter((phrase) => !skill.includes(phrase))
   const missingFromReadme = [
     'with **MCP API 1.45** (`codebook_status` reports the installed build). API 1.45 is additive:',
+    // pregate-literal: API_VERSION=1.44 the README sentence names the API that added details.apiProcess, not the current API
     '`SERVER_STOP_NOT_REACHED` also states what Codebook measured of the API process at that moment in `details.apiProcess` (MCP API 1.44)',
     '`not-paused` means the API process was running, not paused at any breakpoint, so a request that reached the API may be waiting inside the app',
     'or no request reached the line, `paused` names the repository place where it was paused',
