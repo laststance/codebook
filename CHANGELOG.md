@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.130.0] - 2026-11-14 (development candidate)
+
+Cycle 0132 ([Issue #330](https://github.com/laststance/codebook/issues/330)), a feature cycle. **In Cursor, the next Chrome-extension run of a window now shows its Application view and records its frames when the earlier run's paused file was left in front of that view.** On laststance/nsx's WXT-built popup, the chats in VS Code and Cursor ran the popup with its private-network host acknowledged, paused in its own TypeScript source and saved Extension replays. In Cursor, whose Agent chat keeps the keyboard, the earlier run's paused file stayed in front of the view the run kept, and the next run went on without its view and without frames. Now that run brings the view forward and records its frames.
+
+### Fixed
+- **The next extension run shows its view over the earlier run's paused file.** When an ended run's paused file still stands in front of the view it kept, the next run's view comes back to the front. The file's tab stays behind the view until a stop of that run shows the file again; it then moves out of the view's group like any paused file, where the editor lets it.
+- A file you edited there, or opened there again after closing the run's tab, keeps the front, and that run goes on without its view. The keyboard stays where it is, unless that file's own editor had it.
+
+**Compatibility.** No MCP API, study format or skill change.
+
 ## [0.2.129.0] - 2026-11-13 (development candidate)
 
 Cycle 0129 ([Issue #326](https://github.com/laststance/codebook/issues/326)), a bug-fix cycle for the two defects that Cycle 0128's native check found. **In a Next app the chat can now pause the client code that runs while the page first loads, and the saved replay of a browser run shows the values the chat cited at each stop.** On reduxjs/redux-toolkit's Next Example run on the checked-out library, Cursor's chat paused twice while the page loaded: once in the component that renders the post before its data arrived, and once after. The replay, reopened after a window reload, showed both stops' values in the native debugger.
