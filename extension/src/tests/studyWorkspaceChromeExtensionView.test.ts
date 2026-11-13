@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
-import { APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE } from '../constants'
+import {
+  APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
+  PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+} from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
@@ -615,6 +618,159 @@ test('the next extension run still refuses its view over a stop file the learner
       'settings.js',
     )
     second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an extension run's paused file the learner edited since the earlier run ended keeps the front, unsaved text and all; fails_when=the next run's attach brings the kept Application pane over a stop file with unsaved text, hiding the learner's edit behind the view; why_new=the covering tests use unedited stop files and the refusal tests use files the learner opened, so the edited stop file of the note's own set is unchecked; seam=none; no_claim=what the learner does with the refused view
+test('the next extension run still refuses its view over a stop file the earlier run left in front and the learner has edited since', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const applicationColumn = await endRunWithPausedFileInFront(
+      harness,
+      'edited-leftover-run-1',
+      'settings.js',
+    )
+    const leftoverTab = applicationGroupOf(
+      harness,
+      applicationColumn,
+    )?.activeTab
+    assert.equal(leftoverTab?.label, 'settings.js')
+    // The learner types into the file without saving.
+    leftoverTab.isDirty = true
+    const second = await openView(harness, 'edited-leftover-run-2', [
+      'settings.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    // Act
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    const reveal = harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    await assert.rejects(reveal, /Application ownership changed/)
+    const front = applicationGroupOf(harness, applicationColumn)?.activeTab
+    assert.equal(front?.label, 'settings.js')
+    assert.equal(front?.isDirty, true)
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the next extension run brings its view forward and takes the keyboard, with the learner told, when the learner works in the editor of the stop file the earlier run left in front; fails_when=the attach leaves the keyboard in the covered file's editor that the pane now hides, with no notice that the pane took it; why_new=the only keyboard test types in another group, where the pane must keep the keyboard; seam=none; no_claim=the keyboard when the debugger alone gave that editor the keyboard
+test('the next extension run takes the keyboard for its view from the learner typing in the stop file the earlier run left in front', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const applicationColumn = await endRunWithPausedFileInFront(
+      harness,
+      'typing-leftover-run-1',
+      'settings.js',
+    )
+    harness.clickFrontTextTab(applicationColumn)
+    harness.workInActiveTextEditor('keyboard')
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+        '/settings.js',
+      ),
+      true,
+    )
+    const second = await openView(harness, 'typing-leftover-run-2', [
+      'settings.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const revealsBefore = harness.panelReveals().length
+    // Act
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application typing-l',
+    )
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [false],
+    )
+    assert.equal(
+      harness.informationMessages.some(
+        ({ message }) => message === PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+      ),
+      true,
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the stop file an extension run left in front is covered by one next run only; fails_when=the note outlives the attach that read it, so a later run covers the same file again after the learner brought that tab to the front on purpose; why_new=the covering test spans one next run, so a note kept past its read is unseen; seam=none; no_claim=a learner who closes the tab (the closed-tab test covers that)
+test('a third extension run refuses its view over the earlier stop file the learner brought to the front again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const applicationColumn = await endRunWithPausedFileInFront(
+      harness,
+      'once-run-1',
+      'settings.js',
+    )
+    const viewportOf = () => {
+      const viewport = harness.reader['viewport']
+      assert.ok(viewport)
+      return viewport
+    }
+    const second = await openView(harness, 'once-run-2', ['settings.js'])
+    await viewportOf().attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+    second.end('The second run ended.')
+    second.close()
+    // The learner selects the earlier run's file tab again, in front of the kept pane.
+    const group = applicationGroupOf(harness, applicationColumn)
+    const fileTab = group?.tabs.find((tab) => tab.label === 'settings.js')
+    assert.ok(group && fileTab)
+    group.activeTab = fileTab
+    const third = await openView(harness, 'once-run-3', ['settings.js'])
+    // Act
+    await viewportOf().attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    const reveal = harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    await assert.rejects(reveal, /Application ownership changed/)
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'settings.js',
+    )
+    third.close()
   } finally {
     await harness.close()
   }

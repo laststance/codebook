@@ -6600,6 +6600,32 @@ export async function workspaceHarness(
       keyboardInView = false
       activeTextEditorChanged(editor)
     },
+    /**
+     * Gives the keyboard to the text tab in front of a group, as a click into its text does: the group is the active one and the tab's text editor is reported as the active text editor; the generalization of {@link clickMovedSourceTab} to a file the learner did not move, such as a stop file an ended run left in front of the kept Application.
+     * @param column - The view column of the group.
+     * @example harness.clickFrontTextTab(2) // the file in front of group 2 has the keyboard
+     */
+    clickFrontTextTab(column: number): void {
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      const input = group?.activeTab?.input
+      const editor =
+        input instanceof TabInputText
+          ? visibleSourceEditors.find(
+              (candidate) =>
+                candidate.group.viewColumn === column &&
+                candidate.document.uri.toString() === input.uri.toString(),
+            )
+          : undefined
+      assert.ok(
+        group && editor,
+        'The group must show a text tab and its editor',
+      )
+      activeTabGroup = group
+      leaveChatForMainEditor()
+      keyboardOnBody = false
+      keyboardInView = false
+      activeTextEditorChanged(editor)
+    },
     editorLayout: () => structuredClone(editorLayout),
     changeEditorLayout(layout: unknown): void {
       explicitEditorLayout = true
