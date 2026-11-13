@@ -111,7 +111,7 @@ During a Codebook explanation, the editor's bottom status bar shows **Recording 
 - **Learning partially saved · Open replay**: available evidence is retained. The tooltip identifies missing summary/history or incomplete execution/capture evidence; inspect the retained replay before relying on it.
 - **Learning save failed · Retry**: completion was not verified. The tooltip reports the failure; retry after resolving it. Existing saved material remains retained.
 
-A `chrome-extension` run saves the same way and is saved as an **Extension replay** (see **Explain a Chrome extension**). The status bar remains available while reading standard chat or native source/debugger panes. New agent annotations invalidate the earlier saved label until saved again. This development implementation still needs installed-host validation in both editors; its unit tests do not establish full product acceptance.
+A `chrome-extension` run saves the same way and is saved as an **Extension replay** (see **Explain a Chrome extension**). The status bar remains available while reading standard chat or native source/debugger panes. New agent annotations invalidate the earlier saved label until saved again. In a browser run's replay the native debugger also lists the values the run inspected at that stop in its **Recorded inspections** scope, as a test replay does, so a value the chat cited stays readable after the original debugger has exited. This development implementation still needs installed-host validation in both editors; its unit tests do not establish full product acceptance.
 
 ### Test replays
 
