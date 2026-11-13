@@ -125,7 +125,7 @@ test('hold explain is accepted on an afterOperation 0 stop', () => {
   assert.deepEqual([topLevel, additional], [[], []])
 })
 
-// Value: protects=a browser stop with afterOperation 0 and hold "record" reports its hold issue at the hold field (beside the afterOperation issue every browser entry stop gets), top-level and additional; fails_when=the hold issue is missing for a browser stop, or names another path; no_claim=the run's behavior
+// Value: protects=a browser stop with afterOperation 0 and hold "record" reports its hold issue at the hold field (and no afterOperation issue under next-dev-webpack), top-level and additional; fails_when=the hold issue is missing for a browser stop, or names another path; no_claim=the run's behavior
 test('hold record on a browser stop with afterOperation 0 reports the hold issue at the hold field', () => {
   // Arrange, Act
   const topLevel = issuesOf((configuration) => {
@@ -142,13 +142,11 @@ test('hold record on a browser stop with afterOperation 0 reports the hold issue
     additionalStop(configuration).hold = 'record'
   })
   // Assert
-  // A browser stop cannot pause the entry render at all, so its afterOperation is refused too: the two issues are pinned, each at its own path.
+  // A browser stop at the entry load is accepted under next-dev-webpack, so only the hold is refused, at its own path.
   assert.deepEqual(topLevel.map((issue) => issue.split(': ')[0]).sort(), [
-    'afterOperation',
     'hold',
   ])
   assert.deepEqual(additional.map((issue) => issue.split(': ')[0]).sort(), [
-    'additionalStops.0.afterOperation',
     'additionalStops.0.hold',
   ])
 })

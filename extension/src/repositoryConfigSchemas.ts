@@ -45,6 +45,7 @@ import {
   type ReverseProxyDeclaration,
 } from './reverseProxyDeclarationSchema'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
+import { declaresEntryBrowserStop } from './utils/declaresEntryBrowserStop'
 import { declaresPressOperation } from './utils/declaresPressOperation'
 import { declaresReverseProxy } from './utils/declaresReverseProxy'
 import { declaresStopHold } from './utils/declaresStopHold'
@@ -792,7 +793,41 @@ function describeOmittedOperationsRefusal(
 }
 
 /**
- * Refuses the `afterOperation` rules of a version 3 configuration: 0 (the entry render) only on a server stop, a value no greater than the declared operation count, omitted `operations` only when every stop is 0, and a value that never decreases along the declared stop order.
+ * Words the refusal of each stop declared `afterOperation: 0` that the entry load cannot pause; the other stops have none.
+ * Why it exists: only a `next-dev-webpack` page runs client code while the entry opens, and the server response precedes that code, so a server stop of the entry load is declared before its browser stops. Called by {@link validateStopAfterOperations}.
+ * @param declared - The stops in declared order: their field path, `afterOperation` and participant.
+ * @param adapter - The configuration's adapter.
+ * @returns One entry per stop: the refusal sentence naming the field, or `undefined` for a stop of a later operation, a server stop in order and a browser stop under `next-dev-webpack`.
+ * @example describeEntryStopRefusals([{ path: ['afterOperation'], value: 0, participant: 'browser' }], 'vite-dev') // ['afterOperation 0 (the entry load) is declared at configuration.afterOperation on a browser stop under adapter "vite-dev", but …']
+ */
+function describeEntryStopRefusals(
+  declared: readonly {
+    path: (string | number)[]
+    value: number
+    participant: 'browser' | 'server'
+  }[],
+  adapter: string,
+): (string | undefined)[] {
+  let hasEntryBrowserStop = false
+  return declared.map(({ path, value, participant }) => {
+    if (value !== 0) return undefined
+    const field = `configuration.${path.join('.')}`
+    if (participant === 'browser') {
+      hasEntryBrowserStop = true
+      // Only a next-dev-webpack page loads code in the browser while the entry opens; another adapter has no pause there.
+      return adapter === 'next-dev-webpack'
+        ? undefined
+        : `afterOperation 0 (the entry load) is declared at ${field} on a browser stop under adapter "${adapter}", but only adapter "next-dev-webpack" supports a browser stop at the entry load; declare afterOperation 1 or more for a browser stop.`
+    }
+    // The server response precedes the client code it renders, so entry-load stops are taken servers first.
+    return hasEntryBrowserStop
+      ? `afterOperation 0 at ${field} is a server stop declared after a browser stop at afterOperation 0; declare every server stop of the entry load before its browser stops: the server response precedes the client code it renders.`
+      : undefined
+  })
+}
+
+/**
+ * Refuses the `afterOperation` rules of a version 3 configuration: 0 (the entry render or load) on a server stop, or on a browser stop only under `next-dev-webpack`, a value no greater than the declared operation count, omitted `operations` only when every stop is 0, and a value that never decreases along the declared stop order.
  * Called by {@link validateOperations}.
  * @param configuration - A parsed version 3 configuration.
  * @param context - The refinement context that receives one issue per violation, each naming its field.
@@ -817,8 +852,15 @@ function validateStopAfterOperations(
     })),
   ]
   const operationCount = configuration.operations?.length ?? 0
+  const entryRefusals = describeEntryStopRefusals(
+    declared,
+    configuration.adapter,
+  )
   let previous = 0
-  for (const { path, value, participant, hold } of declared) {
+  for (const [
+    position,
+    { path, value, participant, hold },
+  ] of declared.entries()) {
     const field = `configuration.${path.join('.')}`
     // An entry render has no request a page waits on, so there is nothing to record without holding.
     if (value === 0 && hold === 'record')
@@ -827,13 +869,9 @@ function validateStopAfterOperations(
         path: [...path.slice(0, -1), 'hold'],
         message: `hold "record" is declared at configuration.${[...path.slice(0, -1), 'hold'].join('.')}, but its stop has afterOperation 0 (the entry render); a recorded stop needs an operation whose request the page waits on: declare afterOperation 1 or more, or omit hold.`,
       })
-    // The entry render is a server render: a browser stop has no pause to wait for before the page loads.
-    if (value === 0 && participant !== 'server')
-      context.addIssue({
-        code: 'custom',
-        path,
-        message: `afterOperation 0 (the entry render) is declared at ${field}, but only a server stop can pause the entry render; declare afterOperation 1 or more for a browser stop.`,
-      })
+    const entryRefusal = entryRefusals[position]
+    if (entryRefusal)
+      context.addIssue({ code: 'custom', path, message: entryRefusal })
     else if (value > operationCount)
       context.addIssue({
         code: 'custom',
@@ -1116,6 +1154,9 @@ const FORMAT_23_ONLY_MESSAGE =
   'Only a study of format 23 keeps a static-page configuration.'
 /** Why every retained variant but format 24 refuses a stop `hold`: a run whose configuration declares it is saved as format 24 only. */
 const FORMAT_24_ONLY_MESSAGE = 'Only a study of format 24 keeps a stop hold.'
+/** Why every retained variant but format 25 refuses a browser stop at the entry load: a run whose configuration declares one is saved as format 25 only. */
+const FORMAT_25_ONLY_MESSAGE =
+  'Only a study of format 25 keeps a browser stop at the entry load.'
 /** Why every retained variant refuses `reverseProxy`: a run that declares it is saved as format 22 only. */
 const FORMAT_22_ONLY_MESSAGE = 'Only a study of format 22 keeps a reverseProxy.'
 /**
@@ -1158,6 +1199,7 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * Says whether a retained configuration declares no stop `hold` (an explicit `hold: undefined` declares nothing).
  * Called by the refinements of every retained variant but format 24, which an older Codebook reads without the key.
@@ -1167,6 +1209,16 @@ export const retainedRepositoryConfigSchema = liveRepositoryConfigSchema
  */
 function declaresNoStopHold(configuration: object): boolean {
   return !declaresStopHold(configuration)
+}
+/**
+ * Says whether a retained configuration declares no browser stop at the entry load (`afterOperation: 0`).
+ * Called by the refinements of every retained variant but format 25, which an older Codebook reads without such a stop.
+ * @param configuration - A parsed configuration of any version.
+ * @returns `true` when no stop is a browser stop at `afterOperation: 0`.
+ * @example declaresNoEntryBrowserStop({ participant: 'server', afterOperation: 0 }) // => true
+ */
+function declaresNoEntryBrowserStop(configuration: object): boolean {
+  return !declaresEntryBrowserStop(configuration)
 }
 /**
  * Says whether a retained configuration declares no `apiServer` (an explicit `apiServer: undefined` declares nothing).
@@ -1264,6 +1316,7 @@ const packageRootRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 10 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."`.
  * Why it exists: 0.2.77.0 validates a format 9 configuration with {@link packageRootRepositoryConfigSchema}, which accepts `next-dev-webpack` only, so a nested Vite run needs its own format to be listed as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `vite-dev`).
@@ -1292,6 +1345,7 @@ const vitePackageRootRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 16 study retains: the version 3 `vite-dev` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.34).
  * Why it exists: an older Codebook refuses `library` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 10 variant (inspections, operations).
@@ -1316,6 +1370,7 @@ const viteLibraryRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 18 study retains: the version 3 `next-dev-webpack` shape with a required `packageRoot` other than `"."` and a required `library` declaration (API 1.36).
  * Why it exists: an older Codebook refuses `library` under `next-dev-webpack` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 9 variant (inspections, operations). A root app never reaches a save: the run is refused with `library-needs-package-root` before anything starts.
@@ -1335,6 +1390,7 @@ const nextLibraryRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 11 study retains: the version 3 `react-scripts-dev` shape, root (`packageRoot` absent or `"."`) or nested.
  * Why it exists: an older Codebook refuses the adapter value, so every `react-scripts-dev` run takes its own format and is listed there as saved by a newer Codebook (D5). Validated like the format 9 and 10 variants (inspections, operations; {@link validateInspections} also refuses a server participant under `react-scripts-dev`).
@@ -1349,6 +1405,7 @@ const reactScriptsRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 17 study retains: the version 3 `react-scripts-dev` shape with a required `library` declaration (API 1.35).
  * Why it exists: an older Codebook refuses `library` under `react-scripts-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 11 variant (inspections, operations).
@@ -1364,6 +1421,7 @@ const reactScriptsLibraryRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 15 study retains: the version 3 `expo-web-dev` shape, root (`packageRoot` absent or `"."`) or nested.
  * Why it exists: an older Codebook refuses the adapter value, so every `expo-web-dev` run takes its own format and is listed there as saved by a newer Codebook (DX-16). Validated like the format 11 variant (inspections, operations; {@link validateInspections} also refuses a server participant under `expo-web-dev`).
@@ -1381,6 +1439,7 @@ const expoWebRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 19 study retains: the version 3 `expo-web-dev` shape with a required `apiServer` declaration (API 1.37).
  * Why it exists: an older Codebook refuses `apiServer` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 15 variant (inspections, operations, and the `apiServer` folder and stop rules).
@@ -1396,6 +1455,7 @@ const expoWebApiServerRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 20 study retains: the version 3 `vite-dev` shape with a required `apiServer` declaration (API 1.38), at the repository root or with a `packageRoot`.
  * Why it exists: an older Codebook refuses `apiServer` under `vite-dev` as an unknown key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook. Validated like the format 19 variant (inspections, operations, and the `apiServer` folder, `proxyPaths` and stop rules); `library` beside it is refused.
@@ -1412,6 +1472,7 @@ const viteApiServerRepositoryConfigSchema = operationsConfigurationShape
   .refine(declaresNoPress, 'Only a study of format 21 keeps a press operation.')
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 23 study retains: the version 3 `static-page` shape, root (`packageRoot` absent or `"."`) or nested, with an optional `library` declaration (API 1.42).
  * Why it exists: an older Codebook refuses the adapter value, so every `static-page` run takes its own format and is listed there as saved by a newer Codebook. Validated like the format 11 variant (inspections, operations; {@link validateInspections} also refuses a server participant).
@@ -1426,6 +1487,7 @@ const staticPageRepositoryConfigSchema = operationsConfigurationShape
   )
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 21 study retains: a version 3 configuration that declares at least one press, every press key in canonical spelling.
  * Why it exists: an older Codebook refuses the `press` kind, so a run that declares one takes its own format and is listed there as saved by a newer Codebook.
@@ -1446,6 +1508,7 @@ const pressRepositoryConfigSchema = operationsRepositoryConfigSchema
   )
   .refine(declaresNoReverseProxy, FORMAT_22_ONLY_MESSAGE)
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * Says whether a declared `reverseProxy.origin` is already in canonical spelling.
  * Called by {@link reverseProxyRepositoryConfigSchema}: a saved format 22 study holds the spelling the start stored.
@@ -1481,6 +1544,7 @@ const reverseProxyRepositoryConfigSchema = operationsRepositoryConfigSchema
     'A format 22 study keeps the reverseProxy origin in canonical spelling.',
   )
   .refine(declaresNoStopHold, FORMAT_24_ONLY_MESSAGE)
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
 /**
  * The configuration a format 24 study retains: a version 3 configuration in which a stop declares `hold`, press keys and a reverse proxy origin in canonical spelling.
  * Why it exists: an older Codebook refuses the `hold` key, so a run that declares it takes its own format and is listed there as saved by a newer Codebook, whatever else it declares.
@@ -1488,6 +1552,7 @@ const reverseProxyRepositoryConfigSchema = operationsRepositoryConfigSchema
  */
 const holdRepositoryConfigSchema = operationsRepositoryConfigSchema
   .refine(declaresStopHold, 'A format 24 study declares a stop hold.')
+  .refine(declaresNoEntryBrowserStop, FORMAT_25_ONLY_MESSAGE)
   .refine(
     pressKeysAreCanonical,
     'A format 24 study keeps each press key in canonical spelling.',
@@ -1496,7 +1561,25 @@ const holdRepositoryConfigSchema = operationsRepositoryConfigSchema
     originIsCanonical,
     'A format 24 study keeps the reverseProxy origin in canonical spelling.',
   )
-/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) the format 20 variant (Vite with an apiServer) the format 21 variant (a press) the format 22 variant (a reverseProxy) or the format 24 variant (a stop hold). */
+/**
+ * The configuration a format 25 study retains: a version 3 configuration in which a browser stop declares `afterOperation: 0`, press keys and a reverse proxy origin in canonical spelling.
+ * Why it exists: an older Codebook refuses a browser stop at the entry load, so a run that declares one takes its own format and is listed there as saved by a newer Codebook, whatever else it declares (a `hold` included).
+ * Read by {@link studyConfigurationSchema} as the last member.
+ */
+const entryBrowserRepositoryConfigSchema = operationsRepositoryConfigSchema
+  .refine(
+    declaresEntryBrowserStop,
+    'A format 25 study declares a browser stop at the entry load.',
+  )
+  .refine(
+    pressKeysAreCanonical,
+    'A format 25 study keeps each press key in canonical spelling.',
+  )
+  .refine(
+    originIsCanonical,
+    'A format 25 study keeps the reverseProxy origin in canonical spelling.',
+  )
+/** Every configuration a saved study can hold: the retained union of formats 3 to 8, the format 9 package-root variant (Next), the format 10 package-root variant (Vite), the format 11 variant (react-scripts), the format 15 variant (Expo web), the format 16 variant (Vite with a library), the format 17 variant (react-scripts with a library) the format 18 variant (Next with a library) the format 19 variant (Expo web with an apiServer) the format 20 variant (Vite with an apiServer) the format 21 variant (a press) the format 22 variant (a reverseProxy) the format 24 variant (a stop hold) or the format 25 variant (a browser stop at the entry load). */
 export const studyConfigurationSchema = z.union([
   retainedRepositoryConfigSchema,
   packageRootRepositoryConfigSchema,
@@ -1512,6 +1595,7 @@ export const studyConfigurationSchema = z.union([
   reverseProxyRepositoryConfigSchema,
   staticPageRepositoryConfigSchema,
   holdRepositoryConfigSchema,
+  entryBrowserRepositoryConfigSchema,
 ])
 export type RepositoryConfiguration = z.infer<typeof repositoryConfigSchema>
 export type RetainedRepositoryConfiguration = z.infer<

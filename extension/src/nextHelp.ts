@@ -144,7 +144,7 @@ export const NEXT_NESTED_SERVER_STOP_CONFIGURATION = {
 } as const
 
 /**
- * A complete version 3 configuration for a browser stop in a Next app below the repository root, reached by one declared click: a browser stop declares `afterOperation` from 1 (a browser stop with `afterOperation: 0` is refused), so the example carries one `click` operation.
+ * A complete version 3 configuration for a browser stop in a Next app below the repository root, reached by one declared click: a browser stop declares `afterOperation` from 1 for code that runs after an input (a browser stop with `afterOperation: 0` pauses code that runs while the entry page loads, see the entry-load browser stop), so the example carries one `click` operation.
  * Served as `nextPackageRoot.configurationNestedBrowserStop` and parsed by a test with {@link liveRepositoryConfigSchema}. Folder, file, selectors and texts are neutral placeholders, as in {@link NEXT_NESTED_SERVER_STOP_CONFIGURATION}.
  */
 export const NEXT_NESTED_BROWSER_STOP_CONFIGURATION = {
@@ -431,7 +431,7 @@ function nextPackageRootHelp() {
       nestedServerStop:
         "configurationNestedServerStop: a Pages Router data-function stop (participant server, afterOperation 0, operations omitted) in a Next app whose folder is packageRoot. source.path stays repository-relative and starts with packageRoot; entryPath is the page's own route. The folder, file, line and inspection are placeholders: replace them, the book and the hash with the app the question is about (copyFrom of serverRenderQuickStart).",
       nestedBrowserStop:
-        'configurationNestedBrowserStop: a browser stop in a component of the app, reached by one declared click (a browser stop declares afterOperation from 1; afterOperation 0 is refused). Same placeholders and the same path rule.',
+        'configurationNestedBrowserStop: a browser stop in a component of the app, reached by one declared click (afterOperation from 1 for code that runs after an input; afterOperation 0 on a browser stop pauses client code that runs while the entry page loads, such as a fetch on mount). Same placeholders and the same path rule.',
     },
     refusals: Object.fromEntries(
       Object.entries(PACKAGE_ROOT_REFUSALS).map(([reason, entry]) => [
