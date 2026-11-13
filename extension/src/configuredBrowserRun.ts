@@ -5097,9 +5097,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (queuedStop) {
       this.pendingCdpStop = undefined
       this.pendingDapStop = undefined
-      this.fail(
-        `Unexpected or additional ${queuedStop.participant} stop invalidated the declared operation`,
-      )
+      this.fail(this.rejectedStopText(queuedStop.participant))
       return
     }
     this.stopIndex++
@@ -7181,7 +7179,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Words and records `ENTRY_LOAD_TIMEOUT`: the entry page did not load within the active bound after the last entry-render stop was continued.
    * @returns The coded failure text.
-   * @example this.entryLoadTimeoutText() // 'ENTRY_LOAD_TIMEOUT: The entry page did not finish loading within 20 s after its last server-render pause. …'
+   * @example this.entryLoadTimeoutText() // 'ENTRY_LOAD_TIMEOUT: The entry page did not finish loading within 20 s after its last entry-load pause. …'
    */
   private entryLoadTimeoutText(): string {
     const entry = this.entryLoad
@@ -7205,7 +7203,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     return formatRefusalFailure(
       'ENTRY_LOAD_TIMEOUT',
-      `The entry page did not finish loading within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after its last server-render pause. Start a new run; if it repeats, check the app's own output.`,
+      `The entry page did not finish loading within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after its last entry-load pause. Start a new run; if it repeats, check the app's own output.`,
     )
   }
 
@@ -15761,9 +15759,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.pendingDapStop ||
           !Number.isInteger(body.threadId)
         ) {
-          this.fail(
-            `Unexpected or additional ${name} stop invalidated the declared operation`,
-          )
+          this.fail(this.rejectedStopText(name))
           return
         }
         this.pendingDapStop = { participant: name, event }
@@ -15903,7 +15899,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const sentence = `Unexpected or additional ${name} stop invalidated the declared operation`
     return name === 'browser' &&
       this.adapter?.name === 'next-dev-webpack' &&
-      this.isBeforeStopInput()
+      // The entry load runs before every operation's input, so a browser stop that pauses in it is before its input too.
+      (this.isBeforeStopInput() || Boolean(this.entryLoad))
       ? `${sentence}. The declared browser stop ran before its operation's input: a line that runs while the page loads takes afterOperation 0 in a next-dev-webpack run (a browser stop at the entry load, declared after every server stop of it); otherwise declare the stop after an operation whose input comes first.`
       : sentence
   }

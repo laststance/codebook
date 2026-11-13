@@ -239,21 +239,24 @@ test('a browser stop at the entry load that the page never reaches fails 20 s af
   await armedBrowserEntry(harness)
   harness.commitMainFrame('/dashboard')
   // Act: the document completes and the page's code never runs the stop's line
+  const readsBeforeLoaded = harness.readyStateReads()
   harness.setDocumentReadyState('complete')
   await waitUntil(
-    () => harness.readyStateReads() >= 2,
+    () => harness.readyStateReads() > readsBeforeLoaded,
     'the page was read as loaded',
   )
-  const failuresWhileLoaded = harness.run.view().failures.length
-  // The 20 s count starts when the poll saw the page loaded, so the manual clock moves in steps until the bound ends the run.
-  await waitUntil(() => {
-    harness.advance(ACTIVE_TIMEOUT_MS / 20)
-    return harness.run.view().failures.length > 0
-  }, 'the run failed after the wait')
+  // The manual clock stands at the moment the poll saw the page loaded (the 20 s count starts there): one millisecond short of the bound the run is still waiting.
+  harness.advance(19_999)
+  const failuresBeforeBound = harness.run.view().failures.length
+  harness.advance(1)
+  const failuresAtBound = harness.run.view().failures.length
   await prepared
   // Assert
   const view = harness.run.view()
-  assert.equal(failuresWhileLoaded, 0)
+  assert.deepEqual(
+    { failuresBeforeBound, failuresAtBound },
+    { failuresBeforeBound: 0, failuresAtBound: 1 },
+  )
   assert.match(
     view.failures[0]!,
     /^The entry load reached no verified pause at the declared browser stop src\/theme\.ts:1 within 20 s after the page finished loading\. Move the stop to a line that runs while the page loads/,
@@ -548,4 +551,60 @@ test('a server pause of the entry load held longer than the setup budget still r
   // Assert
   assert.equal(harness.run.view().failures.length, 0)
   assert.equal(harness.run.view().snapshots.length, 2)
+})
+
+// Value: protects=a second browser stop that arrives while the entry load's last browser stop is being continued fails the run with the recovery that names the entry-load option, not the bare sentence; fails_when=the queued-stop failure of a continuation keeps the plain "Unexpected or additional" sentence; no_claim=a real page whose client code pauses again during the continue
+test('a second browser pause during the continuation of the last entry browser stop fails the run and names the entry-load option', async (context) => {
+  // Arrange
+  const harness = await entryBrowserHarness(context)
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedBrowserEntry(harness)
+  harness.commitMainFrame('/dashboard')
+  harness.emitPause(1, 1)
+  const pause = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the published entry-load browser pause',
+  )
+  // Act: the debugger announces another stop while the first one is being continued
+  const continued = harness.run
+    .continue('browser', pause.pause)
+    .catch((error: unknown) => error)
+  harness.emitStopped()
+  await waitUntil(
+    () => harness.run.view().failures.length > 0,
+    'the extra pause failed the run',
+  )
+  await continued
+  await prepared
+  // Assert
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^Unexpected or additional browser stop invalidated the declared operation\. The declared browser stop ran before its operation's input: a line that runs while the page loads takes afterOperation 0/,
+  )
+})
+
+// Value: protects=the timeout of an entry page that does not finish loading after its last entry browser stop was continued names that pause as an entry-load pause, not a server-render pause that never happened; fails_when=the sentence says server-render for a run whose last entry stop is a browser stop; no_claim=a real page that hangs after the continue
+test('an entry page that does not load after the last entry browser stop was continued names an entry-load pause in its timeout', async (context) => {
+  // Arrange
+  const harness = await entryBrowserHarness(context)
+  const prepared = harness.run.prepare().catch((error: unknown) => error)
+  await armedBrowserEntry(harness)
+  harness.commitMainFrame('/dashboard')
+  harness.emitPause(1, 1)
+  const pause = await waitUntil(
+    () => harness.run.view().participants.browser.snapshot,
+    'the published entry-load browser pause',
+  )
+  // Act: the page stays loading after the continue until the 20 s bound ends the run
+  await harness.run.continue('browser', pause.pause)
+  await waitUntil(() => {
+    harness.advance(ACTIVE_TIMEOUT_MS / 20)
+    return harness.run.view().failures.length > 0
+  }, 'the run failed after the wait')
+  await prepared
+  // Assert
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^ENTRY_LOAD_TIMEOUT: The entry page did not finish loading within 20 s after its last entry-load pause\./,
+  )
 })
