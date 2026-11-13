@@ -306,7 +306,7 @@ function admitClusterWindows(
 }
 
 /**
- * Brings the head of each route-named function too long for a whole unit that no window brought yet ({@link admitNamedWindow} brings only those holding route-identifier anchors), in rank order, under the head budget rule ({@link admitHead}).
+ * Brings the head of each route-named function too long for a whole unit that no window brought yet ({@link admitNamedWindow} brings only those holding route-identifier anchors), in the order the route reply names them and in rank order among equals ({@link inReplyOrder}), under the head budget rule ({@link admitHead}).
  * Why: Cycle 0124 `/ship` pass 2 — a route naming only the answering function (P06's `pasteItem` alone, or a `transfer` with two callers) kept 0 of its body lines when its head waited until after every caller's window and call-site line.
  * Called by {@link admitWindowsBeforeSingleLines} between the long functions holding more route identifiers than {@link WIKI_CONTEXT_NAMED_HEAD_IDENTIFIER_COUNT} and the rest.
  * @param build - The excerpt build; an admitted head's declaration line joins its `windowedDeclarations`.
@@ -319,7 +319,8 @@ function admitNamedHeads(
   anchors: readonly number[],
 ): void {
   const { lines, keptAnchors, priorityTerms, selected } = build
-  for (const anchor of anchors) {
+  // The function the reply names first comes first, so an earlier declaration of a later name never takes its room.
+  for (const anchor of inReplyOrder(lines, anchors, priorityTerms)) {
     if (selected.size >= WIKI_CONTEXT_LINE_LIMIT) return
     if (!declaresPriorityTerm(lines[anchor]!, priorityTerms)) continue
     const head = longDeclarationHeadOfLine(lines, anchor)
@@ -328,6 +329,36 @@ function admitNamedHeads(
     if (admitHead(head, keptAnchors, selected))
       build.windowedDeclarations.add(head[0]!)
   }
+}
+
+/**
+ * Orders anchors by the place the route reply gives the identifier each one declares, keeping their rank order among anchors that declare equally placed identifiers or none.
+ * Why: Cycle 0125 `/ship` native check (Cursor, 6F) — the reply named `pasteItem` first and `handlePaneAction` last, yet `handlePaneAction`, declared earlier in the file, took the places `pasteItem`'s head needed, and the answer called what a paste creates unknown.
+ * Called by {@link admitNamedHeads} for the heads of the route-named functions that hold no other route identifier.
+ * @param lines - The source's lines.
+ * @param anchors - Anchor lines, best rank first.
+ * @param priorityTerms - The route reply's identifiers, lowercased, in the reply's order.
+ * @returns The anchors, the one declaring the earliest named identifier first; an anchor that declares none goes after those that do.
+ * @example
+ * inReplyOrder(['function late() {', 'function early() {'], [0, 1], ['early', 'late']) // => [1, 0]
+ */
+function inReplyOrder(
+  lines: readonly string[],
+  anchors: readonly number[],
+  priorityTerms: readonly string[],
+): number[] {
+  const placeOf = (anchor: number): number => {
+    const place = priorityTerms.findIndex((term) =>
+      declaresPriorityTerm(lines[anchor]!, [term]),
+    )
+    return place < 0 ? priorityTerms.length : place
+  }
+  return anchors
+    .map((anchor, rank) => ({ anchor, rank, place: placeOf(anchor) }))
+    .sort(
+      (first, second) => first.place - second.place || first.rank - second.rank,
+    )
+    .map(({ anchor }) => anchor)
 }
 
 /**
