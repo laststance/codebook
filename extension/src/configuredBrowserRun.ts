@@ -321,6 +321,7 @@ import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaresEdgeApiRuntime } from './utils/declaresEdgeApiRuntime'
+import { declaresEntryBrowserStop } from './utils/declaresEntryBrowserStop'
 import { describeCdpPause } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
@@ -810,6 +811,8 @@ type EntryLoadState = {
   startedAtMs: number
   /** The entry-render stops that paused and were continued, as `path:line`. */
   pausedStops: string[]
+  /** When the page was last seen loaded while only entry-load browser stops remain (their wait starts here), on the run's monotonic clock; reset by each continue of an earlier entry stop. */
+  settledAtMs?: number
   /** Whether a `document.readyState` read is pending, so the poll starts no second one. */
   readInFlight?: boolean
   /** The poll that reads the document state. */
@@ -837,6 +840,13 @@ type ResumeHitVerdict = Extract<ServerHitVerdict, { action: 'resume' }>
 type BrowserLibraryCopyVerdict = {
   action: 'resume'
   event: 'breakpoint.browser-library-copy'
+}
+/** The verdict for a pause in the server's copy of a client component that holds a browser stop of the entry load (`breakpoint.server-copy-resumed`): the server renders that component too, and the editor's breakpoint binds there; resumed and journaled with its file, line and count, never recorded. */
+type EntryBrowserServerCopyVerdict = {
+  action: 'resume'
+  event: 'breakpoint.server-copy-resumed'
+  file: string
+  line: number
 }
 /** The verdict for a hit of a provisional breakpoint that is no module evaluation (a call during Codebook's own request, or React's copy): resumed and journaled, and the stop takes the path it always had. */
 type PreparationHitVerdict = {
@@ -896,6 +906,20 @@ function requestPauseFieldsOf(
   if (stop.routeHandler)
     return { ...observed, routeHandler: { ...stop.routeHandler } }
   return stop.apiRoute ? { ...observed, apiRoute: { ...stop.apiRoute } } : {}
+}
+/**
+ * Gives the label of a browser pause at the entry load: attributed to the page load, with no operation (format 25).
+ * Called by {@link ConfiguredBrowserRun.pauseLabelFields}.
+ * @param stop - The stop that paused.
+ * @returns `{ attribution: 'entry-load' }` for a browser stop declared `afterOperation: 0`; an empty object for every other stop.
+ * @example entryLoadAttributionOf(entryBrowserStop) // { attribution: 'entry-load' }
+ */
+function entryLoadAttributionOf(
+  stop: PreparedStop,
+): Pick<ConfiguredRuntimeSnapshot, 'attribution'> {
+  return stop.participant === 'browser' && afterOperationOf(stop) === 0
+    ? { attribution: 'entry-load' }
+    : {}
 }
 /**
  * Gives the run message's input for a held route-handler or API-route pause: the request the pause names and the operation it was observed after.
@@ -5332,14 +5356,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.entryLoad = entry
     // Every stop of the entry render is armed and acknowledged before the page is asked to load (X14).
     for (const stop of this.entryRenderStops()) {
-      await this.armStop(stop)
+      if (this.isEntryBrowserStop(stop)) await this.armBrowserEntryStop(stop)
+      else await this.armStop(stop)
       this.armedStops.add(stop)
       this.alive()
     }
-    // The setup budget ends here; the 20 s bound of the first entry-render pause starts (task 2).
-    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
-      this.entryRenderNotReachedText('not-hit'),
-    )
+    // The setup budget ends here; the 20 s bound of the first entry-render pause starts (task 2). A run with only browser stops at the entry load keeps the setup budget as the bound of the page load: its stop runs after the page's own code loads, and its 20 s wait starts once the page finished loading ({@link waitForEntryBrowserStop}).
+    if (this.entryRenderStops().every((stop) => this.isEntryBrowserStop(stop)))
+      this.holdEntryBrowserLoadDeadline()
+    else
+      this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+        this.entryRenderNotReachedText('not-hit'),
+      )
     this.openCausalWindowOfStop(this.stopIndex)
     await this.navigateToEntry(cdp, { answerMayBeHeld: true })
     entry.timer = setInterval(
@@ -5406,12 +5434,67 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const remaining = this.stops
       .slice(this.stopIndex)
       .filter((stop) => afterOperationOf(stop) === 0)
-    // The page loaded while an entry-render stop was never hit.
-    if (remaining.length) {
+    // The page loaded while a server entry-render stop was never hit.
+    if (remaining.some((stop) => !this.isEntryBrowserStop(stop))) {
       this.fail(this.entryRenderNotReachedText('load-first'))
       return
     }
+    // A browser stop at the entry load may still run: the page's code that fetches on mount runs after the document completes.
+    if (remaining.length) {
+      this.waitForEntryBrowserStop(entry, remaining[0]!)
+      return
+    }
     if (entry.finishing) entry.done.resolve()
+  }
+
+  /**
+   * Tells whether a stop is a browser stop at the entry load (`afterOperation: 0`), which pauses client code that runs while the entry page loads.
+   * Called by the entry-load phase, the pause label and the seal check at parse.
+   * @param stop - A declared stop.
+   * @returns `true` for a browser stop of group 0.
+   * @example this.isEntryBrowserStop(stop) // true for a browser stop declared afterOperation 0
+   */
+  private isEntryBrowserStop(stop: PreparedStop): boolean {
+    return stop.participant === 'browser' && afterOperationOf(stop) === 0
+  }
+
+  /**
+   * Bounds the page load by what is left of the setup budget while the entry-load phase waits for a browser stop, for {@link loadEntryWithRenderStops} and {@link beginAfter}.
+   * Why it exists: a browser stop at the entry load has no pause to wait for until the page's own code runs, so the 20 s bound of a server stop does not start at the navigation or at the continue; {@link waitForEntryBrowserStop} starts it once the page finished loading.
+   * @example this.holdEntryBrowserLoadDeadline()
+   */
+  private holdEntryBrowserLoadDeadline(): void {
+    this.progressDeadline(
+      Math.max(1, this.preparationDeadlineAt - Date.now()),
+      () => this.expireSetupBudget(this.preparationBudgetMs),
+    )
+  }
+
+  /**
+   * Starts the 20 s wait for a browser stop of the entry load once the page was seen loaded, for {@link pollEntryLoad}: the bound counts from the later of that moment and the last continue of an earlier entry stop ({@link beginAfter} resets it), and a pause's own time is never counted (the hold deadline replaces it).
+   * @param entry - The phase's state.
+   * @param stop - The first browser stop of the entry load not yet paused.
+   * @example this.waitForEntryBrowserStop(entry, this.stops[1]!)
+   */
+  private waitForEntryBrowserStop(
+    entry: EntryLoadState,
+    stop: PreparedStop,
+  ): void {
+    if (entry.settledAtMs !== undefined) return
+    entry.settledAtMs = performance.now()
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.entryBrowserNotReachedText(stop),
+    )
+  }
+
+  /**
+   * Words the failure of a browser stop at the entry load that the page never reached: an uncoded sentence naming the stop and the recovery, never `SERVER_STOP_NOT_REACHED`, which is a public code with server facts.
+   * @param stop - The browser stop that was not reached.
+   * @returns The failure text.
+   * @example this.entryBrowserNotReachedText(stop) // 'The entry load reached no verified pause at the declared browser stop app/ui/Posts.tsx:14 …'
+   */
+  private entryBrowserNotReachedText(stop: PreparedStop): string {
+    return `The entry load reached no verified pause at the declared browser stop ${this.declaredAt(stop)} within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s after the page finished loading. Move the stop to a line that runs while the page loads (code that runs on mount, such as an effect), or declare it with afterOperation 1 or more after an operation that runs it, then start a new run.`
   }
 
   /**
@@ -5658,6 +5741,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ServerRenderHitVerdict,
         { event: 'breakpoint.react-copy' | 'breakpoint.repeat-hit' }
       >
+    | EntryBrowserServerCopyVerdict
     | BrowserLibraryCopyVerdict
     | LibraryCopyVerdict
     | 'gone'
@@ -5689,7 +5773,74 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const libraryCopy = await this.libraryCopyVerdictOf(session, event, held)
     // A verdict that resumes nothing after the idle bound passed drops the pause (`undefined`), as the bound would have without the wait.
     if (libraryCopy || this.dropAfterClassification(held)) return libraryCopy
-    return this.heldPauseVerdictOf(session, event, held)
+    // The server's render of a client component that holds a browser stop of the entry load pauses at the editor's breakpoint too: nobody's stop.
+    const entryCopy = await this.entryBrowserCopyVerdictOf(session, event)
+    return entryCopy ?? this.heldPauseVerdictOf(session, event, held)
+  }
+
+  /**
+   * Decides whether a held server pause is the server's render of a client component that holds a browser stop of the entry load (D5).
+   * Why it exists: the editor sends a browser stop's breakpoint to every session, and Next renders a client component on the server too, so the server session pauses at the stop's file and line; that pause is nobody's stop (a declared server stop always takes precedence: it was admitted before it could be held, and a client component's file cannot hold one). Called by {@link unexpectedHitVerdict}.
+   * @param session - The server session.
+   * @param event - The `stopped` event.
+   * @returns The resume verdict naming the stop's file and line; `undefined` for any other pause, a pause that also hit a breakpoint of the learner's, or a stack that cannot be read in time.
+   * @example await this.entryBrowserCopyVerdictOf(session, event) // { action: 'resume', event: 'breakpoint.server-copy-resumed', file: 'app/ui/Posts.tsx', line: 14 }
+   */
+  private async entryBrowserCopyVerdictOf(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+  ): Promise<EntryBrowserServerCopyVerdict | undefined> {
+    const threadId = event.body?.threadId
+    const entryStops = this.stops.filter((stop) =>
+      this.isEntryBrowserStop(stop),
+    )
+    if (
+      !entryStops.length ||
+      !Number.isInteger(threadId) ||
+      event.body?.reason !== 'breakpoint' ||
+      !this.hitsOnlyBreakpointsOf(
+        session,
+        event.body.hitBreakpointIds,
+        (stop) => this.isEntryBrowserStop(stop),
+      )
+    )
+      return undefined
+    try {
+      const stack: DebugProtocol.StackTraceResponse['body'] =
+        await awaitResponse(
+          session.customRequest('stackTrace', {
+            threadId,
+            startFrame: 0,
+            levels: 1,
+          }),
+          'repository server copy stack',
+          this.abort.signal,
+          SERVER_RENDER_CLASSIFICATION_MS,
+        )
+      const frame = stack.stackFrames[0]
+      if (!frame?.source?.path) return undefined
+      const framePath = resolve(frame.source.path)
+      const stop = entryStops.find(
+        (candidate) =>
+          resolve(candidate.bundle.sourcePath) === framePath &&
+          frame.line ===
+            (
+              candidate.bound ??
+              candidate.breakpoint?.verifiedPlace(session) ??
+              candidate.armed
+            ).line,
+      )
+      return (
+        stop && {
+          action: 'resume',
+          event: 'breakpoint.server-copy-resumed',
+          file: stop.source.path,
+          line: frame.line,
+        }
+      )
+    } catch {
+      return undefined
+    }
   }
 
   /**
@@ -6111,6 +6262,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: DebugProtocol.Event,
     verdict:
       | Extract<ServerRenderHitVerdict, { action: 'resume' }>
+      | EntryBrowserServerCopyVerdict
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
       | PreparationHitVerdict
@@ -6765,6 +6917,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private journalResumedHit(
     verdict:
       | ResumeHitVerdict
+      | EntryBrowserServerCopyVerdict
       | BrowserLibraryCopyVerdict
       | LibraryCopyVerdict
       | PreparationHitVerdict
@@ -6775,6 +6928,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.resumedHitCounts.set(verdict.event, count)
     if (count > SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT) {
       this.unjournaledAdapterEvents++
+      return
+    }
+    // The server's copy of an entry-load browser stop's component names the stop's file and line and how many such pauses were resumed so far.
+    if (verdict.event === 'breakpoint.server-copy-resumed') {
+      this.evidence.record(verdict.event, {
+        file: verdict.file,
+        line: verdict.line,
+        count,
+      })
       return
     }
     this.evidence.record(
@@ -6848,6 +7010,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ? serverRenderAttributionOf(group, isUnconfirmed)
         : {}),
       ...requestPauseFieldsOf(stop, group),
+      ...entryLoadAttributionOf(stop),
       ...(isModuleEvaluation ? { scope: 'module' as const } : {}),
       // A pause in Codebook's own request names that request, never the page load.
       ...(stop.preparationRequest
@@ -7111,6 +7274,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             this.packageRoot,
             this.appLibraryOverrides('browser'),
           ),
+          // A browser stop at the entry load is bound before its module's first statement runs: js-debug then pauses before each script with a source map (as the server attach does for a stop it must bind before its module runs, native C86-1).
+          ...(declaresEntryBrowserStop(this.definition.configuration)
+            ? { pauseForSourceMap: true }
+            : {}),
           timeout: ACTIVE_TIMEOUT_MS,
         },
         this.abort.signal,
@@ -9032,6 +9199,32 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...binding,
       requested: { line: position.line, column: position.column },
       ...declaredAndArmedPlace(position, armed),
+    })
+    await this.verifySources()
+  }
+
+  /**
+   * Arms a browser stop of the entry load (`afterOperation: 0`) before the first navigation, without waiting for its module.
+   * Why it exists: client code that runs while the entry page loads executes as soon as its module is parsed, so {@link armStop}'s wait for the module and its verified binding would arm the stop after the code ran. The breakpoint is requested and its registration awaited (a pending registration is accepted: the debugger binds it when the module's script is parsed, before it runs, because the browser launches with `pauseForSourceMap`); the module is sealed at parse ({@link bindParsedScript}) and the binding is read at the pause ({@link inspect}).
+   * Called by {@link loadEntryWithRenderStops} for each such stop, which then adds it to {@link armedStops}.
+   * @param stop - A browser stop with `afterOperation: 0`.
+   * @throws The registration failure ({@link registrationFailure}) when the adapter refuses or revokes the registration; `Declared debugger was not acquired` without a browser session.
+   * @example
+   * ```ts
+   * await this.armBrowserEntryStop(this.stops[1]!)
+   * ```
+   */
+  private async armBrowserEntryStop(stop: PreparedStop): Promise<void> {
+    const participant = this.participants.browser
+    if (!participant.selected || !participant.cdp)
+      throw new Error('Declared debugger was not acquired')
+    stop.breakpoint ??= this.requestBreakpoint(stop)
+    const receipt = await this.registeredStop(stop)
+    this.alive()
+    this.evidence.record('breakpoint.registered', {
+      participant: stop.participant,
+      declaredIndex: stop.declaredIndex,
+      ...receipt,
     })
     await this.verifySources()
   }
@@ -11059,17 +11252,35 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.fail(this.changedAfterSealingText(stop))
         return
       }
-      stop.script = event
-      // The journal lists only the first scripts a runtime parses; the first announcement of each stop's module is always journaled and repeats are capped ({@link journalStopModule}), so a run that never pauses shows which script it was waiting in.
-      this.journalStopModule('stop.module-parsed', {
-        participant: name,
-        source: stop.source.path,
-        line: declaredLineOf(stop),
-        scriptId: event.scriptId,
-        scriptUrl: event.url,
-      })
-      this.judgeNewsRefusedBeforeModule(stop)
+      this.acceptParsedModule(stop, name, event)
     }
+  }
+
+  /**
+   * Takes a script as the module of a stop, for {@link bindParsedScript}: journals it, seals an entry-load browser stop's bytes at once and judges the adapter's earlier news about the stop's breakpoint.
+   * @param stop - The stop whose sealed module the runtime announced.
+   * @param name - The participant whose runtime announced the script.
+   * @param event - The announced script.
+   * @example this.acceptParsedModule(stop, 'browser', event)
+   */
+  private acceptParsedModule(
+    stop: PreparedStop,
+    name: Participant,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): void {
+    stop.script = event
+    // A browser stop of the entry load is armed before its module exists, so the executed bytes are compared with the sealed ones as soon as the module is parsed.
+    if (this.isEntryBrowserStop(stop))
+      this.track(this.assertExecutedModuleSealed(stop, 'entry load'))
+    // The journal lists only the first scripts a runtime parses; the first announcement of each stop's module is always journaled and repeats are capped ({@link journalStopModule}), so a run that never pauses shows which script it was waiting in.
+    this.journalStopModule('stop.module-parsed', {
+      participant: name,
+      source: stop.source.path,
+      line: declaredLineOf(stop),
+      scriptId: event.scriptId,
+      scriptUrl: event.url,
+    })
+    this.judgeNewsRefusedBeforeModule(stop)
   }
 
   /**
@@ -15548,9 +15759,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           inputDispatched: this.operation?.inputDispatched ?? false,
           acceptedStop: this.acceptedStop,
         })
-        this.fail(
-          `Unexpected or additional ${name} stop invalidated the declared operation`,
-        )
+        this.fail(this.rejectedStopText(name))
         return
       }
       this.acceptedStop = true
@@ -15657,6 +15866,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (name === 'browser') this.browser.resumeViewport()
       this.beginAfter(continuation)
     }
+  }
+
+  /**
+   * Words the failure of a stop that paused out of turn, for {@link onEvent}: the sentence every run has, and for a `next-dev-webpack` browser stop that paused before its operation's input the recovery that names the entry-load option.
+   * The run still fails (fail-safe): resuming a pause before its operation would change what the run observes. A line that runs while the page loads is declared with `afterOperation: 0`.
+   * @param name - The participant that paused.
+   * @returns The failure text.
+   * @example this.rejectedStopText('server') // 'Unexpected or additional server stop invalidated the declared operation'
+   */
+  private rejectedStopText(name: Participant): string {
+    const sentence = `Unexpected or additional ${name} stop invalidated the declared operation`
+    return name === 'browser' &&
+      this.adapter?.name === 'next-dev-webpack' &&
+      this.isBeforeStopInput()
+      ? `${sentence}. The declared browser stop ran before its operation's input: a line that runs while the page loads takes afterOperation 0 in a next-dev-webpack run (a browser stop at the entry load, declared after every server stop of it); otherwise declare the stop after an operation whose input comes first.`
+      : sentence
   }
 
   /**
@@ -16748,6 +16973,44 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Binds a paused browser stop at its pause when it was adopted away from the binding verified at arming or was armed before its module and has none yet, for {@link inspect}.
+   * The debugger may have moved a verified binding since arming, so it is read again and named; a stop armed before its module ({@link armBrowserEntryStop}) takes the place the editor names or, when the editor names none, the place of the paused frame.
+   * @param stop - The paused browser stop.
+   * @param stopped - The accepted pause, whose `adopted` flag says whether it was adopted away from the verified binding.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @param current - Throws when the pause is no longer the inspected one; asked after every wait.
+   * @throws What {@link bindAtPause} throws for a refused place.
+   * @example await this.bindBrowserStopAtPause(stop, stopped, pausedAt, current)
+   */
+  private async bindBrowserStopAtPause(
+    stop: PreparedStop,
+    stopped: { adopted?: boolean },
+    pausedAt: Protocol.Debugger.Location | undefined,
+    current: () => void,
+  ): Promise<void> {
+    if (!stopped.adopted && stop.bound) return
+    const moved =
+      (await this.movedBrowserBinding(stop, pausedAt)) ??
+      (stop.bound ? undefined : this.pausedPlaceOf(stop, pausedAt))
+    current()
+    if (moved) await this.bindAtPause(stop, moved, pausedAt, current)
+  }
+
+  /**
+   * Gives the place a stop is at when the editor named no binding for it at its pause: the sealed map's place of the paused top frame, for a browser stop armed before its module was parsed ({@link armBrowserEntryStop}).
+   * @param stop - The paused browser stop, not bound yet.
+   * @param pausedAt - The generated place of the paused top frame.
+   * @returns The one-based source line and column; `undefined` for a pause the map places nowhere, which {@link assertFrameAtBoundPosition} then refuses.
+   * @example this.pausedPlaceOf(stop, { lineNumber: 31, columnNumber: 12 }) // { line: 14, column: 5 }
+   */
+  private pausedPlaceOf(
+    stop: PreparedStop,
+    pausedAt: Protocol.Debugger.Location | undefined,
+  ): { line: number; column: number } | undefined {
+    return pausedAt && this.sourcePlaceOf(stop, pausedAt)
+  }
+
+  /**
    * Reads a browser stop's binding again at a pause that was adopted away from the binding verified at arming, for {@link inspect}: the debugger may have moved that binding since.
    * @param stop - The paused browser stop, bound at arming.
    * @param pausedAt - The generated place of the paused top frame.
@@ -16854,12 +17117,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         current,
       )
       await this.bindAtPause(stop, binding, pausedAt, current)
-    } else if (stopped.adopted) {
-      // A browser pause away from the binding verified at arming: the debugger may have moved that binding since, so it is read again and named.
-      const moved = await this.movedBrowserBinding(stop, pausedAt)
-      current()
-      if (moved) await this.bindAtPause(stop, moved, pausedAt, current)
-    }
+    } else await this.bindBrowserStopAtPause(stop, stopped, pausedAt, current)
     const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(
       participant.selected!.customRequest('stackTrace', {
         threadId: pause.threadId,
@@ -17385,9 +17643,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // A later stop is armed only inside the preceding continuation, so its line pauses as that stop only after it; a pause on that line before its turn is held as unannounced and never adopted ({@link pauseHeldForStop}). Say which stop and why.
       const nextStop = this.stops[this.stopIndex]!
       this.entryLoad?.pausedStops.push(this.declaredAt(continuedStop!))
-      this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
-        this.nextStopNotReachedText(nextStop),
-      )
+      // The wait for a browser stop of the entry load counts from the page's completion or this continue, whichever comes later.
+      if (this.entryLoad && this.isEntryBrowserStop(nextStop)) {
+        this.entryLoad.settledAtMs = undefined
+        this.holdEntryBrowserLoadDeadline()
+      } else
+        this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+          this.nextStopNotReachedText(nextStop),
+        )
       // Publish queued events only after the previous generation has retired completely.
       this.replayQueuedStops()
       return
