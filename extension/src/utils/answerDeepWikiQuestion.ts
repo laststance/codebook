@@ -412,9 +412,13 @@ function routePromptOf(
     ...(pageRoute ? matching : []),
     ...(pageRoute?.paths ?? candidateRoute?.paths ?? []),
   ])
+  // One lookup table instead of a scan of every candidate per offered path.
+  const candidateByPath = new Map(
+    candidates.map((candidate) => [candidate.path, candidate]),
+  )
   const namesLine = declaredNamesLineOf(
     [...offeredPaths].flatMap((path) => {
-      const source = candidates.find((candidate) => candidate.path === path)
+      const source = candidateByPath.get(path)
       return source ? [source] : []
     }),
   )
