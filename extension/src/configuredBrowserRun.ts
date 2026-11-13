@@ -5573,6 +5573,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells whether a server `stopped` must be classified by {@link settleServerStop} before the stop machinery sees it.
+   * Why it exists: a library-declaring Next run attaches the server debugger with only browser stops, and Next renders a client component on the server too, so the server session can pause at a browser entry stop's file and line (D5, {@link entryBrowserCopyVerdictOf}) although no server stop is declared and {@link rendersServerStops} is false. Called by {@link onEvent} for the server's `stopped`.
+   * @returns `true` when {@link rendersServerStops} is, or a version 3 run has an attached server session and a browser entry stop not yet continued; `false` for versions 1 and 2 and for runs whose entry browser stops are all behind.
+   * @example this.classifiesServerStops() // true for a library run with a browser entry stop and an attached server session
+   */
+  private classifiesServerStops(): boolean {
+    return (
+      this.rendersServerStops() ||
+      (this.operationsConfiguration !== undefined &&
+        this.participants.server.selected !== undefined &&
+        this.stops
+          .slice(this.stopIndex)
+          .some((stop) => this.isEntryBrowserStop(stop)))
+    )
+  }
+
+  /**
    * Tells whether a server `stopped` is a new hit for the preparation window rather than the end of a stack refresh of a held pause.
    * Why it exists: the refreshing `stopped` (after the debugger's `continued`) must reach the refresh check of {@link onEvent}, not the window's hit intake. Called by {@link settleServerStop}.
    * @returns `true` while a preparation window is open and no refresh or deferred refresh of the server's pause is pending.
@@ -15675,7 +15692,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (
       event.event === 'stopped' &&
       name === 'server' &&
-      this.rendersServerStops() &&
+      this.classifiesServerStops() &&
       !this.settledStops.has(event)
     ) {
       // A hit the run resumes by itself (React's copy, a repeat) must not pass as an unexpected stop: its kind is settled first.
