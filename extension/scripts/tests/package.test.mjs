@@ -492,12 +492,12 @@ test('an unexpected connection descriptor is rejected even when the other packag
 test('a missing dependency license is rejected instead of silently dropping its notice', async () => {
   // Arrange
   const entries = new Map(original)
-  entries.delete('extension/notices/ws8.22.2/LICENSE')
+  entries.delete('extension/notices/ws8.23.0/LICENSE')
   const path = await writeArchive(entries, 'missing-notice')
   // Act / Assert
   await assert.rejects(
     verifyPackageContent(await readVsixEntries(path)),
-    /Missing package file: notices\/ws8.22.2\/LICENSE/,
+    /Missing package file: notices\/ws8.23.0\/LICENSE/,
   )
 })
 
