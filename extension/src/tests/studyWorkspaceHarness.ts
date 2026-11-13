@@ -687,6 +687,9 @@ export async function workspaceHarness(
   /** See `redirectNextTextDocumentShow`. */
   let redirectedTextDocumentShow:
     { uri: string; viewColumn: number } | undefined
+  /** See `redirectEveryTextDocumentShow`. */
+  let lastingTextDocumentShowRedirect:
+    { uri: string; viewColumn: number } | undefined
   /** See `holdNextTabCloseEffect`. */
   let heldTabCloseEffect:
     { entered: () => void; wait: Promise<void> } | undefined
@@ -5265,6 +5268,15 @@ export async function workspaceHarness(
               viewColumn: redirectedTextDocumentShow.viewColumn,
             }
             redirectedTextDocumentShow = undefined
+          } else if (
+            // In the model of `redirectEveryTextDocumentShow`, every show of the document lands in that column until the test ends it.
+            lastingTextDocumentShowRedirect?.uri ===
+            sourceDocument.uri.toString()
+          ) {
+            options = {
+              ...options,
+              viewColumn: lastingTextDocumentShowRedirect.viewColumn,
+            }
           }
           textDocumentShows.push({
             name: basename(sourceDocument.uri.path),
@@ -8090,6 +8102,19 @@ export async function workspaceHarness(
      */
     redirectNextTextDocumentShow(uri: string, viewColumn: number): void {
       redirectedTextDocumentShow = { uri, viewColumn }
+    },
+    /**
+     * Makes the editor show every `showTextDocument` of a document in one column, whatever column is asked, as Cursor 3.30.8 reveals a run's stop file in front of the Application while its Agent chat holds the keyboard (Cycle 0132 task 8: "The editor showed … in column 1, not outside the Application group", twice, for a paused file).
+     * @param uri - The exact document URI.
+     * @param viewColumn - The column the editor shows it in.
+     * @returns The function that ends the redirect.
+     * @example const stop = harness.redirectEveryTextDocumentShow(uri, applicationColumn); …; stop()
+     */
+    redirectEveryTextDocumentShow(uri: string, viewColumn: number): () => void {
+      lastingTextDocumentShowRedirect = { uri, viewColumn }
+      return (): void => {
+        lastingTextDocumentShowRedirect = undefined
+      }
     },
     /**
      * Makes the editor refuse to close every open tab whose document URI contains a text, as it does for a tab it keeps (an answer of `false` for its group's requested tabs).

@@ -1059,6 +1059,8 @@ export class StudyWorkspace {
   /** The documents this host itself showed with `showTextDocument`, newest last and bounded, so a guard can tell a text editor or tab that Codebook's own step put in front from the learner's pick ({@link isCodebookOwnFocus}, Cycle 0072 native C72-2). */
   private readonly documentsShownByCodebook: { atMs: number; uri: string }[] =
     []
+  /** The canonical paths of the stop files every extension run of this window declared, so a next run's lease can tell an earlier run's paused file left in front of the kept Application pane from a learner's file ({@link uncoverApplicationFromRunStopFile}, Cycle 0132 task 8). */
+  private readonly extensionRunStopFiles = new Set<string>()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
   private readonly placementEffects = new PlacementEventLog(
     REFUSAL_REPORT_EFFECTS,
@@ -5739,6 +5741,8 @@ export class StudyWorkspace {
         keepsEndedPane: () => isFinal,
         movesPausedSourceOut: (fsPath) =>
           stopFilePaths.has(canonicalFsPath(fsPath)),
+        isWindowRunStopFile: (fsPath) =>
+          this.extensionRunStopFiles.has(canonicalFsPath(fsPath)),
       })
       return new ChromeExtensionViewportView(viewport, {
         onFinal: () => {
@@ -5748,6 +5752,9 @@ export class StudyWorkspace {
           stopFilePaths = new Set(
             stopFiles.map((file) => canonicalFsPath(file)),
           )
+          // Kept for the window's later runs: a paused file of this run can still stand in front of the kept pane when the next one starts.
+          for (const stopFile of stopFilePaths)
+            this.extensionRunStopFiles.add(stopFile)
         },
       })
     },
@@ -7702,7 +7709,7 @@ export class StudyWorkspace {
   /**
    * Prepares the Application pane for one run and wraps it in a leased {@link BrowserViewport}; called by {@link presentation}'s `createViewport` (repository, server and test runs) and `createChromeExtensionViewport`.
    * The lease's release closes the pane of an ended run, except when `keepsEndedPane` says the run reached its last content: an ended extension run keeps its pane and last frame, without the keyboard, until a next run's view replaces it or the learner closes the tab (ER22). A retired lease never touches a newer one's pane.
-   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question and `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files.
+   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question, `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files, and `isWindowRunStopFile` ({@link uncoverApplicationFromRunStopFile}, an extension run's lease): whether it is a stop file of any extension run of this window.
    * @returns The viewport, already registered as the workspace's live one.
    * @throws What {@link prepareApplicationGroup} throws when no safe pane can be prepared.
    * @example const viewport = await this.leaseApplicationViewport({ runId, record, fail, scenario, signal })
@@ -7716,6 +7723,7 @@ export class StudyWorkspace {
     observer?: ViewportRecordingObserver
     keepsEndedPane?: () => boolean
     movesPausedSourceOut?: (fsPath: string) => boolean
+    isWindowRunStopFile?: (fsPath: string) => boolean
   }): Promise<BrowserViewport> {
     const { runId, keepsEndedPane } = input
     // A new run may replace a closed reader, but an open recording keeps its independently selected film.
@@ -7752,6 +7760,13 @@ export class StudyWorkspace {
         // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
         keepsPaneOpen: async (attachSignal) => {
           await this.keepMovedApplicationTab(panel, attachSignal)
+          // An earlier extension run's paused file can still cover the kept pane; the run's first reveal would refuse over it (Cycle 0132 task 8).
+          if (input.isWindowRunStopFile)
+            await this.uncoverApplicationFromRunStopFile(
+              panel,
+              attachSignal,
+              input.isWindowRunStopFile,
+            )
           await this.openRunStopFilesBesideApplication(
             panel,
             attachSignal,
@@ -7792,6 +7807,69 @@ export class StudyWorkspace {
       this.playback?.reveal()
     }
     return viewport
+  }
+
+  /**
+   * Brings the kept Application pane back in front of a paused file an earlier extension run of this window left in front of it in its own group, so the next run's view is shown instead of refused; called through the lease's `keepsPaneOpen` of {@link leaseApplicationViewport} when an extension run attaches its surface, before the view's first reveal.
+   * Cursor 3.30.8 shows a stop's paused file in front of the Application inside the Application's group while its Agent chat holds the keyboard, and the paused-file watch ({@link keepPausedSourceOutOfApplication}) cannot show that file elsewhere then ("The editor showed … in column 1"), so the file still stands in front when the run ends and the kept pane waits for the next run (ER22). The reveal's guard ({@link assertApplicationReveal}) then refused the next run's view, which went on without frames (Cycle 0132 task 8, E2 run 2).
+   * Only an unedited tab of a stop file one of the window's extension runs declared is covered, in the group that also holds the Application tab; the file's tab stays in that group, unmoved. The keyboard follows the pause reveal's rule ({@link keepsKeyboardFromPane}). Any other front tab, a learner's file or an edited stop file, is left in front, and the guard refuses as before; a pane the editor does not bring to the front in time also leaves that refusal to the guard.
+   * @param panel - The lease's Application pane.
+   * @param signal - The attach's cancellation.
+   * @param isWindowRunStopFile - Whether a file (its `fsPath`) is a stop file of an extension run of this window.
+   * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
+   * @throws The signal's reason when the run was cancelled.
+   * @example await this.uncoverApplicationFromRunStopFile(panel, signal, (fsPath) => stopFiles.has(canonicalFsPath(fsPath))) // settings.js of run 1 stays behind run 2's view
+   */
+  private async uncoverApplicationFromRunStopFile(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal,
+    isWindowRunStopFile: (fsPath: string) => boolean,
+  ): Promise<void> {
+    const column = this.viewColumnOf(panel)
+    const coveringStopFile = (): vscode.Tab | undefined => {
+      const group = vscode.window.tabGroups.all.find(
+        (candidate) => candidate.viewColumn === column,
+      )
+      const applicationTab = this.uniqueApplicationTab()
+      const front = group?.activeTab
+      const input = front?.input
+      // Only the pane's own group, holding its one Application tab behind an unedited stop file of the window's runs.
+      return group &&
+        applicationTab &&
+        front &&
+        front !== applicationTab &&
+        group.tabs.includes(applicationTab) &&
+        !front.isDirty &&
+        input instanceof vscode.TabInputText &&
+        input.uri.scheme === 'file' &&
+        isWindowRunStopFile(input.uri.fsPath)
+        ? front
+        : undefined
+    }
+    if (column === undefined || !coveringStopFile()) return
+    const comesWithoutKeyboard = await this.keepsKeyboardFromPane()
+    signal.throwIfAborted()
+    // Read again after the keyboard's answer: the learner may have changed the group meanwhile.
+    if (!coveringStopFile()) return
+    this.revealPane(panel, column, comesWithoutKeyboard)
+    if (!comesWithoutKeyboard) this.tellPaneTookKeyboard()
+    try {
+      await waitUntil(
+        () => {
+          const group = vscode.window.tabGroups.all.find(
+            (candidate) => candidate.viewColumn === column,
+          )
+          const applicationTab = this.uniqueApplicationTab()
+          return Boolean(applicationTab && group?.activeTab === applicationTab)
+        },
+        'the kept Application pane in front of the earlier run\u2019s paused file',
+        PRESENTATION_READY_TIMEOUT_MS,
+        signal,
+      )
+    } catch (error) {
+      // A cancelled run keeps its reason; an editor that did not bring the pane in front leaves the refusal to the reveal's guard.
+      if (signal.aborted || !(error instanceof WaitTimeoutError)) throw error
+    }
   }
 
   /**

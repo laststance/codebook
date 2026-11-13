@@ -390,6 +390,140 @@ test('a paused file the editor cannot show elsewhere stays open while the next p
   }
 })
 
+/** A screencast connection that answers every request and sends nothing, for an attach in the fake editor. */
+const SILENT_SCREENCAST = {
+  on: () => undefined,
+  request: async () => ({}),
+  subscribe: async () => undefined,
+}
+
+/** Names the Application pane's group as the fake editor holds it now; the group object can change at every tab change. */
+function applicationGroupOf(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  applicationColumn: number,
+) {
+  return harness.groups.find((group) => group.viewColumn === applicationColumn)
+}
+
+/**
+ * Ends a first extension run of the window with its paused file still in front of the kept Application pane, as Cursor 3.30.8 leaves it: the debugger opened the stop's file in the Application's group and every show the watch asked for landed there again.
+ * @returns The Application's column.
+ */
+async function endRunWithPausedFileInFront(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  runId: string,
+  filename: string,
+): Promise<number> {
+  const first = await openView(harness, runId, [filename])
+  const applicationColumn = harness.reader['app']?.viewColumn
+  assert.ok(applicationColumn)
+  const endRedirect = harness.redirectEveryTextDocumentShow(
+    harness.editor.Uri.file(join(harness.directory, filename)).toString(),
+    applicationColumn,
+  )
+  harness.openPausedFileInLockedGroup(filename, applicationColumn)
+  await waitUntil(
+    () =>
+      harness.textDocumentShows().filter((show) => show.name === filename)
+        .length >= 2,
+    'the watch tries its two moves',
+    5_000,
+  )
+  // gstack-timing-ok: a negative settle; the watch gives up after its second refused move, and one settle shows no third show was sent.
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  endRedirect()
+  first.end('The first run ended.')
+  first.close()
+  return applicationColumn
+}
+
+// protects=Cycle 0132 task 8 (E2, Cursor 3.30.8): the next extension run of a window shows its Application view, so its history takes frames, when the earlier run's paused file is still in front of the kept Application pane in its group; fails_when=the next run's attach refuses with "Application ownership changed" over a stop file an earlier run of the window declared, so the run goes on without its view and records no frame; no_claim=why Cursor shows the paused file in the Application group (its Agent part holds the keyboard), or the covering during the first run's own pause
+test('the next extension run shows its Application view over a stop file the earlier run left in front of it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'service-worker.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const applicationColumn = await endRunWithPausedFileInFront(
+      harness,
+      'leftover-run-1',
+      'settings.js',
+    )
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'settings.js',
+    )
+    const second = await openView(harness, 'leftover-run-2', [
+      'service-worker.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    // Act: the run attaches its surface, and its viewport then brings the pane to the front as the real one does at the end of an attach.
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    const applicationGroup = applicationGroupOf(harness, applicationColumn)
+    assert.equal(
+      applicationGroup?.activeTab?.label,
+      'codebook · Application leftover',
+    )
+    assert.deepEqual(
+      applicationGroup?.tabs.map((tab) => tab.label),
+      ['codebook · Application leftover', 'settings.js'],
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=the reveal guard of Cycle 0132 task 8's fix: a file the learner opened in front of the kept Application pane is not covered by the next extension run; fails_when=the next run's attach shows its view over any unedited text tab of the Application's group, hiding the learner's file; no_claim=what the learner does with the refused view
+test('the next extension run still refuses its view over a file the learner opened in front of the kept Application', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'notes.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const first = await openView(harness, 'learner-front-run-1', [
+      'settings.js',
+    ])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    first.end('The first run ended.')
+    first.close()
+    harness.openPausedFileInLockedGroup('notes.js', applicationColumn)
+    const second = await openView(harness, 'learner-front-run-2', [
+      'settings.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    // Act: the run attaches its surface, and its viewport then asks to bring the pane to the front as the real one does at the end of an attach.
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    const reveal = harness.revealApplicationPaneOverPausedFile()
+    // Assert
+    await assert.rejects(reveal, /Application ownership changed/)
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'notes.js',
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=CR6 (Cycle 0062 review, local CodeRabbit CLI): when the editor refuses to close the paused file's copy in front of the view, the watch tries again only up to its limit and then leaves it, instead of showing and closing it without end; fails_when=a refused close counts as a finished move, so the watch looks again, finds the copy and repeats forever; no_claim=why the editor refuses the close
 test('a paused file whose close the editor refuses is moved only up to the attempt limit', async () => {
   // Arrange
