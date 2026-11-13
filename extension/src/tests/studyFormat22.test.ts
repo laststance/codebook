@@ -138,8 +138,8 @@ test('a reverse-proxy replay saves as .study.v22.json, lists as v22, repairs a l
   await library.reconcile()
   const repaired = await library.readCheckpoint(study.id)
   await writeFile(
-    join(directory, `${newerId}.study.v25.json`),
-    '{"version":25}',
+    join(directory, `${newerId}.study.v26.json`),
+    '{"version":26}',
   )
   const withNewer = (await library.list()).map((entry) => entry.format).sort()
   // Assert
@@ -300,13 +300,13 @@ test('Codebook 0.2.103 lists a .study.v22.json archive and its sidecar as saved 
   // Assert
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 22 })
   assert.equal(sidecar, undefined)
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.equal(isOperationsStudyFormat(22), true)
-  assert.equal(isOperationsStudyFormat(25), false)
+  assert.equal(isOperationsStudyFormat(26), false)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 22 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 25 }),
-    /saved in format 25 by a newer Codebook; this Codebook reads formats up to 24/,
+    () => assertReadableStudyFormat({ version: 26 }),
+    /saved in format 26 by a newer Codebook; this Codebook reads formats up to 25/,
   )
 })
 

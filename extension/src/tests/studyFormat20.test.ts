@@ -507,11 +507,11 @@ test('Codebook 0.2.101 lists a .study.v20.json archive as saved by a newer Codeb
     metadataSuffix: '.study.meta.v20.json',
   })
   assert.equal(VITE_API_SERVER_STUDY_VERSION, 20)
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 20 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 25 }),
-    /saved in format 25 by a newer Codebook; this Codebook reads formats up to 24/,
+    () => assertReadableStudyFormat({ version: 26 }),
+    /saved in format 26 by a newer Codebook; this Codebook reads formats up to 25/,
   )
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 20 })
   assert.equal(sidecar, undefined)

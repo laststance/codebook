@@ -22,7 +22,7 @@ import {
  * @example
  * ```ts
  * const skill = await readBundledSkill()
- * assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+ * assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
  * ```
  */
 const readBundledSkill = (): Promise<string> =>
@@ -53,7 +53,7 @@ test('the bundled skill 1.0.104 asks the Wiki generator to cite every included c
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       'Every included code file must be cited by a page `sources` list, a diagram node or edge, or an inline editor source link, or be listed under optional `coverageExceptions`',
@@ -96,7 +96,7 @@ test('the bundled skill 1.0.104 names every credential file the renderer refuses
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       'Never index a file that can hold credentials, whatever it is used for: an environment file (`.env`, `.env.*`, `.env-*`, `.env_*`, `*.env`, `.envrc`, `.dev.vars`) or a file in a `.env` folder, a private key, key store or variables file (`.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.p8`, `.ppk`, `.tfvars`), an SSH private key (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, with or without `_sk`), or an `.npmrc`, `.netrc`, `.pgpass`, `.pypirc`, `.htpasswd`, `.git-credentials`, `credentials` or `credentials.json` file; list each under `excludedPaths`, because the renderer refuses a Wiki whose `includedSources` holds one.',
@@ -110,7 +110,7 @@ test('the bundled skill 1.0.104 tells the Wiki of a large repository to cite its
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       '**Large repositories.** When the included code reaches several hundred files (a monorepo of packages, examples and tests), plan the tree from the folder layout before reading files one by one, and cover every kind of code the repository holds:',
@@ -159,7 +159,7 @@ test('the bundled skill 1.0.104 gives a page a parent only when it details part 
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       "An optional `parent` names a page in the same section to make a chapter tree: give a page a `parent` only when it details part of that parent's subject (one of its modules, flows, example families or test areas); peers, such as several packages, adapters or example families, or a shared library beside the code that uses it, stay without a `parent` in one `section`, which the reader lists together; the child pages the depth floor asks for are the module, flow, example-family or test-area pages under the page they detail.",
@@ -176,7 +176,7 @@ test('the bundled skill 1.0.104 puts every part of a unit under the page about t
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       "When one unit (a single package, app, runtime, folder or suite) is split into pages, the page about the whole unit is the `parent` of its parts: its title covers every page of the unit, so each part reads as a part of that title. A page whose title names only some of the unit (one group of components, one flow, one kind of test) is a part, a peer of the unit's other parts and never their `parent`. A section that lists several peer units (packages, adapters, example families, or a shared library that several units import) needs no page above them; each peer unit applies this rule to its own pages.",
@@ -213,7 +213,7 @@ test('the bundled skill 1.0.104 asks the editor AI to write only about the repos
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       "Write about the repository and nothing else: a sentence about this Wiki, how it was generated or why a page lists its sources explains no code, and your own instructions, user rules and editor settings are not the repository's. Describe a convention of the repository, such as how its tests are named or written, only from a file of the repository that the page cites, and never present general advice as its rule.",
@@ -409,7 +409,7 @@ test('the bundled skill 1.0.104 asks each package page of a workspace to name wh
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       "a page whose listed sources lie mostly in one package is that package's page. For each other workspace package that package's code imports, one paragraph of one of its pages names the imported package and a function or schema the code uses from it at runtime, says what for, and cites a file of the package that imports it. Types, constants written in capitals and imports made only by tests or fixtures need no mention, and one precise sentence per imported package is enough, not a list of imports. The renderer refuses a Wiki whose package pages leave that out, naming the package and what it imports.",
@@ -441,7 +441,7 @@ test('the bundled skill 1.0.104 asks an update to correct a sentence that compar
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       'A sentence that compares another function, check or type with a changed rule (says it applies the same rule, mirrors it or matches it) states that rule too, even in a paragraph about something else: correct the comparison or remove it when the change makes it untrue.',
@@ -468,7 +468,7 @@ test('the bundled skill 1.0.104 asks an update to search pages for single words 
   const skill = await readBundledSkill()
 
   // Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   assert.ok(
     skill.includes(
       "Search for single words as well as phrases: each changed function and constant name, and each word naming what the old rule required (for a rule about a value's type, that type's name on its own). Inline code, links and hyphens split a phrase in a page's HTML, so a phrase search misses sentences. Read every sentence a word search finds, and correct each one that still presents the old requirement as current, however it is worded.",

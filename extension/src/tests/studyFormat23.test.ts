@@ -132,8 +132,8 @@ function decodes(study: ConfiguredStudy): boolean {
   }
 }
 
-// Value: protects=AC 7 a static-page run is saved as format 23 stored in .study.v23.json beside its metadata, this Codebook reads 23 and 24 and refuses 25 as newer, and Codebook 0.2.106 (readable up to 22) lists a .study.v23.json archive as saved by a newer Codebook; fails_when=the storage table lacks v23, the readable limit stays 22, or the file name rule stops recognising v23; no_claim=disk errors
-test('format 23 is stored and readable, 25 is saved by a newer Codebook and a reader limited to 22 lists v23 as newer', async () => {
+// Value: protects=AC 7 a static-page run is saved as format 23 stored in .study.v23.json beside its metadata, this Codebook reads 23 to 25 and refuses 26 as newer, and Codebook 0.2.106 (readable up to 22) lists a .study.v23.json archive as saved by a newer Codebook; fails_when=the storage table lacks v23, the readable limit stays 22, or the file name rule stops recognising v23; no_claim=disk errors
+test('format 23 is stored and readable, 26 is saved by a newer Codebook and a reader limited to 22 lists v23 as newer', async () => {
   // Arrange
   const frozenConstants = { READABLE_STUDY_VERSION: 22 }
   const newerStudyArchive = await loadModule<typeof NewerStudyArchiveModule>(
@@ -152,13 +152,13 @@ test('format 23 is stored and readable, 25 is saved by a newer Codebook and a re
     metadataSuffix: '.study.meta.v23.json',
   })
   assert.deepEqual({ ...archive }, { id: 'a_b', version: 23 })
-  assert.equal(READABLE_STUDY_VERSION, 24)
+  assert.equal(READABLE_STUDY_VERSION, 25)
   assert.equal(isOperationsStudyFormat(23), true)
-  assert.equal(isOperationsStudyFormat(25), false)
+  assert.equal(isOperationsStudyFormat(26), false)
   assert.doesNotThrow(() => assertReadableStudyFormat({ version: 23 }))
   assert.throws(
-    () => assertReadableStudyFormat({ version: 25 }),
-    /saved in format 25 by a newer Codebook; this Codebook reads formats up to 24/,
+    () => assertReadableStudyFormat({ version: 26 }),
+    /saved in format 26 by a newer Codebook; this Codebook reads formats up to 25/,
   )
 })
 

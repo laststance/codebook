@@ -16,8 +16,8 @@ function readPackaged(...segments: string[]): Promise<string> {
   return readFile(join(__dirname, '..', '..', ...segments), 'utf8')
 }
 
-// Value: protects=the API version 1.44 and its note name details.apiProcess, its three states and the 5 s bound of the probe; fails_when=the version stays 1.43, or the note omits the field, a state or the bound constant; no_claim=that a run measures the state (the run tests do)
-test('API 1.44 is served and its note names details.apiProcess with its three states', async () => {
+// Value: protects=the API 1.44 note name details.apiProcess, its three states and the 5 s bound of the probe; fails_when=the version stays 1.43, or the note omits the field, a state or the bound constant; no_claim=that a run measures the state (the run tests do)
+test('API 1.44 note names details.apiProcess with its three states', async () => {
   // Arrange
   const constants = await readFile(
     join(__dirname, '..', '..', 'src', 'constants.ts'),
@@ -32,7 +32,7 @@ test('API 1.44 is served and its note names details.apiProcess with its three st
     '{@link API_PROCESS_PROBE_MS}',
   ].filter((phrase) => !constants.includes(phrase))
   // Assert
-  assert.equal(API_VERSION, '1.44')
+  assert.equal(API_VERSION, '1.45')
   assert.equal(API_PROCESS_PROBE_MS, 5_000)
   assert.deepEqual(missing, [])
 })
@@ -62,7 +62,7 @@ test('the skill and the README describe details.apiProcess of an unreached API s
   const readme = await readPackaged('README.md')
   // Act
   const missingFromSkill = [
-    'metadata:\n  version: "1.0.104"\n',
+    'metadata:\n  version: "1.0.105"\n',
     '`details.apiProcess.state` is `not-paused`',
     'the API process was running, not stopped at a breakpoint, when the deadline ran out',
     'the request may be waiting inside the app (it may depend on a service the app calls) or may never have arrived',
@@ -70,13 +70,13 @@ test('the skill and the README describe details.apiProcess of an unreached API s
     'never name a cause the run did not observe',
   ].filter((phrase) => !skill.includes(phrase))
   const missingFromReadme = [
-    'with **MCP API 1.44** (`codebook_status` reports the installed build). API 1.44 is additive:',
+    'with **MCP API 1.45** (`codebook_status` reports the installed build). API 1.44 is additive:',
     '`SERVER_STOP_NOT_REACHED` also states what Codebook measured of the API process at that moment in `details.apiProcess` (MCP API 1.44)',
     '`not-paused` means the API process was running, not paused at any breakpoint, so a request that reached the API may be waiting inside the app',
     'or no request reached the line, `paused` names the repository place where it was paused',
     '`unknown` means Codebook could not read it',
     "The run resource's operation failure carries the same `apiProcess`, and the failure text names the unreached stop first, then the measured state in one sentence, then the possibilities.",
-    'updates to **1.0.104**',
+    'updates to **1.0.105**',
   ].filter((phrase) => !readme.includes(phrase))
   // Assert
   assert.deepEqual(missingFromSkill, [])

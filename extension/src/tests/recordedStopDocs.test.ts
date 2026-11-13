@@ -65,7 +65,7 @@ test('the skill and the README describe recorded stops from API 1.43 with the de
   const readme = await readPackaged('README.md')
   // Act
   const missingFromSkill = [
-    'metadata:\n  version: "1.0.104"\n',
+    'metadata:\n  version: "1.0.105"\n',
     'With API 1.43 or later',
     'declare `hold: "record"` on its server stops',
     "explain the recorded stops in order after the operation's result",
@@ -84,7 +84,7 @@ test('the skill and the README describe recorded stops from API 1.43 with the de
     '`recordedStops`',
     "recorded values are in the saved replay's native debugger",
     'refused `STALE_PAUSE`',
-    'updates to **1.0.104**',
+    'updates to **1.0.105**',
     'is saved as format 24 (`.study.v24.json`)',
     'a Codebook older than API 1.43 lists it as saved by a newer Codebook',
   ].filter((phrase) => !readme.includes(phrase))

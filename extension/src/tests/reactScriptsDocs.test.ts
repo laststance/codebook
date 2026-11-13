@@ -122,7 +122,7 @@ test('the MCP instructions name react-scripts-dev, its selection rule and the AP
       .split('\n')
       .find((line) => line.startsWith(' * 1.25 is additive')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.44')
+  assert.equal(API_VERSION, '1.45')
   assert.ok(protocol.includes('${REACT_SCRIPTS_APP_SELECTION_RULE}'))
   assert.ok(
     protocol.includes(
@@ -151,7 +151,7 @@ test('the bundled skill routes a Create React App app to react-scripts-dev behin
   // Arrange
   const skill = await readPackaged('skills/codebook/SKILL.md')
   // Act / Assert
-  assert.ok(skill.includes('metadata:\n  version: "1.0.104"\n'))
+  assert.ok(skill.includes('metadata:\n  version: "1.0.105"\n'))
   for (const phrase of [
     'goes to the `react-scripts-dev` adapter of the `repository-browser` profile',
     '`reactScriptsQuickStart`',
@@ -171,7 +171,7 @@ test('the README documents the react-scripts-dev adapter and its limits', async 
     'Codebook runs a Create React App app (react-scripts 4 or 5) at or below the repository root',
     "pauses at browser stops in the app's own source",
     'A stop in `node_modules` (a published package is not the checked-out library) and react-scripts 3 or older (refused as `react-scripts-version`) are not supported',
-    'with **MCP API 1.44**',
+    'with **MCP API 1.45**',
     'study format 11 (`.study.v11.json`)',
   ])
     assert.ok(readme.includes(phrase), phrase)
@@ -344,7 +344,7 @@ test('the API note, skill and README state the react-scripts 4 support of API 1.
       .split('\n')
       .find((line) => line.startsWith('**A Create React App app')) ?? ''
   // Assert
-  assert.equal(API_VERSION, '1.44')
+  assert.equal(API_VERSION, '1.45')
   for (const phrase of [
     'a Create React App app on react-scripts 4 is ready under `react-scripts-dev`',
     "adds `--openssl-legacy-provider` to the `NODE_OPTIONS` of the app's own process only, after the learner's own value",

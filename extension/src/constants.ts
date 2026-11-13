@@ -46,7 +46,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.9 is additive: a node-server run is saved as a Server replay. `codebook_explain_node_history` accepts a server history's material (steps citing the request, a stop, output, the response or the request failure), the server run resource gains `nodeServer.history`, `historyUri`, `historyIssue`, `learningCoverage`, `learningMissing` and `captureMissing`, `nextActions` offers `save-node-learning`, and `codebook://help/node-server` has a save section.
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.44'
+export const API_VERSION = '1.45'
 
 /** The API that first accepts a `press` operation in a version 3 configuration. */
 export const PRESS_MINIMUM_API = '1.39'
@@ -2277,6 +2277,8 @@ export const REVERSE_PROXY_STUDY_VERSION = 22
 export const STATIC_PAGE_STUDY_VERSION = 23
 /** The format of a study saved from a version 3 configuration in which any stop (the top-level stop or an `additionalStops` entry) declares `hold` (API 1.43), whether `"explain"` or `"record"`: a compatibility format that keeps every fact of the underlying run's format, because the sealed configuration holds a key an older strict reader rejects; it wins over every other format, a `static-page` run included. A configuration that declares no `hold` keeps its earlier format; the suffix `.study.v24.json` makes Codebook 0.2.107 and older list such a study as saved by a newer Codebook and keep it. */
 export const HOLD_STUDY_VERSION = 24
+/** The format of a study saved from a version 3 `next-dev-webpack` configuration in which any stop (the top-level stop or an `additionalStops` entry) is a browser stop with `afterOperation: 0` (API 1.45): a compatibility format that keeps every fact of the underlying run's format, because the sealed configuration holds a stop an older strict reader refuses; it wins over every other format, a `hold` format 24 included. Its observation of that stop reads `execution: "browser"` and `attribution: "entry-load"` with no `operationIndex`; a configuration without such a stop keeps its earlier format; the suffix `.study.v25.json` makes Codebook 0.2.128 and older list such a study as saved by a newer Codebook and keep it. */
+export const ENTRY_BROWSER_STUDY_VERSION = 25
 /** The longest HTTP method token an `apiRequest` fact may name. */
 export const API_REQUEST_METHOD_LIMIT_CHARS = 16
 /** The characters of an upper-cased HTTP method token an `apiRequest` fact may name: RFC 9110 `tchar` without lower-case letters (the producer upper-cases first). */
@@ -2296,7 +2298,7 @@ export const API_REQUEST_PATH_ELLIPSIS = '…'
 /** The fewest candidate requests an `unattributed` `several` fact may count. */
 export const API_REQUEST_SEVERAL_MIN_COUNT = 2
 /** The highest study format this Codebook reads; a saved study above it is listed as saved by a newer Codebook. */
-export const READABLE_STUDY_VERSION = HOLD_STUDY_VERSION
+export const READABLE_STUDY_VERSION = ENTRY_BROWSER_STUDY_VERSION
 /** The replay's operation marks closer than this many pixels stack vertically instead of overlapping. */
 export const OPERATION_MARK_STACK_PX = 24
 /** Below this webview width in pixels the operation marks show their numbers only. */
@@ -2308,6 +2310,12 @@ export const CONFIGURED_STUDY_METADATA_SUFFIX = '.study.meta.v3.json'
 // Highest existing version owns a logical study, including when its bytes are corrupt.
 // A change of the saved study format that an older Codebook cannot read takes the next format number and its own `.study.v<n>.json` suffix in this table; an older Codebook then lists such a study as saved by a newer one and keeps it, instead of failing on its schema.
 export const STUDY_STORAGE_FORMATS = [
+  {
+    version: ENTRY_BROWSER_STUDY_VERSION,
+    format: 'v25',
+    archiveSuffix: '.study.v25.json',
+    metadataSuffix: '.study.meta.v25.json',
+  },
   {
     version: HOLD_STUDY_VERSION,
     format: 'v24',

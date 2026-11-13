@@ -4728,9 +4728,9 @@ test('a saved study in a newer format is listed with its note, adds no storage e
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${study.id}.study.v25.json`,
+        `${study.id}.study.v26.json`,
       ),
-      JSON.stringify({ ...study, version: 25 }),
+      JSON.stringify({ ...study, version: 26 }),
     )
     await harness.reader.action('retry')
     // Act
@@ -4747,7 +4747,7 @@ test('a saved study in a newer format is listed with its note, adds no storage e
         [
           study.id,
           'newer',
-          'This study was saved in format 25 by a newer Codebook; this Codebook reads formats up to 24. Update the extension to open it. The study is kept as it is.',
+          'This study was saved in format 26 by a newer Codebook; this Codebook reads formats up to 25. Update the extension to open it. The study is kept as it is.',
         ],
       ],
     )
@@ -4783,9 +4783,9 @@ test('a reader that starts with a study of a newer Codebook as its newest entry 
     await writeFile(
       join(
         harness.reader.inspect().libraryDirectory!,
-        `${savedAgainByNewer.id}.study.v25.json`,
+        `${savedAgainByNewer.id}.study.v26.json`,
       ),
-      JSON.stringify({ ...savedAgainByNewer, version: 25 }),
+      JSON.stringify({ ...savedAgainByNewer, version: 26 }),
     )
     const restarted = harness.createReader()
     try {
