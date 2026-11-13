@@ -55,7 +55,7 @@ test('the apiServer help explains details.apiProcess and forbids naming an unobs
   assert.deepEqual(missing, [])
 })
 
-// Value: protects=the bundled skill 1.0.104 tells the chat how to report a not-paused API process and the README tells the learner what details.apiProcess means, where the run resource carries it and in which order the failure text gives it; fails_when=the skill version, the skill rule, the README sentence or the README's current API mention is stale; no_claim=how the chat behaves in a host
+// Value: protects=the bundled skill 1.0.105 tells the chat how to report a not-paused API process and the README tells the learner what details.apiProcess means, where the run resource carries it and in which order the failure text gives it; fails_when=the skill version, the skill rule, the README sentence or the README's current API mention is stale; no_claim=how the chat behaves in a host
 test('the skill and the README describe details.apiProcess of an unreached API stop', async () => {
   // Arrange
   const skill = await readPackaged('skills', 'codebook', 'SKILL.md')
@@ -70,7 +70,7 @@ test('the skill and the README describe details.apiProcess of an unreached API s
     'never name a cause the run did not observe',
   ].filter((phrase) => !skill.includes(phrase))
   const missingFromReadme = [
-    'with **MCP API 1.45** (`codebook_status` reports the installed build). API 1.44 is additive:',
+    'with **MCP API 1.45** (`codebook_status` reports the installed build). API 1.45 is additive:',
     '`SERVER_STOP_NOT_REACHED` also states what Codebook measured of the API process at that moment in `details.apiProcess` (MCP API 1.44)',
     '`not-paused` means the API process was running, not paused at any breakpoint, so a request that reached the API may be waiting inside the app',
     'or no request reached the line, `paused` names the repository place where it was paused',

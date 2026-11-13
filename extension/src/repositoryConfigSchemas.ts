@@ -776,7 +776,7 @@ function validateOperations(
  * Called by {@link validateStopAfterOperations}.
  * @param value - The stop's `afterOperation` (1 or more).
  * @param field - The dotted configuration path of that field.
- * @param participant - The stop's participant; only a server stop may use afterOperation 0.
+ * @param participant - The stop's participant; a server stop may use afterOperation 0, and so may a browser stop under adapter next-dev-webpack.
  * @returns The refusal sentence; a browser stop is told to declare the operations only.
  * @example describeOmittedOperationsRefusal(1, 'configuration.afterOperation', 'browser') // '… but operations is omitted; declare the operations.'
  */
