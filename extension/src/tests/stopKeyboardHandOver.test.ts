@@ -365,3 +365,127 @@ test('only the source of the frame the editor focuses for an armed stop is recog
   ])
   assert.equal(afterHandOver, undefined)
 })
+
+// Value: protects=the stop note of the kept Application view (Cycle 0134 D22, /ship review): the paused file of a stop is known also for a stop whose adapter asked to keep the focus, which the editor shows late or only when the learner selects it, and only until the session goes on; fails_when=a stop that waits for no hand-over has no paused file (a late-shown stop file is never noted), another document counts as the paused file, or a stop that ended still names one; why_new=the note checks the covering tab against the stop's own paused file
+test('the paused file of a stop that keeps the focus is its top frame’s source until the session goes on', () => {
+  // Arrange: a library test session stops with the adapter's preserveFocusHint; the adapter answered the stopped thread's top frame in settings.test.js.
+  const handOver = new StopKeyboardHandOver()
+  handOver.arm('library-tests', {
+    keepsFocus: true,
+    threadId: 1,
+    reason: 'breakpoint',
+  })
+  handOver.readEditorsMessage('library-tests', {
+    type: 'request',
+    seq: 7,
+    command: 'stackTrace',
+    arguments: { threadId: 1, startFrame: 0, levels: 1 },
+  })
+  handOver.readAdaptersMessage('library-tests', {
+    type: 'response',
+    request_seq: 7,
+    success: true,
+    command: 'stackTrace',
+    body: {
+      stackFrames: [{ id: 3, source: { path: '/app/settings.test.js' } }],
+    },
+  })
+  const settingsTest = {
+    scheme: 'file',
+    path: '/app/settings.test.js',
+    query: '',
+    fsPath: '/app/settings.test.js',
+  }
+  const otherTest = {
+    scheme: 'file',
+    path: '/app/other.test.js',
+    query: '',
+    fsPath: '/app/other.test.js',
+  }
+
+  // Act: both files are asked for while the stop lasts, then settings.test.js once the session went on.
+  const whileStopped = [
+    handOver.showsPausedFileOf('library-tests', settingsTest, 'linux'),
+    handOver.showsPausedFileOf('library-tests', otherTest, 'linux'),
+  ]
+  handOver.disarm('library-tests')
+  const afterGoingOn = handOver.showsPausedFileOf(
+    'library-tests',
+    settingsTest,
+    'linux',
+  )
+
+  // Assert: the stop waits for no hand-over, and still names its paused file until it ends.
+  assert.equal(handOver.isHeldFor('library-tests'), false)
+  assert.deepEqual(whileStopped, [true, false])
+  assert.equal(afterGoingOn, false)
+})
+
+// Value: protects=the keyboard hand-over of a session whose two threads stop, the second with the adapter's preserveFocusHint (VS Code handles every stored stop again at an invalidated stack): the armed stop of the first thread keeps the frame the editor focuses for it, while the paused file asked for by the stop note is the latest stop's; fails_when=the second thread's stop replaces the first one's frames, so the first thread's paused file never gets the keyboard; why_new=Cycle 0134 /ship review fix, which reads the frames of every stop
+test('a second thread’s stop that keeps the focus leaves the first thread’s waiting stop its paused frame', () => {
+  // Arrange: thread 1 stops and its top frame in actions.ts is answered; then thread 2 stops with the preserveFocusHint and its top frame in notes.ts is answered.
+  const handOver = new StopKeyboardHandOver()
+  handOver.arm('learner-node', { threadId: 1, reason: 'breakpoint' })
+  handOver.readEditorsMessage('learner-node', {
+    type: 'request',
+    seq: 21,
+    command: 'stackTrace',
+    arguments: { threadId: 1, startFrame: 0, levels: 1 },
+  })
+  handOver.readAdaptersMessage('learner-node', {
+    type: 'response',
+    request_seq: 21,
+    success: true,
+    command: 'stackTrace',
+    body: { stackFrames: [{ id: 11, source: { path: '/app/actions.ts' } }] },
+  })
+
+  // Act
+  handOver.arm('learner-node', {
+    keepsFocus: true,
+    threadId: 2,
+    reason: 'breakpoint',
+  })
+  handOver.readEditorsMessage('learner-node', {
+    type: 'request',
+    seq: 22,
+    command: 'stackTrace',
+    arguments: { threadId: 2, startFrame: 0, levels: 1 },
+  })
+  handOver.readAdaptersMessage('learner-node', {
+    type: 'response',
+    request_seq: 22,
+    success: true,
+    command: 'stackTrace',
+    body: { stackFrames: [{ id: 12, source: { path: '/app/notes.ts' } }] },
+  })
+
+  // Assert: the first thread's stop still waits with its own frame; the latest stop's paused file is notes.ts.
+  assert.equal(handOver.isArmedFor('learner-node'), true)
+  assert.equal(handOver.pausedFrameIdOf('learner-node'), 11)
+  assert.deepEqual(
+    [
+      handOver.showsPausedFileOf(
+        'learner-node',
+        {
+          scheme: 'file',
+          path: '/app/notes.ts',
+          query: '',
+          fsPath: '/app/notes.ts',
+        },
+        'linux',
+      ),
+      handOver.showsPausedFileOf(
+        'learner-node',
+        {
+          scheme: 'file',
+          path: '/app/actions.ts',
+          query: '',
+          fsPath: '/app/actions.ts',
+        },
+        'linux',
+      ),
+    ],
+    [true, false],
+  )
+})

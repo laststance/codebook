@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.131",
+  "version": "0.2.132",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -666,7 +666,7 @@
     "@vscode/debugprotocol": "1.68.0",
     "@vscode/vsce": "4.0.0",
     "c8": "12.0.0",
-    "devtools-protocol": "0.0.1742540",
+    "devtools-protocol": "0.0.1743766",
     "esbuild": "0.28.2",
     "eslint": "10.14.0",
     "eslint-config-ts-prefixer": "5.1.0",

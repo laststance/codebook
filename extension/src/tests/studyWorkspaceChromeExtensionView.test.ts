@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -7,7 +8,10 @@ import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
 import {
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+  PRESENTATION_READY_TIMEOUT_MS,
+  STOP_OWN_FOCUS_BOUND_MS,
 } from '../constants'
+import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
@@ -238,6 +242,7 @@ test('the next extension run after Close All Editors opens its view while the ea
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     harness.focusMutableDraft('popup.js', 1)
     harness.closeEmptiedGroupAtInsertion()
+    harness.useHostAppName('Cursor')
     const chat = harness.addSeparateEditorPart()
     const first = await openView(harness, 'close-all-run-1', [])
     first.end('Clicked Add note; the saved title read "Bookmark Notes".')
@@ -271,7 +276,9 @@ test('the next extension run after Close All Editors opens its view while the ea
       })),
       [
         { column: 1, tabs: ['codebook · Application close-al'], locked: true },
+        // The group Codebook created below the view for the run's stop files (Cycle 0134 D24).
         { column: 2, tabs: [], locked: false },
+        { column: 3, tabs: [], locked: false },
       ],
     )
     assert.equal(harness.reader['errors'].size, 0)
@@ -288,10 +295,14 @@ test('an extension run in Cursor opens its view when no group has a tab and Curs
   try {
     readerSeams(harness).stopOwnTimer()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.useHostAppName('Cursor')
     const chat = harness.addSeparateEditorPart()
     chat.closeChatTab()
     for (const tab of [...harness.groups[0]!.tabs]) harness.closeTabByHand(tab)
     harness.replaceGroupObjectsOnTabChanges()
+    // Cursor 3.30.14 lists every webview tab under `mainThreadWebview-<viewType>` and wraps each group it reports; the stop files' destination step (Cycle 0134 D24) reads and creates groups through those wrappers, so the model must report them.
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.useCursorGroupWrappers()
     assert.deepEqual(
       harness.groups.map((group) => ({
         column: group.viewColumn,
@@ -339,6 +350,7 @@ test('the next extension run in Cursor after Close All Editors opens its view wh
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     harness.focusMutableDraft('popup.js', 1)
     harness.closeEmptiedGroupAtInsertion()
+    harness.useHostAppName('Cursor')
     const chat = harness.addSeparateEditorPart()
     const first = await openView(harness, 'replaced-run-1', [])
     first.end('Clicked Add note; the saved title read "Bookmark Notes".')
@@ -388,7 +400,9 @@ test('the next extension run in Cursor after Close All Editors opens its view wh
       })),
       [
         { column: 1, tabs: ['codebook · Application replaced'], locked: true },
+        // The group Codebook created below the view for the run's stop files (Cycle 0134 D24).
         { column: 2, tabs: [], locked: false },
+        { column: 3, tabs: [], locked: false },
       ],
     )
     assert.equal(harness.reader['errors'].size, 0)
@@ -407,6 +421,7 @@ test('the next extension run in Cursor after Close All Editors and a new Agent c
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     harness.focusMutableDraft('popup.js', 1)
     harness.closeEmptiedGroupAtInsertion()
+    harness.useHostAppName('Cursor')
     const chat = harness.addSeparateEditorPart()
     const first = await openView(harness, 'new-chat-run-1', [])
     first.end('Clicked Add note; the saved title read "Bookmark Notes".')
@@ -455,8 +470,10 @@ test('the next extension run in Cursor after Close All Editors and a new Agent c
       })),
       [
         { column: 1, tabs: ['codebook · Application new-chat'], locked: true },
+        // The group Codebook created below the view for the run's stop files (Cycle 0134 D24).
+        { column: 2, tabs: [], locked: false },
         {
-          column: 2,
+          column: 3,
           tabs: ['Codebook submit request detail'],
           locked: false,
         },
@@ -469,7 +486,7 @@ test('the next extension run in Cursor after Close All Editors and a new Agent c
   }
 })
 
-// protects=Cycle 0133 D12 (/ship QA revalidation R1b, Cursor 3.30.14): after Close All Editors left no learner's group, the next extension run's stop file is not shown into the Agent part's group beside the view, and the view stays in front of its group after the attach; fails_when=the column after the view counts as the learner's group although it lies beyond the main editor's measured groups, so the stop file lands in the Agent part (natively) or in front of the view (the fake redirects a show aimed at the chat part to the active group), and the paused-file watch then moves files between the view's group and the Agent part until the view is refused with "Application ownership changed"; no_claim=where the debugger opens the first pause's file when no learner's group exists (it may cover the view, the frozen D13 boundary) and Cursor's own Close All Editors (the explicit closes and replaceGroupObjectsOnTabChanges stand in for it)
+// protects=Cycle 0133 D12 (/ship QA revalidation R1b, Cursor 3.30.14; Cycle 0134 D24 now creates the learner's group the stop file opens in): after Close All Editors left no learner's group, the next extension run's stop file is not shown into the Agent part's group beside the view, and the view stays in front of its group after the attach; fails_when=the column after the view counts as the learner's group although it lies beyond the main editor's measured groups, so the stop file lands in the Agent part (natively) or in front of the view (the fake redirects a show aimed at the chat part to the active group), and the paused-file watch then moves files between the view's group and the Agent part until the view is refused with "Application ownership changed"; no_claim=where the debugger opens the first pause's file when no learner's group exists (it may cover the view, the frozen D13 boundary) and Cursor's own Close All Editors (the explicit closes and replaceGroupObjectsOnTabChanges stand in for it)
 test('the next extension run in Cursor after Close All Editors shows no stop file in the Agent part and keeps its view in front', async () => {
   // Arrange: an ended run kept its view; then every editor closed in Cursor 3.30.14's order, which leaves no learner's group beside the Agent part.
   const harness = await workspaceHarness()
@@ -479,6 +496,7 @@ test('the next extension run in Cursor after Close All Editors shows no stop fil
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     harness.focusMutableDraft('popup.js', 1)
     harness.closeEmptiedGroupAtInsertion()
+    harness.useHostAppName('Cursor')
     const chat = harness.addSeparateEditorPart()
     const first = await openView(harness, 'agent-stop-run-1', [])
     first.end('Clicked Add note; the saved title read "Bookmark Notes".')
@@ -510,8 +528,8 @@ test('the next extension run in Cursor after Close All Editors shows no stop fil
       'popup',
     )
 
-    // Assert: no group shows the stop file, the view stands in front of its group in column 1, and the Agent part's group still holds no tab.
-    assert.equal(groupShowing(harness, 'settings.js'), undefined)
+    // Assert: the stop file stands in the group Codebook created below the view (Cycle 0134 D24), never in the Agent part's group; the view stands in front of its group in column 1.
+    assert.equal(groupShowing(harness, 'settings.js')?.viewColumn, 2)
     assert.deepEqual(
       harness.groups.map((group) => ({
         column: group.viewColumn,
@@ -524,7 +542,8 @@ test('the next extension run in Cursor after Close All Editors shows no stop fil
           tabs: ['codebook · Application agent-st'],
           front: 'codebook · Application agent-st',
         },
-        { column: 2, tabs: [], front: undefined },
+        { column: 2, tabs: ['settings.js'], front: 'settings.js' },
+        { column: 3, tabs: [], front: undefined },
       ],
     )
     second.close()
@@ -2858,6 +2877,1432 @@ test('the status item of an extension run shows its phase text and its learning 
       command: 'codebook.saveLearningReplay',
       arguments: [`${harness.service.instanceId}_${record.id}`],
     })
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 (Cursor 3.30.14, Cycle 0133 N2 run 122e9d6c): after Close Study Workspace and Open Study Workspace left the Study's Application pane in front of the learner's files in the first group, with the Study pane holding the keyboard, the next extension run shows its view, and its preparation takes the first group's keyboard through the Application pane without showing a learner file in column 1 with the keyboard; the learner's files stay as tabs behind the pane; fails_when=the preparation shows the retained learner file in front of the Study's Application pane (Cursor then reports the pane hidden and the placement guard refuses the run's view with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."); no_claim=that this fake reproduces the refusal itself (it shows the learner file and no guard fires, so the test names the show), Cursor's own placement of the reopened Application pane (the reopen after a close stands in for it) and where the editor gives the keyboard (ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard stands in for Cursor 3.30.14's focus command)
+test('the next extension run after Close and Open Study Workspace shows its view without putting a learner file in front of the Study’s Application pane in the first group', async () => {
+  // Arrange: the Study is open beside Cursor's Agent part, closed and opened again; the reopened Application pane stands in front of both learner files in the first group while the Study pane holds the keyboard.
+  const harness = await workspaceHarness(false)
+  const refusals: string[] = []
+  const shows: {
+    filename: string
+    column?: number
+    preserveFocus?: boolean
+  }[] = []
+  try {
+    harness.reader.diagnostics = {
+      log: (entry): void => {
+        if (entry.surface === 'presentation:placement-refused')
+          refusals.push(entry.surface)
+      },
+      show: () => undefined,
+    }
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+    readerSeams(harness).stopOwnTimer()
+    const showTextDocument = harness.editor.window.showTextDocument
+    harness.editor.window.showTextDocument = async (...args) => {
+      const [document, options] = args
+      shows.push({
+        filename:
+          ('uri' in document ? document.uri : document).path
+            .split('/')
+            .at(-1) ?? '',
+        column: options?.viewColumn,
+        preserveFocus: options?.preserveFocus,
+      })
+      return showTextDocument(...args)
+    }
+    assert.equal(harness.groups[0]?.activeTab?.label, 'codebook · Application')
+
+    // Act
+    const view = await openView(harness, 'reopened-study-run-1', [])
+
+    // Assert
+    // No show takes the keyboard into a learner file, whether it names column 1 or the active group.
+    assert.deepEqual(
+      shows.filter(
+        (show) =>
+          (show.column === undefined || show.column === 1) &&
+          !show.preserveFocus,
+      ),
+      [],
+    )
+    assert.deepEqual(refusals, [])
+    assert.equal(harness.reader['errors'].size, 0)
+    // The view is shown: the Application pane stays in front of the first group, reports itself active, and the learner's tabs are behind it.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    assert.equal(
+      harness.groups[0]?.activeTab?.label,
+      'codebook · Application reopened',
+    )
+    assert.equal(application.active, true)
+    assert.equal(application.visible, true)
+    const learnerGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'App.tsx'),
+    )
+    assert.deepEqual(
+      learnerGroup?.tabs
+        .map((tab) => tab.label)
+        .filter((label) =>
+          ['buildStockRequestConfig.ts', 'App.tsx'].includes(label),
+        ),
+      ['buildStockRequestConfig.ts', 'App.tsx'],
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 rule 4: when the first group's front tab is the learner's own file, not the Study's Application pane, the extension run's preparation does not take the first group's keyboard through the Application pane, so the pane is not revealed in place with the keyboard behind the learner's file and the run's view is shown; fails_when=the pane route of the preparation covers a first group whose front tab is a learner file, so the Application pane is revealed over the file the learner chose; no_claim=that the learner-file borrow still shows the file (the existing Cursor chat tests of the borrow, such as "starting a run after idle Live selection preserves the separate chat keyboard without rearranging its prepared panes", run through it), and Cursor's own focus events
+test('the next extension run does not reveal the Application pane in place when a learner file, not the pane, is in front of the first group', async () => {
+  // Arrange: the reopened Study's Application pane shares the first group, the learner has brought App.tsx in front of it, and the Study pane holds the keyboard.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    const learnerFile = harness.groups[0]!.tabs.find(
+      (tab) => tab.label === 'App.tsx',
+    )
+    assert.ok(learnerFile)
+    harness.groups[0]!.activeTab = learnerFile
+    harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    // Preconditions: the Study pane holds the keyboard and the learner's file, not the Application pane, is in front of the first group.
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab?.label,
+      'codebook · Study',
+    )
+    assert.equal(harness.groups[0]?.activeTab?.label, 'App.tsx')
+    // Every reveal of the pane with the keyboard, in place or with a column.
+    const keyboardReveals: (number | undefined)[] = []
+    const reveal = application.reveal.bind(application)
+    application.reveal = (column, preserveFocus): void => {
+      if (!preserveFocus) keyboardReveals.push(column)
+      reveal(column, preserveFocus)
+    }
+
+    // The preparation's focus check, which it reaches only after it chose its route to the first group's keyboard: whether that route was the pane route.
+    const checkFocus = harness.reader['hasApplicationPreparationFocus'].bind(
+      harness.reader,
+    )
+    const tookPaneRoutes: boolean[] = []
+    harness.reader['hasApplicationPreparationFocus'] = (...args) => {
+      tookPaneRoutes.push(args[3])
+      return checkFocus(...args)
+    }
+
+    // Act: the editor ignores the first group's focus command here, so the run's own outcome is not what this test reads.
+    const view = await openView(harness, 'learner-file-front-run-1', []).catch(
+      () => undefined,
+    )
+
+    // Assert
+    // The preparation reached its focus check, so a refusal before the route was chosen cannot pass for rule 4.
+    assert.deepEqual(tookPaneRoutes, [false])
+    assert.deepEqual(keyboardReveals, [])
+    view?.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 (cancellation): cancelling the run while its preparation waits for the Application pane in the first group to report itself active ends the run with the cancellation's reason at once, not after the presentation-ready bound; fails_when=the wait ignores the cancellation and holds the layout queue until PRESENTATION_READY_TIMEOUT_MS; no_claim=what the editor does with the pane afterwards
+test('the next extension run cancelled while it waits for the Application pane in the first group ends with its reason without waiting out the bound', async () => {
+  // Arrange: the reopened Study as above, but the pane never reports itself active.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    // The reveal is swallowed, so the pane stays inactive and the wait goes on.
+    let revealed = false
+    application.reveal = (): void => {
+      revealed = true
+    }
+    const create = harness.reader.presentation.createChromeExtensionViewport
+    assert.ok(create)
+    const reason = new Error('The run was cancelled during the pane wait.')
+    const controller = new AbortController()
+    const startedMs = performance.now()
+
+    // Act
+    const outcome = create('cancelled-pane-wait-run-1', controller.signal).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    await waitUntil(() => revealed, 'the preparation’s in-place reveal', 2_000)
+    controller.abort(reason)
+    const rejection = await outcome
+
+    // Assert
+    assert.equal(rejection, reason)
+    // gstack-timing-ok: a wait that ignores the cancellation also ends with the reason, but only once the presentation-ready bound has passed, so only the elapsed time against that bound tells the two apart.
+    assert.ok(performance.now() - startedMs < PRESENTATION_READY_TIMEOUT_MS)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 (acknowledgement scope): a stale active report of the Application pane in front of the first group is no proof that the first group holds the keyboard unless the preparation took the pane route; fails_when=the pane's report is accepted whatever route the preparation took, so a stale active:true passes just after the keyboard moved elsewhere; no_claim=the whole preparation (the focus check is read directly with a stale report forced)
+test('the first group’s keyboard is not acknowledged by the Application pane’s stale active report when the preparation did not take the pane route', async () => {
+  // Arrange: the reopened Study; the Study pane holds the keyboard, and the Application pane in front of the first group still reports itself active.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    Object.defineProperty(application, 'active', { get: () => true })
+    // The preparation's own call supplies the native first group the check reads.
+    const original = harness.reader['hasApplicationPreparationFocus'].bind(
+      harness.reader,
+    )
+    const calls: Parameters<typeof original>[] = []
+    harness.reader['hasApplicationPreparationFocus'] = (...args) => {
+      calls.push(args)
+      return original(...args)
+    }
+    const view = await openView(harness, 'stale-active-run-1', [])
+    const [primary] = calls[0] ?? []
+    assert.ok(primary)
+    // The keyboard moves back to the Study pane after the run's preparation, while the Application pane's report stays stale.
+    harness.activatePaneByHand('codebook.studyContext')
+    // A main-group count that does not match the editor's, so only the pane's report can answer.
+    const unmatchedMainCount = 99
+
+    // Act
+    const withoutPaneRoute = original(
+      primary,
+      unmatchedMainCount,
+      undefined,
+      false,
+    )
+    const withPaneRoute = original(primary, unmatchedMainCount, undefined, true)
+
+    // Assert
+    assert.equal(withoutPaneRoute, false)
+    assert.equal(withPaneRoute, true)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D25 (Step 0 probe-nsx-1, Cursor 3.30.14): the first extension run in a fresh window opens its stop file beside its view before the first click, and the view stays in front at the first pause, although Cursor sends every show into another group to the main editor's last active group while its Agent chat holds the keyboard; fails_when=the preparation hands the keyboard back to the chat with the Application's group as the last active one, so the show of the stop file lands in the view's group and the view is refused at the first pause with "Application ownership changed"; no_claim=Cursor's own redirect rule for every column (redirectShowsBesideChatToLastActiveGroup models the observed cases) and the debugger's real reveal (debuggerOpensStopFile stands in for it)
+test('the first extension run in a new Cursor window opens its stop files beside its view before the first click and keeps the view in front at the first pause', async () => {
+  // Arrange: one empty main group, the Agent part beside it, and the chat holding the keyboard, as a new window starts.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // The window's one group is empty: the fake opens a draft there unless it is emptied.
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const view = await openView(harness, 'new-window-run-1', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+
+    // Act: the run attaches its surface, and the debugger's first pause reveals the stop file, then the viewport brings the view forward.
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    harness.debuggerOpensStopFile('settings.js', applicationColumn)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    const stopFileGroup = groupShowing(harness, 'settings.js')
+    assert.equal(stopFileGroup?.viewColumn, applicationColumn + 1)
+    assert.equal(
+      stopFileGroup?.tabs.find((tab) => tab.label === 'settings.js')?.isPreview,
+      false,
+    )
+    assert.deepEqual(
+      applicationGroupOf(harness, applicationColumn)?.tabs.map(
+        (tab) => tab.label,
+      ),
+      ['codebook · Application new-wind'],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors']], [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24 (Step 0 U4, Cursor 3.30.14): when Close All Editors left the earlier Application group alone in the main editor and Cursor closed the emptied first group at the next run's insertion, the preparation creates the learner's group below the view, so the run's stop file opens beside the view; fails_when=no destination exists for the stop files, so no stop file opens beside the view and a paused file Cursor opens lands in the view's group; a broken precondition of the model (a main editor of more than one group, a chat part that is still the active part) surfaces only through the group list compared below, or through the model's own assertion in newGroupBelow; no_claim=Cursor's own newGroupBelow and Close All Editors (the fake models them) and that Cursor keeps the new empty group when the learner's next command comes
+test('the next extension run after Close All Editors creates a group below its view and opens its stop file there while the main editor held only the view’s group', async () => {
+  // Arrange: the earlier run's view is kept in the main editor's only group, which is empty and locked, beside the Agent part with no tab.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'only-group-run-1', [])
+    first.end('The first run ended.')
+    first.close()
+    await closeAllEditors(harness, chat)
+    // The learner opens a new Agent chat and types in it.
+    chat.openChatTab('Codebook submit request detail')
+    chat.focus()
+
+    // Act: the next run opens its view, attaches its surface, and the debugger's first pause reveals the stop file.
+    const second = await openView(harness, 'only-group-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    harness.debuggerOpensStopFile('settings.js', applicationColumn)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the view's group, the new group holding the stop file, and the Agent part's group after them.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        locked: Boolean(group.locked),
+      })),
+      [
+        {
+          column: 1,
+          tabs: ['codebook · Application only-gro'],
+          locked: true,
+        },
+        { column: 2, tabs: ['settings.js'], locked: false },
+        { column: 3, tabs: ['Codebook submit request detail'], locked: false },
+      ],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 (Step 0 probe-nsx-2, Cursor 3.30.14): after an extension run ended and kept its view, a library test run that leases no pane pauses in a file that is open nowhere, and Cursor opens that file beside the view, so the next extension run shows its view; fails_when=the kept view's group is still the main editor's last active group when the test run pauses, so the paused file opens in front of the view and the next run's view is refused with "Application ownership changed"; no_claim=the test run's own debugger (debuggerOpensStopFile stands in for js-debug's reveal) and Cursor's redirect rule beyond the observed cases
+test('the next extension run shows its view after a library test run paused in a file that was open nowhere while the earlier view was kept', async () => {
+  // Arrange: a first extension run ended and kept its view; the Agent chat holds the keyboard.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'settings.test.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // The window's one group is empty: the fake opens a draft there unless it is emptied.
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const first = await openView(harness, 'library-test-run-1', ['settings.js'])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    first.end('The first run ended.')
+    first.close()
+
+    // Act: the library test run pauses in a file nobody opened; then the next extension run starts and attaches.
+    harness.debuggerOpensStopFile('settings.test.js', applicationColumn)
+    const second = await openView(harness, 'library-test-run-2', [
+      'settings.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    assert.equal(
+      groupShowing(harness, 'settings.test.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application library-',
+    )
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+/** The debug session of a Codebook library test run, named as the run names its root attach; the harness names a session by its id, and a test registers it in the stop ledger as the owned Node test run does. */
+const LIBRARY_TEST_SESSION = 'codebook node test library-tests-1'
+
+/**
+ * Declares a stop in a file for a run of the window that has no pane of its own (a library test run), the way the harness's other tests stand in an earlier run: a copy of a started run's record whose first stop sits in this file.
+ * @param harness - The harness whose service holds the record.
+ * @param filename - The file of the declared stop, relative to the repository.
+ * @returns The id of the stand-in record, to delete it when the test ends.
+ * @example const recordId = await declareRunStop(harness, 'settings.test.js')
+ */
+async function declareRunStop(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  filename: string,
+): Promise<string> {
+  harness.acknowledgeContext()
+  const receipt = harness.service.start({
+    instanceId: harness.service.instanceId,
+    profile: 'repository-browser',
+    configuration: harness.configuration,
+    key: randomUUID(),
+  })
+  const record = harness.service.records.get(receipt.runId)!
+  await record.preparation
+  const recordId = randomUUID()
+  harness.service.records.set(recordId, {
+    ...record,
+    id: `${harness.service.instanceId}_${recordId}`,
+    // No runtime of its own: a run of the window that holds no lease.
+    runtime: undefined,
+    definition: {
+      ...record.definition!,
+      configuration: {
+        ...record.definition!.configuration,
+        source: { ...record.definition!.configuration.source, path: filename },
+      },
+    },
+  })
+  return recordId
+}
+
+/**
+ * Declares a stop in another file for one more run of the window, by copying a stand-in record that {@link declareRunStop} made: the service starts one run at a time, so a second stand-in cannot come from a second start.
+ * @param harness - The harness whose service holds the records.
+ * @param recordId - The stand-in record to copy.
+ * @param filename - The file of the copy's declared stop, relative to the repository.
+ * @returns The id of the copy, to delete it when the test ends.
+ * @example const otherId = declareAnotherRunStop(harness, recordId, 'other.test.js')
+ */
+function declareAnotherRunStop(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  recordId: string,
+  filename: string,
+): string {
+  const template = harness.service.records.get(recordId)
+  assert.ok(template?.definition)
+  const copyId = randomUUID()
+  harness.service.records.set(copyId, {
+    ...template,
+    id: `${harness.service.instanceId}_${copyId}`,
+    definition: {
+      ...template.definition,
+      configuration: {
+        ...template.definition.configuration,
+        source: { ...template.definition.configuration.source, path: filename },
+      },
+    },
+  })
+  return copyId
+}
+
+/**
+ * Lets a first extension run end with its view kept in front of its group, then a session stop with its file opened in that group, as Cursor shows a stop of a run that leases no pane; then opens the next run's view and brings it forward.
+ * @param harness - The harness.
+ * @param options - `session` stops (its name is the id); the stop's file `pausedFile`; `fileInFront` is the file that comes in front of the view before the frame is reported (left out, the paused file; another one stands for a file the learner brought there meanwhile); `lateFrame` makes the editor report the frame after the bound for a doubtful stop, so the frame does not count as the stop's own.
+ * @returns The label in front of the view's group after the next run's view was brought forward, and the text of the refusal when the reveal was refused.
+ * @example const { frontLabel } = await stopBesideKeptView(harness, { session: LIBRARY_TEST_SESSION, pausedFile: 'settings.test.js' })
+ */
+async function stopBesideKeptView(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  options: {
+    session: string
+    pausedFile: string
+    fileInFront?: string
+    lateFrame?: boolean
+  },
+): Promise<{ frontLabel: string | undefined; refusal: string | undefined }> {
+  const fileInFront = options.fileInFront ?? options.pausedFile
+  readerSeams(harness).stopOwnTimer()
+  await writeRepositoryFile(harness, 'settings.js')
+  await writeRepositoryFile(harness, options.pausedFile)
+  await writeRepositoryFile(harness, fileInFront)
+  await writeRepositoryFile(harness, 'popup.js')
+  harness.focusMutableDraft('popup.js', 1)
+  const first = await openView(harness, 'covered-run-1', ['settings.js'])
+  const applicationColumn = harness.reader['app']?.viewColumn
+  assert.ok(applicationColumn)
+  first.end('The first run ended.')
+  first.close()
+  // The session stops: the editor reads the adapter's stop, then opens the paused file in the view's group and reports the frame.
+  harness.pauseDebugger({
+    session: options.session,
+    staysInBackground: true,
+    keepsFocus: options.lateFrame,
+    pausedFile: options.pausedFile,
+  })
+  // Cursor opens the file in the view's group, the main editor's last active one.
+  harness.openPausedFileInLockedGroup(fileInFront, applicationColumn)
+  if (options.lateFrame) {
+    const stopReadAtMs = performance.now()
+    await waitUntil(
+      () => performance.now() - stopReadAtMs > STOP_OWN_FOCUS_BOUND_MS + 50,
+      'the editor reports the stop frame after the bound for a doubtful stop',
+      5_000,
+    )
+  }
+  harness.reportStopFrame(options.session)
+  assert.equal(
+    applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+    fileInFront,
+  )
+  const second = await openView(harness, 'covered-run-2', ['settings.js'])
+  try {
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    // A file that is no noted stop file makes the reveal refuse, and the learner's file stays in front.
+    let refusal: string | undefined
+    try {
+      await harness.revealApplicationPaneOverPausedFile()
+    } catch (error) {
+      refusal = String(error)
+    }
+    return {
+      frontLabel: applicationGroupOf(harness, applicationColumn)?.activeTab
+        ?.label,
+      refusal,
+    }
+  } finally {
+    second.close()
+  }
+}
+
+// protects=Cycle 0134 D22 safety net (Step 0 probe-nsx-2): a stop file of a run that leases no pane, which still comes in front of the kept view at that run's own debugger stop, is noted like the ended run's own leftover, so the next extension run's view comes forward over it; fails_when=the stop tracker notes no such file, so the next run's attach has no note for the covering tab and refuses its view with "Application ownership changed"; no_claim=why the editor opens the file in the view's group (the fake opens it there, without the redirect model) and the stops of a run that has its own pane
+test('the next extension run shows its view over the stop file a library test run opened in front of the kept view at its own stop', async () => {
+  // Arrange: the library test run declared its stop in settings.test.js; the owned Node test run registers its sessions in the stop ledger.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'codebook · Application covered-')
+    assert.equal(refusal, undefined)
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 safety net, review finding (late frame): a library test run's stop that the editor reports late, so its frame does not count as brought by the stop, is still noted when its file stands in front of the kept view; fails_when=the note is taken only for a frame that came with its stop, so the late-shown stop file stays unnoted and the next run's view is refused; no_claim=the length of the real editor's delay
+test('the next extension run shows its view over the stop file of a library test run whose frame the editor reported late', async () => {
+  // Arrange: the owned Node test run registers its sessions in the stop ledger.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+      lateFrame: true,
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'codebook · Application covered-')
+    assert.equal(refusal, undefined)
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22, review finding (learner's own debugger): a file the learner's own debug session (F5 on their launch configuration) stops in, in front of the kept view, is never noted, so the next run does not move the learner's file; fails_when=the note is taken for any session, so the next run's view comes in front of the learner's file; no_claim=the real editor's own handling of the learner's session
+test("the next extension run does not hide the file the learner's own debug session stopped in", async () => {
+  // Arrange: the file is a declared stop file, so only the session tells it is the learner's.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: 'Launch Program',
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'settings.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22, review finding (stop-file match): a file in front of the kept view at a Codebook run's stop that no run declared as a stop is the learner's and is never noted; fails_when=the note takes any unedited file that covers the view, so the next run's view comes in front of a file that is no stop file; no_claim=which file the real editor opens at a stop
+test('the next extension run does not hide a file in front of the kept view that no run declared as a stop file', async () => {
+  // Arrange: the library test run declared its stop in another file; its sessions are in the stop ledger.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'other.test.js')
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'settings.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 safety net, /ship review (Codex adversarial and structured): at a library test run's stop that the editor shows late, a declared stop file the learner brought in front of the kept view meanwhile is not that stop's paused file and is never noted, so the next run does not hide it; fails_when=the note takes any declared stop file that covers the view at the stop's frame, so the next run's view comes in front of the learner's file; no_claim=where the real editor opens the late stop's own file (the fake opens it nowhere)
+test('the next extension run does not hide a declared stop file the learner brought in front of the kept view while a library test run’s stop waited to be shown', async () => {
+  // Arrange: two runs of the window declared stops, in settings.test.js and in other.test.js; the library test run's sessions are in the stop ledger.
+  const harness = await workspaceHarness()
+  const recordIds: string[] = []
+  try {
+    recordIds.push(await declareRunStop(harness, 'settings.test.js'))
+    recordIds.push(
+      declareAnotherRunStop(harness, recordIds[0]!, 'other.test.js'),
+    )
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
+
+    // Act: the library test run stops in settings.test.js; before the editor shows that stop, other.test.js comes in front of the kept view.
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+      fileInFront: 'other.test.js',
+      lateFrame: true,
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'other.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    for (const recordId of recordIds) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22, /ship review (Codex adversarial, specialist and native reviewers): a stop of the learner's own debug session whose launch configuration is named like a Codebook run is never noted, because only the stop ledger says which stops are Codebook's; fails_when=the note trusts the session's name ("codebook " at its start), so the next run's view comes in front of the file the learner's own session stopped in; no_claim=the real editor's handling of the learner's session
+test('the next extension run does not hide the file a learner’s debug session named like a Codebook run stopped in', async () => {
+  // Arrange: the file is a declared stop file, and the learner's launch configuration starts with "codebook "; the stop ledger holds none of its stops.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: 'codebook local development',
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'settings.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D25 on the reuse path (/ship review round, CodeRabbit major): an extension run that reuses the kept view, after the learner selected the view, opens its stop files beside the view before its first click and keeps the view in front, and the keyboard is back in the chat; fails_when=the reuse returns the kept pane without preparing the stop files' destination, so the view's group is still the main editor's last active group and the run's stop file opens in front of the view; no_claim=Cursor's own redirect rule for every column (redirectShowsBesideChatToLastActiveGroup models the observed cases) and which group the learner's next click selects
+test('the next extension run that reuses the kept view after the learner selected it opens its stop files beside the view and keeps the view in front', async () => {
+  // Arrange: a first run ended and kept its view; the learner clicked into the view, which makes its group the main editor's last active group; then the chat took the keyboard.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // The window's one group is empty: the fake opens a draft there unless it is emptied.
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const first = await openView(harness, 'reuse-run-1', [])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    first.end('The first run ended.')
+    first.close()
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    // The learner types in the chat again: Cursor then names the chat's own group (Cycle 0134 Step 0), not the view's.
+    chat.focusTab()
+    assert.equal(harness.lastActiveMainColumn(), applicationColumn)
+
+    // Act: the next run reuses the kept pane, attaches its surface, and the debugger's first pause reveals the stop file.
+    const second = await openView(harness, 'reuse-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    harness.debuggerOpensStopFile('settings.js', applicationColumn)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    assert.equal(
+      groupShowing(harness, 'settings.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    assert.deepEqual(
+      applicationGroupOf(harness, applicationColumn)?.tabs.map(
+        (tab) => tab.label,
+      ),
+      ['codebook · Application reuse-ru'],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24 on the reuse path (/ship review round, CodeRabbit major): an extension run that reuses the kept view, whose group is the main editor's only group beside Cursor's Agent part, creates the group for its stop files below the view; fails_when=the reuse returns the kept pane without creating a destination, so no stop file opens beside the view; no_claim=Cursor's own newGroupBelow (the fake models it) and that Cursor keeps the new empty group when the learner's next command comes
+test('the next extension run that reuses the kept view alone in the main editor creates a group below it and opens its stop file there', async () => {
+  // Arrange: a first run ended and kept its view in the main editor's only group; the learner clicked into the view; the chat has the keyboard again.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'reuse-alone-1', [])
+    first.end('The first run ended.')
+    first.close()
+    // The learner closes every group but the kept view's and the Agent part's.
+    for (const group of harness.groups.filter(
+      (candidate) =>
+        candidate.viewColumn !== 1 && !candidate.tabs.includes(chat.tab),
+    )) {
+      await harness.editor.window.tabGroups.close([...group.tabs], true)
+      await harness.editor.window.tabGroups.close(group, true)
+    }
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    // The learner types in the chat again: Cursor then names the chat's own group (Cycle 0134 Step 0), not the view's.
+    chat.focusTab()
+    assert.deepEqual(
+      harness.groups.map((group) => group.viewColumn),
+      [1, 2],
+    )
+
+    // Act
+    const second = await openView(harness, 'reuse-alone-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    harness.debuggerOpensStopFile('settings.js', 1)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the view's group, the created group holding the stop file, and the Agent part's group after them.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application reuse-al'] },
+        { column: 2, tabs: ['settings.js'] },
+        { column: 3, tabs: ['New Agent'] },
+      ],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24, /ship review (Codex adversarial): a run that reuses the kept view alone in the main editor creates its stop files' group only while the view's group holds the keyboard, so when the chat has the keyboard again right after Codebook focused the view's group (a learner's click, or Cursor's own return seen in N60), the chat's part stays as it was and the layout line names why no group was made; fails_when=the preparation runs workbench.action.newGroupBelow while the chat holds the keyboard, which adds the group below the chat's group (the fake splits the group the editor names) and counts it as the main editor's; no_claim=what Cursor 3.30.14 itself does with newGroupBelow while its Agent part holds the keyboard (not observed natively) and where the run's stop files open without a destination
+test('the next extension run that reuses the kept view alone creates no group for its stop files when the chat has the keyboard again right after Codebook focuses the view', async () => {
+  // Arrange: a first run ended and kept its view in the main editor's only group; the learner clicked into the view; the chat has the keyboard again.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'reuse-click-1', [])
+    first.end('The first run ended.')
+    first.close()
+    // The learner closes every group but the kept view's and the Agent part's.
+    for (const group of harness.groups.filter(
+      (candidate) =>
+        candidate.viewColumn !== 1 && !candidate.tabs.includes(chat.tab),
+    )) {
+      await harness.editor.window.tabGroups.close([...group.tabs], true)
+      await harness.editor.window.tabGroups.close(group, true)
+    }
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    chat.focusTab()
+    // Cursor's chat takes the keyboard back right after Codebook's focus of the view's group, and Cursor goes on naming the chat's group (N60).
+    harness.takesKeyboardBackFromFirstGroupBesideChat()
+
+    // Act: the next run reuses the view.
+    const second = await openView(harness, 'reuse-click-2', ['settings.js'])
+
+    // Assert: still the view's group and the Agent part's group only; the chat has the keyboard; the layout line names the refusal.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application reuse-cl'] },
+        { column: 2, tabs: ['New Agent'] },
+      ],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors'].keys()], ['layout'])
+    assert.equal(
+      harness.reader['errors'].get('layout'),
+      'Error: The keyboard left the Application’s group before a group for the run’s stop files was created beside it; no group was created.',
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24 Cursor gate (/ship review round, OCR P2): in VS Code, beside a floating editor window that holds no chat tab, a run's preparation creates no group for stop files; fails_when=the destination step runs for every host with another editor part and no chat editor tab, so VS Code gets an empty group below its view; no_claim=VS Code's own floating windows (the fake's second editor part stands in for one) and the placement of a stop file in VS Code
+test('an extension run in VS Code beside a floating editor window of non-chat tabs creates no group for its stop files', async () => {
+  // Arrange: after Close All Editors the earlier run's empty Application group is the main editor's only group beside a second editor part whose tab is no chat; the host is VS Code, which closes the emptied first group at the next insertion.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    const part = harness.addSeparateEditorPart()
+    const earlier = await openView(harness, 'vscode-window-0', [])
+    earlier.end('The earlier run ended.')
+    earlier.close()
+    await closeAllEditors(harness, part)
+    part.openChatTab('Notes')
+
+    // Act
+    const view = await openView(harness, 'vscode-window-1', ['settings.js'])
+
+    // Assert: the view's group and the other part's group only.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application vscode-w'] },
+        { column: 2, tabs: ['Notes'] },
+      ],
+    )
+    assert.deepEqual([...harness.reader['errors']], [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24 fallback (/ship review round, OCR P2): when the editor refuses to create the group for the run's stop files, the stop file never lands in the Agent part's group, the view stays in front of its group, and the refusal is reported on the layout line while the run goes on; fails_when=the refusal ends the preparation (the view is refused), or the stop file is shown into the Agent part's group beside the view; no_claim=why a real editor would refuse newGroupBelow (failNewGroupBelow stands in) and where the debugger opens the first pause's file without a destination
+test('the next extension run in Cursor after Close All Editors goes on with its view in front when the editor cannot create a group for its stop files', async () => {
+  // Arrange: an ended run kept its view alone in the main editor beside Cursor's Agent part, and the editor will refuse to create a group.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'no-destination-1', [])
+    first.end('The first run ended.')
+    first.close()
+    await closeAllEditors(harness, chat)
+    chat.openChatTab('Codebook submit request detail')
+    chat.focus()
+    harness.failNewGroupBelow()
+
+    // Act
+    const second = await openView(harness, 'no-destination-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+
+    // Assert: no group shows the stop file, the view stands in front of column 1, and the Agent part's tab is untouched; the refusal is on the layout line.
+    assert.equal(groupShowing(harness, 'settings.js'), undefined)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        front: group.activeTab?.label,
+      })),
+      [
+        {
+          column: 1,
+          tabs: ['codebook · Application no-desti'],
+          front: 'codebook · Application no-desti',
+        },
+        {
+          column: 2,
+          tabs: ['Codebook submit request detail'],
+          front: 'Codebook submit request detail',
+        },
+      ],
+    )
+    assert.equal(
+      harness.reader['errors'].get('layout'),
+      'Error: workbench.action.newGroupBelow is unavailable',
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Builds the reopened Study beside Cursor's Agent part: Close Study Workspace and Open Study Workspace left the Study's Application pane in front of the learner's files in the first group, the captured source in the next group and the Study pane in its own group; the learner worked in the captured source's group last, then clicked into the Agent chat, which has the keyboard, with the Live tab chosen and the redirect and preview-replacement models of Cursor 3.30.14 on (Cycle 0134 N2).
+ * @param harness - The workspace harness, attached to its service.
+ * @param chatNamesItsGroup - `true` (the default) when the editor names the Agent part's group as active, as after a click on its tab; `false` when the editor goes on naming the learner's group of the main editor while the chat's input has the keyboard, as Cursor 3.30.14 did in the native check (Cycle 0134 N2 round 2).
+ * @returns The Agent part the harness added.
+ * @example const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness, false)
+ */
+async function reopenStudyBesideAgentPartWithKeyboardInChat(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  chatNamesItsGroup = true,
+) {
+  harness.useHostAppName('Cursor')
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.reportsMainThreadWebviewViewTypes()
+  harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+  harness.focusMutableDraft('App.tsx', 1)
+  await harness.reader.open()
+  await harness.reader.close()
+  await harness.reader.open()
+  readerSeams(harness).stopOwnTimer()
+  // The learner follows the current run on the Live tab.
+  harness.receiveContext({
+    type: 'tab',
+    tab: 'live',
+    revision: harness.reader.inspect().view!.revision,
+  })
+  await waitUntil(
+    () => harness.reader.presentationState().reader.contentTab === 'live',
+    'the Live tab the learner chose',
+    2_000,
+  )
+  // The learner last worked in the captured source's group.
+  const source = harness.editor.window.visibleTextEditors.find(
+    (editor) =>
+      editor.document.uri.toString() === harness.reader.inspect().sourceUri &&
+      editor.viewColumn ===
+        harness.reader.presentationState().panes.sourceColumn,
+  )
+  assert.ok(source)
+  harness.focusExistingSource(source)
+  harness.redirectShowsBesideChatToLastActiveGroup()
+  harness.replacesPreviewTabOnTextPreview()
+  if (chatNamesItsGroup) chat.focusTab()
+  else {
+    harness.namesStudyPaneGroupAfterFocusAgent()
+    chat.focus()
+  }
+  return chat
+}
+
+// protects=Cycle 0134 N2 (a): an extension run started from the Agent chat in the reopened Study, whose live entry follows the run while the run's own Application preparation is inside the layout queue, leaves the Study pane open until that preparation ended, shows the view in front of its own group without an error, and gives the chat its keyboard back; fails_when=the live entry disposes the Study pane between the preparation's effects (the preparation then reads shifted groups and its placement guard refuses its focus return), so the view is refused or the chat never gets the keyboard back; no_claim=that the fake editor refuses the view as Cursor 3.30.14 did ("The dedicated Application layout could not be confirmed."), which it does not model
+test('an extension run whose live entry interleaves with its own Application preparation after Close and Open Study Workspace shows its view and gives the chat its keyboard back', async () => {
+  // Arrange: the reopened Study beside Cursor's Agent part, the chat holding the keyboard, and the preparation held right after the group's insertion.
+  const harness = await workspaceHarness()
+  try {
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+
+    // Act: the run's lease starts its preparation and stops inside the layout queue; the reader's refresh enters the Live arrangement of that run meanwhile; the preparation goes on.
+    const lease = openView(harness, 'interleaved-run-1', [])
+    await lockHeld.started
+    const entry = readerSeams(harness).refresh()
+    // gstack-timing-ok: a negative check; an entry that changes the composition outside the layout queue closes the Study pane within one turn of the fake editor, so one settle shows it.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const studyPaneOpenWhileHeld = harness
+      .nativePanels()
+      .some((panel) => panel.kind === 'codebook.studyContext')
+    lockHeld.release()
+    const view = await lease
+    await entry
+
+    // Assert
+    assert.equal(studyPaneOpenWhileHeld, true)
+    assert.equal(harness.reader['errors'].size, 0)
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    assert.equal(application.visible, true)
+    assert.equal(
+      groupShowing(harness, 'codebook · Application interlea')?.tabs.length,
+      1,
+    )
+    assert.equal(chat.focused(), true)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 CodeRabbit CLI final-range review (Major): an Open that waits for a run's Application preparation before it closes the Study pane ends with its own cancellation's reason at once, while the preparation goes on, and changes no composition; fails_when=the entry's wait ignores the entry's signal, so the cancelled entry stays pending until the preparation ends (never, when an editor command of the preparation never answers); no_claim=an entry nobody cancels, which still waits until the preparation ended, and what the preparation does after the entry ended
+test('an Open cancelled while it waits for a run’s Application preparation in the reopened Study ends with its reason at once and leaves the Study pane open', async () => {
+  // Arrange: the reopened Study beside Cursor's Agent part with the chat holding the keyboard, and the run's preparation held inside the layout queue.
+  const harness = await workspaceHarness()
+  let releaseLock = (): void => {}
+  try {
+    await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+    releaseLock = lockHeld.release
+    const lease = openView(harness, 'cancelled-wait-run-1', []).catch(
+      () => undefined,
+    )
+    await lockHeld.started
+    // The Open decides to close the Study pane right before it waits for the preparation.
+    const decideClosesStudyPane = harness.reader[
+      'compositionChangeClosesStudyPane'
+    ].bind(harness.reader)
+    let closesStudyPane: boolean | undefined
+    harness.reader['compositionChangeClosesStudyPane'] = () => {
+      closesStudyPane = decideClosesStudyPane()
+      return closesStudyPane
+    }
+    const reason = new Error(
+      'The Open was cancelled while it waited for the preparation.',
+    )
+    const controller = new AbortController()
+    let outcome: unknown = 'pending'
+
+    // Act: the Open waits for the held preparation, then its own request cancels it.
+    void harness.reader.open(controller.signal, 'study', false, true).then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      },
+    )
+    await waitUntil(
+      () => closesStudyPane !== undefined,
+      'the Open’s decision to close the Study pane',
+      2_000,
+    )
+    controller.abort(reason)
+    await waitUntil(
+      () => outcome !== 'pending',
+      'the cancelled Open ending while the preparation is held',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(closesStudyPane, true)
+    assert.equal(outcome, reason)
+    assert.equal(
+      harness
+        .nativePanels()
+        .some((panel) => panel.kind === 'codebook.studyContext'),
+      true,
+    )
+    releaseLock()
+    const view = await lease
+    view?.close()
+  } finally {
+    releaseLock()
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 round 2 (F1): an extension run started from the Agent chat in the reopened Study, whose live entry interleaves with the run's own preparation, ends with the chat's input holding the keyboard although the entry's own placements (the retained path's borrow of the main editor) took it after the preparation had given it back; fails_when=the entry remembers no tab to return to (Cursor names a main group while the chat input has the keyboard), so nothing gives the keyboard back after the entry's last placement and it stays in the learner group's editor; no_claim=Cursor 3.30.14's own naming of the active group (chat.focus() keeps the learner's group named, the fake models the preparation's and the entry's borrows) and the notice text
+test('the chat keeps its keyboard after the live entry of an agent run that interleaved with the run’s own Application preparation in the reopened Study', async () => {
+  // Arrange: the reopened Study with the chat input holding the keyboard while the editor names the learner's group, and the preparation held right after the group's insertion.
+  const harness = await workspaceHarness()
+  try {
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(
+      harness,
+      false,
+    )
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+
+    // Act: the lease's preparation stops inside the layout queue, the live entry follows the run meanwhile, and both finish.
+    const lease = openView(harness, 'chat-return-run-1', [])
+    await lockHeld.started
+    const entry = readerSeams(harness).refresh()
+    // gstack-timing-ok: a negative check; the entry reads the chat's place while the preparation stands mid-way, which one settle of the fake editor lets it do.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    lockHeld.release()
+    const view = await lease
+    await entry
+
+    // Assert
+    assert.equal(harness.reader['errors'].size, 0)
+    assert.equal(chat.focused(), true)
+    assert.equal(
+      harness.commands.filter((command) => command === 'composer.focusComposer')
+        .length >= 1,
+      true,
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 round 2 (F1): the learner's click in an editor while the live entry of an agent run places the view wins over the entry's return to the chat; fails_when=the entry runs Focus Agent after the learner's click and takes the keyboard from the file the learner works in; no_claim=a real mouse event (the learner's sign is set on the workspace as the editor's selection listener sets it) and Cursor's own naming of the active group
+test('the live entry of an agent run leaves the keyboard in the editor the learner clicked into while the entry placed the view in the reopened Study', async () => {
+  // Arrange: the same interleaved run, with the entry held at its arrangement, after the preparation gave the chat its keyboard back.
+  const harness = await workspaceHarness()
+  try {
+    await reopenStudyBesideAgentPartWithKeyboardInChat(harness, false)
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+    const lease = openView(harness, 'learner-wins-run-1', [])
+    await lockHeld.started
+    const arrangementHeld = harness.holdNextCommand('runCommands')
+    const entry = readerSeams(harness).refresh()
+    // gstack-timing-ok: a negative check; the entry reads the chat's place while the preparation stands mid-way, which one settle of the fake editor lets it do.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    lockHeld.release()
+    const view = await lease
+    await arrangementHeld.started
+    const focusAgentRunsBefore = harness.commands.filter(
+      (command) => command === 'composer.focusComposer',
+    ).length
+
+    // Act: the learner clicks into a file while the entry is arranging, then the entry ends.
+    harness.reader['learnerWorkedInEditorAtMs'] = performance.now()
+    arrangementHeld.release()
+    await entry
+
+    // Assert
+    assert.equal(
+      harness.commands.filter((command) => command === 'composer.focusComposer')
+        .length,
+      focusAgentRunsBefore,
+    )
+    assert.equal(harness.reader['errors'].size, 0)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 round 2 (F2): an extension run's preparation keeps the moved Application tab although Cursor activated the learner's group between the lock and the reveal of the view, so the tab is no preview afterwards, the run's stop files' destination is the main editor's last active group, and the chat has the keyboard back; fails_when=the preparation runs no Keep Open for the preview tab because another group is the active one and returns before it places the destination, so the tab stays a preview that a later text preview in its group replaces; no_claim=Cursor's own timing of the activation (activateGroupOfTabAfterNextLock names the learner's group right after the lock) and the debugger's real reveal
+test('an extension run keeps its moved view and places the stop files’ destination when Cursor names the learner’s group right after the lock', async () => {
+  // Arrange: the reopened Study beside the Agent part with the chat holding the keyboard, and Cursor naming the learner's group (the captured source's) right after the new group's lock.
+  const harness = await workspaceHarness()
+  try {
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+    const learnerGroup = harness.groups.find(
+      (group) =>
+        group.viewColumn ===
+        harness.reader.presentationState().panes.sourceColumn,
+    )
+    assert.ok(learnerGroup?.activeTab)
+    harness.activateGroupOfTabAfterNextLock(learnerGroup.activeTab)
+
+    // Act
+    const view = await openView(harness, 'learner-group-named-run-1', [])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+
+    // Assert
+    const applicationTab = applicationGroupOf(
+      harness,
+      applicationColumn,
+    )?.tabs.find((tab) => tab.label.startsWith('codebook · Application'))
+    assert.equal(applicationTab?.isPreview, false)
+    assert.equal(harness.lastActiveMainColumn(), applicationColumn + 1)
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors'].keys()], [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Builds the window of the third native check: the earlier run's view stands alone in the main editor's only group, Close All Editors emptied the window, the learner opened a new Agent chat, and the next run's view created its empty destination group below the view and gave the chat its keyboard back, so the editor names that empty group while the chat input has the keyboard (Cycle 0134 N3 round 2).
+ * @param harness - The workspace harness, attached to its service.
+ * @returns The Agent part and the run's view.
+ * @example const { chat, view } = await openRunBesideEmptyDestinationWithKeyboardInChat(harness)
+ */
+async function openRunBesideEmptyDestinationWithKeyboardInChat(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) {
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('popup.js', 1)
+  harness.closeEmptiedGroupAtInsertion()
+  harness.redirectShowsBesideChatToLastActiveGroup()
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  const first = await openView(harness, 'empty-destination-run-1', [])
+  first.end('The first run ended.')
+  first.close()
+  await closeAllEditors(harness, chat)
+  chat.openChatTab('Codebook submit request detail')
+  chat.focus()
+  const view = await openView(harness, 'empty-destination-run-2', [])
+  return { chat, view }
+}
+
+// protects=Cycle 0134 N3 round 2 (G1): an agent's restore of the Study workspace after an extension run's preparation left an empty destination group named active with the Agent chat's input holding the keyboard gives the chat its keyboard back, so the next run's stop files open while the chat still has it; fails_when=the admission remembers no foreign tab (the named group shows no tab), the arrangement's measurement borrows the main editor's keyboard and nothing gives it back until a later pause; no_claim=Cursor 3.30.14's own naming of the group (chat.focus() keeps the empty group named in the fake) and which view of the chat holds the keyboard
+test('an agent’s restore of the Study workspace gives the chat its keyboard back when an empty group is named while the chat input has it', async () => {
+  // Arrange: the run's view stands beside its empty destination group with the chat holding the keyboard.
+  const harness = await workspaceHarness()
+  try {
+    const { chat, view } =
+      await openRunBesideEmptyDestinationWithKeyboardInChat(harness)
+    assert.equal(chat.focused(), true)
+    const selection = harness.reader.presentationState()
+
+    // Act: the chat's agent asks to restore the Study workspace.
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      },
+      'agent',
+    )
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors'].keys()], [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N3 round 2 (G1): the learner's click or key in an editor while an agent's restore arranges the panes wins over the return to the chat; fails_when=the admission's give-back takes the keyboard from the file the learner works in; no_claim=a real mouse event (the learner's sign is set on the workspace as the editor's selection listener sets it)
+test('an agent’s restore of the Study workspace leaves the keyboard where the learner clicked while it arranged the panes beside an empty named group', async () => {
+  // Arrange: the same window, with the arrangement held at its layout command.
+  const harness = await workspaceHarness()
+  try {
+    const { chat, view } =
+      await openRunBesideEmptyDestinationWithKeyboardInChat(harness)
+    const selection = harness.reader.presentationState()
+    const arrangementHeld = harness.holdNextCommand('runCommands')
+    const focusAgentRunsBefore = harness.commands.filter(
+      (command) => command === 'composer.focusComposer',
+    ).length
+
+    // Act: the restore starts, the learner clicks into a file meanwhile, and the restore ends.
+    const restore = harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      },
+      'agent',
+    )
+    await arrangementHeld.started
+    harness.reader['learnerWorkedInEditorAtMs'] = performance.now()
+    arrangementHeld.release()
+    await restore.catch(() => undefined)
+
+    // Assert
+    assert.equal(
+      harness.commands.filter((command) => command === 'composer.focusComposer')
+        .length,
+      focusAgentRunsBefore,
+    )
+    assert.equal(chat.focused(), false)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 (b): in the reopened Study beside Cursor's Agent chat, the live entry of an agent's run keeps the moved Application tab and makes the group beside the view the main editor's last active group, so the file a library test run's debugger pauses in (open nowhere, no lease) opens beside the view and the Application pane stays; fails_when=the entry leaves the moved tab a preview in the last active group, so the paused file opens as a preview there and replaces the pane; no_claim=Cursor's own placement of the debugger's reveal beyond the observed cases (redirectShowsBesideChatToLastActiveGroup, replacesPreviewTabOnTextPreview and debuggerOpensStopFile stand in for it)
+test('a library test run that pauses in a file open nowhere after the live entry of an agent run in the reopened Study opens it beside the view and leaves the Application pane open', async () => {
+  // Arrange: the reopened Study with the chat holding the keyboard; a run is started, and the reader's live entry follows it (no lease).
+  const harness = await workspaceHarness()
+  try {
+    await writeRepositoryFile(harness, 'settings.test.js')
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+
+    // Act: the live entry moves the Application pane into its own group; the library test run's debugger pauses in a file nobody opened.
+    await readerSeams(harness).refresh()
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    harness.debuggerOpensStopFile('settings.test.js', applicationColumn)
+
+    // Assert
+    assert.deepEqual([...harness.reader['errors'].keys()], [])
+    assert.equal(
+      groupShowing(harness, 'settings.test.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    assert.deepEqual(
+      applicationGroupOf(harness, applicationColumn)?.tabs.map(
+        (tab) => tab.label,
+      ),
+      ['codebook · Application'],
+    )
+    assert.equal(
+      harness
+        .nativePanels()
+        .filter((panel) => panel.kind === 'codebook.scopedBrowser').length,
+      1,
+    )
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 (c): when the reader's live entry of an agent's run arranges the panes before the run's own preparation in the reopened Study beside Cursor's Agent chat, the chat has the keyboard afterwards, after the entry and after the run's view opened; fails_when=the chat's give-back refuses because the keyboard stands where Codebook's own placement (the measurement's borrow of the captured source, the group beside the view) left it, so the learner types into nothing; no_claim=which group Cursor 3.30.14 reports as active after the placement (the fake names the group the focus command made active)
+test('the chat has its keyboard back after the live entry of an agent run and then the run’s own view in the reopened Study', async () => {
+  // Arrange: the reopened Study with the chat holding the keyboard and a run that was started.
+  const harness = await workspaceHarness()
+  try {
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+
+    // Act: the entry arranges first, then the run's lease opens its view.
+    await readerSeams(harness).refresh()
+    const chatAfterEntry = chat.focused()
+    const view = await openView(harness, 'entry-first-run-1', [])
+
+    // Assert
+    assert.equal(chatAfterEntry, true)
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.reader['errors'].size, 0)
+    assert.equal(harness.lastActiveMainColumn(), 2)
+    view.close()
   } finally {
     await harness.close()
   }
