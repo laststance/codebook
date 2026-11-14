@@ -398,6 +398,77 @@ test('the next extension run in Cursor after Close All Editors opens its view wh
   }
 })
 
+// protects=Cycle 0133 D12 (/ship native check N2, Cursor 3.30.14): after Close All Editors and a new Agent chat the learner opened, the next extension run opens its view, although Cursor answers every change with new group objects and closes the old empty group when the new group comes above it, which moves the Agent part up one column; fails_when=the group tracker keeps a group it recognizes by its tabs only in its own column or the issued insertion's shift, so the Agent part loses its identity when the closed group above it moves it up, and the run's view is refused with "Original editor groups changed while preparing the Application."; no_claim=Cursor's own Close All Editors, New Agent and New Group Above (the explicit closes, openChatTab, replaceGroupObjectsOnTabChanges and closeEmptiedGroupAtInsertion stand in for them) and where the editor gives the keyboard
+test('the next extension run in Cursor after Close All Editors and a new Agent chat opens its view while the closed old group moves the Agent part up', async () => {
+  // Arrange: an ended run kept its view; every editor closed in Cursor 3.30.14's order; then the learner opened a new Agent chat.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'new-chat-run-1', [])
+    first.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    first.close()
+    const learnerGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'popup.js'),
+    )
+    assert.ok(learnerGroup)
+    await harness.editor.window.tabGroups.close([...learnerGroup.tabs], true)
+    await harness.editor.window.tabGroups.close(
+      harness.groups.find((group) => group.viewColumn === 2)!,
+      true,
+    )
+    chat.closeChatTab()
+    await harness.editor.window.tabGroups.close(
+      [...harness.groups[0]!.tabs],
+      true,
+    )
+    harness.announceTabChange()
+    harness.replaceGroupObjectsOnTabChanges()
+    chat.openChatTab('Codebook submit request detail')
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: [] },
+        { column: 2, tabs: ['Codebook submit request detail'] },
+      ],
+    )
+
+    // Act
+    const second = await openView(harness, 'new-chat-run-2', [])
+
+    // Assert: the view stands in its own locked group in column 1; the editor closed the old group, and the Agent part with its chat follows.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.equal(application?.viewColumn, 1)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        locked: Boolean(group.locked),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application new-chat'], locked: true },
+        {
+          column: 2,
+          tabs: ['Codebook submit request detail'],
+          locked: false,
+        },
+      ],
+    )
+    assert.equal(harness.reader['errors'].size, 0)
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0133 D12 (/ship QA revalidation R1b, Cursor 3.30.14): after Close All Editors left no learner's group, the next extension run's stop file is not shown into the Agent part's group beside the view, and the view stays in front of its group after the attach; fails_when=the column after the view counts as the learner's group although it lies beyond the main editor's measured groups, so the stop file lands in the Agent part (natively) or in front of the view (the fake redirects a show aimed at the chat part to the active group), and the paused-file watch then moves files between the view's group and the Agent part until the view is refused with "Application ownership changed"; no_claim=where the debugger opens the first pause's file when no learner's group exists (it may cover the view, the frozen D13 boundary) and Cursor's own Close All Editors (the explicit closes and replaceGroupObjectsOnTabChanges stand in for it)
 test('the next extension run in Cursor after Close All Editors shows no stop file in the Agent part and keeps its view in front', async () => {
   // Arrange: an ended run kept its view; then every editor closed in Cursor 3.30.14's order, which leaves no learner's group beside the Agent part.

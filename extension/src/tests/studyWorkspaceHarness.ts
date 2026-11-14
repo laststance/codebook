@@ -7897,6 +7897,24 @@ export async function workspaceHarness(
             listener({ opened: [], closed: closedTabs, changed: [] })
           changedGroups({ opened: [], closed: [], changed: [part.group] })
         },
+        /** Opens a new chat tab in the part's group, as the learner's New Agent after Close All Editors does in Cursor 3.30.14 (Cycle 0133 D12, /ship QA N2); with `replaceGroupObjectsOnTabChanges` every group gets a new object, as Cursor answers a tab that opened. @example chat.openChatTab('New Agent') */
+        openChatTab(label: string): void {
+          const part = separateEditorPart
+          assert.ok(part)
+          const tab = {
+            input: new TabInputUnknown(),
+            label,
+            isPreview: false,
+            isDirty: false,
+          }
+          part.group.tabs.push(tab)
+          part.group.activeTab = tab
+          part.tab = tab
+          for (const listener of tabChangeListeners)
+            listener({ opened: [tab], closed: [], changed: [] })
+          if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
+          else changedGroups({ opened: [], closed: [], changed: [part.group] })
+        },
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
         resync(change: 'wrapper' | 'opened' | 'unannounced' | 'move'): void {
           const previous = separateEditorPart!.group,
