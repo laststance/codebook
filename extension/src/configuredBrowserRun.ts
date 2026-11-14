@@ -46,6 +46,7 @@ import {
   ACTIVE_TIMEOUT_MS,
   API_PROCESS_PROBE_MS,
   NEXT_LIBRARY_WRAPPED_WAIT_MS,
+  NEXT_BROWSER_SOURCE_MAP_LOCATIONS,
   NEXT_ROUTER_POLL_INTERVAL_MS,
   RECORDED_STOP_REFRESH_POLL_MS,
   NEXT_SETUP_STEPS,
@@ -737,6 +738,8 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       'webpack://_N_E/./*': `${workspace}/*`,
       ...libraryOverrides,
     },
+    // React's copies of Server Components stay unmapped in the page: their maps come from the server a server stop holds (F2).
+    resolveSourceMapLocations: [...NEXT_BROWSER_SOURCE_MAP_LOCATIONS],
   }),
   // The page's debugger announces a library module with its dot segments resolved, which drops the layer and the climb out of the app.
   isScriptOfModule: (sealedUrl, announcedUrl) =>

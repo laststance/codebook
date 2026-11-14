@@ -200,7 +200,7 @@ export class OwnedRepositoryBreakpoint {
       refusedAt?: VerifiedPlace
     } & VerifiedRegistration
   >()
-  /** Every id each session's adapter gave this breakpoint in a registration reply that identified it, whether its owner accepted the place or refused it, kept across later registrations and the retirement; read by {@link wasAnsweredWith} and {@link answeredIds}. */
+  /** Every id each session's adapter gave this breakpoint in a registration reply that identified it, whether its owner accepted the place or refused it, kept across later registrations until the breakpoint is removed or retired; read by {@link wasAnsweredWith} and {@link answeredIds}. */
   private readonly answeredIdsBySession = new Map<string, Set<number>>()
   /** `ownedBreakpointId` is the adapter id acknowledged for this breakpoint; with it, a learner breakpoint left on the same line is told apart from the owned one. */
   private retirement?: {
@@ -539,7 +539,7 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Says whether a session's adapter named this breakpoint by an id in a registration reply that identified it, whether its owner accepted the place or refused it, also before a later registration or the retirement.
+   * Says whether a session's adapter named this breakpoint by an id in a registration reply that identified it, whether its owner accepted the place or refused it, also before a later registration; the removal or retirement forgets the ids, as it forgets the registrations (a page pause at the same place may then be another owner's stop, D19).
    * Why it exists: the page binds a server stop's breakpoint in React's copy of the module at a place the server stop's owner refuses, and still pauses there under that id; a `stopped` that names it hit this breakpoint, so {@link ConfiguredBrowserRun} resumes it as the stop's copy instead of ending the run as an unowned page stop (Cycle 0136, F2: the page answered `app/ui/invoices/table.tsx:17` with id 9, refused, and paused there under 9).
    * Like {@link movedTo} it never throws.
    * @param session - The session whose adapter sent the pause.
@@ -553,7 +553,7 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Lists every id each session's adapter gave this breakpoint ({@link wasAnsweredWith}), for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring forgets the breakpoint's registrations, while a page that keeps hitting it in its copies of server components still names an old id (Cycle 0095, C95-N1).
+   * Lists every id each session's adapter gave this breakpoint ({@link wasAnsweredWith}), for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring forgets the breakpoint's registrations and ids, while a page that keeps hitting it in its copies of server components still names an old id (Cycle 0095, C95-N1).
    * Like {@link movedTo} it never throws.
    * @returns The ids per session id; empty when no session answered a registration that identified the breakpoint.
    * @example
@@ -1036,6 +1036,7 @@ export class OwnedRepositoryBreakpoint {
       )
       signal.throwIfAborted()
       this.registrations.clear()
+      this.answeredIdsBySession.clear()
       this.retired = true
       return
     }
@@ -1084,6 +1085,8 @@ export class OwnedRepositoryBreakpoint {
   /** Releases only the acquired editor breakpoint during cancellation; it never clears a whole source or another owner's breakpoints. @example owned.remove() */
   remove(): void {
     this.registrations.clear()
+    // A removed breakpoint names no later pause: an id it had may hit another owner's stop at the same place (D19).
+    this.answeredIdsBySession.clear()
     vscode.debug.removeBreakpoints([this.breakpoint])
   }
 }

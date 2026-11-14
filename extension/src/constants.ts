@@ -2812,6 +2812,14 @@ export const SERVER_RENDER_ROUTE_EXPRESSION =
   "require('next/dist/server/app-render/work-async-storage.external.js').workAsyncStorage.getStore()?.route"
 /** The address prefix of the fabricated copies React's development server parses of server modules; a hit in one at an armed stop's position is never a stop's pause. */
 export const REACT_SERVER_COPY_URL_PREFIX = 'about://React/Server/'
+/**
+ * The source map locations the page's debugger of a Next run may resolve (js-debug's `resolveSourceMapLocations`, matched against each map's URL): every map except the development server's `/__nextjs_source-map`, where React's copies of Server Components in the page (`about://React/Server/…`) take theirs.
+ * That route is served by the server process a server stop holds, so js-debug waited about 1 s on each new copy and bound server stops' breakpoints in them; the page then paused in those copies and its debugger fell so far behind that a stop's breakpoint retirement never reached the server (Cycle 0136, F2). The page's own modules keep their maps: js-debug resolves `webpack-internal:` modules and inline maps whatever the patterns say.
+ */
+export const NEXT_BROWSER_SOURCE_MAP_LOCATIONS: readonly string[] = [
+  '**',
+  '!**/__nextjs_source-map**',
+]
 /** How many resumed hits (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`) one run journals, each event type up to it; past it only their count is kept. */
 export const SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT = 100
 /** The path tail of Next 16's compiled Pages renderer under `next dev --webpack` (chosen in `next/dist/server/route-modules/pages/module.compiled.js`); a frame whose script address ends with it is a renderer frame of a Pages hit. */

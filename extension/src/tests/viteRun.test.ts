@@ -54,6 +54,20 @@ test('the Next browser keeps the webpack source-map path override and no per-scr
   )
 })
 
+// protects=F2 (Cycle 0136, Cursor run 2ad66ef4): the page's debugger of a Next run resolves no map from the development server's /__nextjs_source-map, so React's copies of Server Components stay unmapped, server stops' breakpoints never bind in them and the page never waits on the server a stop holds; fails_when=the launch leaves every map resolvable (the page paused in the copies, js-debug stalled about 1 s on each and a stop's breakpoint retirement timed out); no_claim=js-debug's own pattern matching, checked in the native Cursor run
+test('the Next browser resolves every source map except the development server’s React copy maps', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context)
+  // Act
+  await harness.run.prepare()
+  // Assert
+  const configuration = harness.launchConfigurations[0]!
+  assert.deepEqual(
+    [...configuration.resolveSourceMapLocations],
+    ['**', '!**/__nextjs_source-map**'],
+  )
+})
+
 test('a Vite run on its sealed module reaches ready after one page load', async (context) => {
   // Arrange
   const harness = await configuredRuntimeHarness(context, undefined, NO_STOPS, {
