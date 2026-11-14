@@ -383,6 +383,98 @@ test('the next extension run keeps the earlier Application group when the learne
   }
 })
 
+// protects=Cycle 0133 D12 (group gone after the layout read): the learner closes the earlier run's empty Application group while the next run's retirement reads the editor's layout; the next run still opens its view and nothing refuses; fails_when=the retirement treats a group that is gone after the read as not retired, so the run's view is refused instead of opened; no_claim=how long a real layout read takes (the wrapper closes the group right after the read answered, which is the same moment for the retirement)
+test('the next extension run opens its view when the learner closes the earlier empty Application group while the run reads the layout', async () => {
+  // Arrange: the earlier run's view closed, which leaves its locked group empty above the learner's group; no other editor part.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    const first = await openView(harness, 'group-gone-run-1', [])
+    first.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    first.close()
+    const earlierViewTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Application group-go')
+    assert.ok(earlierViewTab)
+    await harness.editor.window.tabGroups.close([earlierViewTab], true)
+    const emptyGroup = harness.groups[0]!
+    assert.deepEqual(emptyGroup.tabs, [])
+    const readLayoutOfOnlyGroup = harness.reader['isOnlyMainEditorGroup'].bind(
+      harness.reader,
+    )
+    harness.reader['isOnlyMainEditorGroup'] = async (group) => {
+      const answer = await readLayoutOfOnlyGroup(group)
+      // The learner closes the empty group while the layout read is on its way.
+      await harness.editor.window.tabGroups.close(emptyGroup, true)
+      return answer
+    }
+
+    // Act
+    const second = await openView(harness, 'group-gone-run-2', [])
+
+    // Assert: the new view stands in column 1 above the learner's group, and no run error was recorded.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application group-go'] },
+        { column: 2, tabs: ['article-source.ts', 'popup.js'] },
+      ],
+    )
+    assert.equal(harness.reader['errors'].size, 0)
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0133 D12 (old group not active): when Cursor names its Agent part's group active after Close All Editors, the next extension run still opens its view above the earlier empty Application group, which is released at once; fails_when=the release waits for a removal the editor never makes, or needs the old group to be the active one, so the view is refused or delayed 5 s; no_claim=that the old group is unlocked (a known limitation, a later candidate) and Cursor's own Close All Editors (closeAllEditors stands in for it)
+test('the next extension run opens its view when Cursor’s Agent part holds the active group after Close All Editors', async () => {
+  // Arrange: an ended run kept its view; then every editor closed, and the learner's click into the Agent part makes its group the active one.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'not-active-run-1', [])
+    first.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    first.close()
+    await closeAllEditors(harness, chat)
+    chat.focusTab()
+    const startedAt = Date.now()
+
+    // Act
+    const second = await openView(harness, 'not-active-run-2', [])
+
+    // Assert: the view stands in its own group in column 1, the old group stays below it empty, and no 5 s wait passed.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.equal(application?.viewColumn, 1)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application not-acti'] },
+        { column: 2, tabs: [] },
+        { column: 3, tabs: [] },
+      ],
+    )
+    assert.ok(Date.now() - startedAt < 4000)
+    assert.equal(harness.reader['errors'].size, 0)
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=N61-1 (Cycle 0062 task 3): an extension run started from Cursor's Agent chat, with the first main editor group empty, opens its Application view and leaves the chat its keyboard; fails_when=the lease refuses with "Focus the first main source group before preparing the Application." because the Agent chat's tab group is counted beside the main groups; no_claim=Cursor's native focus events (N62)
 test('an extension run started from Cursor\u2019s Agent chat with an empty first group opens its Application view and keeps the chat\u2019s keyboard', async () => {
   // Arrange
