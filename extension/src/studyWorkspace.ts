@@ -8007,28 +8007,28 @@ export class StudyWorkspace {
   /**
    * Notes the stop file that came in front of the kept Application pane at a stop of a run that leases no pane, like the ended run's own leftover ({@link rememberLeftoverStopTab}), so the next extension run's attach brings the view back in front of it ({@link uncoverApplicationFromLeftoverStopTab}) instead of refusing it; called by the stop tracker ({@link PresentationGuards}) when the editor reports the frame of a stop.
    * Cursor 3.30.14 opens a file that is open nowhere in the main editor's last active group, which is the Application's group unless the preparation left another one ({@link prepareStopFileDestination}), and a library test run (Vitest under js-debug) pauses in such files while the last extension run's view is kept (Cycle 0134 D22). Only a Codebook run's own stop is noted: the stop ledger counts it as Codebook's ({@link codebookStopLedger}: every stop of an owned Node test run's sessions, and a stop another run caused; never a stop of the learner's own debug session, whatever its launch configuration is named), the pane stood in front when the stop was read ({@link noteApplicationFrontAtStop}), and the unedited `file:` tab that covers it now ({@link coveringTabOfApplication}) is that stop's paused file ({@link StopKeyboardHandOver.showsPausedFileOf}) and a stop file one of the window's runs declared ({@link declaredRunStopFiles}). The first frame the editor reports for that stop counts, whether or not it came with the stop ({@link frameCameWithStop}): an editor may show the stop's file late, as long as the stop lasts. A file the learner brings in front meanwhile, or opens in that group at any other time, is never noted, and the reveal's guard still refuses over it. A run with a lease has its paused-file watch and its own release note.
-   * @param session - The session whose frame the editor reported.
-   * @example this.noteStopFileCoveringApplication(session) // settings.test.ts, a declared stop file of the library test run, covers the kept view
+   * @param stoppedSession - The session whose frame the editor reported.
+   * @example this.noteStopFileCoveringApplication(stoppedSession) // settings.test.ts, a declared stop file of the library test run, covers the kept view
    */
   private noteStopFileCoveringApplication(
-    session: Pick<vscode.DebugSession, 'id'>,
+    stoppedSession: Pick<vscode.DebugSession, 'id'>,
   ): void {
     const stoodInFront = this.sessionsStoppedBehindApplication.delete(
-      session.id,
+      stoppedSession.id,
     )
     if (
       !stoodInFront ||
       this.leaseId !== undefined ||
       !this.app ||
       // A stop the learner's own debugger made is never Codebook's, whatever its launch configuration is named.
-      !codebookStopLedger.isCodebookCausedStop(session.id)
+      !codebookStopLedger.isCodebookCausedStop(stoppedSession.id)
     )
       return
     const covering = this.coveringTabOfApplication(this.viewColumnOf(this.app))
     // Only the stop's own paused file, and only one a run declared as a stop: a file the learner brought in front meanwhile stays theirs.
     if (
       covering &&
-      this.stopHandOver.showsPausedFileOf(session.id, covering.uri) &&
+      this.stopHandOver.showsPausedFileOf(stoppedSession.id, covering.uri) &&
       this.declaredRunStopFiles().has(canonicalFsPath(covering.uri.fsPath))
     )
       this.leftoverStopTabUris.add(covering.uri.toString())
