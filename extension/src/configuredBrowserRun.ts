@@ -16109,7 +16109,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Journals `browser.unowned-stop` for a browser `stopped` no rule owns, so the failure that follows names what paused: the emitting session, whether the run owns it, the paused script's address, the place, the adapter's hit breakpoint ids and the declared server stops whose registration in that session still awaited the adapter's answer.
+   * Journals `browser.unowned-stop` for a browser `stopped` no rule owns, so the failure that follows names what paused: the emitting session, whether the run owns it, the paused script's address, the place, the adapter's hit breakpoint ids and the declared server stops whose registration in that session still awaited the adapter's answer; then `browser.unowned-stop-registrations`, every owned breakpoint's registration in every session (state and id) and the retired provisional ids, so the journal says whose id the pause named.
    * Called by {@link onEvent} right before it ends the run with the unowned browser DAP stop failure, and by {@link rejectStop} for a page pause that paused out of turn.
    * @param session - The browser session that sent the `stopped` event.
    * @param body - The event's body; its hit breakpoint ids are journaled.
@@ -16126,6 +16126,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hitBreakpointIds: body.hitBreakpointIds,
       awaitedStops: this.awaitingBrowserRegistrations(session).map(
         (stop) => stop.declaredIndex,
+      ),
+    })
+    // Which breakpoint each session knows under which id at this moment, so a journal tells a late answer from an id of another session or of a retired breakpoint (E-F2).
+    this.evidence.record('browser.unowned-stop-registrations', {
+      stops: this.stops.flatMap((stop) =>
+        stop.breakpoint
+          ? [
+              {
+                declaredIndex: stop.declaredIndex,
+                sessions: stop.breakpoint.registrationStates(),
+              },
+            ]
+          : [],
+      ),
+      provisional: (this.preparationWindow?.provisional ?? []).map((entry) => ({
+        declaredIndex: entry.index,
+        sessions: entry.breakpoint.registrationStates(),
+      })),
+      retiredProvisionalIds: Object.fromEntries(
+        [...this.retiredProvisionalIds].map(([sessionId, ids]) => [
+          sessionId,
+          [...ids],
+        ]),
       ),
     })
   }

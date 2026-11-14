@@ -209,7 +209,7 @@ test('a page pause in React’s copy that names a server stop’s breakpoint bef
   ])
 })
 
-// protects=the hold has a bound: a page pause in React's copy whose server stop's registration the browser never answers is judged when the bound passes and still ends the run, and the journal names the stop it waited for; fails_when=the pause is resumed although no reply named its breakpoint, the run waits without end, or the journal leaves out the awaited stop; no_claim=the bound is shortened to 300 ms for the test (the product waits 2 s), and the harness adapter stands in for js-debug
+// protects=the hold has a bound: a page pause in React's copy whose server stop's registration the browser never answers is judged when the bound passes and still ends the run, and the journal names the stop it waited for and each session's registration of its breakpoint; fails_when=the pause is resumed although no reply named its breakpoint, the run waits without end, or the journal leaves out the awaited stop or the registrations; no_claim=the bound is shortened to 300 ms for the test (the product waits 2 s), and the harness adapter stands in for js-debug
 test('a page pause in React’s copy whose server stop’s registration the browser never answers still ends the run once the hold’s bound passes', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server'], {
@@ -242,6 +242,25 @@ test('a page pause in React’s copy whose server stop’s registration the brow
       ownsSession: true,
       ...REACT_COPY_ENTRY,
       awaitedStops: [0],
+    },
+  ])
+  assert.deepEqual(journaled(harness, 'browser.unowned-stop-registrations'), [
+    {
+      stops: [
+        {
+          declaredIndex: 0,
+          sessions: [
+            { sessionId: 'browser-session', state: 'awaiting' },
+            {
+              sessionId: 'server-session',
+              state: 'acknowledged',
+              breakpointId: 12,
+            },
+          ],
+        },
+      ],
+      provisional: [],
+      retiredProvisionalIds: {},
     },
   ])
 })

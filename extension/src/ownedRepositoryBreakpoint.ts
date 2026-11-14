@@ -516,6 +516,29 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Describes this breakpoint's latest registration in every session the editor sent it to, for the journal of a page pause no rule owns ({@link ConfiguredBrowserRun}): which session answered with which id, which still awaits its answer and which refused it (Cycle 0136, E-F2).
+   * Like {@link movedTo} it never throws.
+   * @returns One entry per session, in the order the sessions first received a registration; empty when no session has.
+   * @example
+   * owned.registrationStates() // => [{ sessionId: 'server', state: 'acknowledged', breakpointId: 9 }, { sessionId: 'page', state: 'awaiting' }]
+   */
+  registrationStates(): {
+    sessionId: string
+    state: 'acknowledged' | 'awaiting' | 'refused'
+    breakpointId?: number
+  }[] {
+    return [...this.registrations].map(([sessionId, registration]) =>
+      registration.receipt
+        ? {
+            sessionId,
+            state: 'acknowledged',
+            breakpointId: registration.receipt.breakpointId,
+          }
+        : { sessionId, state: registration.failure ? 'refused' : 'awaiting' },
+    )
+  }
+
+  /**
    * Says whether a session's adapter has yet to answer this breakpoint's latest registration, for {@link ConfiguredBrowserRun}: the editor sends a server stop's breakpoint to the browser session too, and the page can pause at it (in React's copy of the module) before the adapter's reply names its id there, so the run holds the judgment of such a pause until that reply arrives (Cycle 0136, F2).
    * Like {@link movedTo} it never throws.
    * @param session - The debug session the editor sent the registration to.
