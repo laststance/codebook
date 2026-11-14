@@ -1071,6 +1071,8 @@ export class StudyWorkspace {
     []
   /** The document URIs of the paused files ended runs left in front of their kept Application pane, each until its tab closes or the next run's attach reads it, so that attach can tell such a run tab from a learner's ({@link uncoverApplicationFromLeftoverStopTab}, Cycle 0132 task 8). */
   private readonly leftoverStopTabUris = new Set<string>()
+  /** Whether the main editor's last active group is the Application's, kept by {@link noteActiveMainGroup}: Cursor names its Agent chat's group while the chat holds the keyboard, so the main editor's last active group is only known from the group events before it (Cycle 0134 D25, review round). */
+  private applicationGroupLastActive = false
   /** The debug sessions whose stop was read while the kept Application pane stood in front of its group ({@link noteApplicationFrontAtStop}), until the first frame of that session is reported ({@link noteStopFileCoveringApplication}) or its next stop is read ({@link noteApplicationFrontAtStop}); an id whose frame never comes stays until then. */
   private readonly sessionsStoppedBehindApplication = new Set<string>()
   /** Every paused-file move in flight, whichever lease's watch started it, until its show and close end ({@link keepPausedSourceOutOfApplication}); a next run's uncover step waits for all of them, since a released lease's move still shows its file when the editor answers ({@link pausedSourceMovesSettled}, CodeRabbit, PR 334). */
@@ -14085,10 +14087,10 @@ export class StudyWorkspace {
 
   /**
    * Says whether a run that reuses the kept Application must prepare the stop files' destination again, read before the layout queue is entered so a reuse that needs nothing never waits for it; asked by {@link prepareApplicationGroup} and {@link prepareRetainedStopFileDestination}.
-   * Only in Cursor beside another editor part that is no chat editor window ({@link holdsChatEditorTab}), and only when the editor names the Application's group as the active one (while the chat has the keyboard Cursor names the main editor's last active group, so that group is the one the next show opens in) or when no group stands beside the view for the stop files ({@link sourceGroupAfterApplication}).
+   * Only in Cursor beside another editor part that is no chat editor window ({@link holdsChatEditorTab}), and only when the Application's group is the main editor's last active group, which the next show opens in while the chat has the keyboard ({@link applicationGroupLastActive}, or the editor names that group now), or when no group stands beside the view for the stop files ({@link sourceGroupAfterApplication}). While the chat holds the keyboard Cursor 3.30.14 names the chat's own group (Cycle 0134 Step 0), so the named group alone cannot tell.
    * @param retained - The kept Application pane.
-   * @returns `true` when the destination must be made the last active group (or created); `false` in VS Code, beside a chat editor window, and when another group is already the named one.
-   * @example this.keptApplicationNeedsStopFileDestination(panel) // => true in Cursor after the learner selected the view
+   * @returns `true` when the destination must be made the last active group (or created); `false` in VS Code, beside a chat editor window, and when another main group was active last.
+   * @example this.keptApplicationNeedsStopFileDestination(panel) // => true in Cursor after the learner selected the view and then typed in the chat
    */
   private keptApplicationNeedsStopFileDestination(
     retained: vscode.WebviewPanel,
@@ -14096,8 +14098,29 @@ export class StudyWorkspace {
     if (!this.isCursorHost() || this.holdsChatEditorTab()) return false
     const applicationColumn = this.viewColumnOf(retained)
     return (
+      this.applicationGroupLastActive ||
       vscode.window.tabGroups.activeTabGroup.viewColumn === applicationColumn ||
       this.sourceGroupAfterApplication(applicationColumn) === undefined
+    )
+  }
+
+  /**
+   * Keeps whether the main editor's last active group is the Application's, for {@link keptApplicationNeedsStopFileDestination}; called by the group and tab listeners of {@link installReaders} at every group or tab event.
+   * A group of another part that holds no editor tab (Cursor's Agent chat, with its input-less tab or none) is never the main editor's, so naming it leaves the last answer as it was: Cursor names the chat's group while the chat holds the keyboard, and the next show still opens in the main editor's last active group (Cycle 0134 Step 0).
+   * @example this.noteActiveMainGroup() // the learner clicked the kept view: applicationGroupLastActive becomes true and stays so while the chat has the keyboard
+   */
+  private noteActiveMainGroup(): void {
+    const active = vscode.window.tabGroups.activeTabGroup
+    const mainCount = this.applicationGroup?.count ?? 1
+    // The chat part's group, listed after the main editor's, says nothing about the main editor's last active group.
+    if (
+      active.viewColumn > mainCount &&
+      !holdsEditorTab(active, editorTabInputKinds(vscode))
+    )
+      return
+    const owned = this.applicationGroup
+    this.applicationGroupLastActive = Boolean(
+      owned && this.editorGroupIdentities.get(active) === owned.identity,
     )
   }
 
@@ -18541,6 +18564,7 @@ export class StudyWorkspace {
         this.notePlacementGroupEvent(event)
         this.invalidateClosedContextCreation(event)
         this.observeEditorGroups(event)
+        this.noteActiveMainGroup()
         this.bindPendingContextCreation()
         this.publishAfterTabChange()
       }),
@@ -18550,6 +18574,8 @@ export class StudyWorkspace {
         this.notePlacementTabEvent(event)
         // The recorded groups follow the tabs that leave with a tab event only (Cursor 3.30.14's Close All Editors, Cycle 0133 D12).
         this.presentationGuards.noteObservedGroupTabs()
+        // A click on a tab of another group can arrive as a tab event before its group event.
+        this.noteActiveMainGroup()
         // A closed run tab is no leftover any more: a tab the learner opens again in its place is theirs. A closed copy in another group leaves the note of the one still in front of the pane.
         for (const tab of event.closed)
           if (

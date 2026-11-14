@@ -3510,7 +3510,8 @@ test('the next extension run that reuses the kept view after the learner selecte
     first.end('The first run ended.')
     first.close()
     harness.activatePaneByHand('codebook.scopedBrowser')
-    chat.focus()
+    // The learner types in the chat again: Cursor then names the chat's own group (Cycle 0134 Step 0), not the view's.
+    chat.focusTab()
     assert.equal(harness.lastActiveMainColumn(), applicationColumn)
 
     // Act: the next run reuses the kept pane, attaches its surface, and the debugger's first pause reveals the stop file.
@@ -3569,7 +3570,8 @@ test('the next extension run that reuses the kept view alone in the main editor 
       await harness.editor.window.tabGroups.close(group, true)
     }
     harness.activatePaneByHand('codebook.scopedBrowser')
-    chat.focus()
+    // The learner types in the chat again: Cursor then names the chat's own group (Cycle 0134 Step 0), not the view's.
+    chat.focusTab()
     assert.deepEqual(
       harness.groups.map((group) => group.viewColumn),
       [1, 2],
