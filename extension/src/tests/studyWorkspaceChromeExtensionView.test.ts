@@ -3008,12 +3008,24 @@ test('the next extension run does not reveal the Application pane in place when 
       reveal(column, preserveFocus)
     }
 
+    // The preparation's focus check, which it reaches only after it chose its route to the first group's keyboard: whether that route was the pane route.
+    const checkFocus = harness.reader['hasApplicationPreparationFocus'].bind(
+      harness.reader,
+    )
+    const tookPaneRoutes: boolean[] = []
+    harness.reader['hasApplicationPreparationFocus'] = (...args) => {
+      tookPaneRoutes.push(args[3])
+      return checkFocus(...args)
+    }
+
     // Act: the editor ignores the first group's focus command here, so the run's own outcome is not what this test reads.
     const view = await openView(harness, 'learner-file-front-run-1', []).catch(
       () => undefined,
     )
 
     // Assert
+    // The preparation reached its focus check, so a refusal before the route was chosen cannot pass for rule 4.
+    assert.deepEqual(tookPaneRoutes, [false])
     assert.deepEqual(keyboardReveals, [])
     view?.close()
   } finally {
@@ -3954,6 +3966,74 @@ test('an extension run whose live entry interleaves with its own Application pre
     assert.equal(chat.focused(), true)
     view.close()
   } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 CodeRabbit CLI final-range review (Major): an Open that waits for a run's Application preparation before it closes the Study pane ends with its own cancellation's reason at once, while the preparation goes on, and changes no composition; fails_when=the entry's wait ignores the entry's signal, so the cancelled entry stays pending until the preparation ends (never, when an editor command of the preparation never answers); no_claim=an entry nobody cancels, which still waits until the preparation ended, and what the preparation does after the entry ended
+test('an Open cancelled while it waits for a run’s Application preparation in the reopened Study ends with its reason at once and leaves the Study pane open', async () => {
+  // Arrange: the reopened Study beside Cursor's Agent part with the chat holding the keyboard, and the run's preparation held inside the layout queue.
+  const harness = await workspaceHarness()
+  let releaseLock = (): void => {}
+  try {
+    await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+    releaseLock = lockHeld.release
+    const lease = openView(harness, 'cancelled-wait-run-1', []).catch(
+      () => undefined,
+    )
+    await lockHeld.started
+    // The Open decides to close the Study pane right before it waits for the preparation.
+    const decideClosesStudyPane = harness.reader[
+      'compositionChangeClosesStudyPane'
+    ].bind(harness.reader)
+    let closesStudyPane: boolean | undefined
+    harness.reader['compositionChangeClosesStudyPane'] = () => {
+      closesStudyPane = decideClosesStudyPane()
+      return closesStudyPane
+    }
+    const reason = new Error(
+      'The Open was cancelled while it waited for the preparation.',
+    )
+    const controller = new AbortController()
+    let outcome: unknown = 'pending'
+
+    // Act: the Open waits for the held preparation, then its own request cancels it.
+    void harness.reader.open(controller.signal, 'study', false, true).then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: unknown) => {
+        outcome = error
+      },
+    )
+    await waitUntil(
+      () => closesStudyPane !== undefined,
+      'the Open’s decision to close the Study pane',
+      2_000,
+    )
+    controller.abort(reason)
+    await waitUntil(
+      () => outcome !== 'pending',
+      'the cancelled Open ending while the preparation is held',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(closesStudyPane, true)
+    assert.equal(outcome, reason)
+    assert.equal(
+      harness
+        .nativePanels()
+        .some((panel) => panel.kind === 'codebook.studyContext'),
+      true,
+    )
+    releaseLock()
+    const view = await lease
+    view?.close()
+  } finally {
+    releaseLock()
     await harness.close()
   }
 })

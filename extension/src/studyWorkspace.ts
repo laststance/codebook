@@ -447,6 +447,7 @@ import { unconfirmedWritersInLocalTime } from './utils/unconfirmedWritersInLocal
 import { unmatchedByKey } from './utils/unmatchedByKey'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
 import { unsavedHistoryLine } from './utils/unsavedHistoryLine'
+import { untilAborted } from './utils/untilAborted'
 import { withoutEditorLayoutLeaves } from './utils/withoutEditorLayoutLeaves'
 import { withoutErrorName } from './utils/withoutErrorName'
 import { withoutStudy } from './utils/withoutStudy'
@@ -5901,7 +5902,7 @@ export class StudyWorkspace {
   }
 
   /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome. An entry that waited for a run's Application preparation, which gave Cursor's Agent chat its keyboard back, gives the chat its keyboard back again at its end through the chat's own command, unless it remembered a foreign tab, the learner clicked or typed in an editor since the wait, a newer Open or Close took over, or the entry failed (Cycle 0134 N2 round 2).
-   * @param signal - Cancels an obsolete reader entry.
+   * @param signal - Cancels an obsolete reader entry, also while it waits for a run's Application preparation ({@link waitForApplicationPreparations}).
    * @param origin - Identifies the existing navigation/placement contract for this entry.
    * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
    * @param forAgent - `true` for an entry an agent asked for (a selection through codebook_presentation, a recording's open through codebook_playback, a source reveal through codebook_reveal, a Live Return through codebook_return_current, the reader's own Live entry of a run codebook_start started): its Application preparation gives the keyboard to no place it cannot prove beside a chat view (row 613), and in VS Code a Learning summary that is not shown yet stays behind the chat in the secondary side bar ({@link showLearningSummary}).
@@ -5997,14 +5998,10 @@ export class StudyWorkspace {
       signal?.throwIfAborted()
       // Only a change that closes the Study pane is serialized: an entry that disposes nothing changes no group a preparation reads.
       const disposesStudyPane = this.compositionChangeClosesStudyPane()
-      let waitedForPreparation = false
       const chatReturnsBeforeWait = this.chatPartKeyboardReturns
-      while (disposesStudyPane && this.applicationPreparations.size > 0) {
-        waitedForPreparation = true
-        await Promise.all([...this.applicationPreparations])
-        this.assertLifetime(lifetime)
-        signal?.throwIfAborted()
-      }
+      const waitedForPreparation =
+        disposesStudyPane &&
+        (await this.waitForApplicationPreparations(signal, lifetime))
       // The preparation gave the keyboard back to the chat that held it when it started (a run codebook_start started): what this entry captured at its start was the keyboard where that preparation stood mid-way, so no tab was known to return to, and the entry's own placements (the captured source's show with the keyboard) left it in the editor (Cycle 0134 N2). The return is captured again from where the preparation left the keyboard.
       if (waitedForPreparation && origin !== 'presentation') {
         returnForeignFocus = this.retainForeignTabFocus(
@@ -6444,6 +6441,31 @@ export class StudyWorkspace {
       signal?.removeEventListener('abort', cancel)
       if (ownsLearnerRefusal) this.presentationYieldedToLearner = false
     }
+  }
+
+  /**
+   * Waits, for {@link open} before a composition change that closes the Study pane, until no run's Application preparation is in flight, so that a preparation never reads groups that change between its effects (Cycle 0134 N2).
+   * The wait is the entry's own: the entry's cancellation ends it at once with the cancellation's reason ({@link untilAborted}), while the preparations go on under their own signals, and an entry that stopped waiting throws, so it changes no composition. No bound ends it: a preparation can outlast a fixed bound on a loaded machine, and an entry that left before it ended would change the composition between its effects again.
+   * @param signal - The entry's cancellation; an entry without one waits until the preparations ended.
+   * @param lifetime - The workspace lifetime the entry started in.
+   * @returns `true` when at least one preparation was in flight and waited for; `false` when none was.
+   * @throws The entry's cancellation reason, or the lifetime's error once the workspace closed.
+   * @example const waitedForPreparation = await this.waitForApplicationPreparations(signal, lifetime)
+   */
+  private async waitForApplicationPreparations(
+    signal: AbortSignal | undefined,
+    lifetime: number,
+  ): Promise<boolean> {
+    let waited = false
+    // A preparation that starts while the entry waits is waited for too.
+    while (this.applicationPreparations.size > 0) {
+      waited = true
+      const preparations = Promise.all([...this.applicationPreparations])
+      await (signal ? untilAborted(preparations, signal) : preparations)
+      this.assertLifetime(lifetime)
+      signal?.throwIfAborted()
+    }
+    return waited
   }
 
   /**
