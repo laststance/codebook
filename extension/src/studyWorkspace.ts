@@ -13555,7 +13555,23 @@ export class StudyWorkspace {
         manualEntry,
         retiredContextGroup,
       )
-      if (existing) return existing
+      if (existing) {
+        // A live run that reuses the kept view still makes the stop files' destination the last active main group before the keyboard goes back (D25, D24).
+        if (!forAgentRun || manualEntry) return existing
+        const restoreFocus = await this.withLayout(
+          signal,
+          async (_lifetime, assertCurrent) =>
+            await this.prepareRetainedStopFileDestination(signal, existing, {
+              assertCurrent,
+              cancelEntryFocusReturn,
+              chatReturn,
+              placesStopFileDestination: true,
+            }),
+        )
+        if (restoreFocus) owedChatReturn = undefined
+        await restoreFocus?.({ proofKeptKeyboard, forAgentRun })
+        return existing
+      }
       const preparation = await this.withLayout(
         signal,
         async (lifetime, assertCurrent) =>
@@ -13778,7 +13794,14 @@ export class StudyWorkspace {
     }
     // A completed retained layout needs no native work unless its Context was retired.
     if (!retiredIdentity && owned.layout !== undefined)
-      return { panel: retained }
+      return {
+        panel: retained,
+        restoreFocus: await this.prepareRetainedStopFileDestination(
+          signal,
+          retained,
+          input,
+        ),
+      }
     let grid = await this.readMainEditorGrid(signal, assertCurrent)
     assertCurrent()
     grid.assertUnchanged()
@@ -13789,7 +13812,14 @@ export class StudyWorkspace {
       grid.assertUnchanged()
     }
     this.rememberRetainedApplication(owned, retained, grid)
-    return { panel: retained }
+    return {
+      panel: retained,
+      restoreFocus: await this.prepareRetainedStopFileDestination(
+        signal,
+        retained,
+        input,
+      ),
+    }
   }
 
   /**
@@ -13929,8 +13959,7 @@ export class StudyWorkspace {
       // A second editor part (Cursor's Agent chat) can send later shows into the main editor's last active group; the stop files' destination is made that group before the keyboard goes back (D25, D24).
       const createdDestinationGroups =
         placesStopFileDestination &&
-        !onlyEditorPart &&
-        !this.holdsChatEditorTab()
+        this.stopFileDestinationApplies(onlyEditorPart)
           ? await this.prepareStopFileDestination(panel, signal, assertCurrent)
           : 0
       const assertPlaced = this.retainPresentationPlacement(
@@ -13963,43 +13992,15 @@ export class StudyWorkspace {
       this.rememberApplicationGroupMarker(identity)
       assertCurrent()
       // An entry's own final handoff replaces this return; a Live Return keeps its chat handoff too ({@link returnPreparationFocus}).
-      if (!cancelEntryFocusReturn) {
-        const selections = JSON.stringify(
-            vscode.window.activeTextEditor?.selections,
-          ),
-          ownedByReturn = this.returningCurrent !== undefined
-        const stillCurrent = (): boolean => {
-          try {
-            assertCurrent()
-            assertPlaced()
-            return (
-              vscode.window.state.focused &&
-              JSON.stringify(vscode.window.activeTextEditor?.selections) ===
-                selections
-            )
-          } catch {
-            return false
-          }
-        }
-        restorePreparationFocus = async ({
-          proofKeptKeyboard,
-          forAgentRun,
-        }): Promise<void> => {
-          if (!stillCurrent()) return
-          await this.returnPreparationFocusAsCodebook(() =>
-            returnFocus(signal, stillCurrent, assertPlaced, {
-              onlyEditorPart,
-              forAgentRun,
-              tookKeyboard:
-                sourceFocusTookKeyboard ||
-                lockTookKeyboard ||
-                proofKeptKeyboard,
-              ownedByReturn,
-            }),
-          )
-          assertCurrent()
-        }
-      }
+      if (!cancelEntryFocusReturn)
+        restorePreparationFocus = this.createPreparationFocusRestore({
+          signal,
+          assertCurrent,
+          assertPlaced,
+          returnFocus,
+          onlyEditorPart,
+          tookKeyboard: sourceFocusTookKeyboard || lockTookKeyboard,
+        })
       assertCurrent()
       return {
         panel,
@@ -14012,6 +14013,149 @@ export class StudyWorkspace {
     } finally {
       endPlacing()
     }
+  }
+
+  /**
+   * Says whether a live run's preparation makes the stop files' destination the main editor's last active group: only in Cursor, whose Agent chat part redirects shows into that group, with another editor part beside the main editor that is not VS Code's chat editor window; read by {@link reserveApplicationGroup} and {@link prepareRetainedStopFileDestination}.
+   * @param onlyEditorPart - `true` when the main editor is the only editor part, where a chat can only be a view.
+   * @returns `true` when {@link prepareStopFileDestination} should run; `false` in VS Code (with or without a floating editor window of non-chat tabs), beside a chat editor window, or without another editor part.
+   * @example this.stopFileDestinationApplies(false) // => true in Cursor beside its Agent part
+   */
+  private stopFileDestinationApplies(onlyEditorPart: boolean): boolean {
+    return this.isCursorHost() && !onlyEditorPart && !this.holdsChatEditorTab()
+  }
+
+  /**
+   * Builds the focus return a preparation runs after it left the native queue, shared by a fresh allocation ({@link reserveApplicationGroup}) and a run that reuses the kept Application ({@link prepareRetainedStopFileDestination}); the guard it makes refuses when the window lost focus or the learner moved the selection since the preparation.
+   * @param input - The preparation's cancellation and guards, the focus return captured before its effects ({@link captureApplicationPreparationReturn}), whether the main editor is the only editor part, and whether one of its own commands took the keyboard.
+   * @returns The deferred return, which {@link prepareApplicationGroup} calls once the queue is released.
+   * @example const restore = this.createPreparationFocusRestore({ signal, assertCurrent, assertPlaced, returnFocus, onlyEditorPart: false, tookKeyboard: true })
+   */
+  private createPreparationFocusRestore(input: {
+    signal: AbortSignal | undefined
+    assertCurrent: () => void
+    assertPlaced: () => void
+    returnFocus: ReturnType<
+      StudyWorkspace['captureApplicationPreparationReturn']
+    >
+    onlyEditorPart: boolean
+    tookKeyboard: boolean
+  }): NonNullable<
+    Awaited<
+      ReturnType<StudyWorkspace['prepareApplicationLayout']>
+    >['restoreFocus']
+  > {
+    const { signal, assertCurrent, assertPlaced, returnFocus, onlyEditorPart } =
+      input
+    const selections = JSON.stringify(
+        vscode.window.activeTextEditor?.selections,
+      ),
+      ownedByReturn = this.returningCurrent !== undefined
+    const stillCurrent = (): boolean => {
+      try {
+        assertCurrent()
+        assertPlaced()
+        return (
+          vscode.window.state.focused &&
+          JSON.stringify(vscode.window.activeTextEditor?.selections) ===
+            selections
+        )
+      } catch {
+        return false
+      }
+    }
+    return async ({ proofKeptKeyboard, forAgentRun }): Promise<void> => {
+      if (!stillCurrent()) return
+      await this.returnPreparationFocusAsCodebook(() =>
+        returnFocus(signal, stillCurrent, assertPlaced, {
+          onlyEditorPart,
+          forAgentRun,
+          tookKeyboard: input.tookKeyboard || proofKeptKeyboard,
+          ownedByReturn,
+        }),
+      )
+      assertCurrent()
+    }
+  }
+
+  /**
+   * Makes the stop files' destination the main editor's last active group for a run that reuses the kept Application, which {@link prepareApplicationLayout} never allocates again; called by {@link prepareApplicationGroup} and {@link completeApplicationPreparation} inside the layout queue for a live run's lease.
+   * The learner may have selected the Application's group since the last run (or an entry left it active), which makes it the last active group, so this run's stop files and the debugger's reveals would open in front of the view, and with the Application's group alone the paused-file watch would have no destination. The return is captured before the destination's focus, and the keyboard goes back to where it was through the same return as a fresh preparation's.
+   * @param signal - The run's cancellation.
+   * @param retained - The kept Application pane.
+   * @param input - The queue's current guard, the entry's own final return when it owns one, the return a leftover proof owes, and whether the preparation places the stop files' destination (a live run's lease only).
+   * @returns The deferred focus return, or `undefined` when nothing applies (not a live run, not Cursor beside another editor part, a chat editor window, or the main editor is the only part).
+   * @throws The signal's reason when the run was cancelled, and what `assertCurrent` throws.
+   * @example const restoreFocus = await this.prepareRetainedStopFileDestination(signal, panel, { assertCurrent, placesStopFileDestination: true })
+   */
+  private async prepareRetainedStopFileDestination(
+    signal: AbortSignal | undefined,
+    retained: vscode.WebviewPanel,
+    input: Pick<
+      Parameters<StudyWorkspace['prepareApplicationLayout']>[1],
+      | 'assertCurrent'
+      | 'cancelEntryFocusReturn'
+      | 'chatReturn'
+      | 'placesStopFileDestination'
+    >,
+  ): Promise<
+    Awaited<
+      ReturnType<StudyWorkspace['prepareApplicationLayout']>
+    >['restoreFocus']
+  > {
+    const { assertCurrent } = input
+    // Cheap exits first: an entry, VS Code and a chat editor window never place the destination.
+    if (
+      !input.placesStopFileDestination ||
+      !this.isCursorHost() ||
+      this.holdsChatEditorTab()
+    )
+      return undefined
+    // Captured before any effect: the destination's focus takes the keyboard from the chat.
+    const returnFocus = this.captureApplicationPreparationReturn(
+      retained,
+      input.cancelEntryFocusReturn,
+      input.chatReturn,
+    )
+    const grid = await this.readMainEditorGrid(signal, assertCurrent)
+    assertCurrent()
+    grid.assertUnchanged()
+    const onlyEditorPart =
+      grid.groups.length === vscode.window.tabGroups.all.length
+    if (!this.stopFileDestinationApplies(onlyEditorPart)) return undefined
+    const createdGroups = await this.prepareStopFileDestination(
+      retained,
+      signal,
+      assertCurrent,
+    )
+    const assertPlaced = this.retainPresentationPlacement(
+      'prepareRetainedStopFileDestination/assertPlaced',
+    )
+    // A group the step created changes the main grid: the retained record follows it.
+    const owned = this.applicationGroup
+    if (createdGroups > 0 && owned) {
+      const layout = await this.executeEditorCommand<unknown>(
+        'vscode.getEditorLayout',
+      )
+      assertCurrent()
+      assertPlaced()
+      this.rememberApplicationGroup(
+        owned.identity,
+        layout,
+        grid.groups.length + createdGroups,
+      )
+    }
+    assertCurrent()
+    // An entry's own final handoff replaces this return.
+    if (input.cancelEntryFocusReturn) return undefined
+    return this.createPreparationFocusRestore({
+      signal,
+      assertCurrent,
+      assertPlaced,
+      returnFocus,
+      onlyEditorPart,
+      tookKeyboard: true,
+    })
   }
 
   /**
@@ -14034,7 +14178,7 @@ export class StudyWorkspace {
     if (this.uniqueApplicationTab()?.isPreview) return 0
     const groupsBefore = vscode.window.tabGroups.all.length
     try {
-      await this.focusOrCreateStopFileDestination(panel)
+      await this.focusOrCreateStopFileDestination(panel, signal, assertCurrent)
     } catch (error) {
       // A cancelled run keeps its signal's reason; any other refusal leaves the preparation as it was.
       signal?.throwIfAborted()
@@ -14065,11 +14209,15 @@ export class StudyWorkspace {
   /**
    * Runs the commands of {@link prepareStopFileDestination}: focuses the learner's group beside the Application by its column, or creates one below a lone Application group; a column without a focus command and a main editor with more groups than the Application's run nothing.
    * @param panel - The new Application pane.
-   * @throws What the editor's command throws, and the error of a group that did not appear.
-   * @example await this.focusOrCreateStopFileDestination(panel) // runs workbench.action.focusSecondEditorGroup
+   * @param signal - The run's cancellation, checked after each await and right before the group is created.
+   * @param assertCurrent - Rejects a superseded preparation at the same points.
+   * @throws What the editor's command throws, the error of a group that did not appear, the signal's reason when cancelled, and what `assertCurrent` throws.
+   * @example await this.focusOrCreateStopFileDestination(panel, signal, assertCurrent) // runs workbench.action.focusSecondEditorGroup
    */
   private async focusOrCreateStopFileDestination(
     panel: vscode.WebviewPanel,
+    signal: AbortSignal | undefined,
+    assertCurrent: () => void,
   ): Promise<void> {
     const applicationColumn = this.viewColumnOf(panel)
     if (applicationColumn === undefined) return
@@ -14080,11 +14228,16 @@ export class StudyWorkspace {
     // The editor has no focus command past its eighth group: such a destination stays as it is.
     if (!command) return
     await this.executeEditorCommand(command)
+    signal?.throwIfAborted()
+    assertCurrent()
     if (destination) return
     // No destination: only a main editor that holds the Application's group alone gets one, below it, from the group that now holds the keyboard.
     const layout = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
     )
+    // A cancelled or superseded preparation creates no group.
+    signal?.throwIfAborted()
+    assertCurrent()
     if (editorLayoutGroupCount(layout) !== 1) return
     const groupsBefore = vscode.window.tabGroups.all.length
     await this.executeEditorCommand('workbench.action.newGroupBelow')

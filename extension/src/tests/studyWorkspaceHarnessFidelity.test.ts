@@ -206,6 +206,7 @@ test('the fake Cursor opens a show beside the chat in the main editor’s last a
       'honored-after-first-focus.ts',
       'honored-after-second-focus.ts',
       'beyond-the-main-groups.ts',
+      'into-the-chat-group.ts',
     ])
       await writeFile(join(harness.directory, name), 'export {}\n')
     const show = async (name: string, viewColumn: number): Promise<void> => {
@@ -219,6 +220,7 @@ test('the fake Cursor opens a show beside the chat in the main editor’s last a
         group.tabs.some((tab) => tab.label === name),
       )?.viewColumn
     const { commands } = harness.editor
+    const chatColumn = harness.groups.length
 
     // Act
     // The main editor's first group was the last active one when the chat took the keyboard.
@@ -235,6 +237,8 @@ test('the fake Cursor opens a show beside the chat in the main editor’s last a
     await show('honored-after-second-focus.ts', 2)
     // A column past the main editor's groups, which Cursor opens in its Agent part first, ends in the last active group too.
     await show('beyond-the-main-groups.ts', 9)
+    // A show into the chat part's real column (the third group) ends in the last active group too.
+    await show('into-the-chat-group.ts', chatColumn)
 
     // Assert
     assert.equal(columnHolding('redirected.ts'), 1)
@@ -242,6 +246,29 @@ test('the fake Cursor opens a show beside the chat in the main editor’s last a
     assert.equal(columnHolding('honored-after-first-focus.ts'), 2)
     assert.equal(columnHolding('honored-after-second-focus.ts'), 2)
     assert.equal(columnHolding('beyond-the-main-groups.ts'), 2)
+    assert.equal(columnHolding('into-the-chat-group.ts'), 2)
+    assert.equal(harness.lastActiveMainColumn(), 2)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the fake Cursor's last active main group following the learner's click into a file of a main group, as the editor's does, so a show the chat redirects lands where the learner worked; fails_when=a learner's selection of a file leaves the earlier group as the last active one, so a test of the stop files' destination passes or fails for a group the learner never left; why_new=Cycle 0134 review round (the learner selecting the Application or a file before the next run); seam=the harness's focusMutableDraft and the chat part's focus; no_claim=Cursor's rule for a selection made through a tab strip or a command
+test('the fake Cursor treats the group of the file the learner selected as the main editor’s last active group', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.focusMutableDraft('first.ts', 1)
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+
+    // Act
+    harness.focusMutableDraft('second.ts', 2)
+    chat.focus()
+
+    // Assert
     assert.equal(harness.lastActiveMainColumn(), 2)
   } finally {
     await harness.close()

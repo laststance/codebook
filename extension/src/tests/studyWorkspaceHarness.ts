@@ -700,6 +700,8 @@ export async function workspaceHarness(
     { uri: string; viewColumn: number } | undefined
   /** See `redirectShowsBesideChatToLastActiveGroup`. */
   let redirectsShowsToLastActiveMainGroup = false
+  /** See `failNewGroupBelow`. */
+  let newGroupBelowFails = false
   /** The main editor's last active group, as {@link noteLastActiveMainGroup} followed it; only read by the model of `redirectShowsBesideChatToLastActiveGroup` and by `lastActiveMainColumn`. */
   let lastActiveMainGroup: (typeof groups)[number] | undefined
   /** See `holdNextTabCloseEffect`. */
@@ -2655,6 +2657,8 @@ export async function workspaceHarness(
     group.activeTab = opened.tab
     activeTabGroup = group
     leaveChatForMainEditor()
+    // The learner's selection makes this group the main editor's last active one.
+    noteLastActiveMainGroup()
     keyboardOnBody = false
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
@@ -4649,6 +4653,8 @@ export async function workspaceHarness(
             return
           }
           if (name === 'workbench.action.newGroupBelow') {
+            if (newGroupBelowFails)
+              throw new Error('workbench.action.newGroupBelow is unavailable')
             insertNativeGroupBelowActiveGroup()
             return
           }
@@ -6453,6 +6459,8 @@ export async function workspaceHarness(
       activeTabGroup = group
       // The learner's click ends the chat's keyboard ownership and puts the keyboard in the pane's document, as the reveal path does.
       leaveChatForMainEditor()
+      // The pane's group is the main editor's last active one from now on.
+      noteLastActiveMainGroup()
       keyboardOnBody = false
       keyboardInView = false
       innerFocusedPanel = kind
@@ -7277,9 +7285,14 @@ export async function workspaceHarness(
         ),
       )
       if (!holder) {
-        // In the model of `redirectShowsBesideChatToLastActiveGroup`, Cursor opens a file that is open nowhere as a preview in the main editor's last active group (Cycle 0134 Step 0, observation 2).
+        // In the model of `redirectShowsBesideChatToLastActiveGroup`, Cursor opens a file that is open nowhere as a preview in the main editor's last active group while the chat has the keyboard (Cycle 0134 Step 0, observation 2); with the main editor holding the keyboard it opens in the active group.
+        const redirected =
+          redirectsShowsToLastActiveMainGroup &&
+          separateEditorPart?.focused === true
         const openedColumn = redirectsShowsToLastActiveMainGroup
-          ? (lastActiveMainGroupNow()?.viewColumn ?? applicationColumn)
+          ? ((redirected
+              ? lastActiveMainGroupNow()?.viewColumn
+              : activeTabGroup.viewColumn) ?? applicationColumn)
           : applicationColumn
         openAnnouncedTextTab(filename, openedColumn, {
           isPreview: true,
@@ -8324,6 +8337,13 @@ export async function workspaceHarness(
      */
     redirectShowsBesideChatToLastActiveGroup(): void {
       redirectsShowsToLastActiveMainGroup = true
+    },
+    /**
+     * Makes `workbench.action.newGroupBelow` reject, as an editor that cannot split the group does, so no group is created below the Application's. A test of the destination's creation that wrongly leaves the main editor with more than one group fails in the model's own assertion; a broken precondition otherwise surfaces only through the group list the test compares.
+     * @example harness.failNewGroupBelow()
+     */
+    failNewGroupBelow(): void {
+      newGroupBelowFails = true
     },
     /**
      * Names the column of the main editor's last active group, as the model of `redirectShowsBesideChatToLastActiveGroup` follows it.
