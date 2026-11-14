@@ -398,6 +398,70 @@ test('the next extension run in Cursor after Close All Editors opens its view wh
   }
 })
 
+// protects=Cycle 0133 D12 (/ship QA revalidation R1b, Cursor 3.30.14): after Close All Editors left no learner's group, the next extension run's stop file is not shown into the Agent part's group beside the view, and the view stays in front of its group after the attach; fails_when=the column after the view counts as the learner's group although it lies beyond the main editor's measured groups, so the stop file lands in the Agent part (natively) or in front of the view (the fake redirects a show aimed at the chat part to the active group), and the paused-file watch then moves files between the view's group and the Agent part until the view is refused with "Application ownership changed"; no_claim=where the debugger opens the first pause's file when no learner's group exists (it may cover the view, the frozen D13 boundary) and Cursor's own Close All Editors (the explicit closes and replaceGroupObjectsOnTabChanges stand in for it)
+test('the next extension run in Cursor after Close All Editors shows no stop file in the Agent part and keeps its view in front', async () => {
+  // Arrange: an ended run kept its view; then every editor closed in Cursor 3.30.14's order, which leaves no learner's group beside the Agent part.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'agent-stop-run-1', [])
+    first.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    first.close()
+    const learnerGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'popup.js'),
+    )
+    assert.ok(learnerGroup)
+    await harness.editor.window.tabGroups.close([...learnerGroup.tabs], true)
+    await harness.editor.window.tabGroups.close(
+      harness.groups.find((group) => group.viewColumn === 2)!,
+      true,
+    )
+    chat.closeChatTab()
+    await harness.editor.window.tabGroups.close(
+      [...harness.groups[0]!.tabs],
+      true,
+    )
+    harness.announceTabChange()
+    harness.replaceGroupObjectsOnTabChanges()
+    const second = await openView(harness, 'agent-stop-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+
+    // Act: the run attaches its surface, which opens its stop files before the first click.
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+
+    // Assert: no group shows the stop file, the view stands in front of its group in column 1, and the Agent part's group still holds no tab.
+    assert.equal(groupShowing(harness, 'settings.js'), undefined)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        front: group.activeTab?.label,
+      })),
+      [
+        {
+          column: 1,
+          tabs: ['codebook · Application agent-st'],
+          front: 'codebook · Application agent-st',
+        },
+        { column: 2, tabs: [], front: undefined },
+      ],
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0133 D12 (VS Code shape, no other editor part): after Close All Editors left the earlier run's empty locked Application group as the editor's only group, the next extension run opens its view at once and the old group stays below it as an empty group, still locked; fails_when=the only-group check counts a single listed group as no proof and closes the group, so the editor keeps it and the run waits 5 s for a removal that never comes ("Timed out waiting for owned Codebook group removal"); no_claim=VS Code's own Close All Editors (the fake closes the tabs and keeps the locked group) and where the editor gives the keyboard
 test('the next extension run after Close All Editors opens its view when the earlier Application group is the editor’s only group', async () => {
   // Arrange: an ended run kept its view; then every tab closed, which leaves the locked Application group empty and alone, with no other editor part.
