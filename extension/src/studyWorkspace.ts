@@ -18107,6 +18107,8 @@ export class StudyWorkspace {
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabs((event) => {
         this.notePlacementTabEvent(event)
+        // The recorded groups follow the tabs that leave with a tab event only (Cursor 3.30.14's Close All Editors, Cycle 0133 D12).
+        this.presentationGuards.noteObservedGroupTabs()
         // A closed run tab is no leftover any more: a tab the learner opens again in its place is theirs. A closed copy in another group leaves the note of the one still in front of the pane.
         for (const tab of event.closed)
           if (

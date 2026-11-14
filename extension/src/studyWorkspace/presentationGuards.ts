@@ -3169,6 +3169,20 @@ export class PresentationGuards {
   }
 
   /**
+   * Updates how many tabs each recorded group holds after a tab event, for the groups whose objects the editor kept; called by the reader's `onDidChangeTabs` listener in `StudyWorkspace.installReaders`.
+   * Cursor 3.30.14 reports the last tab **View: Close All Editors** closes with a tab event only, after its last group event (Cycle 0133 D12, `/ship` QA journal), so the recorded groups would still count that tab; {@link orderedEmptySurvivors} reads the counts. A tab that leaves without any event changes no count.
+   * @example this.noteObservedGroupTabs() // the recorded first group counts 0 tabs once its last tab closed
+   */
+  noteObservedGroupTabs(): void {
+    const current = vscode.window.tabGroups.all
+    this.observedEditorGroups = this.observedEditorGroups.map((entry) =>
+      current.includes(entry.group)
+        ? { ...entry, tabCount: entry.group.tabs.length }
+        : entry,
+    )
+  }
+
+  /**
    * Pairs each group an event replaced with the earlier group it still is, by the groups' order, when no group holds a tab before or after the event; asked by {@link observeEditorGroups} for a group that is neither opened nor recognized otherwise.
    * Cursor 3.30.14 lists its Agent part with no tab after **View: Close All Editors**, so a window whose main groups are empty too has nothing to recognize its groups by, and Cursor answers an insertion, a close or a lock with every group a new object (Cycle 0133 D12, `/ship` QA smoke). The extension host names the groups an event opened and closed; the others keep their order, since inserting or closing a group moves no other group. With no tab anywhere, a wrong pairing could take nothing of the learner's.
    * @param event - The tab-group event the observer runs for, if any.

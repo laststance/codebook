@@ -283,18 +283,15 @@ test('the next extension run after Close All Editors opens its view while the ea
 
 // protects=Cycle 0133 D12 (/ship QA revalidation R1, Cursor 3.30.14): in a window whose only main group is empty and whose Agent part is listed with no tab, so no group has a tab, an extension run opens its view in a new group above the empty one, although Cursor answers the insertion and the lock with every group a new object; fails_when=the group tracker gives every replaced empty group a new identity, so the earlier groups read as gone and the run's view is refused with "The editor did not create one empty owned Application group." or "Original editor groups changed while preparing the Application."; no_claim=why Cursor keeps this group at the insertion (a group the fake did not empty by a close stays, as after a window reload) and where the editor gives the keyboard
 test('an extension run in Cursor opens its view when no group has a tab and Cursor answers each group change with new group objects', async () => {
-  // Arrange: the main editor's one group is empty and the Agent part lists no tab, as after Close All Editors and a reload.
+  // Arrange: the main editor's one group is empty and the Agent part lists no tab; the last tab left with a tab event only, after the last group event, as Cursor 3.30.14 reports it.
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
-    harness.replaceGroupObjectsOnTabChanges()
     const chat = harness.addSeparateEditorPart()
     chat.closeChatTab()
-    await harness.editor.window.tabGroups.close(
-      [...harness.groups[0]!.tabs],
-      true,
-    )
+    for (const tab of [...harness.groups[0]!.tabs]) harness.closeTabByHand(tab)
+    harness.replaceGroupObjectsOnTabChanges()
     assert.deepEqual(
       harness.groups.map((group) => ({
         column: group.viewColumn,
@@ -335,19 +332,34 @@ test('an extension run in Cursor opens its view when no group has a tab and Curs
 
 // protects=Cycle 0133 D12 (/ship QA smoke S3, Cursor 3.30.14): after Close All Editors left the earlier run's empty Application group alone beside Cursor's Agent part with no tab, the next extension run opens its view, although Cursor answers every group change with new group objects and closes the old empty group when the new group comes above it; fails_when=the group tracker loses the identities of the empty groups, or the creation check expects one group more than before, so the run's view is refused with "Original editor groups changed while preparing the Application." or "The editor did not create one empty owned Application group."; no_claim=Cursor's own Close All Editors and New Group Above (closeAllEditors, replaceGroupObjectsOnTabChanges and closeEmptiedGroupAtInsertion stand in for them) and where the editor gives the keyboard
 test('the next extension run in Cursor after Close All Editors opens its view while Cursor replaces every group object and closes the old empty group', async () => {
-  // Arrange: an ended run kept its view; then every editor closed, which leaves the locked Application group empty and alone in the main editor.
+  // Arrange: an ended run kept its view; then every editor closed in Cursor 3.30.14's order: the learner's group goes first, and the Application's tab leaves last with a tab event only, so the locked Application group stays empty and alone in the main editor.
   const harness = await workspaceHarness()
   try {
     readerSeams(harness).stopOwnTimer()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     harness.focusMutableDraft('popup.js', 1)
-    harness.replaceGroupObjectsOnTabChanges()
     harness.closeEmptiedGroupAtInsertion()
     const chat = harness.addSeparateEditorPart()
     const first = await openView(harness, 'replaced-run-1', [])
     first.end('Clicked Add note; the saved title read "Bookmark Notes".')
     first.close()
-    await closeAllEditors(harness, chat)
+    const learnerGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'popup.js'),
+    )
+    assert.ok(learnerGroup)
+    await harness.editor.window.tabGroups.close([...learnerGroup.tabs], true)
+    await harness.editor.window.tabGroups.close(
+      harness.groups.find((group) => group.viewColumn === 2)!,
+      true,
+    )
+    chat.closeChatTab()
+    await harness.editor.window.tabGroups.close(
+      [...harness.groups[0]!.tabs],
+      true,
+    )
+    // The editor tells the tab listeners that the Application's tab left, and sends no group event after it.
+    harness.announceTabChange()
+    harness.replaceGroupObjectsOnTabChanges()
     assert.deepEqual(
       harness.groups.map((group) => ({
         column: group.viewColumn,
