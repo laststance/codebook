@@ -337,14 +337,8 @@
       }
     },
     "src/utils/answerDeepWikiQuestion.ts": {
-      "complexity_high": {
-        "count": 1
-      },
       "complexity_moderate": {
-        "count": 2
-      },
-      "crap_high": {
-        "count": 1
+        "count": 3
       },
       "crap_moderate": {
         "count": 1
@@ -528,15 +522,14 @@
     "src/utils/assertStudyCheckpoint.ts:high impact",
     "src/utils/projectConfiguredStudy.ts:complexity",
     "src/recordingStore.ts:complexity",
+    "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/learningLibrary.ts:hidden coupling",
     "src/studyWorkspace.ts:complexity",
-    "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/ownedNodeTestRun.ts:complexity",
     "src/recordingSchemas.ts:dead code",
+    "skills/codebook/render-wiki.mjs:high impact",
     "src/utils/projectRecording.ts:high impact",
     "src/playbackController.ts:complexity",
-    "skills/codebook/render-wiki.mjs:high impact",
-    "src/utils/answerDeepWikiQuestion.ts:complexity",
     "src/configuredBrowserRun.ts:complexity",
     "src/utils/configuredDomExpression.ts:complexity",
     "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
@@ -544,16 +537,16 @@
     "src/utils/readRecordingResource.ts:complexity",
     "src/extension.ts:complexity",
     "skills/codebook/publish-wiki.mjs:high impact",
+    "src/ownedRepositoryBreakpoint.ts:complexity",
     "src/utils/validateRepositoryBook.ts:complexity",
     "src/runtimeSupport/hostBrowser.ts:complexity",
     "src/cursorSkillDeployment.ts:complexity",
-    "src/ownedRepositoryBreakpoint.ts:complexity",
     "skills/codebook/render-wiki-diagrams.mjs:complexity",
     "src/studyWorkspace/presentationState.ts:complexity",
     "src/ui/repositoryHtml.ts:complexity",
     "src/studyWorkspace/presentationGuards.ts:complexity",
     "src/replayDebugger.ts:hidden coupling",
-    "src/studyWorkspace/replayOpening.ts:complexity",
-    "src/replayDebugAdapter.ts:complexity"
+    "src/replayDebugAdapter.ts:complexity",
+    "src/studyWorkspace/replayOpening.ts:complexity"
   ]
 }
