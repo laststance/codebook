@@ -7972,13 +7972,16 @@ export class StudyWorkspace {
     if (!isStillCovered()) return
     watch.leave(covered)
     // A move of the earlier run's file that the watch started before this step may still be showing it; its show would bring the file in front of the pane again after the reveal below (Cycle 0133 D21). The file is marked left, so no move starts after the one in flight.
-    await this.awaitMoveInFlight(watch, signal)
+    const hasMoveEnded = await this.awaitMoveInFlight(watch, signal)
     // Read again after the move's end.
     if (!isStillCovered()) return
     // An editor the learner chose while the rule answered or the move ended keeps the keyboard (CodeRabbit, PR 331).
     const takesKeyboard = !comesWithoutKeyboard && coveredEditorIsActive()
     this.revealPane(panel, column, !takesKeyboard)
     if (takesKeyboard) this.tellPaneTookKeyboard()
+    // A move that outlasted the bound can still put the file in front of the pane when its show answers.
+    if (!hasMoveEnded)
+      this.recoverPaneAfterLateMove(panel, column, watch, covered)
     try {
       await waitUntil(
         () => {
@@ -8000,17 +8003,19 @@ export class StudyWorkspace {
 
   /**
    * Waits, within the placement bound, until the run's paused-file watch has no move in flight; called by {@link uncoverNotedLeftover} after it marked the earlier run's file left behind the pane.
-   * A move that outlasts the bound is gone on from (the reveal's guard refuses the view if that file still covers it).
+   * A move that outlasts the bound is gone on from; the caller then covers the pane again once that move ends ({@link recoverPaneAfterLateMove}).
    * @param watch - The run's paused-file watch.
    * @param signal - The attach's cancellation.
-   * @returns Once the watch is settled, or {@link PRESENTATION_READY_TIMEOUT_MS} passed.
+   * @returns
+   * - `true` once the watch is settled within the bound
+   * - `false` when {@link PRESENTATION_READY_TIMEOUT_MS} passed with a move still in flight
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.awaitMoveInFlight(watch, signal)
+   * @example const hasMoveEnded = await this.awaitMoveInFlight(watch, signal) // => false when the move's show is still pending after 5 s
    */
   private async awaitMoveInFlight(
     watch: PausedSourceWatchGuard,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await awaitResponse(
         watch.settled(),
@@ -8018,11 +8023,47 @@ export class StudyWorkspace {
         signal,
         PRESENTATION_READY_TIMEOUT_MS,
       )
+      return true
     } catch (error) {
       // A cancelled run keeps its signal's reason; the bound only ends the wait.
       signal.throwIfAborted()
       if (!(error instanceof WaitTimeoutError)) throw error
+      return false
     }
+  }
+
+  /**
+   * Brings the kept pane back in front once a paused-file move that outlasted the uncover step's bound has ended, when that move's late show put the earlier run's file in front of the pane again; called by {@link uncoverNotedLeftover} after it went on without the move (Codex review, Cycle 0133).
+   * Cursor 3.30.14 answers such a show by bringing the file's copy in the pane's group to the front while its Agent chat holds the keyboard, and the watch, which leaves that file behind the pane, would not move it. Only that file, still the unedited front tab of the same pane's group in the same lease, is covered again, without the keyboard; another tab in front of the pane (one the learner chose meanwhile) stays, and a failure is reported on the layout line.
+   * @param panel - The lease's Application pane.
+   * @param column - The pane's column when the uncover step revealed it.
+   * @param watch - The run's paused-file watch, whose `settled` ends with the late move.
+   * @param covered - The earlier run's file the uncover step left behind the pane.
+   * @example this.recoverPaneAfterLateMove(panel, column, watch, settingsUri) // the view is in front again once the late show of settings.js answered
+   */
+  private recoverPaneAfterLateMove(
+    panel: vscode.WebviewPanel,
+    column: vscode.ViewColumn,
+    watch: PausedSourceWatchGuard,
+    covered: vscode.Uri,
+  ): void {
+    const leaseId = this.leaseId
+    void watch
+      .settled()
+      .then(() => {
+        // Only the same lease's pane, in the same column, over the same file.
+        const isSamePane =
+          this.leaseId === leaseId &&
+          this.app === panel &&
+          this.viewColumnOf(panel) === column
+        if (
+          isSamePane &&
+          this.coveringTabOfApplication(column)?.uri.toString() ===
+            covered.toString()
+        )
+          this.revealPane(panel, column, true)
+      })
+      .catch((error: unknown) => this.report('layout', error))
   }
 
   /**
@@ -8289,16 +8330,22 @@ export class StudyWorkspace {
         )
           frontTabsBefore.set(destination.viewColumn, frontInput.uri)
         try {
-          await this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
-            viewColumn: destination.viewColumn,
-            preserveFocus: true,
-            // A kept tab replaces no preview of the learner's.
-            preview: false,
-          })
+          // Bounded: a show the editor never answers must not hold the attach until the run's setup deadline fails the whole run (Codex review, Cycle 0133).
+          await awaitResponse(
+            this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
+              viewColumn: destination.viewColumn,
+              preserveFocus: true,
+              // A kept tab replaces no preview of the learner's.
+              preview: false,
+            }),
+            'the stop file shown beside the Application',
+            signal,
+            PRESENTATION_READY_TIMEOUT_MS,
+          )
           lastShownStopFiles.set(destination.viewColumn, canonicalStopFile)
         } catch (error) {
-          // A file the editor cannot open leaves the run as it was; only a cancelled run ends here.
-          if (signal?.aborted) throw error
+          // A cancelled run keeps its signal's reason; a file the editor cannot open, or does not open within the bound, leaves the run as it was.
+          signal?.throwIfAborted()
           this.report('layout', error)
         }
       }
@@ -8344,10 +8391,16 @@ export class StudyWorkspace {
       )
         continue
       try {
-        await this.showTextDocumentNoted(previousUri, {
-          viewColumn: column,
-          preserveFocus: true,
-        })
+        // Bounded like the stop file's own show: an unanswered show leaves that tab behind and ends nothing else.
+        await awaitResponse(
+          this.showTextDocumentNoted(previousUri, {
+            viewColumn: column,
+            preserveFocus: true,
+          }),
+          'the earlier front tab shown again',
+          undefined,
+          PRESENTATION_READY_TIMEOUT_MS,
+        )
       } catch (error) {
         this.report('layout', error)
       }

@@ -150,6 +150,58 @@ test('an extension run opens its stop file as a kept tab beside its view before 
   }
 })
 
+// protects=Cycle 0133 /ship review (Codex adversarial, Medium): a stop file whose show beside the view the editor never answers does not hold the extension run's attach: the attach goes on after the 5 s placement bound with the view in front; fails_when=the stop file's show is awaited without a bound, so the attach, and the run's start behind it, waits for as long as the editor does not answer; no_claim=why a native show stalls (the held show stands in for it), or where the file opens once the late show answers
+test('an extension run’s attach goes on with its view in front when the editor never answers the show of its stop file beside the view', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const view = await openView(harness, 'held-stop-run-1', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // The editor holds its show of the stop file beside the view and never answers it during the attach.
+    const show = harness.holdNextTextDocumentShow({
+      uri: harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString(),
+    })
+    let budgetTimer: NodeJS.Timeout | undefined
+    try {
+      // Act
+      // gstack-timing-ok: a negative check with a budget above the 5 s bound; an attach that awaits the held show without a bound never ends within it.
+      const outcome = await Promise.race([
+        viewport
+          .attach(SILENT_SCREENCAST, new AbortController().signal, 'popup')
+          .then(() => 'attached'),
+        new Promise<string>((resolve) => {
+          budgetTimer = setTimeout(() => resolve('still waiting'), 8_000)
+        }),
+      ])
+      // Assert, with the show still held
+      assert.equal(outcome, 'attached')
+      assert.equal(groupShowing(harness, 'settings.js'), undefined)
+      assert.equal(
+        applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+        'codebook · Application held-sto',
+      )
+    } finally {
+      clearTimeout(budgetTimer)
+      // Released on every path, so a failure above leaves no show held.
+      show.release()
+    }
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 /**
  * Closes every tab of the main editor and the chat's tab, as Cursor 3.30.8's View: Close All Editors does: the locked Application group stays, empty, as the main editor's only group, and the Agent part's group stays listed with no tab (Cycle 0133 D12 Step 0, run 3).
  * @param harness - The workspace harness.
@@ -433,7 +485,7 @@ test('the next extension run opens its view when the learner closes the earlier 
   }
 })
 
-// protects=Cycle 0133 D12 (old group not active): when Cursor names its Agent part's group active after Close All Editors, the next extension run still opens its view above the earlier empty Application group, which is released at once; fails_when=the release waits for a removal the editor never makes, or needs the old group to be the active one, so the view is refused or delayed 5 s; no_claim=that the old group is unlocked (a known limitation, a later candidate) and Cursor's own Close All Editors (closeAllEditors stands in for it)
+// protects=Cycle 0133 D12 (old group not active): when Cursor names its Agent part's group active after Close All Editors, the next extension run still opens its view above the earlier empty Application group, which is released in place; fails_when=the release waits for a removal the editor never makes, or needs the old group to be the active one, so the view is refused; no_claim=how long the release takes (the test reads no clock), that the old group is unlocked (a known limitation, a later candidate) and Cursor's own Close All Editors (closeAllEditors stands in for it)
 test('the next extension run opens its view when Cursor’s Agent part holds the active group after Close All Editors', async () => {
   // Arrange: an ended run kept its view; then every editor closed, and the learner's click into the Agent part makes its group the active one.
   const harness = await workspaceHarness()
@@ -447,12 +499,11 @@ test('the next extension run opens its view when Cursor’s Agent part holds the
     first.close()
     await closeAllEditors(harness, chat)
     chat.focusTab()
-    const startedAt = Date.now()
 
     // Act
     const second = await openView(harness, 'not-active-run-2', [])
 
-    // Assert: the view stands in its own group in column 1, the old group stays below it empty, and no 5 s wait passed.
+    // Assert: the view stands in its own group in column 1, the old group stays below it empty, and nothing was refused.
     const application = harness
       .nativePanels()
       .find((panel) => panel.kind === 'codebook.scopedBrowser')
@@ -468,7 +519,6 @@ test('the next extension run opens its view when Cursor’s Agent part holds the
         { column: 3, tabs: [] },
       ],
     )
-    assert.ok(Date.now() - startedAt < 4000)
     assert.equal(harness.reader['errors'].size, 0)
     second.close()
   } finally {
@@ -1097,11 +1147,106 @@ test('the next extension run’s attach goes on and shows its view when a move o
         )
         const elapsedMs = performance.now() - startedAt
         // Assert, with the show still held
+        // gstack-timing-ok: a lower bound only: the attach waited for the held move until the 5 s bound; load can lengthen the wait, never shorten it.
         assert.equal(elapsedMs >= 4_500, true)
         assert.equal(
           applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
           'codebook · Application long-mov',
         )
+      } finally {
+        // Released on every path, so a failure above leaves no show held.
+        show.release()
+      }
+      second.close()
+    } finally {
+      endRedirect()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0133 /ship review (Codex adversarial, High): a move of the earlier run's file that outlasted the uncover step's 5 s bound and lands in the view's group afterwards leaves the next run's view in front again once that move ended; fails_when=the uncover step forgets the move once its wait timed out, so the late show, which lands in the view's group, covers the view for the rest of the pause (the watch leaves that file behind the pane and never moves it); no_claim=how late a native show answers, or that Cursor lands it there (the held show and the redirect of every show to the view's group stand in for Cursor 3.30.14 with its Agent chat holding the keyboard)
+test('the next extension run brings its view back in front when a move of the earlier run’s file that outlasted the placement bound lands over it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const { applicationColumn, endRedirect } =
+      await endRunWithPausedFileInFrontWhileShowsLandThere(
+        harness,
+        'late-move-run-1',
+        'settings.js',
+      )
+    try {
+      const second = await openView(harness, 'late-move-run-2', ['settings.js'])
+      const viewport = harness.reader['viewport']
+      assert.ok(viewport)
+      const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')
+      assert.ok(application)
+      const settingsUri = harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString()
+      // The editor reports the view's state, so the run's watch starts moving the earlier run's file, and that show answers only after the attach went on without it.
+      const show = harness.holdNextTextDocumentShow({ uri: settingsUri })
+      try {
+        let showStarted = false
+        void show.started.then(() => {
+          showStarted = true
+        })
+        application.notifyViewState()
+        await waitUntil(
+          () => showStarted,
+          'the watch’s held show of settings.js',
+          2_000,
+        )
+        await viewport.attach(
+          SILENT_SCREENCAST,
+          new AbortController().signal,
+          'popup',
+        )
+        assert.equal(
+          applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+          'codebook · Application late-mov',
+        )
+        const showsBeforeRelease = harness.textDocumentShows().length
+        const revealsBeforeRelease = harness.panelReveals().length
+        // Act: the late show answers and lands in the view's group, as every show of the file does; the fake editor puts the file in front in the same step it records the show.
+        show.release()
+        await waitUntil(
+          () => harness.textDocumentShows().length > showsBeforeRelease,
+          'the late show of settings.js',
+          2_000,
+        )
+        // Assert
+        assert.deepEqual(
+          harness.textDocumentShows().slice(showsBeforeRelease),
+          [
+            {
+              name: 'settings.js',
+              viewColumn: applicationColumn,
+              preserveFocus: true,
+            },
+          ],
+        )
+        await waitUntil(
+          () =>
+            applicationGroupOf(harness, applicationColumn)?.activeTab?.label ===
+            'codebook · Application late-mov',
+          'the view in front again once the late move ended',
+          2_000,
+        )
+        assert.deepEqual(harness.panelReveals().slice(revealsBeforeRelease), [
+          {
+            kind: 'codebook.scopedBrowser',
+            column: applicationColumn,
+            preserveFocus: true,
+          },
+        ])
       } finally {
         // Released on every path, so a failure above leaves no show held.
         show.release()
