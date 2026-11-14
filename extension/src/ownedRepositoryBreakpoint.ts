@@ -166,6 +166,8 @@ export class OwnedRepositoryBreakpoint {
       refusedAt?: VerifiedPlace
     } & VerifiedRegistration
   >()
+  /** Every id each session's adapter gave this breakpoint in a registration reply that identified it, whether its owner accepted the place or refused it, kept across later registrations and the retirement; read by {@link wasAnsweredWith} and {@link answeredIds}. */
+  private readonly answeredIdsBySession = new Map<string, Set<number>>()
   /** `ownedBreakpointId` is the adapter id acknowledged for this breakpoint; with it, a learner breakpoint left on the same line is told apart from the owned one. */
   private retirement?: {
     sessionId: string
@@ -359,12 +361,14 @@ export class OwnedRepositoryBreakpoint {
         ? parsed.data.breakpoints[registration.index]
         : undefined
       // DAP preserves request order; never select an arbitrary matching line from a truncated/reordered response.
-      const isOwnAnswer =
+      const isIdentifiedAnswer =
         response.success &&
         parsed.success &&
         parsed.data.breakpoints.length === registration.count &&
-        this.isIdentifiedBinding(binding, parsed.data.breakpoints) &&
-        this.isInOwnedSource(binding)
+        this.isIdentifiedBinding(binding, parsed.data.breakpoints)
+      // The entry names the adapter's id of this breakpoint wherever the adapter bound it: a pause that names that id hit this breakpoint, also where its owner refuses the place (F2).
+      if (isIdentifiedAnswer) this.rememberAnsweredId(session.id, binding.id)
+      const isOwnAnswer = isIdentifiedAnswer && this.isInOwnedSource(binding)
       if (!isOwnAnswer || !this.acknowledgesPosition(binding)) {
         // The readable positions come first; the JSON keeps every field of the reply for diagnosis.
         registration.failure = `Selected adapter did not acknowledge the breakpoint registration (requested ${this.line}:${this.column}, ${
@@ -488,54 +492,78 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Reads the id a session's adapter gave the owned breakpoint, also where its owner refuses the place, so a `stopped` event that names that id is told to belong to this breakpoint; {@link ConfiguredBrowserRun} asks it for the browser session, to which the editor sends a server stop's breakpoint too.
+   * Reads the id a session's adapter gave the owned breakpoint in the registration it acknowledged at a place the owner accepts, for {@link ConfiguredBrowserRun}'s judgement of a pause in the session the stop runs in.
+   * A pause in another session (the page, to which the editor sends a server stop's breakpoint too) is placed by {@link wasAnsweredWith}, which also knows the ids of answers whose place the owner refused.
    * Like {@link movedTo} it never throws.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
    * @returns The adapter's id of the owned breakpoint, or `undefined` while that session's latest registration is unanswered or was refused.
    * @example
-   * owned.acknowledgedId(browserSession) // => 12
+   * owned.acknowledgedId(serverSession) // => 12
    */
   acknowledgedId(session: vscode.DebugSession): number | undefined {
     return this.registrations.get(session.id)?.receipt?.breakpointId
   }
 
   /**
-   * Lists the id each session's adapter acknowledged for this breakpoint, for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring clears every registration, while a page that keeps hitting the breakpoint in its copies of server components still names the old id (Cycle 0095, C95-N1).
+   * Says whether a session's adapter named this breakpoint by an id in a registration reply that identified it, whether its owner accepted the place or refused it, also before a later registration or the retirement.
+   * Why it exists: the page binds a server stop's breakpoint in React's copy of the module at a place the server stop's owner refuses, and still pauses there under that id; a `stopped` that names it hit this breakpoint, so {@link ConfiguredBrowserRun} resumes it as the stop's copy instead of ending the run as an unowned page stop (Cycle 0136, F2: the page answered `app/ui/invoices/table.tsx:17` with id 9, refused, and paused there under 9).
    * Like {@link movedTo} it never throws.
-   * @returns The session id and acknowledged breakpoint id of every session whose latest registration has a receipt; empty when none has.
+   * @param session - The session whose adapter sent the pause.
+   * @param id - An id the pause names.
+   * @returns `true` when that session's adapter answered a registration of this breakpoint with this id; `false` otherwise, also for a reply that did not identify the breakpoint.
    * @example
-   * owned.acknowledgedIds() // => Map { 'server-session' => 7, 'page-session' => 101 }
+   * owned.wasAnsweredWith(pageSession, 9) // => true after the page answered the registration with id 9 at a place the owner refused
    */
-  acknowledgedIds(): ReadonlyMap<string, number> {
-    const ids = new Map<string, number>()
-    // Only an acknowledged registration names an id; a pending or refused one names none.
-    for (const [sessionId, registration] of this.registrations)
-      if (registration.receipt)
-        ids.set(sessionId, registration.receipt.breakpointId)
-    return ids
+  wasAnsweredWith(session: vscode.DebugSession, id: number): boolean {
+    return this.answeredIdsBySession.get(session.id)?.has(id) ?? false
   }
 
   /**
-   * Describes this breakpoint's latest registration in every session the editor sent it to, for the journal of a page pause no rule owns ({@link ConfiguredBrowserRun}): which session answered with which id, which still awaits its answer and which refused it (Cycle 0136, E-F2).
+   * Lists every id each session's adapter gave this breakpoint ({@link wasAnsweredWith}), for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring forgets the breakpoint's registrations, while a page that keeps hitting it in its copies of server components still names an old id (Cycle 0095, C95-N1).
+   * Like {@link movedTo} it never throws.
+   * @returns The ids per session id; empty when no session answered a registration that identified the breakpoint.
+   * @example
+   * owned.answeredIds() // => Map { 'server-session' => Set { 7 }, 'page-session' => Set { 101, 104 } }
+   */
+  answeredIds(): ReadonlyMap<string, ReadonlySet<number>> {
+    return this.answeredIdsBySession
+  }
+
+  /** Keeps an id a session's adapter gave this breakpoint, for {@link onResponse}. @example this.rememberAnsweredId('page-session', 9) */
+  private rememberAnsweredId(sessionId: string, id: number): void {
+    const ids = this.answeredIdsBySession.get(sessionId) ?? new Set<number>()
+    ids.add(id)
+    this.answeredIdsBySession.set(sessionId, ids)
+  }
+
+  /**
+   * Describes this breakpoint's latest registration in every session the editor sent it to, for the journal of a page pause no rule owns ({@link ConfiguredBrowserRun}): which session acknowledged it under which id, which still awaits its answer and which was refused, with every id each session answered ({@link wasAnsweredWith}) (Cycle 0136, E-F2).
    * Like {@link movedTo} it never throws.
    * @returns One entry per session, in the order the sessions first received a registration; empty when no session has.
    * @example
-   * owned.registrationStates() // => [{ sessionId: 'server', state: 'acknowledged', breakpointId: 9 }, { sessionId: 'page', state: 'awaiting' }]
+   * owned.registrationStates() // => [{ sessionId: 'server', state: 'acknowledged', breakpointId: 9, answeredIds: [9] }, { sessionId: 'page', state: 'refused', answeredIds: [9] }]
    */
   registrationStates(): {
     sessionId: string
     state: 'acknowledged' | 'awaiting' | 'refused'
     breakpointId?: number
+    answeredIds: number[]
   }[] {
-    return [...this.registrations].map(([sessionId, registration]) =>
-      registration.receipt
+    return [...this.registrations].map(([sessionId, registration]) => {
+      const answeredIds = [...(this.answeredIdsBySession.get(sessionId) ?? [])]
+      return registration.receipt
         ? {
             sessionId,
             state: 'acknowledged',
             breakpointId: registration.receipt.breakpointId,
+            answeredIds,
           }
-        : { sessionId, state: registration.failure ? 'refused' : 'awaiting' },
-    )
+        : {
+            sessionId,
+            state: registration.failure ? 'refused' : 'awaiting',
+            answeredIds,
+          }
+    })
   }
 
   /**

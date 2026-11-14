@@ -172,21 +172,19 @@ test('a page pause in the page’s own script that no stop owns ends the run and
 /** How late the browser's adapter answers the held registration in the tests below: longer than the 250 ms a page pause nobody owns may last, so the answer comes only after that bound would have ended the run. */
 const LATE_ANSWER_MS = 400
 
-// protects=F2 (Cycle 0135 run 22ed260d, Cycle 0136 E-F2): a page pause in React's copy that names a declared server stop's breakpoint before the browser's adapter has answered that breakpoint's registration is held until the answer, then resumed as the stop's copy, and the server stop still commits; fails_when=the pause is judged at once and ends the run ("Unowned browser DAP stop invalidated the declared operation"), or the 250 ms bound of a page pause nobody owns ends it while the answer is awaited ("Unowned browser stop remained paused"); no_claim=the harness sends the registration to the browser session again to stand in for js-debug's late first reply while a Next.js entry load runs, and its React copy is a stand-in script (the native Cursor run shows the real order)
+// protects=F2 (Cycle 0135 run 22ed260d, Cycle 0136 E-F2): a page pause in React's copy that names a declared server stop's breakpoint before the browser's adapter has answered that breakpoint's registration is held until the answer, then resumed as the stop's copy, and the server stop still commits; fails_when=the pause is judged at once and ends the run ("Unowned browser DAP stop invalidated the declared operation"), or the 250 ms bound of a page pause nobody owns ends it while the answer is awaited ("Unowned browser stop remained paused"); no_claim=the harness keeps the page's first reply back to stand in for js-debug's late reply while a Next.js entry load runs, and its React copy is a stand-in script; the native E-F2 runs answered before the pause, so this order is not yet observed natively
 test('a page pause in React’s copy that names a server stop’s breakpoint before the browser has answered its registration is resumed once the answer arrives', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server'])
+  const answers = harness.holdBrowserAnswers()
   await harness.run.prepare()
   harness.holdFirstPause()
   harness.run.action('once', 'repository-click')
   await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
-  const registration = harness.holdBrowserRegistrationAnswer(
-    harness.breakpoints[0]!,
-  )
   // Act
   harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
   await setTimeout(LATE_ANSWER_MS)
-  registration.answer()
+  answers.answer()
   await resumedOrFailed(harness)
   harness.emitPause('server')
   await waitUntil(() => {
@@ -215,11 +213,11 @@ test('a page pause in React’s copy whose server stop’s registration the brow
   const harness = await nativeParticipantsHarness(context, ['server'], {
     runtimeConstants: { BROWSER_STOP_REGISTRATION_ANSWER_MS: 300 },
   })
+  harness.holdBrowserAnswers()
   await harness.run.prepare()
   harness.holdFirstPause()
   harness.run.action('once', 'repository-click')
   await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
-  harness.holdBrowserRegistrationAnswer(harness.breakpoints[0]!)
   // Act
   harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
   await waitUntil(() => harness.run.view().status === 'failed', 'run ended')
@@ -250,11 +248,16 @@ test('a page pause in React’s copy whose server stop’s registration the brow
         {
           declaredIndex: 0,
           sessions: [
-            { sessionId: 'browser-session', state: 'awaiting' },
+            {
+              sessionId: 'browser-session',
+              state: 'awaiting',
+              answeredIds: [],
+            },
             {
               sessionId: 'server-session',
               state: 'acknowledged',
               breakpointId: 12,
+              answeredIds: [12],
             },
           ],
         },
@@ -293,4 +296,30 @@ test('a page pause that ends the run out of turn before the operation’s input 
       awaitedStops: [],
     },
   ])
+})
+
+// protects=F2's located cause (Cycle 0136 E-F2, Cursor run b7e60f6b on build ff9c3973): the page answered the registration of the server stop app/ui/invoices/table.tsx:17 with id 9 at a place the stop refuses, then paused in React's copy of the module under id 9; that pause is resumed as the stop's copy and the server stop still commits; fails_when=the refused answer leaves the id unknown and the pause ends the run ("Unowned browser DAP stop invalidated the declared operation", natively "Unexpected or additional browser stop invalidated the declared operation"); no_claim=the harness page answers every registration at line 40 to stand in for js-debug's binding in React's copy, and its copy is a stand-in script (the native Cursor run shows the real answer)
+test('a page pause in React’s copy under the id the page gave a server stop’s breakpoint at a refused place is resumed as that stop’s copy', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  harness.answerBrowserRegistrationsAt(40, 1)
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  // Act
+  harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+  await resumedOrFailed(harness)
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the server stop was captured')
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [
+    { sessionId: 'browser-session', ...REACT_COPY_ENTRY },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [])
 })

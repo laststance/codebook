@@ -196,6 +196,10 @@ export async function nativeParticipantsHarness(
   let editorForgetsBinding: 'kept' | 'removed' | undefined
   // The one-based column of a requested breakpoint whose registration request the adapter leaves unanswered.
   let unansweredColumn: number | undefined
+  // Where the page's adapter alone verifies every registration, as js-debug binds a server stop's breakpoint in React's copy of the module somewhere else than the server does.
+  let browserAnsweredAt: { line: number; column: number } | undefined
+  // The page's registration replies a test keeps back, sent in order when it releases them; `undefined` while the page answers at once.
+  let heldBrowserAnswers: (() => void)[] | undefined
   // The generated places each participant's adapter lists as break locations of its module; without them it cannot answer.
   const possibleBreakLocations: Partial<Record<Participant, GeneratedPlace[]>> =
     {}
@@ -842,29 +846,38 @@ export async function nativeParticipantsHarness(
           )
         )
           continue
-        run.onResponse(target, {
-          type: 'response',
-          seq: ++sequence,
-          command: 'setBreakpoints',
-          request_seq: requestSequence,
-          success: !failedRegistration,
-          body: {
-            breakpoints: selected.map((breakpoint) => ({
-              id: adapterId(breakpoint),
-              // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
-              ...(acknowledgedAt &&
-              !(options.serverWorkerThread && target === serverChild)
-                ? {
-                    verified: true,
-                    ...acknowledgedAt({
-                      line: breakpoint.location.range.start.line + 1,
-                      column: breakpoint.location.range.start.character + 1,
-                    }),
-                  }
-                : { verified: false }),
-            })),
-          },
-        })
+        const respond = (): void =>
+          run.onResponse(target, {
+            type: 'response',
+            seq: ++sequence,
+            command: 'setBreakpoints',
+            request_seq: requestSequence,
+            success: !failedRegistration,
+            body: {
+              breakpoints: selected.map((breakpoint) => ({
+                id: adapterId(breakpoint),
+                // The page's adapter answers at its own place when a test set one; a module that is already loaded is acknowledged as verified, at the position the adapter chose.
+                ...(name === 'browser' && browserAnsweredAt
+                  ? { verified: true, ...browserAnsweredAt }
+                  : acknowledgedAt &&
+                      !(options.serverWorkerThread && target === serverChild)
+                    ? {
+                        verified: true,
+                        ...acknowledgedAt({
+                          line: breakpoint.location.range.start.line + 1,
+                          column: breakpoint.location.range.start.character + 1,
+                        }),
+                      }
+                    : { verified: false }),
+              })),
+            },
+          })
+        // The page's reply waits while a test holds the page's answers; every other reply is sent at once.
+        if (name === 'browser' && heldBrowserAnswers) {
+          heldBrowserAnswers.push(respond)
+          continue
+        }
+        respond()
         // The adapter resolved the breakpoints after it answered: it verifies them by news.
         const news = verifiedByNewsAt[name]
         if (news) announceVerified(name, news.line, news.column)
@@ -1498,63 +1511,6 @@ export async function nativeParticipantsHarness(
       emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
     },
     /**
-     * Sends the editor's registration of a stop's breakpoint to the browser session again and keeps the adapter's reply back until `answer` is called, as js-debug answers a registration only once it has set the breakpoint in every script while the page can already pause at it (Cycle 0136, F2): until the reply the run knows no id of that breakpoint in the browser session.
-     * @param serverBreakpoint - The stop's editor breakpoint; every breakpoint of its file is in the request, as the editor sends them.
-     * @returns `answer`, which sends the held reply naming each breakpoint's adapter id.
-     * @example
-     * const registration = harness.holdBrowserRegistrationAnswer(harness.breakpoints[0]!)
-     * harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
-     * registration.answer()
-     */
-    holdBrowserRegistrationAnswer(serverBreakpoint: { id: string }): {
-      answer(): void
-    } {
-      const sourcePath = breakpoints.find(
-        (breakpoint) => breakpoint.id === serverBreakpoint.id,
-      )!.location.uri.fsPath
-      const selected = breakpoints.filter(
-          (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
-        ),
-        requestSequence = ++sequence
-      run.onRequest(sessions.browser, {
-        type: 'request',
-        seq: requestSequence,
-        command: 'setBreakpoints',
-        arguments: {
-          source: { path: sourcePath },
-          breakpoints: selected.map((breakpoint) =>
-            sourceBreakpointRequest(breakpoint.location.range.start),
-          ),
-        },
-      })
-      return {
-        answer: (): void => {
-          run.onResponse(sessions.browser, {
-            type: 'response',
-            seq: ++sequence,
-            command: 'setBreakpoints',
-            request_seq: requestSequence,
-            success: true,
-            body: {
-              breakpoints: selected.map((breakpoint) => ({
-                id: adapterId(breakpoint),
-                // The reply has the shape of the first one: verified where the adapter binds, or still pending.
-                ...(acknowledgedAt
-                  ? {
-                      verified: true,
-                      ...acknowledgedAt({
-                        line: breakpoint.location.range.start.line + 1,
-                        column: breakpoint.location.range.start.character + 1,
-                      }),
-                    }
-                  : { verified: false }),
-              })),
-            },
-          })
-        },
-      }
-    },
-    /**
      * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
      * @example const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!); harness.advance(300); stub.stopped()
      */
@@ -1692,6 +1648,29 @@ export async function nativeParticipantsHarness(
       },
     ): void {
       acknowledgedAt = bind
+    },
+    /**
+     * Keeps the page's adapter's replies to every later registration back until `answer` is called, as js-debug answers a registration only once it has set the breakpoint in every script of the page while the page can already pause at it (Cycle 0136, F2): until the reply the run knows no id of that breakpoint in the page.
+     * @returns `answer`, which sends the held replies in order and lets later ones through at once.
+     * @example
+     * const answers = harness.holdBrowserAnswers()
+     * await harness.run.prepare()
+     * harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+     * answers.answer()
+     */
+    holdBrowserAnswers(): { answer(): void } {
+      heldBrowserAnswers = []
+      return {
+        answer: (): void => {
+          const held = heldBrowserAnswers ?? []
+          heldBrowserAnswers = undefined
+          for (const respond of held) respond()
+        },
+      }
+    },
+    /** Makes the page's adapter alone answer every later registration as verified at this place, as js-debug binds a server stop's breakpoint in React's copy of the module on another line than the server does; the stop's owner refuses that place for the page session, and the server's answer is unchanged (Cycle 0136, F2). @example harness.answerBrowserRegistrationsAt(40, 1) */
+    answerBrowserRegistrationsAt(line: number, column: number): void {
+      browserAnsweredAt = { line, column }
     },
     /** Leaves every registration request unanswered that holds a breakpoint requested at this one-based column, as an adapter that has not replied yet does. @example harness.leaveRegistrationUnansweredAtColumn(1) */
     leaveRegistrationUnansweredAtColumn(column: number): void {

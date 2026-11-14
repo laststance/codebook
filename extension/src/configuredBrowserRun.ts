@@ -5165,15 +5165,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     hitIds: readonly number[] | undefined,
   ): boolean {
     if (!hitIds || hitIds.length === 0) return false
-    const own = (this.preparationWindow?.provisional ?? []).map((entry) =>
-      entry.breakpoint.acknowledgedId(session),
-    )
+    const provisional = this.preparationWindow?.provisional ?? []
     const retired = this.retiredProvisionalIds.get(session.id)
-    return hitIds.every((id) => own.includes(id) || Boolean(retired?.has(id)))
+    return hitIds.every(
+      (id) =>
+        provisional.some((entry) =>
+          entry.breakpoint.wasAnsweredWith(session, id),
+        ) || Boolean(retired?.has(id)),
+    )
   }
 
   /**
-   * Keeps the id every session's adapter gave a provisional breakpoint, just before the window retires it, in {@link retiredProvisionalIds}.
+   * Keeps every id each session's adapter gave a provisional breakpoint ({@link OwnedRepositoryBreakpoint.answeredIds}, also in an answer whose place the owner refused), just before the window retires it, in {@link retiredProvisionalIds}.
    * Why it exists: retiring clears the breakpoint's registrations and with them the ids, while the page keeps pausing at the breakpoint in React's browser copies of server components (Next maps them to the server file) and names the old id; without the id that pause ends the run as an unexpected browser stop (C95-N1). Called by {@link closePreparationWindow} before its first retirement.
    * @param breakpoint - The provisional breakpoint about to be retired.
    * @example this.rememberRetiredProvisionalIds(entry.breakpoint) // keeps 101 for the page session that acknowledged it as 101
@@ -5181,9 +5184,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private rememberRetiredProvisionalIds(
     breakpoint: OwnedRepositoryBreakpoint,
   ): void {
-    for (const [sessionId, id] of breakpoint.acknowledgedIds()) {
+    for (const [sessionId, answered] of breakpoint.answeredIds()) {
       const ids = this.retiredProvisionalIds.get(sessionId) ?? new Set<number>()
-      ids.add(id)
+      for (const id of answered) ids.add(id)
       this.retiredProvisionalIds.set(sessionId, ids)
     }
   }
@@ -16000,7 +16003,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const body: DebugProtocol.StoppedEvent['body'] = event.body
     const hitIds = body.hitBreakpointIds ?? []
     const isPlaced = (id: number): boolean =>
-      this.stops.some((stop) => stop.breakpoint?.acknowledgedId(session) === id)
+      this.stops.some(
+        (stop) => stop.breakpoint?.wasAnsweredWith(session, id) === true,
+      )
     // Only a pause at a breakpoint the run cannot place yet may be waiting for an answer; a pause that names none never is.
     if (body.reason !== 'breakpoint' || hitIds.every(isPlaced)) return false
     const awaiting = this.awaitingBrowserRegistrations(session)
@@ -16194,7 +16199,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const isServerId = (id: number): boolean =>
       Boolean(this.retiredServerCopyIds.get(session.id)?.has(id)) ||
       serverStops.some(
-        (stop) => stop.breakpoint?.acknowledgedId(session) === id,
+        (stop) => stop.breakpoint?.wasAnsweredWith(session, id) === true,
       )
     if (serverStops.length === 0 || !hitIds.every(isServerId)) return undefined
     // The pause's event: one the intake already admitted as the browser's stop or queued behind a continuation counts too, because the DAP `stopped` can arrive after the CDP pause was judged.
@@ -16276,7 +16281,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Finds the server stop a browser pause names with every breakpoint it hit, for {@link serverStopOfBrowserPause} once the pause is known to be none of the browser's own.
    * @param session - The browser session that sent the `stopped` event.
    * @param hitIds - The adapter's ids of the breakpoints the pause hit; empty when the event named none.
-   * @returns The server stop whose owned breakpoint the first id names, when every id names a server stop's breakpoint in this session; `undefined` when one of them does not, and for a pause that names no breakpoint.
+   * @returns The server stop whose owned breakpoint the first id names, when every id is one this session's adapter gave a server stop's breakpoint ({@link OwnedRepositoryBreakpoint.wasAnsweredWith}, also where the page bound it at a place the stop refuses); `undefined` when one of them is not, and for a pause that names no breakpoint.
    * @example
    * ```ts
    * this.serverStopOfEveryBreakpoint(session, [12]) // the server stop whose breakpoint the browser adapter calls 12
@@ -16286,11 +16291,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     session: vscode.DebugSession,
     hitIds: readonly number[],
   ): PreparedStop | undefined {
+    // An id the page's adapter gave a server stop's breakpoint names it also where the page bound it at a place the stop refuses (F2).
     const serverStopOf = (id: number): PreparedStop | undefined =>
       this.stops.find(
         (stop) =>
           stop.participant === 'server' &&
-          stop.breakpoint?.acknowledgedId(session) === id,
+          stop.breakpoint?.wasAnsweredWith(session, id) === true,
       )
     // Every breakpoint the pause hit must be a server stop's, so a breakpoint of the page's own is never resumed past.
     return hitIds.length > 0 && hitIds.every((id) => serverStopOf(id))
