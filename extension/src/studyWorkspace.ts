@@ -327,6 +327,7 @@ import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarker
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isCodebookRunDebugSession } from './utils/isCodebookRunDebugSession'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import { isCurrentRunRememberedWhileClosed } from './utils/isCurrentRunRememberedWhileClosed'
@@ -1070,7 +1071,7 @@ export class StudyWorkspace {
     []
   /** The document URIs of the paused files ended runs left in front of their kept Application pane, each until its tab closes or the next run's attach reads it, so that attach can tell such a run tab from a learner's ({@link uncoverApplicationFromLeftoverStopTab}, Cycle 0132 task 8). */
   private readonly leftoverStopTabUris = new Set<string>()
-  /** The debug sessions whose stop was read while the kept Application pane stood in front of its group ({@link noteApplicationFrontAtStop}), until the stop's frame is reported ({@link noteStopFileCoveringApplication}) or the session ends. */
+  /** The debug sessions whose stop was read while the kept Application pane stood in front of its group ({@link noteApplicationFrontAtStop}), until the first frame of that session is reported ({@link noteStopFileCoveringApplication}) or its next stop is read ({@link noteApplicationFrontAtStop}); an id whose frame never comes stays until then. */
   private readonly sessionsStoppedBehindApplication = new Set<string>()
   /** Every paused-file move in flight, whichever lease's watch started it, until its show and close end ({@link keepPausedSourceOutOfApplication}); a next run's uncover step waits for all of them, since a released lease's move still shows its file when the editor answers ({@link pausedSourceMovesSettled}, CodeRabbit, PR 334). */
   private readonly pausedSourceMovesInFlight = new Set<Promise<void>>()
@@ -7874,15 +7875,33 @@ export class StudyWorkspace {
 
   /**
    * Notes the stop file that came in front of the kept Application pane at a stop of a run that leases no pane, like the ended run's own leftover ({@link rememberLeftoverStopTab}), so the next extension run's attach brings the view back in front of it ({@link uncoverApplicationFromLeftoverStopTab}) instead of refusing it; called by the stop tracker ({@link PresentationGuards}) when the editor reports the frame of a stop.
-   * Cursor 3.30.14 opens a file that is open nowhere in the main editor's last active group, which is the Application's group unless the preparation left another one ({@link prepareStopFileDestination}), and a library test run (Vitest under js-debug) pauses in such files while the last extension run's view is kept (Cycle 0134 D22). Only the stop's own opening is noted: the pane stood in front when the stop was read ({@link noteApplicationFrontAtStop}) and an unedited `file:` tab covers it now ({@link coveringTabOfApplication}); a file the learner opens in that group at any other time is never noted, and the reveal's guard still refuses over it. A run with a lease has its paused-file watch and its own release note.
-   * @param sessionId - The session whose stop frame the editor reported.
-   * @example this.noteStopFileCoveringApplication('library-tests') // settings.test.ts covers the kept view
+   * Cursor 3.30.14 opens a file that is open nowhere in the main editor's last active group, which is the Application's group unless the preparation left another one ({@link prepareStopFileDestination}), and a library test run (Vitest under js-debug) pauses in such files while the last extension run's view is kept (Cycle 0134 D22). Only a Codebook run's own stop is noted: the session is a Codebook run's attach or a child of it ({@link isCodebookRunDebugSession}, never the learner's own debug session), the pane stood in front when the stop was read ({@link noteApplicationFrontAtStop}), and the unedited `file:` tab that covers it now ({@link coveringTabOfApplication}) is a stop file one of the window's runs declared ({@link declaredRunStopFiles}). The first frame the editor reports for that stop counts, whether or not it came with the stop ({@link frameCameWithStop}): an editor may show the stop's file late. A file the learner opens in that group at any other time is never noted, and the reveal's guard still refuses over it. A run with a lease has its paused-file watch and its own release note.
+   * @param session - The session whose frame the editor reported.
+   * @example this.noteStopFileCoveringApplication(session) // settings.test.ts, a declared stop file of the library test run, covers the kept view
    */
-  private noteStopFileCoveringApplication(sessionId: string): void {
-    const stoodInFront = this.sessionsStoppedBehindApplication.delete(sessionId)
-    if (!stoodInFront || this.leaseId !== undefined || !this.app) return
+  private noteStopFileCoveringApplication(
+    session: Pick<
+      vscode.DebugSession,
+      'id' | 'configuration' | 'parentSession'
+    >,
+  ): void {
+    const stoodInFront = this.sessionsStoppedBehindApplication.delete(
+      session.id,
+    )
+    if (
+      !stoodInFront ||
+      this.leaseId !== undefined ||
+      !this.app ||
+      !isCodebookRunDebugSession(session)
+    )
+      return
     const covering = this.coveringTabOfApplication(this.viewColumnOf(this.app))
-    if (covering) this.leftoverStopTabUris.add(covering.uri.toString())
+    // A file no run declared as a stop is the learner's, even when it covers the view.
+    if (
+      covering &&
+      this.declaredRunStopFiles().has(canonicalFsPath(covering.uri.fsPath))
+    )
+      this.leftoverStopTabUris.add(covering.uri.toString())
   }
 
   /**

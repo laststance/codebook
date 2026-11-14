@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -7,6 +8,7 @@ import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
 import {
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+  STOP_OWN_FOCUS_BOUND_MS,
 } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -3271,53 +3273,209 @@ test('the next extension run shows its view after a library test run paused in a
   }
 })
 
-// protects=Cycle 0134 D22 safety net (Step 0 probe-nsx-2): a stop file of a run that leases no pane, which still comes in front of the kept view at that run's own debugger stop, is noted like the ended run's own leftover, so the next extension run's view comes forward over it; fails_when=the stop tracker notes no such file, so the next run's attach has no note for the covering tab and refuses its view with "Application ownership changed"; no_claim=why the editor opens the file in the view's group (the fake opens it there, without the redirect model) and the stops of a run that has its own pane
-test('the next extension run shows its view over the stop file a library test run opened in front of the kept view at its own stop', async () => {
-  // Arrange: a first extension run ended and kept its view in front of its group.
-  const harness = await workspaceHarness()
-  try {
-    readerSeams(harness).stopOwnTimer()
-    await writeRepositoryFile(harness, 'settings.js')
-    await writeRepositoryFile(harness, 'settings.test.js')
-    await writeRepositoryFile(harness, 'popup.js')
-    harness.focusMutableDraft('popup.js', 1)
-    const first = await openView(harness, 'covered-run-1', ['settings.js'])
-    const applicationColumn = harness.reader['app']?.viewColumn
-    assert.ok(applicationColumn)
-    first.end('The first run ended.')
-    first.close()
-    // The library test run stops: the editor reads the adapter's stop, then opens the paused file in the view's group and reports the frame.
-    harness.pauseDebugger({
-      session: 'library-tests',
-      staysInBackground: true,
-      pausedFile: 'settings.test.js',
-    })
-    harness.openPausedFileInLockedGroup('settings.test.js', applicationColumn)
-    harness.reportStopFrame('library-tests')
-    assert.equal(
-      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
-      'settings.test.js',
+/** The configuration name of the root attach a Codebook library test run gives its debug session; the harness names a session by its id. */
+const LIBRARY_TEST_SESSION = 'codebook node test library-tests-1'
+
+/**
+ * Declares a stop in a file for a run of the window that has no pane of its own (a library test run), the way the harness's other tests stand in an earlier run: a copy of a started run's record whose first stop sits in this file.
+ * @param harness - The harness whose service holds the record.
+ * @param filename - The file of the declared stop, relative to the repository.
+ * @returns The id of the stand-in record, to delete it when the test ends.
+ * @example const recordId = await declareRunStop(harness, 'settings.test.js')
+ */
+async function declareRunStop(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  filename: string,
+): Promise<string> {
+  harness.acknowledgeContext()
+  const receipt = harness.service.start({
+    instanceId: harness.service.instanceId,
+    profile: 'repository-browser',
+    configuration: harness.configuration,
+    key: randomUUID(),
+  })
+  const record = harness.service.records.get(receipt.runId)!
+  await record.preparation
+  const recordId = randomUUID()
+  harness.service.records.set(recordId, {
+    ...record,
+    id: `${harness.service.instanceId}_${recordId}`,
+    // No runtime of its own: a run of the window that holds no lease.
+    runtime: undefined,
+    definition: {
+      ...record.definition!,
+      configuration: {
+        ...record.definition!.configuration,
+        source: { ...record.definition!.configuration.source, path: filename },
+      },
+    },
+  })
+  return recordId
+}
+
+/**
+ * Lets a first extension run end with its view kept in front of its group, then a session stop with its file opened in that group, as Cursor shows a stop of a run that leases no pane; then opens the next run's view and brings it forward.
+ * @param harness - The harness.
+ * @param options - `session` stops (its name is the id); the stop's file `pausedFile`; `lateFrame` makes the editor report the frame after the bound for a doubtful stop, so the frame does not count as the stop's own.
+ * @returns The label in front of the view's group after the next run's view was brought forward, and the text of the refusal when the reveal was refused.
+ * @example const { frontLabel } = await stopBesideKeptView(harness, { session: LIBRARY_TEST_SESSION, pausedFile: 'settings.test.js' })
+ */
+async function stopBesideKeptView(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  options: { session: string; pausedFile: string; lateFrame?: boolean },
+): Promise<{ frontLabel: string | undefined; refusal: string | undefined }> {
+  readerSeams(harness).stopOwnTimer()
+  await writeRepositoryFile(harness, 'settings.js')
+  await writeRepositoryFile(harness, options.pausedFile)
+  await writeRepositoryFile(harness, 'popup.js')
+  harness.focusMutableDraft('popup.js', 1)
+  const first = await openView(harness, 'covered-run-1', ['settings.js'])
+  const applicationColumn = harness.reader['app']?.viewColumn
+  assert.ok(applicationColumn)
+  first.end('The first run ended.')
+  first.close()
+  // The session stops: the editor reads the adapter's stop, then opens the paused file in the view's group and reports the frame.
+  harness.pauseDebugger({
+    session: options.session,
+    staysInBackground: true,
+    keepsFocus: options.lateFrame,
+    pausedFile: options.pausedFile,
+  })
+  harness.openPausedFileInLockedGroup(options.pausedFile, applicationColumn)
+  if (options.lateFrame) {
+    const stopReadAtMs = performance.now()
+    await waitUntil(
+      () => performance.now() - stopReadAtMs > STOP_OWN_FOCUS_BOUND_MS + 50,
+      'the editor reports the stop frame after the bound for a doubtful stop',
+      5_000,
     )
-    const second = await openView(harness, 'covered-run-2', ['settings.js'])
+  }
+  harness.reportStopFrame(options.session)
+  assert.equal(
+    applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+    options.pausedFile,
+  )
+  const second = await openView(harness, 'covered-run-2', ['settings.js'])
+  try {
     const viewport = harness.reader['viewport']
     assert.ok(viewport)
-
-    // Act
     await viewport.attach(
       SILENT_SCREENCAST,
       new AbortController().signal,
       'popup',
     )
-    await harness.revealApplicationPaneOverPausedFile()
+    // A file that is no noted stop file makes the reveal refuse, and the learner's file stays in front.
+    let refusal: string | undefined
+    try {
+      await harness.revealApplicationPaneOverPausedFile()
+    } catch (error) {
+      refusal = String(error)
+    }
+    return {
+      frontLabel: applicationGroupOf(harness, applicationColumn)?.activeTab
+        ?.label,
+      refusal,
+    }
+  } finally {
+    second.close()
+  }
+}
+
+// protects=Cycle 0134 D22 safety net (Step 0 probe-nsx-2): a stop file of a run that leases no pane, which still comes in front of the kept view at that run's own debugger stop, is noted like the ended run's own leftover, so the next extension run's view comes forward over it; fails_when=the stop tracker notes no such file, so the next run's attach has no note for the covering tab and refuses its view with "Application ownership changed"; no_claim=why the editor opens the file in the view's group (the fake opens it there, without the redirect model) and the stops of a run that has its own pane
+test('the next extension run shows its view over the stop file a library test run opened in front of the kept view at its own stop', async () => {
+  // Arrange: the library test run declared its stop in settings.test.js.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+    })
 
     // Assert
-    assert.equal(
-      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
-      'codebook · Application covered-',
-    )
-    assert.deepEqual([...harness.reader['errors']], [])
-    second.close()
+    assert.equal(frontLabel, 'codebook · Application covered-')
+    assert.equal(refusal, undefined)
   } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 safety net, review finding (late frame): a library test run's stop that the editor reports late, so its frame does not count as brought by the stop, is still noted when its file stands in front of the kept view; fails_when=the note is taken only for a frame that came with its stop, so the late-shown stop file stays unnoted and the next run's view is refused; no_claim=the length of the real editor's delay
+test('the next extension run shows its view over the stop file of a library test run whose frame the editor reported late', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+      lateFrame: true,
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'codebook · Application covered-')
+    assert.equal(refusal, undefined)
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22, review finding (learner's own debugger): a file the learner's own debug session (F5 on their launch configuration) stops in, in front of the kept view, is never noted, so the next run does not move the learner's file; fails_when=the note is taken for any session, so the next run's view comes in front of the learner's file; no_claim=the real editor's own handling of the learner's session
+test("the next extension run does not hide the file the learner's own debug session stopped in", async () => {
+  // Arrange: the file is a declared stop file, so only the session tells it is the learner's.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: 'Launch Program',
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'settings.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22, review finding (stop-file match): a file in front of the kept view at a Codebook run's stop that no run declared as a stop is the learner's and is never noted; fails_when=the note takes any unedited file that covers the view, so the next run's view comes in front of a file that is no stop file; no_claim=which file the real editor opens at a stop
+test('the next extension run does not hide a file in front of the kept view that no run declared as a stop file', async () => {
+  // Arrange: the library test run declared its stop in another file.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'other.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'settings.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
     await harness.close()
   }
 })

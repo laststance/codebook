@@ -1850,8 +1850,9 @@ export class PresentationGuards {
     // What the learner did before this item says nothing about it: the editor opened the frame's file before it reported the frame.
     this.host.learnerChoseEditorAtFrame = false
     this.previewTabOfFrame = this.previewTabInFront()
-    if (isStackFrameItem(item) && this.host.frameCameWithStop)
-      this.host.noteStopFileCoveringApplication(item.session.id)
+    // The first frame of a session that stopped behind the kept view counts even when the editor shows it late (no stop came with it).
+    if (isStackFrameItem(item))
+      this.host.noteStopFileCoveringApplication(item.session)
     if (this.host.frameCameWithStop) this.judgeKeyboardAtPauseBegin()
     else if (isStackFrameItem(item)) this.host.leavePauseToLearner()
     else this.judgeKeyboardAtPauseEnd()
