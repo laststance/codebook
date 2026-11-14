@@ -7858,6 +7858,14 @@ export async function workspaceHarness(
         },
         /** Gives the chat tab the keyboard focus the way Cursor reports it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. @example chat.focusTab() */
         focusTab: focusSeparatePartGroup,
+        /** Closes the chat's tab and keeps the part's group listed with no tab, as Cursor 3.30.8's Close All Editors leaves its Agent part (Cycle 0133 D12 Step 0, runs 3 and 5). @example chat.closeChatTab() */
+        closeChatTab(): void {
+          const part = separateEditorPart
+          assert.ok(part)
+          part.group.tabs.splice(0)
+          part.group.activeTab = undefined
+          changedGroups({ opened: [], closed: [], changed: [part.group] })
+        },
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
         resync(change: 'wrapper' | 'opened' | 'unannounced' | 'move'): void {
           const previous = separateEditorPart!.group,

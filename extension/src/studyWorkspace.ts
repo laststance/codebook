@@ -15480,11 +15480,12 @@ export class StudyWorkspace {
 
   /**
    * Retires one leftover group for {@link retireProvenLeftoverGroups}: focuses its column where needed, proves the group, unlocks it, proves it again, closes it and confirms that the grid lost exactly that group.
+   * A leftover that is the main editor's only group (a record of one group) is retired in place once unlocked: the editor keeps a part's last group whatever closes it (VS Code's `removeGroup`; Cursor 3.30.8 accepts such a close with no group event and no change), so a close could only time out (Cycle 0133 D12, E3 probe run A).
    * @param marker - The group's recorded column, with the group count and layout of the grid it must stand in.
    * @param focusCommand - The command that gives the group at that column the keyboard; `undefined` when that group is the active one of the only editor part already.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
-   * @returns The grid the removal left (one group fewer, the layout the editor answered), or `undefined` when the proof failed and nothing was unlocked or closed.
+   * @returns The grid the removal left (one group fewer, the layout the editor answered), the same one-group grid for a leftover retired in place, or `undefined` when the proof failed and nothing was unlocked or closed.
    * @throws When the editor refuses the close, or the grid does not lose exactly that group.
    * @example const left = await this.retireProvenLeftoverGroup({ column: 1, groupCount: 3, layout }, 'workbench.action.focusFirstEditorGroup', assertCurrent, signal)
    */
@@ -15505,6 +15506,14 @@ export class StudyWorkspace {
       throw new Error(
         'The editor refused to retire the empty Application group an earlier window left.',
       )
+    // The main editor's only group is kept whatever closes it, so the unlocked leftover stays as the learner's empty group (Cycle 0133 D12).
+    if (marker.groupCount === 1)
+      return {
+        groupCount: 1,
+        layout: await this.executeEditorCommand<unknown>(
+          'vscode.getEditorLayout',
+        ),
+      }
     await this.closeLeftoverAsIssuedRemoval(group, groupsBefore, signal)
     const layout = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
@@ -16588,8 +16597,9 @@ export class StudyWorkspace {
 
   /**
    * Retires only a verified empty created group; Context retirement, Return and final App cleanup share the issued-removal identity boundary.
+   * A group that is the main editor's only group cannot be removed, so it is released in place instead of closed ({@link retireOnlyMainGroupInPlace}, Cycle 0133 D12).
    * @param identity - The allocation identity retained by this reader, never a borrowed parking group.
-   * @returns Whether the allocation is gone; a newly adopted nonempty group stays intact.
+   * @returns Whether the allocation is gone (closed, or released in place); a newly adopted nonempty group stays intact.
    * @throws When the host refuses an empty-group close or never publishes its accepted removal.
    * @example await this.retireEmptyOwnedGroup(owned.identity)
    */
@@ -16608,10 +16618,14 @@ export class StudyWorkspace {
     }
     this.applicationGroupChange = removal
     try {
-      await this.closeKnownNativeGroup(group, identity, {
-        refusal: 'The editor refused to retire an empty Codebook group.',
-        pending: 'owned Codebook group removal',
-      })
+      // The editor keeps the main editor's only group: its close would be accepted and remove nothing, as after Close All Editors (Cycle 0133 D12).
+      if (await this.isOnlyMainEditorGroup(group))
+        await this.retireOnlyMainGroupInPlace(identity)
+      else
+        await this.closeKnownNativeGroup(group, identity, {
+          refusal: 'The editor refused to retire an empty Codebook group.',
+          pending: 'owned Codebook group removal',
+        })
       // The retired group leaves the record until the next confirmed layout names the groups that remain (finding 599); the removal never rejects and is not awaited, so the identity boundary below is released at once.
       if (retiresRecordedGroup) void this.forgetRecordedGroup(identity)
       return true
@@ -16619,6 +16633,51 @@ export class StudyWorkspace {
       if (this.applicationGroupChange === removal)
         this.applicationGroupChange = previous
     }
+  }
+
+  /**
+   * Says whether a group is the main editor's only group, which no close removes; asked by {@link retireEmptyOwnedGroup} before it closes an owned group.
+   * The editor keeps a part's last group (VS Code's `removeGroup`), and Cursor 3.30.8 accepts the close of its main editor's only group with no group event and no change, so the retirement used to wait 5 s and refuse (Cycle 0133 D12 Step 0, run 3). The main editor's groups come first, at column 1 on ({@link holdsOnlyChatsBeyond}); beside another part a layout read answers for the part that has the keyboard, so the group is the only one when the editor lists no other group, or when the read counts one group and the other group is another part's ({@link isSoleMainGroupBesideChat}).
+   * @param group - The owned group about to be retired.
+   * @returns `true` when no close can remove the group; `false` when it is not at column 1 or the main editor has other groups.
+   * @example await this.isOnlyMainEditorGroup(group) // => true for the empty Application group Close All Editors left beside Cursor's Agent part
+   */
+  private async isOnlyMainEditorGroup(
+    group: vscode.TabGroup,
+  ): Promise<boolean> {
+    if (group.viewColumn !== vscode.ViewColumn.One) return false
+    const groupCount = vscode.window.tabGroups.all.length
+    if (groupCount === 1) return true
+    // A third group would make the read's count of one no proof of the main editor's grid.
+    if (groupCount !== 2) return false
+    const layout = await this.executeEditorCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    // A layout the editor did not answer proves nothing.
+    const layoutGroupCount = editorLayoutGroupCount(layout)
+    return (
+      layoutGroupCount !== undefined &&
+      this.isSoleMainGroupBesideChat(layoutGroupCount)
+    )
+  }
+
+  /**
+   * Releases the main editor's only group in place instead of closing it ({@link isOnlyMainEditorGroup}); called by {@link retireEmptyOwnedGroup}, as when Close All Editors left the empty Application group alone in the main editor (Cycle 0133 D12).
+   * The group gets a new identity, so the allocation is gone for every reader that asks by the old one and the group is an ordinary empty group from then on. Codebook locked its Application group, so the group is unlocked too when it is the active one: the unlock acts only on the active group, and no keyboard is taken for a group that is not.
+   * @param identity - The allocation's identity; a group no longer listed under it is left as it is.
+   * @returns Once the group is released, and unlocked where it was the active group.
+   * @example await this.retireOnlyMainGroupInPlace(identity) // the empty Application group stays as an unlocked empty group
+   */
+  private async retireOnlyMainGroupInPlace(identity: symbol): Promise<void> {
+    // Found again: the layout read may have let the editor give every group a new object.
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+    )
+    if (!group) return
+    this.editorGroupIdentities.set(group, Symbol())
+    // Unlocking a group that holds no lock changes nothing.
+    if (vscode.window.tabGroups.activeTabGroup === group)
+      await this.executeEditorCommand('workbench.action.unlockEditorGroup')
   }
 
   /**
@@ -18509,7 +18568,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or holding only Codebook's own panes: an entry places its Application pane there before it measures) and one group of another part that holds only a chat, so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389).
+   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or holding only Codebook's own panes: an entry places its Application pane there before it measures) and one group of another part that holds no editor tab (only a chat, or no tab at all: Cursor 3.30.8 keeps listing its Agent part's group after Close All Editors closed the chat's tab, Cycle 0133 D12), so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389). With two groups and a read of one, the second group cannot be the main editor's: two main groups would read two.
    * Cursor reports no keyboard focus for an empty group or a Codebook pane beside its Agent chat part, so the wait of {@link readMainEditorGrid} could never end for an empty main editor. With one group on each side the count a read answers is the main editor's whichever part answered, which is the proof the focus report gives elsewhere. Any other shape (a learner's tab in the first group, more groups, a second part with editors) still needs the report.
    * @param count - The group count the layout read answered.
    * @returns `true` for that shape; `false` otherwise.
@@ -18518,13 +18577,16 @@ export class StudyWorkspace {
   private isSoleMainGroupBesideChat(count: number): boolean {
     const groups = vscode.window.tabGroups.all
     if (count !== 1 || groups.length !== 2) return false
-    const [first, other] = groups
+    // Found by column: Cursor lists its groups in the order they were created, not by column (Cycle 0133 D12 Step 0).
+    const first = groups.find(
+      (group) => group.viewColumn === vscode.ViewColumn.One,
+    )
+    const other = groups.find((group) => group !== first)
     return Boolean(
       first &&
       other &&
-      first.viewColumn === vscode.ViewColumn.One &&
       first.tabs.every((tab) => this.isCodebookPaneInput(tab.input)) &&
-      other.tabs.length > 0 &&
+      // A chat part holds only its chat tab, or no tab at all once Close All Editors closed it (Cursor 3.30.8, Cycle 0133 D12).
       !holdsEditorTab(other, editorTabInputKinds(vscode)),
     )
   }

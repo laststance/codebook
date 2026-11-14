@@ -999,6 +999,115 @@ test("a reloaded window's leftover Application group that the editor never remov
   }
 })
 
+/**
+ * Arranges a window reloaded after Codebook recorded its Application group as the main editor's only group, beside Cursor's Agent part: the earlier window's record names column 1 of a one-group grid, and the editor restored that group empty and locked, with no pane.
+ * @param harness - The workspace harness, laid out with one main group.
+ * @returns The restored leftover group.
+ * @example const leftover = leaveLoneLeftoverBesideAgent(harness)
+ */
+function leaveLoneLeftoverBesideAgent(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) {
+  harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+    version: 1,
+    writer: 'the window before the reload',
+    column: 1,
+    groupCount: 1,
+    layout: { orientation: 0, groups: [{ size: 1 }] },
+  })
+  harness.leaveEmptyLockedGroup(1)
+  const leftover = harness.groups.find((group) => group.viewColumn === 1)
+  assert.ok(leftover)
+  return leftover
+}
+
+/**
+ * Names the window that wrote a group record, as the record's `writer` field says.
+ * @param record - The stored record, if any.
+ * @returns The writer; `undefined` without a record.
+ * @example writerOfRecord({ version: 2, writer: 'b2c7…' }) // => 'b2c7…'
+ */
+function writerOfRecord(record: unknown): unknown {
+  return typeof record === 'object' && record !== null && 'writer' in record
+    ? record.writer
+    : undefined
+}
+
+// Value: protects=Cycle 0133 D12 (E3 probe run A): a reloaded window whose record names the leftover Application group as the main editor's only group, beside Cursor's Agent part, opens the Study workspace, with the leftover unlocked and kept as the learner's empty group and the record gone; fails_when=Open closes that leftover and waits for a removal the editor never makes (it keeps a part's last group), failing after 5 s with "Timed out waiting for leftover Application group removal (groups before the close: 2, now: 2, after 5000 ms)"; no_claim=Cursor's real reload (the fake restores the empty locked group by hand) and the keyboard's path, which the leftover tests above own
+test("a reloaded window's leftover Application group that is the main editor's only group beside Cursor's Agent part stays unlocked and Open Study Workspace succeeds", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.addSeparateEditorPart()
+  try {
+    const leftover = leaveLoneLeftoverBesideAgent(harness)
+
+    // Act
+    const outcome = await harness.reader.open().then(
+      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: Open succeeded, the leftover stands unlocked (the Study now uses it), and the earlier window's record gave way to this window's.
+    assert.deepEqual(
+      {
+        outcome,
+        leftoverStands: harness.groups.includes(leftover),
+        leftoverLocked: Boolean(leftover.locked),
+        recordWriter: writerOfRecord(
+          harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+        ),
+      },
+      {
+        outcome: '',
+        leftoverStands: true,
+        leftoverLocked: false,
+        recordWriter: harness.reader['applicationGroupMarkerWriter'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Cycle 0133 D12 (Step 0 run 5): after Close All Editors and a window reload, when Cursor still lists its Agent part as a group with no tab, the main editor's one empty group counts as its whole grid, so Open Study Workspace retires the lone leftover in place and succeeds; fails_when=the one-group grid is proven only beside a chat part that holds a tab, so Open is refused at once with "The Codebook panes were not arranged: the first editor group (column 1) is empty, and beside the chat the editor reports no keyboard focus in an empty group. …"; no_claim=Cursor's own Close All Editors (closeChatTab stands in for it) and its real reload
+test("after Close All Editors left Cursor's Agent part with no tab, a reloaded window's lone leftover Application group stays unlocked and Open Study Workspace succeeds", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    const leftover = leaveLoneLeftoverBesideAgent(harness)
+    chat.closeChatTab()
+
+    // Act
+    const outcome = await harness.reader.open().then(
+      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: Open succeeded, the leftover stands unlocked, and the earlier window's record gave way to this window's.
+    assert.deepEqual(
+      {
+        outcome,
+        leftoverStands: harness.groups.includes(leftover),
+        leftoverLocked: Boolean(leftover.locked),
+        recordWriter: writerOfRecord(
+          harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
+        ),
+      },
+      {
+        outcome: '',
+        leftoverStands: true,
+        leftoverLocked: false,
+        recordWriter: harness.reader['applicationGroupMarkerWriter'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an entry cancelled by a wait of its own that timed out, while Open waits for the leftover Application group's removal sees the cancelled entry's own outcome, not a timeout, and no "removal not seen" Output line; fails_when=the cancelled wait is reported as "Timed out waiting for leftover Application group removal" or writes the bound line; why_new=Cycle 0111 /ship coverage audit; seam=keepNextClosedGroup (returns when the kept close happened); no_claim=an ordinary cancel reason (the wait already rethrows it, so only a cancel whose reason is itself a WaitTimeoutError needs the signal guard), the cancelled entry's exact wording, which the other cancel tests own, and the 5 s bound itself
 test("a cancelled Open that waits for a leftover Application group's removal keeps its own reason, shows no timeout and writes no removal line", async () => {
   // Arrange: as above, and the editor will accept the leftover's close without ever removing the group.
