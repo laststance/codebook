@@ -7864,12 +7864,9 @@ export async function workspaceHarness(
           assert.ok(part)
           const closedTabs = part.group.tabs.splice(0)
           part.group.activeTab = undefined
-          // No chat is left to hold the keyboard; the editor names the main editor's first group again, as Step 0's journal showed after Close All Editors.
+          // No chat input is left to hold the keyboard. The named group stays as it was: Cursor 3.30.8 named the main group again in Step 0's run-3 window, and 3.30.14 kept naming the empty Agent group in the baseline window.
           part.focused = false
           part.lastActive = false
-          if (activeTabGroup === part.group)
-            activeTabGroup =
-              groups.find((group) => group.viewColumn === 1) ?? activeTabGroup
           for (const listener of tabChangeListeners)
             listener({ opened: [], closed: closedTabs, changed: [] })
           changedGroups({ opened: [], closed: [], changed: [part.group] })
