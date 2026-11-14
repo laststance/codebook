@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type { DebugSession } from 'vscode'
 
+import * as constants from '../constants'
 import type * as OwnedRepositoryBreakpointModule from '../ownedRepositoryBreakpoint'
 
 import { loadModule } from './utils/loadModule'
@@ -16,6 +17,8 @@ async function breakpointHarness(
   acceptsOtherLine?: (line: number) => boolean,
   /** One-based column the owned breakpoint is requested at on line 20. */
   requestedColumn = 5,
+  /** Replaces the active bound the breakpoint's waits use, so a test can let a retirement time out quickly; the real bound otherwise. */
+  activeTimeoutMs?: number,
 ) {
   class Position {
     constructor(
@@ -41,6 +44,11 @@ async function breakpointHarness(
   const module = await loadModule<typeof OwnedRepositoryBreakpointModule>(
     resolve(__dirname, '../ownedRepositoryBreakpoint.js'),
     {
+      ...(activeTimeoutMs === undefined
+        ? {}
+        : {
+            './constants': { ...constants, ACTIVE_TIMEOUT_MS: activeTimeoutMs },
+          }),
       vscode: {
         Position,
         Location,
@@ -1076,4 +1084,55 @@ test('a place the adapter withdrew stays withdrawn for the pause stand-in when t
     '{"line":30,"column":1}',
   )
   assert.equal(breakpoint.adapterVerifiedPlace(session, 8), undefined)
+})
+
+// protects=F2's located cause (Cycle 0136 E-F2): the page answers a server stop's registration at a place the stop refuses, and still pauses under that id, so the breakpoint knows the id of a refused answer, keeps it after the next registration, and knows none from a reply that does not identify the breakpoint; fails_when=a refused or replaced answer leaves the id unknown and a page pause under it ends the run; no_claim=js-debug's own ids
+test('a breakpoint knows every id a session answered for it, also refused and replaced ones, and none from a reply that does not identify it', async () => {
+  // Arrange
+  const { breakpoint, session, request, response } = await breakpointHarness()
+  // Act
+  breakpoint.onRequest(session, request(1))
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 40, column: 1 }),
+  )
+  breakpoint.onRequest(session, request(2))
+  breakpoint.onResponse(
+    session,
+    response(2, { id: 7, verified: true, line: 20, column: 5 }),
+  )
+  // Assert
+  assert.equal(breakpoint.acknowledgedId(session), undefined)
+  assert.equal(breakpoint.wasAnsweredWith(session, 8), true)
+  assert.equal(breakpoint.wasAnsweredWith(session, 7), false)
+  assert.equal(
+    JSON.stringify(breakpoint.registrationStates()),
+    '[{"sessionId":"owned-server","state":"refused","answeredIds":[8]}]',
+  )
+})
+
+// protects=E-F2's diagnosis: a retirement whose removal the adapter never answers fails naming that step, so a native failure says whether the adapter, the editor's list or the editor's report of the adapter breakpoint held it; fails_when=the timeout says only that it timed out; no_claim=the bound is shortened to 300 ms for the test (the product waits 20 s)
+test('a retirement whose removal the adapter never answers fails naming the step it waited at', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness(undefined, 5, 300)
+  breakpoint.onRequest(session, request(1))
+  breakpoint.onResponse(
+    session,
+    response(1, {
+      id: 8,
+      verified: true,
+      line: 20,
+      column: 5,
+      source: { path: '/repo/actions.ts' },
+    }),
+  )
+  // Act
+  const retirement = breakpoint.retire(session, signal)
+  breakpoint.onRequest(session, request(2, [{ line: 2 }]))
+  // Assert
+  await assert.rejects(retirement, {
+    message:
+      'Timed out waiting for confirmed owned breakpoint retirement (the adapter had not answered the removal request; the editor no longer listed the breakpoint; its adapter breakpoint was not read)',
+  })
 })

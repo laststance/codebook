@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { ACTIVE_TIMEOUT_MS } from './constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { completeBindingPlace } from './utils/completeBindingPlace'
@@ -149,6 +150,39 @@ function wholeVerifiedPosition(binding: {
   )
     return undefined
   return { line: binding.line, column: binding.column }
+}
+
+/**
+ * Words what a retirement that timed out last found, for the failure {@link OwnedRepositoryBreakpoint.retire} throws: whether the adapter of the stop's session got the removal and answered it, whether the editor still lists the breakpoint, and whether it still reports the adapter's breakpoint (Cycle 0136, E-F2: a run in Cursor timed out here while the page's debugger was busy with React's copies of a server component).
+ * @param retirement - The retirement's state: the removal request's sequence once the adapter got it, and whether its reply confirmed the removal.
+ * @param isStillListed - Whether the editor's breakpoint list still held the breakpoint at the last look.
+ * @param isStillReported - Whether the editor still reported the adapter's breakpoint for the session at the last look; `undefined` when the wait never got that far.
+ * @returns The state in words, for the failure's parentheses.
+ * @example
+ * retirementWaitState({ requestSequence: 12, confirmed: false }, false, undefined) // => 'the adapter had not answered the removal request; the editor no longer listed the breakpoint; its adapter breakpoint was not read'
+ */
+function retirementWaitState(
+  retirement: { requestSequence?: number; confirmed: boolean },
+  isStillListed: boolean,
+  isStillReported: boolean | undefined,
+): string {
+  const reply =
+    retirement.requestSequence === undefined
+      ? 'the removal request had not reached the adapter'
+      : retirement.confirmed
+        ? 'the adapter confirmed the removal'
+        : 'the adapter had not answered the removal request'
+  const listed = isStillListed
+    ? 'the editor still listed the breakpoint'
+    : 'the editor no longer listed the breakpoint'
+  // The adapter's breakpoint is read only once the reply confirmed the removal and the editor dropped it.
+  const reported =
+    isStillReported === undefined
+      ? 'its adapter breakpoint was not read'
+      : isStillReported
+        ? 'the editor still reported its adapter breakpoint'
+        : 'its adapter breakpoint was gone'
+  return `${reply}; ${listed}; ${reported}`
 }
 
 /** Removes only one installed breakpoint and requires its selected adapter's replacement ACK before continuation. @example await owned.retire(selected, signal) */
@@ -1014,27 +1048,35 @@ export class OwnedRepositoryBreakpoint {
       confirmed: false,
     })
     this.remove()
-    await waitUntil(
-      async () => {
-        if (this.retirement?.failure) throw new Error(this.retirement.failure)
-        if (
-          !retirement.confirmed ||
-          vscode.debug.breakpoints.some(
+    // What the last look found, so a retirement that never completes names the step it waited at (Cycle 0136, E-F2).
+    let isStillListed = true,
+      isStillReported: boolean | undefined
+    try {
+      await waitUntil(
+        async () => {
+          if (this.retirement?.failure) throw new Error(this.retirement.failure)
+          isStillListed = vscode.debug.breakpoints.some(
             (breakpoint) => breakpoint.id === this.breakpoint.id,
           )
-        )
-          return false
-        const remaining = await awaitResponse(
-          session.getDebugProtocolBreakpoint(this.breakpoint),
-          'owned breakpoint retirement',
-          signal,
-        )
-        return remaining === undefined
-      },
-      'confirmed owned breakpoint retirement',
-      ACTIVE_TIMEOUT_MS,
-      signal,
-    )
+          if (!retirement.confirmed || isStillListed) return false
+          const remaining = await awaitResponse(
+            session.getDebugProtocolBreakpoint(this.breakpoint),
+            'owned breakpoint retirement',
+            signal,
+          )
+          isStillReported = remaining !== undefined
+          return !isStillReported
+        },
+        'confirmed owned breakpoint retirement',
+        ACTIVE_TIMEOUT_MS,
+        signal,
+      )
+    } catch (error) {
+      if (!(error instanceof WaitTimeoutError)) throw error
+      throw new Error(
+        `${error.message} (${retirementWaitState(retirement, isStillListed, isStillReported)})`,
+      )
+    }
     signal.throwIfAborted()
     this.retired = true
   }
