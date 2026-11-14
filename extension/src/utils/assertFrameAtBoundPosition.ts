@@ -4,7 +4,7 @@ import { isFrameAtPosition } from './isFrameAtPosition'
 
 /**
  * Throws unless the paused top frame is the position the debugger bound, for {@link ConfiguredBrowserRun} when it commits a pause.
- * A library stop pauses in a built file whose eval map is line-granular, so js-debug's columns there are not stable: it is compared by file and line only, and its failure names the frame and the bound place so a later mismatch can be read from the journal. Every other stop keeps the exact file, line, column and the short message.
+ * A library stop pauses in a built file whose eval map is line-granular, so js-debug's columns there are not stable: it is compared by file and line only. Every other stop keeps the exact file, line and column. Every failure names the frame and the bound place (`path:line:column`) so a mismatch can be read from the journal.
  * @param frame - The debugger's top stack frame, if it reported one.
  * @param sourcePath - Absolute path of the file the stop belongs to (the built file for a library stop).
  * @param bound - One-based place the debugger bound, if known.
@@ -25,13 +25,15 @@ export function assertFrameAtBoundPosition(
   if (isFrameAtPosition(frame, sourcePath, bound, { lineOnly: isLibraryStop }))
     return
   const message = 'DAP frame differs from the bound configured source position'
-  if (!isLibraryStop) throw new Error(message)
-  // A library stop adds both places to the failure text.
+  // Both places go into every failure text.
   const placeOf = (
     path: string | undefined,
     position: { line?: number; column?: number } | undefined,
   ): string => `${path ?? 'no path'}:${position?.line}:${position?.column}`
+  const places = `frame ${placeOf(reported?.source?.path, reported)}, bound ${placeOf(sourcePath, bound)}`
   throw new Error(
-    `${message} (library stop: frame ${placeOf(reported?.source?.path, reported)}, bound ${placeOf(sourcePath, bound)}, column not compared)`,
+    isLibraryStop
+      ? `${message} (library stop: ${places}, column not compared)`
+      : `${message} (${places})`,
   )
 }

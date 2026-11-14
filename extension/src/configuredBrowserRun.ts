@@ -349,6 +349,7 @@ import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import { isEntryAnswerFailure } from './utils/isEntryAnswerFailure'
+import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isInsideFolder } from './utils/isInsideFolder'
@@ -17217,6 +17218,52 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Takes the paused frame's column as a server stop's bound column when the debugger paused the stop's own breakpoint at another column of the bound line, for {@link inspect} before {@link assertFrameAtBoundPosition} judges the frame.
+   * Why it exists: VS Code's debugger can answer a breakpoint at one column of a line (the call's `(`) while the paused frame maps to another (the callee) for the same generated location; the pause is still the stop's own when the `stopped` event names its acknowledged breakpoint. Without that attribution the stop keeps its bound place and the frame check refuses the pause.
+   * @param stop - The paused stop, already bound.
+   * @param frame - The debugger's top stack frame, if it reported one.
+   * @example this.attributeFrameColumn(stop, frame) // stop.bound 25:46 becomes 25:28 for a frame at 25:28 when hitBreakpointIds names the stop's breakpoint
+   */
+  private attributeFrameColumn(
+    stop: PreparedStop,
+    frame: DebugProtocol.StackFrame | undefined,
+  ): void {
+    const bound = stop.bound
+    // Only a server stop in its own file qualifies; a library stop already compares by line.
+    if (stop.participant !== 'server' || stop.library || !bound) return
+    // Kept apart: a failed predicate narrows `frame` to never.
+    const reported = frame && { line: frame.line, column: frame.column }
+    if (isFrameAtPosition(frame, stop.bundle.sourcePath, bound)) return
+    // The frame must stay on the bound line of the bound file; another line is never attributed.
+    if (
+      !reported ||
+      !isFrameAtPosition(frame, stop.bundle.sourcePath, bound, {
+        lineOnly: true,
+      })
+    )
+      return
+    const participant = this.participants.server
+    const ownedId =
+      participant.selected &&
+      stop.breakpoint?.acknowledgedId(participant.selected)
+    // Missing attribution, or ids that name another breakpoint, keep the refusal.
+    if (
+      ownedId === undefined ||
+      !participant.hitBreakpointIds?.includes(ownedId)
+    )
+      return
+    this.evidence.record('breakpoint.frame-column-attributed', {
+      participant: stop.participant,
+      path: stop.bundle.sourcePath,
+      frame: reported,
+      bound,
+      hitBreakpointIds: [...participant.hitBreakpointIds],
+      ownedBreakpointId: ownedId,
+    })
+    stop.bound = reported
+  }
+
+  /**
    * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
    * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
    * @param pause - The identity the pause gate gave the accepted stop.
@@ -17281,6 +17328,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame = stopped.event.callFrames[0]!,
       position = stop.source
     // The paused frame must be the position the debugger bound, which may differ from the requested column and, by the stop's rule, from the declared line.
+    // A server stop the debugger paused at another column of its bound line, naming the stop's own breakpoint, is recorded at the frame's column first.
+    this.attributeFrameColumn(stop, frame)
     // A library stop pauses in a built file whose eval map is line-granular, so only file and line are compared; the generated-position checks below stay exact.
     assertFrameAtBoundPosition(
       frame,

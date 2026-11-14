@@ -31,9 +31,9 @@ test('a pause of the learner breakpoint at another column is not recorded as the
   // Assert
   const view = harness.run.view()
   assert.equal(view.snapshots.length, 0)
-  assert.equal(
-    view.failures[0],
-    'Error: DAP frame differs from the bound configured source position',
+  assert.match(
+    view.failures[0]!,
+    /^Error: DAP frame differs from the bound configured source position \(frame .+:\d+:\d+, bound .+:undefined:undefined\)$/,
   )
 })
 

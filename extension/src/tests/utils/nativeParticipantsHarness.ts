@@ -550,12 +550,20 @@ export async function nativeParticipantsHarness(
       }),
     )
   }
+  /** The adapter ids the next `stopped` events name as hit breakpoints; none until a test sets them ({@link reportHitBreakpoints}). */
+  let stoppedHitBreakpointIds: number[] | undefined
   const emitStopped = (name: Participant): void => {
     run.onEvent(sessions[name], {
       type: 'event',
       seq: ++sequence,
       event: 'stopped',
-      body: { reason: 'breakpoint', threadId: 1 },
+      body: {
+        reason: 'breakpoint',
+        threadId: 1,
+        ...(stoppedHitBreakpointIds
+          ? { hitBreakpointIds: stoppedHitBreakpointIds }
+          : {}),
+      },
     })
   }
   const emitPause = (name: Participant): void => {
@@ -1559,6 +1567,10 @@ export async function nativeParticipantsHarness(
     movePausedFrame(line: number, column = 1): void {
       pausedLine = line
       pausedColumn = column
+    },
+    /** Makes every declared stop's DAP `stopped` event list these adapter breakpoint ids in `hitBreakpointIds`, as js-debug does for a pause at a breakpoint; the first registered breakpoint's id is 12. @example harness.reportHitBreakpoints([12]) */
+    reportHitBreakpoints(ids: number[]): void {
+      stoppedHitBreakpointIds = ids
     },
     /** Reports the paused top frame in this file instead of the stop's own source. */
     movePausedFrameToFile(path: string): void {
