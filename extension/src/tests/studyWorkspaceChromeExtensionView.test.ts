@@ -522,6 +522,70 @@ function showsAskedOf(
   ).length
 }
 
+// protects=Cycle 0133 D21 (Cycle 0132 CodeRabbit CLI, PR 331 final range): a move of the earlier run's file that the next run's watch started before the attach brought the view forward ends before the view is revealed, so its show cannot bring the file in front of the view again; fails_when=the uncover step reveals the view while that move's show is still held, so the show that lands in the view's group afterwards covers the view and the run's first reveal refuses with "Application ownership changed"; no_claim=how soon a native show answers, or that Cursor starts such a move at that moment (the held show and the redirect of every show to the view's group stand in for Cursor 3.30.8 with its Agent chat holding the keyboard)
+test('the next extension run waits for a move of the earlier run’s file that was in flight before its view came forward, so the file does not cover the view', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const { applicationColumn, endRedirect } =
+      await endRunWithPausedFileInFrontWhileShowsLandThere(
+        harness,
+        'in-flight-run-1',
+        'settings.js',
+      )
+    try {
+      const second = await openView(harness, 'in-flight-run-2', ['settings.js'])
+      const viewport = harness.reader['viewport']
+      assert.ok(viewport)
+      const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser')
+      assert.ok(application)
+      const settingsUri = harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString()
+      // The editor reports the view's state, so the run's watch starts moving the earlier run's file, and that show stalls.
+      const show = harness.holdNextTextDocumentShow({ uri: settingsUri })
+      application.notifyViewState()
+      await show.started
+      // Act: the run attaches while the move is in flight; the show is released only after the attach had its time to finish.
+      let attachEnded = false
+      const attached = viewport
+        .attach(SILENT_SCREENCAST, new AbortController().signal, 'popup')
+        .finally(() => {
+          attachEnded = true
+        })
+      // gstack-timing-ok: a negative check with a budget far below the 5 s bound; an attach that does not wait ends within it.
+      await Promise.race([
+        attached,
+        new Promise((resolve) => setTimeout(resolve, 1_000)),
+      ])
+      const attachEndedBeforeRelease = attachEnded
+      show.release()
+      await attached
+      // Assert
+      assert.equal(attachEndedBeforeRelease, false)
+      const applicationGroup = applicationGroupOf(harness, applicationColumn)
+      assert.equal(
+        applicationGroup?.activeTab?.label,
+        'codebook · Application in-fligh',
+      )
+      assert.deepEqual(
+        applicationGroup?.tabs.map((tab) => tab.label),
+        ['codebook · Application in-fligh', 'settings.js'],
+      )
+      second.close()
+    } finally {
+      endRedirect()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0132 task 8 (E4, Cursor 3.30.8): the next extension run that also stops in the file the earlier run left in front of the kept Application pane leaves that file behind its view once the attach brought the view forward, so no show of the run brings the file back in front of the view; fails_when=the next run's paused-file watch moves that file when the editor reports the view's new state, and Cursor, while its Agent chat holds the keyboard, answers the show by bringing the file's copy in the view's group to the front again, so the attach's reveal refuses with "Application ownership changed" and the run records no frame (E2-2 run 2); no_claim=the run's own later stop in that file (the next test), or why Cursor answers shows that way
 test('the next extension run that also stops in the earlier run’s file leaves that file behind its view while every show of it lands in the view’s group', async () => {
   // Arrange
@@ -995,6 +1059,13 @@ test('the next extension run leaves the keyboard in the file the learner chose w
       harness.focusMutableDraft('popup.js', learnerColumn)
       return answer
     }
+    // The editor keeps showing the earlier run's file in the view's group, as Cursor 3.30.8 does while its Agent chat holds the keyboard: the watch's move that the learner's click starts is refused, and the file still covers the view when the attach reads it again (Cycle 0133 D21: the attach now waits for that move).
+    const endRedirect = harness.redirectEveryTextDocumentShow(
+      harness.editor.Uri.file(
+        join(harness.directory, 'settings.js'),
+      ).toString(),
+      applicationColumn,
+    )
     const second = await openView(harness, 'switching-run-2', ['settings.js'])
     const viewport = harness.reader['viewport']
     assert.ok(viewport)
@@ -1030,6 +1101,7 @@ test('the next extension run leaves the keyboard in the file the learner chose w
       ),
       false,
     )
+    endRedirect()
     second.close()
   } finally {
     await harness.close()

@@ -498,6 +498,12 @@ type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 /** Where a file a paused-file watch left behind the Application pane stands in its skip ({@link StudyWorkspace}'s `refreshLeftBehindFiles`): `until-hidden` while the pane has not yet been seen in front of it, `until-front` while it stays behind the pane. */
 type LeftBehindFileState = 'until-hidden' | 'until-front'
 
+/** What the attach's uncover step uses of a run's paused-file watch ({@link StudyWorkspace.keepPausedSourceOutOfApplication}): marking a file left behind the pane, and waiting for a move in flight. */
+interface PausedSourceWatchGuard {
+  leave: (uri: vscode.Uri) => void
+  settled: () => Promise<void>
+}
+
 /** What the native surfaces present for an Extension replay's moment; see {@link StudyWorkspace.extensionMomentOf}. */
 type ExtensionMomentPresentation = {
   moment: ExtensionReplayPresentation['model']['moments'][number]
@@ -7770,7 +7776,10 @@ export class StudyWorkspace {
           await this.uncoverApplicationFromLeftoverStopTab(
             panel,
             attachSignal,
-            (uri) => pausedSourceWatch?.leave(uri),
+            {
+              leave: (uri) => pausedSourceWatch?.leave(uri),
+              settled: async () => pausedSourceWatch?.settled(),
+            },
           )
           // Read at this moment: a run declares its stops when its configuration resolves, after its lease exists. Written as the run resolved them (the canonical form is for comparing only); only this lease's run, never an earlier run's or another study's.
           await this.openRunStopFilesBesideApplication(
@@ -7898,18 +7907,18 @@ export class StudyWorkspace {
    * The run's own paused-file watch ({@link keepPausedSourceOutOfApplication}) is told to leave that file behind the pane before the pane comes forward: a run that also stops in the file would otherwise move it, and Cursor 3.30.8, whose Agent chat still holds the keyboard, answers that show by bringing the file's copy in the pane's group to the front again, so the attach's reveal refused after all (Cycle 0132 E4, E2-2 run 2). Once the run's own stop shows the file in front again, the watch moves it as any paused file. The notes are read live during the keyboard question, so a tab the learner closes and opens again meanwhile is not covered.
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
-   * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
+   * @param watch - The run's paused-file watch: `leave` tells it not to move a file left behind the pane, and `settled` ends once a move it had in flight has ended.
    * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.uncoverApplicationFromLeftoverStopTab(panel, signal, (uri) => watch.leave(uri)) // settings.js of run 1 stays behind run 2's view
+   * @example await this.uncoverApplicationFromLeftoverStopTab(panel, signal, { leave: (uri) => watch.leave(uri), settled: () => watch.settled() }) // settings.js of run 1 stays behind run 2's view
    */
   private async uncoverApplicationFromLeftoverStopTab(
     panel: vscode.WebviewPanel,
     signal: AbortSignal,
-    leaveBehind: (uri: vscode.Uri) => void,
+    watch: PausedSourceWatchGuard,
   ): Promise<void> {
     try {
-      await this.uncoverNotedLeftover(panel, signal, leaveBehind)
+      await this.uncoverNotedLeftover(panel, signal, watch)
     } finally {
       // The note is read once, whatever the attach did with it: a later run notes its own.
       this.leftoverStopTabUris.clear()
@@ -7920,15 +7929,15 @@ export class StudyWorkspace {
    * The body of {@link uncoverApplicationFromLeftoverStopTab}: reads the notes live, so a tab the learner closes meanwhile (the tab listener drops its note) is not covered when it is opened again.
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
-   * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
+   * @param watch - The run's paused-file watch: `leave` tells it not to move a file left behind the pane, and `settled` ends once a move it had in flight has ended.
    * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.uncoverNotedLeftover(panel, signal, (uri) => watch.leave(uri))
+   * @example await this.uncoverNotedLeftover(panel, signal, { leave: (uri) => watch.leave(uri), settled: () => watch.settled() })
    */
   private async uncoverNotedLeftover(
     panel: vscode.WebviewPanel,
     signal: AbortSignal,
-    leaveBehind: (uri: vscode.Uri) => void,
+    watch: PausedSourceWatchGuard,
   ): Promise<void> {
     const column = this.viewColumnOf(panel)
     const coveringLeftover = (): vscode.Uri | undefined => {
@@ -7952,16 +7961,20 @@ export class StudyWorkspace {
       ? await this.keepsKeyboardFromPane()
       : true
     signal.throwIfAborted()
-    // Read again after the keyboard's answer: the pane may be gone or moved, or the learner may have changed the group meanwhile.
-    if (
-      this.app !== panel ||
-      this.viewColumnOf(panel) !== column ||
-      !coveringLeftover()
-    )
-      return
-    // An editor the learner chose while the rule answered keeps the keyboard (CodeRabbit, PR 331).
+    /** Tells that the pane is still where the notes were read and still covered by a noted file: the pane may be gone or moved, or the learner may have changed the group meanwhile. */
+    const isStillCovered = (): boolean =>
+      this.app === panel &&
+      this.viewColumnOf(panel) === column &&
+      Boolean(coveringLeftover())
+    // Read again after the keyboard's answer.
+    if (!isStillCovered()) return
+    watch.leave(covered)
+    // A move of the earlier run's file that the watch started before this step may still be showing it; its show would bring the file in front of the pane again after the reveal below (Cycle 0133 D21). The file is marked left, so no move starts after the one in flight.
+    await this.awaitMoveInFlight(watch, signal)
+    // Read again after the move's end.
+    if (!isStillCovered()) return
+    // An editor the learner chose while the rule answered or the move ended keeps the keyboard (CodeRabbit, PR 331).
     const takesKeyboard = !comesWithoutKeyboard && coveredEditorIsActive()
-    leaveBehind(covered)
     this.revealPane(panel, column, !takesKeyboard)
     if (takesKeyboard) this.tellPaneTookKeyboard()
     try {
@@ -7984,22 +7997,62 @@ export class StudyWorkspace {
   }
 
   /**
+   * Waits, within the placement bound, until the run's paused-file watch has no move in flight; called by {@link uncoverNotedLeftover} after it marked the earlier run's file left behind the pane.
+   * A move that outlasts the bound is gone on from (the reveal's guard refuses the view if that file still covers it).
+   * @param watch - The run's paused-file watch.
+   * @param signal - The attach's cancellation.
+   * @returns Once the watch is settled, or {@link PRESENTATION_READY_TIMEOUT_MS} passed.
+   * @throws The signal's reason when the run was cancelled.
+   * @example await this.awaitMoveInFlight(watch, signal)
+   */
+  private async awaitMoveInFlight(
+    watch: PausedSourceWatchGuard,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await awaitResponse(
+        watch.settled(),
+        'the paused-file move in flight',
+        signal,
+        PRESENTATION_READY_TIMEOUT_MS,
+      )
+    } catch (error) {
+      // A cancelled run keeps its signal's reason; the bound only ends the wait.
+      signal.throwIfAborted()
+      if (!(error instanceof WaitTimeoutError)) throw error
+    }
+  }
+
+  /**
    * Moves the paused file that opens in front of a live extension run's Application pane to the source group below it, so the stopped source and the extension view stay visible in separate groups (DR6); called by {@link leaseApplicationViewport} for an extension run's lease.
    * Cursor 3.27.22 opens a stop's paused file in the Application group although that group is locked, as a preview tab in front of the view (Cycle 0062 task 2, dry run of 2026-10-30); VS Code opens it in another group. An extension run has no captured source of its own: the paused file is where the learner reads the stop.
    * The watch ends with the lease's release or the pane's disposal. It looks again after each move, for a stop that came meanwhile, and gives a file up after {@link PAUSED_SOURCE_MOVE_ATTEMPTS} failed moves in a row, so a show the editor keeps refusing never loops while the next stop's file still moves.
    * @param panel - The lease's Application pane.
    * @param isCurrent - Whether the lease is still the workspace's current one.
    * @param isStopFile - Whether a file (its `fsPath`) is one of this run's declared stop files; only such a file moves, so a file the learner opens there as a preview during the run stays, and nothing moves before the run's stops are known.
-   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while it stays behind the pane, until a stop shows it in front again ({@link uncoverApplicationFromLeftoverStopTab}, {@link refreshLeftBehindFiles}).
+   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while it stays behind the pane, until a stop shows it in front again ({@link uncoverApplicationFromLeftoverStopTab}, {@link refreshLeftBehindFiles}); `settled` ends at once when no move is in flight, else when the move in flight and the chain of moves after it ended (a failed move counts as ended; disposal ends nothing early, a move in flight ends when its show answers).
    * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId, (fsPath) => stopFiles.has(fsPath)); watch.leave(settingsUri)
    */
   private keepPausedSourceOutOfApplication(
     panel: vscode.WebviewPanel,
     isCurrent: () => boolean,
     isStopFile: (fsPath: string) => boolean,
-  ): { dispose: () => void; leave: (uri: vscode.Uri) => void } {
+  ): {
+    dispose: () => void
+    leave: (uri: vscode.Uri) => void
+    settled: () => Promise<void>
+  } {
     let isMoving = false,
       isDisposed = false
+    // Callers of `settled` waiting for the move in flight and the chain after it to end.
+    let settledWaiters: Array<() => void> = []
+    /** Lets the callers of `settled` go on once no move is in flight. */
+    const releaseSettledWaiters = (): void => {
+      if (isMoving) return
+      const waiters = settledWaiters
+      settledWaiters = []
+      for (const resolve of waiters) resolve()
+    }
     const failedMoves = new Map<string, number>()
     // Files left behind the pane on purpose, by document URI: kept until the pane is seen in front of them, then until a stop brings them in front again.
     const leftBehind = new Map<string, LeftBehindFileState>()
@@ -8030,6 +8083,8 @@ export class StudyWorkspace {
           isMoving = false
           // A stop that opened its file during this move announced it while the move ran.
           moveCoveringSource()
+          // The look above started no next move: the chain ended here.
+          releaseSettledWaiters()
         })
     }
     const watches = [
@@ -8046,7 +8101,11 @@ export class StudyWorkspace {
     const leave = (uri: vscode.Uri): void => {
       leftBehind.set(uri.toString(), 'until-hidden')
     }
-    return { dispose, leave }
+    const settled = (): Promise<void> =>
+      isMoving
+        ? new Promise<void>((resolve) => settledWaiters.push(resolve))
+        : Promise.resolve()
+    return { dispose, leave, settled }
   }
 
   /**
