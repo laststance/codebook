@@ -322,7 +322,7 @@ import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaresEdgeApiRuntime } from './utils/declaresEdgeApiRuntime'
 import { declaresEntryBrowserStop } from './utils/declaresEntryBrowserStop'
-import { describeCdpPause } from './utils/describeCdpPause'
+import { describeCdpPause, type CdpPausePlace } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
 import { describePressRefusal } from './utils/describePressRefusal'
@@ -1474,6 +1474,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /** Set while a route-handler or API-route hit is judged and sealed: another participant's stop that arrives meanwhile is queued behind it, like a stop that arrives during a continuation ({@link settleRouteHandlerHit}). */
   private judgingRouteHandler = false
+  /** The page's latest pause as the runtime reported it, kept only so the journal can name the place of a pause the run judges later ({@link openBrowserPausePlace}); it holds nothing and decides nothing. */
+  private lastBrowserPause?: Protocol.Debugger.PausedEvent
   private transientBrowserPause?: {
     timer: ReturnType<typeof setTimeout>
     event: Protocol.Debugger.PausedEvent
@@ -13324,6 +13326,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
     participant.runtimePaused = true
+    if (name === 'browser') this.lastBrowserPause = event
     const isInstrumentation = event.reason === 'instrumentation'
     this.stampApiPauseReceipt(name, isInstrumentation)
     // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
@@ -15749,12 +15752,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         })
       this.recordStopVerdict(session, participant, serverStop !== undefined)
       if (serverStop) {
+        this.journalReactCopyResume(session, body)
         this.track(
           this.resumeServerBreakpointInBrowser(session, body, serverStop),
         )
         return
       }
       if (name === 'browser' && this.transientBrowserPause) {
+        this.journalUnownedBrowserStop(session, body)
         this.fail('Unowned browser DAP stop invalidated the declared operation')
         return
       }
@@ -15973,6 +15978,53 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       session,
       body.hitBreakpointIds ?? [],
     )
+  }
+
+  /**
+   * Journals `breakpoint.react-copy` when the browser pause the run resumes for a server stop is in one of React's server copies (`about://React/Server/…`), so a journal tells that copy apart from the page's stub of a `"use server"` module.
+   * Called by {@link onEvent} just before {@link resumeServerBreakpointInBrowser}; the place is the page's open pause as the runtime reported it, so nothing is journaled while the runtime has not reported that pause yet.
+   * @param session - The browser session that sent the `stopped` event.
+   * @param body - The event's body; its hit breakpoint ids are journaled.
+   * @example this.journalReactCopyResume(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [12] }) // journals the copy's URL and place
+   */
+  private journalReactCopyResume(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): void {
+    const place = this.openBrowserPausePlace()
+    if (!place || !isReactServerCopyUrl(place.url)) return
+    this.evidence.record('breakpoint.react-copy', {
+      sessionId: session.id,
+      ...place,
+      hitBreakpointIds: body.hitBreakpointIds,
+    })
+  }
+
+  /**
+   * Journals `browser.unowned-stop` for a browser `stopped` no rule owns, so the failure that follows names what paused: the emitting session, whether the run owns it, the paused script's address, the place and the adapter's hit breakpoint ids.
+   * Called by {@link onEvent} right before it ends the run with the unowned browser DAP stop failure.
+   * @param session - The browser session that sent the `stopped` event.
+   * @param body - The event's body; its hit breakpoint ids are journaled.
+   * @example this.journalUnownedBrowserStop(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [7] }) // journals url, line, column and ids
+   */
+  private journalUnownedBrowserStop(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): void {
+    this.evidence.record('browser.unowned-stop', {
+      sessionId: session.id,
+      ownsSession: this.participantName(session) === 'browser',
+      ...this.openBrowserPausePlace(),
+      hitBreakpointIds: body.hitBreakpointIds,
+    })
+  }
+
+  /** Gives the journal's description of the page's open pause (bounded URL, 1-based generated line and column, hit breakpoints); `undefined` while the runtime has not reported one. Called by {@link journalReactCopyResume} and {@link journalUnownedBrowserStop}. @example this.openBrowserPausePlace()?.url // 'about://React/Server/webpack-internal:///(rsc)/./app/ui/invoices/table.tsx?107' */
+  private openBrowserPausePlace(): CdpPausePlace | undefined {
+    const event = this.openPagePause()?.event ?? this.lastBrowserPause
+    return event
+      ? describeCdpPause(event, this.participants.browser.scriptUrls)
+      : undefined
   }
 
   /**

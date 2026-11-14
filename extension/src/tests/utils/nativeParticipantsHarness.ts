@@ -1162,10 +1162,16 @@ export async function nativeParticipantsHarness(
     revealSource: async () => {},
   })
   // The browser events of a page pause in its stub of the server module, shared by the three helpers that report one, so their payloads stay alike.
-  const emitStubScriptParsed = (): void => {
+  const emitStubScriptParsed = (reactCopy = false): void => {
+    const modulePath =
+      options.nextPackage?.toPackageRelative(server.source.path) ??
+      server.source.path
     listeners.browser.get('Debugger.scriptParsed')?.({
       scriptId: SERVER_MODULE_STUB_ID,
-      url: `webpack-internal:///(app-pages-browser)/./${options.nextPackage?.toPackageRelative(server.source.path) ?? server.source.path}`,
+      // React's fabricated copy of a Server Component module, the form a page that gets source maps for server code shows in an owner stack.
+      url: reactCopy
+        ? `about://React/Server/webpack-internal:///(rsc)/./${modulePath}?107`
+        : `webpack-internal:///(app-pages-browser)/./${modulePath}`,
       executionContextId: 1,
     })
   }
@@ -1469,6 +1475,21 @@ export async function nativeParticipantsHarness(
       emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
     },
     /**
+     * Pauses the page in React's copy of the server module (`about://React/Server/…`), as js-debug does when the editor sent a server stop's breakpoint to the browser session and the page holds a fake function for that Server Component: the runtime pause, then the `stopped` whose breakpoint ids name the server breakpoint's id in the browser session.
+     * @param serverBreakpoint - The server stop's editor breakpoint, whose adapter id the `stopped` names first.
+     * @param otherHitIds - Adapter ids of further breakpoints the same pause hit, named after the server breakpoint's; none by default.
+     * @example harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!, [999])
+     */
+    pauseBrowserInReactServerCopy(
+      serverBreakpoint: { id: string },
+      otherHitIds: readonly number[] = [],
+    ): void {
+      stubPausesAwaitingResume++
+      emitStubScriptParsed(true)
+      emitStubPaused(SERVER_MODULE_STUB_START)
+      emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
+    },
+    /**
      * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
      * @example const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!); harness.advance(300); stub.stopped()
      */
@@ -1634,6 +1655,36 @@ export async function nativeParticipantsHarness(
     },
     /** Moves a manual clock forward and fires every run timer that is due by then; it does nothing for a run on real timers. @example harness.advance(20_000) */
     advance: manualClock.advance,
+    /**
+     * Pauses the page in one of its own scripts that no declared stop owns, then reports the adapter's `stopped` naming a breakpoint of the page's own (adapter id 999), as a pause nobody declared arrives.
+     * @param scriptUrl - The address the page announces for the paused script.
+     * @param place - The zero-based generated line and column of the pause.
+     * @example harness.pauseBrowserInOwnScript('webpack-internal:///(app-pages-browser)/./app/ui/search.tsx', 4, 2)
+     */
+    pauseBrowserInOwnScript(
+      scriptUrl: string,
+      place: { lineNumber: number; columnNumber: number },
+    ): void {
+      listeners.browser.get('Debugger.scriptParsed')?.({
+        scriptId: 'page-own-script',
+        url: scriptUrl,
+        executionContextId: 1,
+      })
+      listeners.browser.get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: 'page-own-script',
+          scriptId: 'page-own-script',
+          ...place,
+          hitBreakpoints: ['page-own'],
+        }),
+      )
+      run.onEvent(sessions.browser, {
+        type: 'event',
+        seq: ++sequence,
+        event: 'stopped',
+        body: { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [999] },
+      })
+    },
     emitBrowserAdapterPause(): void {
       listeners.browser.get('Debugger.paused')?.(
         debuggerPausedEvent({
