@@ -8,6 +8,7 @@ import type { ExtensionViewportIdentity } from '../chromeExtensionContracts'
 import {
   APPLICATION_GROUP_TOOK_KEYBOARD_MESSAGE,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
+  PRESENTATION_READY_TIMEOUT_MS,
   STOP_OWN_FOCUS_BOUND_MS,
 } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -3060,7 +3061,8 @@ test('the next extension run cancelled while it waits for the Application pane i
 
     // Assert
     assert.equal(rejection, reason)
-    assert.ok(performance.now() - startedMs < 3_000)
+    // gstack-timing-ok: a wait that ignores the cancellation also ends with the reason, but only once the presentation-ready bound has passed, so only the elapsed time against that bound tells the two apart.
+    assert.ok(performance.now() - startedMs < PRESENTATION_READY_TIMEOUT_MS)
   } finally {
     await harness.close()
   }
