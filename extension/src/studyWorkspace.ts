@@ -5901,7 +5901,7 @@ export class StudyWorkspace {
     return giveBack
   }
 
-  /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome. An entry that waited for a run's Application preparation, which gave Cursor's Agent chat its keyboard back, gives the chat its keyboard back again at its end through the chat's own command, unless it remembered a foreign tab, the learner clicked or typed in an editor since the wait, a newer Open or Close took over, or the entry failed (Cycle 0134 N2 round 2).
+  /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome. An entry that waited for a run's Application preparation, which gave Cursor's Agent chat its keyboard back, gives the chat its keyboard back again at its end through the chat's own command, unless it remembered a foreign tab, the learner clicked or typed in an editor since the wait, a newer Open or Close took over, the entry's own request was cancelled, or the entry failed (Cycle 0134 N2 round 2).
    * @param signal - Cancels an obsolete reader entry, also while it waits for a run's Application preparation ({@link waitForApplicationPreparations}).
    * @param origin - Identifies the existing navigation/placement contract for this entry.
    * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
@@ -6395,11 +6395,12 @@ export class StudyWorkspace {
         this.initialAppPlacement = undefined
       // Last, because the editor answers a layout read for the focused editor part.
       await returnForeignFocus?.().catch(() => undefined)
-      // The chat's own command gives its input the keyboard back after the entry's placements, unless the learner clicked or typed in an editor since the wait, or a newer Open or Close took over.
+      // The chat's own command gives its input the keyboard back after the entry's placements, unless the learner clicked or typed in an editor since the wait, a newer Open or Close took over, or the entry's own request was cancelled while the host listed its commands.
       const chatReturn = chatReturnAfterWait
       if (chatReturn)
         await this.returnKeyboardToChatPart(
           () =>
+            !signal?.aborted &&
             lifetime === this.lifetime &&
             !this.closing &&
             request === this.readerOpenNumber &&
@@ -17057,8 +17058,8 @@ export class StudyWorkspace {
    * @param primary - The original first group, required by the empty single-part fallback.
    * @param mainCount - Main groups measured before the issued focus command.
    * @param sourceReceipt - The exact source or opaque-tab acknowledgement retained across that command.
-   * @param tookPaneRoute - Whether this preparation took the first group's keyboard through the Application pane; only then is the pane's own active report an acknowledgement, so a stale report after the keyboard moved elsewhere proves nothing.
-   * @returns Whether a current native report, retained acknowledgement, the pane's own report after the pane route, unchanged empty primary or the sole empty main group beside a chat part proves the destination.
+   * @param tookPaneRoute - Whether this preparation took the first group's keyboard through the Application pane; then the pane's own active report is the only acknowledgement (the main editor's focus in the first group may be a file the learner brought in front of the pane), and without the pane route a stale report after the keyboard moved elsewhere proves nothing.
+   * @returns After the pane route, whether the pane reports itself active in front of the first group; otherwise whether a current native report, retained acknowledgement, unchanged empty primary or the sole empty main group beside a chat part proves the destination.
    * @example this.hasApplicationPreparationFocus(primary, mainCount, input)
    */
   private hasApplicationPreparationFocus(
@@ -17068,11 +17069,11 @@ export class StudyWorkspace {
       ReturnType<StudyWorkspace['retainPreparationPrimaryInput']> | undefined,
     tookPaneRoute: boolean,
   ): boolean {
+    // After the pane route only the Application pane's own active report in front of the first group proves it, while Cursor may go on naming another group: a file the learner brought in front of that group meanwhile holds the main editor's focus there, not the pane, and the preparation is refused instead of placing beside a hidden view.
+    if (tookPaneRoute) return this.isApplicationPaneActiveInFirstGroup()
     return (
       this.hasMainEditorFocus(vscode.ViewColumn.One) ||
       Boolean(sourceReceipt?.acknowledged()) ||
-      // After the pane route, the Application pane in front of the first group reports itself active there, while Cursor may go on naming another group.
-      (tookPaneRoute && this.isApplicationPaneActiveInFirstGroup()) ||
       (mainCount === vscode.window.tabGroups.all.length &&
         primary === vscode.window.tabGroups.activeTabGroup &&
         !primary.activeTab) ||

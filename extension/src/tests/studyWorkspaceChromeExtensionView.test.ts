@@ -3081,6 +3081,72 @@ test('the next extension run cancelled while it waits for the Application pane i
   }
 })
 
+// protects=PR 339 hosted CodeRabbit review (Minor): after the pane route the preparation needs the Application pane's own active report in front of the first group, so a file the learner brings in front of that group with the keyboard while the preparation waits for the report refuses the preparation, and the learner's file stays in front; fails_when=the main editor's focus in the first group alone accepts the preparation after the pane route, so the run goes on to place its stop files and give the keyboard back while its view is hidden behind the learner's file; no_claim=Cursor's own focus events (the pane's reveal is swallowed, so it never reports itself active)
+test('the next extension run is refused when the learner brings a file in front of the first group while the preparation waits for the Application pane there', async () => {
+  // Arrange: the reopened Study as above; the pane never reports itself active.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    const learnerFile = harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    // The reveal is swallowed, so the pane stays inactive and the wait goes on.
+    let revealed = false
+    application.reveal = (): void => {
+      revealed = true
+    }
+    const create = harness.reader.presentation.createChromeExtensionViewport
+    assert.ok(create)
+
+    // Act: the learner clicks into App.tsx in the first group while the preparation waits for the pane's report.
+    const outcome = create('learner-file-during-pane-wait-run-1').then(
+      () => 'view prepared',
+      (error: unknown) => error,
+    )
+    await waitUntil(() => revealed, 'the preparation’s in-place reveal', 2_000)
+    learnerFile.focus()
+    const commandsAtClick = harness.commands.length
+    const result = await outcome
+
+    // Assert
+    // The refusal comes from the reader's own module, whose errors are not this test's Error class, so its message is read.
+    assert.ok(
+      typeof result === 'object' && result !== null && 'message' in result,
+    )
+    assert.equal(
+      result.message,
+      'Focus the first main source group before preparing the Application.',
+    )
+    // No group was inserted or locked around the learner's file after the click.
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsAtClick)
+        .filter(
+          (command) =>
+            command === 'workbench.action.newGroupAbove' ||
+            command === 'workbench.action.lockEditorGroup',
+        ),
+      [],
+    )
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab?.label,
+      'App.tsx',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0134 D23 (acknowledgement scope): a stale active report of the Application pane in front of the first group is no proof that the first group holds the keyboard unless the preparation took the pane route; fails_when=the pane's report is accepted whatever route the preparation took, so a stale active:true passes just after the keyboard moved elsewhere; no_claim=the whole preparation (the focus check is read directly with a stale report forced)
 test('the first group’s keyboard is not acknowledged by the Application pane’s stale active report when the preparation did not take the pane route', async () => {
   // Arrange: the reopened Study; the Study pane holds the keyboard, and the Application pane in front of the first group still reports itself active.
@@ -4109,6 +4175,73 @@ test('the live entry of an agent run leaves the keyboard in the editor the learn
     assert.equal(harness.reader['errors'].size, 0)
     view.close()
   } finally {
+    await harness.close()
+  }
+})
+
+// protects=PR 339 hosted CodeRabbit review (Minor): an Open whose own request is cancelled while its return of the keyboard to Cursor's Agent chat waits for the host's command list runs no Focus Agent afterwards; fails_when=the return's check ignores the entry's cancellation, so Focus Agent takes the keyboard after the request that asked for the entry was cancelled; no_claim=the host's real command-list timing (the reader's discovery is held at its start) and Cursor's own naming of the active group
+test('an Open cancelled while it gives the chat its keyboard back after its wait runs no Focus Agent', async () => {
+  // Arrange: the interleaved run in the reopened Study with the chat input holding the keyboard, an Open with its own request, and that Open held at its arrangement after the preparation gave the chat its keyboard back.
+  const harness = await workspaceHarness()
+  let releaseDiscovery = (): void => {}
+  try {
+    await reopenStudyBesideAgentPartWithKeyboardInChat(harness, false)
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+    const lease = openView(harness, 'cancelled-return-run-1', [])
+    await lockHeld.started
+    const arrangementHeld = harness.holdNextCommand('runCommands')
+    const controller = new AbortController()
+    const entry = harness.reader
+      .open(controller.signal, 'study', false, true)
+      .then(
+        () => 'ended',
+        (error: unknown) => error,
+      )
+    // gstack-timing-ok: a negative check; the entry reads the chat's place while the preparation stands mid-way, which one settle of the fake editor lets it do.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    lockHeld.release()
+    const view = await lease
+    await arrangementHeld.started
+    // The return's command discovery is held at its start, so the cancellation lands while the host lists its commands.
+    const discoverChatCommand = harness.reader['chatFocusCommand'].bind(
+      harness.reader,
+    )
+    let discoveryAsked = false
+    harness.reader['chatFocusCommand'] = async () => {
+      discoveryAsked = true
+      await new Promise<void>((release) => {
+        releaseDiscovery = release
+      })
+      return discoverChatCommand()
+    }
+    const focusAgentRunsBefore = harness.commands.filter(
+      (command) => command === 'composer.focusComposer',
+    ).length
+
+    // Act: the entry ends its arrangement and asks for the chat's command; its own request is cancelled meanwhile.
+    arrangementHeld.release()
+    await waitUntil(
+      () => discoveryAsked,
+      'the return’s command discovery',
+      2_000,
+    )
+    controller.abort(
+      new Error('The request that asked for the Open was cancelled.'),
+    )
+    releaseDiscovery()
+    const outcome = await entry
+
+    // Assert
+    assert.equal(outcome, 'ended')
+    assert.equal(
+      harness.commands.filter((command) => command === 'composer.focusComposer')
+        .length,
+      focusAgentRunsBefore,
+    )
+    view.close()
+  } finally {
+    releaseDiscovery()
     await harness.close()
   }
 })
