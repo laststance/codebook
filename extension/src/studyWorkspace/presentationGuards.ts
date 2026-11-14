@@ -3383,15 +3383,15 @@ export class PresentationGuards {
     previous: PresentationGuards['observedEditorGroups'],
     column: vscode.ViewColumn,
   ): number | undefined {
-    // A group that left without a close report, or a close of a group never recorded, leaves the columns unexplained.
-    if (
-      !event?.closed.length ||
-      event.opened.length ||
-      current.length !== previous.length - event.closed.length
+    if (!event?.closed.length || event.opened.length) return undefined
+    const closedRecorded = previous.filter((entry) =>
+      event.closed.includes(entry.group),
     )
+    // A group that left without a close report leaves the columns unexplained.
+    if (current.length !== previous.length - closedRecorded.length)
       return undefined
-    const closedBefore = previous.filter(
-      (entry) => entry.column < column && event.closed.includes(entry.group),
+    const closedBefore = closedRecorded.filter(
+      (entry) => entry.column < column,
     ).length
     return column - closedBefore
   }
