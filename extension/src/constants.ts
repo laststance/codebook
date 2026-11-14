@@ -2801,6 +2801,8 @@ export const API_PROCESS_PROBE_MS = 5_000
 export const SERVER_RENDER_ROUTE_MAX_CHARS = 2_048
 /** How often the run looks for the pause behind a server `stopped` while the pause has not arrived yet; the two channels of one pause arrive within milliseconds of each other. */
 export const SERVER_RENDER_PAUSE_POLL_MS = 5
+/** The longest the run holds the judgment of a page pause that names a breakpoint it cannot place while the browser's adapter has yet to answer the registration of a declared server stop's breakpoint (the editor sends it to the page too, and React's copy of the module can pause at it first); past it the pause is judged as it is (Cycle 0136, F2). Shorter than {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS}, the bound such a pause in React's copy of a declared stop's module runs against, so the judgment comes before that bound ends the run. */
+export const BROWSER_STOP_REGISTRATION_ANSWER_MS = 2_000
 /** How often the entry-load phase reads whether the main frame's committed document finished loading while no server-render pause is held. */
 export const ENTRY_LOAD_POLL_MS = 100
 /** The key of the aggregate operation record a run that declares no operation keeps (entry render only): no input is dispatched for it. */

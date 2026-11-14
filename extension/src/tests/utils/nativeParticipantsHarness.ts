@@ -1498,6 +1498,63 @@ export async function nativeParticipantsHarness(
       emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
     },
     /**
+     * Sends the editor's registration of a stop's breakpoint to the browser session again and keeps the adapter's reply back until `answer` is called, as js-debug answers a registration only once it has set the breakpoint in every script while the page can already pause at it (Cycle 0136, F2): until the reply the run knows no id of that breakpoint in the browser session.
+     * @param serverBreakpoint - The stop's editor breakpoint; every breakpoint of its file is in the request, as the editor sends them.
+     * @returns `answer`, which sends the held reply naming each breakpoint's adapter id.
+     * @example
+     * const registration = harness.holdBrowserRegistrationAnswer(harness.breakpoints[0]!)
+     * harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+     * registration.answer()
+     */
+    holdBrowserRegistrationAnswer(serverBreakpoint: { id: string }): {
+      answer(): void
+    } {
+      const sourcePath = breakpoints.find(
+        (breakpoint) => breakpoint.id === serverBreakpoint.id,
+      )!.location.uri.fsPath
+      const selected = breakpoints.filter(
+          (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
+        ),
+        requestSequence = ++sequence
+      run.onRequest(sessions.browser, {
+        type: 'request',
+        seq: requestSequence,
+        command: 'setBreakpoints',
+        arguments: {
+          source: { path: sourcePath },
+          breakpoints: selected.map((breakpoint) =>
+            sourceBreakpointRequest(breakpoint.location.range.start),
+          ),
+        },
+      })
+      return {
+        answer: (): void => {
+          run.onResponse(sessions.browser, {
+            type: 'response',
+            seq: ++sequence,
+            command: 'setBreakpoints',
+            request_seq: requestSequence,
+            success: true,
+            body: {
+              breakpoints: selected.map((breakpoint) => ({
+                id: adapterId(breakpoint),
+                // The reply has the shape of the first one: verified where the adapter binds, or still pending.
+                ...(acknowledgedAt
+                  ? {
+                      verified: true,
+                      ...acknowledgedAt({
+                        line: breakpoint.location.range.start.line + 1,
+                        column: breakpoint.location.range.start.character + 1,
+                      }),
+                    }
+                  : { verified: false }),
+              })),
+            },
+          })
+        },
+      }
+    },
+    /**
      * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
      * @example const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!); harness.advance(300); stub.stopped()
      */

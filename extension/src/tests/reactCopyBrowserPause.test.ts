@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setTimeout } from 'node:timers/promises'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
@@ -130,6 +131,7 @@ test('a page pause in React’s copy that also names a breakpoint of the page’
       ownsSession: true,
       ...REACT_COPY_ENTRY,
       hitBreakpointIds: [12, 999],
+      awaitedStops: [],
     },
   ])
 })
@@ -162,6 +164,114 @@ test('a page pause in the page’s own script that no stop owns ends the run and
       column: 3,
       hitBreakpoints: ['page-own'],
       hitBreakpointIds: [999],
+      awaitedStops: [],
+    },
+  ])
+})
+
+/** How late the browser's adapter answers the held registration in the tests below: longer than the 250 ms a page pause nobody owns may last, so the answer comes only after that bound would have ended the run. */
+const LATE_ANSWER_MS = 400
+
+// protects=F2 (Cycle 0135 run 22ed260d, Cycle 0136 E-F2): a page pause in React's copy that names a declared server stop's breakpoint before the browser's adapter has answered that breakpoint's registration is held until the answer, then resumed as the stop's copy, and the server stop still commits; fails_when=the pause is judged at once and ends the run ("Unowned browser DAP stop invalidated the declared operation"), or the 250 ms bound of a page pause nobody owns ends it while the answer is awaited ("Unowned browser stop remained paused"); no_claim=the harness sends the registration to the browser session again to stand in for js-debug's late first reply while a Next.js entry load runs, and its React copy is a stand-in script (the native Cursor run shows the real order)
+test('a page pause in React’s copy that names a server stop’s breakpoint before the browser has answered its registration is resumed once the answer arrives', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  const registration = harness.holdBrowserRegistrationAnswer(
+    harness.breakpoints[0]!,
+  )
+  // Act
+  harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+  await setTimeout(LATE_ANSWER_MS)
+  registration.answer()
+  await resumedOrFailed(harness)
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the server stop was captured')
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
+    {
+      sessionId: 'browser-session',
+      hitBreakpointIds: [12],
+      awaitedStops: [0],
+      answered: true,
+    },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [
+    { sessionId: 'browser-session', ...REACT_COPY_ENTRY },
+  ])
+})
+
+// protects=the hold has a bound: a page pause in React's copy whose server stop's registration the browser never answers is judged when the bound passes and still ends the run, and the journal names the stop it waited for; fails_when=the pause is resumed although no reply named its breakpoint, the run waits without end, or the journal leaves out the awaited stop; no_claim=the bound is shortened to 300 ms for the test (the product waits 2 s), and the harness adapter stands in for js-debug
+test('a page pause in React’s copy whose server stop’s registration the browser never answers still ends the run once the hold’s bound passes', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    runtimeConstants: { BROWSER_STOP_REGISTRATION_ANSWER_MS: 300 },
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  harness.holdBrowserRegistrationAnswer(harness.breakpoints[0]!)
+  // Act
+  harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+  await waitUntil(() => harness.run.view().status === 'failed', 'run ended')
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unowned browser DAP stop invalidated the declared operation',
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
+    {
+      sessionId: 'browser-session',
+      hitBreakpointIds: [12],
+      awaitedStops: [0],
+      answered: false,
+    },
+  ])
+  assert.deepEqual(journaled(harness, 'browser.unowned-stop'), [
+    {
+      sessionId: 'browser-session',
+      ownsSession: true,
+      ...REACT_COPY_ENTRY,
+      awaitedStops: [0],
+    },
+  ])
+})
+
+// protects=E-F2's diagnosis: a page pause that ends the run because it paused out of turn (no rule owns it and the run's next stop is a server stop) journals its script address, place and breakpoint ids too, as the native E-F2 run's failure did not; fails_when=the failure "Unexpected or additional browser stop invalidated the declared operation" leaves no browser.unowned-stop entry; no_claim=a harness adapter, not js-debug
+test('a page pause that ends the run out of turn before the operation’s input journals its script address, place and breakpoint ids', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  // Act
+  harness.pauseBrowserInOwnScript(
+    'webpack-internal:///(app-pages-browser)/./app/ui/invoices/pagination.tsx',
+    { lineNumber: 9, columnNumber: 4 },
+  )
+  await waitUntil(() => harness.run.view().status === 'failed', 'run ended')
+  // Assert
+  assert.match(
+    harness.run.view().failures[0] ?? '',
+    /^Unexpected or additional browser stop invalidated the declared operation/,
+  )
+  assert.deepEqual(journaled(harness, 'browser.unowned-stop'), [
+    {
+      sessionId: 'browser-session',
+      ownsSession: true,
+      url: 'webpack-internal:///(app-pages-browser)/./app/ui/invoices/pagination.tsx',
+      line: 10,
+      column: 5,
+      hitBreakpoints: ['page-own'],
+      hitBreakpointIds: [999],
+      awaitedStops: [],
     },
   ])
 })

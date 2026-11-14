@@ -516,6 +516,26 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Says whether a session's adapter has yet to answer this breakpoint's latest registration, for {@link ConfiguredBrowserRun}: the editor sends a server stop's breakpoint to the browser session too, and the page can pause at it (in React's copy of the module) before the adapter's reply names its id there, so the run holds the judgment of such a pause until that reply arrives (Cycle 0136, F2).
+   * Like {@link movedTo} it never throws.
+   * @param session - The debug session the editor sent the registration to.
+   * @returns `true` while the session's latest registration request has neither a receipt nor a refusal and the breakpoint is neither retired nor being retired; `false` otherwise, also for a session that never received one.
+   * @example
+   * owned.awaitsAnswer(browserSession) // => true between the editor's setBreakpoints and the adapter's reply
+   */
+  awaitsAnswer(session: vscode.DebugSession): boolean {
+    const registration = this.registrations.get(session.id)
+    // A retired breakpoint is not registered again, so its last request is answered by nobody the run waits for.
+    return (
+      registration !== undefined &&
+      registration.receipt === undefined &&
+      registration.failure === undefined &&
+      this.retirement === undefined &&
+      !this.retired
+    )
+  }
+
+  /**
    * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
    * @param session - The debug session whose adapter acknowledges the breakpoint.
    * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.
