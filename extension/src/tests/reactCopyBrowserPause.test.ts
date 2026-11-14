@@ -368,3 +368,27 @@ test('a page pause held for the page’s registration answer is dropped when the
     [],
   )
 })
+
+// Value: protects=F2's journal cap: a page that keeps pausing in React's copies is still resumed every time but journals breakpoint.react-copy only up to the shared cap; fails_when=the journal grows past the cap or a copy past it is no longer resumed; why_new=the cap of the page-side entry is separate from the server-side copy-hit cap test; seam=none; no_claim=js-debug's real pause rate
+test('page pauses in React’s copies past the journal cap are still resumed but not journaled', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  // Three pauses past the shared cap of 100 entries.
+  const copies = 103
+  // Act
+  for (let copy = 1; copy <= copies; copy++) {
+    harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+    await waitUntil(() => {
+      const view = harness.run.view()
+      if (view.failures.length) throw new Error(view.failures.join('; '))
+      return (
+        journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+          .length >= copy
+      )
+    }, `page pause ${copy} was resumed`)
+  }
+  // Assert
+  assert.equal(journaled(harness, 'breakpoint.react-copy').length, 100)
+  assert.equal(harness.run.view().failures.length, 0)
+})
