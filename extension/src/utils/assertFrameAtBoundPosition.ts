@@ -26,10 +26,14 @@ export function assertFrameAtBoundPosition(
     return
   const message = 'DAP frame differs from the bound configured source position'
   // Both places go into every failure text.
+  // A place the debugger did not report reads as unknown rather than as undefined numbers.
   const placeOf = (
     path: string | undefined,
     position: { line?: number; column?: number } | undefined,
-  ): string => `${path ?? 'no path'}:${position?.line}:${position?.column}`
+  ): string =>
+    position?.line === undefined
+      ? `${path ?? 'no path'}:unknown`
+      : `${path ?? 'no path'}:${position.line}:${position.column}`
   const places = `frame ${placeOf(reported?.source?.path, reported)}, bound ${placeOf(sourcePath, bound)}`
   throw new Error(
     isLibraryStop

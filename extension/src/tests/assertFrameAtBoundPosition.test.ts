@@ -27,7 +27,7 @@ test('a frame at another column than the bound place of an ordinary stop fails n
   )
 })
 
-// protects=a missing frame is named as no path in the failure text; fails_when=the text throws on a missing frame or names nothing; no_claim=none beyond protects
+// protects=a missing frame is named as no path and an unknown place in the failure text; fails_when=the text throws on a missing frame, names nothing or prints undefined numbers; no_claim=none beyond protects
 test('a missing frame fails naming no path and the bound place', () => {
   // Arrange / Act
   const check = (): void =>
@@ -41,7 +41,7 @@ test('a missing frame fails naming no path and the bound place', () => {
   assert.throws(
     check,
     new Error(
-      'DAP frame differs from the bound configured source position (frame no path:undefined:undefined, bound /app/page.tsx:25:46)',
+      'DAP frame differs from the bound configured source position (frame no path:unknown, bound /app/page.tsx:25:46)',
     ),
   )
 })
