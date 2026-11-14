@@ -1085,12 +1085,12 @@ function writerOfRecord(record: unknown): unknown {
     : undefined
 }
 
-// Value: protects=Cycle 0133 D12 (E3 probe run A): a reloaded window whose record names the leftover Application group as the main editor's only group, beside Cursor's Agent part, opens the Study workspace, with the leftover kept in place, still locked, and the record gone; fails_when=Open closes that leftover and waits for a removal the editor never makes (it keeps a part's last group), failing after 5 s with "Timed out waiting for leftover Application group removal (groups before the close: 2, now: 2, after 5000 ms)", or it unlocks the leftover, which Cursor 3.30.14 closes when the new group comes above it; no_claim=Cursor's real reload and New Group Above (the fake restores the empty locked group by hand; closeUnlockedEmptyGroupAtInsertion models the close) and the keyboard's path, which the leftover tests above own
+// Value: protects=Cycle 0133 D12 (E3 probe run A): a reloaded window whose record names the leftover Application group as the main editor's only group, beside Cursor's Agent part, opens the Study workspace, with the leftover kept in place, still locked, and the record gone; fails_when=Open closes that leftover and waits for a removal the editor never makes (it keeps a part's last group), failing after 5 s with "Timed out waiting for leftover Application group removal (groups before the close: 2, now: 2, after 5000 ms)", or it unlocks the leftover, which Cursor 3.30.14 closes when the new group comes above it; no_claim=Cursor's real reload and New Group Above (the fake restores the empty locked group by hand; closeEmptiedGroupAtInsertion models the close) and the keyboard's path, which the leftover tests above own
 test("a reloaded window's leftover Application group that is the main editor's only group beside Cursor's Agent part is kept and Open Study Workspace succeeds", async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
-  harness.closeUnlockedEmptyGroupAtInsertion()
+  harness.closeEmptiedGroupAtInsertion()
   harness.addSeparateEditorPart()
   try {
     leaveLoneLeftoverBesideAgent(harness)

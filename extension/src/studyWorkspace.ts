@@ -13778,6 +13778,7 @@ export class StudyWorkspace {
     const originals = vscode.window.tabGroups.all.map((group) => ({
       identity: this.editorGroupIdentities.get(group),
       column: group.viewColumn,
+      isEmpty: group.tabs.length === 0,
     }))
     let allocated: symbol | undefined,
       createdPanel: vscode.WebviewPanel | undefined
@@ -13797,10 +13798,13 @@ export class StudyWorkspace {
         sourceFocus.dispose()
         this.applicationGroupChange = undefined
       }
-      const { group, identity } = this.newApplicationGroup(originals)
+      const { group, identity, hasClosedFirstOriginal } =
+        this.newApplicationGroup(originals)
+      // The editor closed the empty group the insertion went above (Cursor 3.30.14, Cycle 0133 D12): the main grid keeps its count.
+      const insertedMainGroups = hasClosedFirstOriginal ? 0 : 1
       allocated = identity
       assertCurrent()
-      this.assertApplicationLockTarget(group, originals)
+      this.assertApplicationLockTarget(group, originals, hasClosedFirstOriginal)
       const lockReport = await this.lockActiveEditorGroup()
       assertCurrent()
       // Cursor can activate the group that held the keyboard again before the lock reaches it (row 644), or only after it (row 650).
@@ -13812,7 +13816,10 @@ export class StudyWorkspace {
       // The editor reports the new group's activation after the commands answered; no guard of the preparation arms before that report, which would read it as a change the learner made (N55-F4 refusal 1, H2-b).
       await this.waitForLateGroupActivation(identity, signal)
       assertCurrent()
-      this.claimApplicationAllocation(identity, grid.groups.length + 1)
+      this.claimApplicationAllocation(
+        identity,
+        grid.groups.length + insertedMainGroups,
+      )
       // Decided right before the pane exists: an Open may have made one outside the queue since this transaction began (Cycle 0046 OCR1-7).
       const paneBefore = this.app
       const panel = this.ensureApp()
@@ -13830,7 +13837,8 @@ export class StudyWorkspace {
       // Move Source only after App leaves its old group, so native preview replacement cannot dispose the retained renderer.
       const retiredSource = await this.retireSourceDerivedGroup(
         vscode.window.tabGroups.all.filter(
-          (group) => group.viewColumn <= grid.groups.length + 1,
+          (group) =>
+            group.viewColumn <= grid.groups.length + insertedMainGroups,
         ),
         assertCurrent,
       )
@@ -13854,7 +13862,10 @@ export class StudyWorkspace {
       // A row the new group left at the minimum height would be expanded by its first activation, the focus return among them (row 691).
       layout = await this.stackRowsLeftAtMinimum(layout, lifetime, assertPlaced)
       const expectedCount =
-        grid.groups.length + (retiredSource ? 0 : 1) - removedByMove
+        grid.groups.length +
+        insertedMainGroups -
+        (retiredSource ? 1 : 0) -
+        removedByMove
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
       // The record never rejects and is not awaited, so the preparation keeps its timing.
       this.rememberApplicationGroupMarker(identity)
@@ -14930,32 +14941,65 @@ export class StudyWorkspace {
 
   /**
    * Identifies the newly created empty allocation for {@link reserveApplicationGroup} before cleanup authority is recorded.
-   * @param originals - Group identities and columns captured before the issued insertion.
-   * @returns The new first group and its existing observed identity.
+   * The editor adds one group; Cursor 3.30.14 may also close the empty first group the insertion went above, in the same command ({@link hasClosedFirstOriginalGroup}), so the count then stays the same.
+   * @param originals - Group identities, columns and emptiness captured before the issued insertion.
+   * @returns The new first group, its existing observed identity, and whether the editor closed the empty first original group.
    * @throws When count, emptiness or provenance differs from the issued creation.
-   * @example const allocation = this.newApplicationGroup(originals)
+   * @example const allocation = this.newApplicationGroup(originals) // => { group, identity, hasClosedFirstOriginal: true } after Close All Editors in Cursor
    */
   private newApplicationGroup(
     originals: readonly {
       identity: symbol | undefined
       column: vscode.ViewColumn
+      isEmpty: boolean
     }[],
-  ): { group: vscode.TabGroup; identity: symbol } {
+  ): {
+    group: vscode.TabGroup
+    identity: symbol
+    hasClosedFirstOriginal: boolean
+  } {
     const group = vscode.window.tabGroups.all.find(
         (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
       ),
-      identity = group && this.editorGroupIdentities.get(group)
+      identity = group && this.editorGroupIdentities.get(group),
+      hasClosedFirstOriginal = this.hasClosedFirstOriginalGroup(originals)
     if (
       !group ||
       !identity ||
       group.tabs.length ||
       originals.some((original) => original.identity === identity) ||
-      vscode.window.tabGroups.all.length !== originals.length + 1
+      vscode.window.tabGroups.all.length !==
+        originals.length + (hasClosedFirstOriginal ? 0 : 1)
     )
       throw new Error(
         'The editor did not create one empty owned Application group.',
       )
-    return { group, identity }
+    return { group, identity, hasClosedFirstOriginal }
+  }
+
+  /**
+   * Tells that the editor closed the empty first group the Application's insertion went above, within the same `workbench.action.newGroupAbove`; read by {@link newApplicationGroup} and passed on to {@link assertApplicationLockTarget}.
+   * Cursor 3.30.14 closes a main group whose last editor's close left it empty, while it was the main editor's only group, as soon as a group is added above it, whatever its lock (Cycle 0133 D12: `/ship` pass 2 smoke S3 after **View: Close All Editors**, and two probes without Codebook, one after Close All Editors and one after closing the group's last editor). VS Code keeps such a group below the new one.
+   * @param originals - The groups captured right before the insertion.
+   * @returns
+   * - `true` when the group at column 1 was empty and is no longer listed
+   * - `false` when it is still listed, held a tab, or had no identity Codebook knows
+   * @example this.hasClosedFirstOriginalGroup(originals) // => true after Close All Editors left the earlier Application group alone in Cursor's main editor
+   */
+  private hasClosedFirstOriginalGroup(
+    originals: Parameters<StudyWorkspace['newApplicationGroup']>[0],
+  ): boolean {
+    const first = originals.find(
+      (original) => original.column === vscode.ViewColumn.One,
+    )
+    return Boolean(
+      first?.isEmpty &&
+      first.identity &&
+      !vscode.window.tabGroups.all.some(
+        (candidate) =>
+          this.editorGroupIdentities.get(candidate) === first.identity,
+      ),
+    )
   }
 
   /**
@@ -15067,23 +15111,28 @@ export class StudyWorkspace {
    * Validates original-group survival and current native input for {@link reserveApplicationGroup} immediately before locking its new group.
    * @param group - The newly observed empty allocation.
    * @param originals - The pre-insertion identity/column snapshot.
+   * @param hasClosedFirstOriginal - Whether the editor closed the empty first group the insertion went above ({@link hasClosedFirstOriginalGroup}); that group is not expected to survive.
    * @throws When original groups or native focus changed.
-   * @example this.assertApplicationLockTarget(group, originals)
+   * @example this.assertApplicationLockTarget(group, originals, false)
    */
   private assertApplicationLockTarget(
     group: vscode.TabGroup,
-    originals: readonly {
-      identity: symbol | undefined
-      column: vscode.ViewColumn
-    }[],
+    originals: Parameters<StudyWorkspace['newApplicationGroup']>[0],
+    hasClosedFirstOriginal: boolean,
   ): void {
-    // Every previous group must survive at its shifted column, including auxiliary chat parts.
+    // Every previous group must survive at its shifted column, including auxiliary chat parts; when the editor closed the empty first group the insertion went above, the others stand at their own columns again.
+    const survivors = hasClosedFirstOriginal
+      ? originals.filter(
+          (original) => original.column !== vscode.ViewColumn.One,
+        )
+      : originals
+    const columnShift = hasClosedFirstOriginal ? 0 : 1
     if (
-      !originals.every((original) =>
+      !survivors.every((original) =>
         vscode.window.tabGroups.all.some(
           (candidate) =>
             this.editorGroupIdentities.get(candidate) === original.identity &&
-            candidate.viewColumn === original.column + 1,
+            candidate.viewColumn === original.column + columnShift,
         ),
       )
     )

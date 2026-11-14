@@ -669,10 +669,12 @@ export async function workspaceHarness(
   let refusesNextGroupClose = false
   /** See `keepNextClosedGroup`. */
   let keepsNextClosedGroup = false
-  /** See `closeUnlockedEmptyGroupAtInsertion`. */
-  let closesUnlockedEmptyGroupAtInsertion = false
-  /** Groups whose lock the editor removed, read by the model of `closeUnlockedEmptyGroupAtInsertion` through {@link currentGroupOf}. */
+  /** See `closeEmptiedGroupAtInsertion`. */
+  let closesEmptiedGroupAtInsertion = false
+  /** Groups whose lock the editor removed, read by the model of `closeEmptiedGroupAtInsertion` through {@link currentGroupOf}. */
   const unlockedGroups = new Set<(typeof groups)[number]>()
+  /** Groups a tab close left empty, read by the model of `closeEmptiedGroupAtInsertion` through {@link currentGroupOf}. */
+  const groupsEmptiedByClose = new Set<(typeof groups)[number]>()
   /** Called once when `keepNextClosedGroup`'s close is consumed; resolves the promise that call returned. */
   let keptCloseConsumed: (() => void) | undefined
   /** See `failNextGroupsReadAfterKeptClose`: the error to throw, and whether the kept close already happened. */
@@ -1932,7 +1934,7 @@ export async function workspaceHarness(
    */
   function setGroupLock(group: (typeof groups)[number], locked: boolean): void {
     if (Boolean(group.locked) === locked) return
-    // The model of `closeUnlockedEmptyGroupAtInsertion` remembers every group whose lock the editor removed.
+    // The model of `closeEmptiedGroupAtInsertion` remembers every group whose lock the editor removed.
     if (!locked) unlockedGroups.add(group)
     group.locked = locked
     if (replacesGroupObjectsOnTabChanges) replaceGroupObjects()
@@ -2848,6 +2850,8 @@ export async function workspaceHarness(
       const active = group.activeTab,
         heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
       group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
+      // The model of `closeEmptiedGroupAtInsertion` remembers every group a tab close left empty.
+      if (!group.tabs.length) groupsEmptiedByClose.add(group)
       // The group shows another editor, or none, once the tab it showed is closed.
       if (active && tabs.includes(active)) returnHiddenEditorArea()
       // The editor activates the neighbouring tab when the active one closes.
@@ -4521,15 +4525,19 @@ export async function workspaceHarness(
             return
           }
           if (name === 'workbench.action.newGroupAbove') {
-            const groupBelow = activeTabGroup
+            const groupBelow = activeTabGroup,
+              mainGroupsBefore = groups.filter(
+                (group) => group !== separateEditorPart?.group,
+              ).length
             insertNativeAppGroup()
-            // Cursor 3.30.14 closes an empty group whose lock it removed as soon as a group is added above it, within the same command (Cycle 0133 /ship QA isolation: lock, unlock, New Group Above).
+            // Cursor 3.30.14 closes the main editor's only group, empty because its lock was removed or a tab close emptied it, as soon as a group is added above it, within the same command and whatever its lock (Cycle 0133 /ship QA: pass 1 isolation lock, unlock, New Group Above; pass 2 smoke S3 and probes after Close All Editors and after closing the locked group's last editor).
             const below = currentGroupOf(groupBelow)
             if (
-              closesUnlockedEmptyGroupAtInsertion &&
+              closesEmptiedGroupAtInsertion &&
+              mainGroupsBefore === 1 &&
               below &&
               !below.tabs.length &&
-              [...unlockedGroups].some(
+              [...unlockedGroups, ...groupsEmptiedByClose].some(
                 (group) => currentGroupOf(group) === below,
               )
             )
@@ -8286,11 +8294,11 @@ export async function workspaceHarness(
       refusesNextGroupClose = true
     },
     /**
-     * Makes the editor close an empty group whose lock it removed as soon as New Group Above adds a group above it, within that command, as Cursor 3.30.14 does (Cycle 0133 /ship QA: lock, unlock, then New Group Above closed the old empty group; a group never unlocked stays).
-     * @example harness.closeUnlockedEmptyGroupAtInsertion()
+     * Makes the editor close the main editor's only group, when it is empty because its lock was removed or a tab close emptied it, as soon as New Group Above adds a group above it, within that command and whatever its lock, as Cursor 3.30.14 does (Cycle 0133 /ship QA: lock, unlock, then New Group Above closed the old empty group; after View: Close All Editors, and after closing a locked group's last editor, New Group Above closed the group too). A group the fake restored empty by hand, as after a window reload, stays.
+     * @example harness.closeEmptiedGroupAtInsertion()
      */
-    closeUnlockedEmptyGroupAtInsertion(): void {
-      closesUnlockedEmptyGroupAtInsertion = true
+    closeEmptiedGroupAtInsertion(): void {
+      closesEmptiedGroupAtInsertion = true
     },
     /**
      * Models an editor that accepts the close of an empty group (answering `true`) and never removes that group, so a wait for its removal runs to its bound (Cycle 0111). It applies to the next close of any empty group, then resets; unused, it stays armed for the rest of this harness. Called by the leftover-group removal tests before they open the reader.
