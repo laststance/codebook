@@ -1022,6 +1022,58 @@ function leaveLoneLeftoverBesideAgent(
 }
 
 /**
+ * Lists every editor group by column with its tab count and lock, as the fake editor holds them now.
+ * @param harness - The workspace harness.
+ * @returns One entry per group, in column order.
+ * @example groupLocks(harness) // => [{ column: 1, tabs: 0, locked: true }, { column: 2, tabs: 1, locked: false }]
+ */
+function groupLocks(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
+  return harness.groups
+    .map((group) => ({
+      column: group.viewColumn,
+      tabs: group.tabs.length,
+      locked: Boolean(group.locked),
+    }))
+    .toSorted((left, right) => left.column - right.column)
+}
+
+/**
+ * Lists the tab labels of every locked group, without the run id a pane's title carries.
+ * @param harness - The workspace harness.
+ * @returns One label list per locked group, in column order.
+ * @example lockedGroupTabs(harness) // => [['codebook · Application']]
+ */
+function lockedGroupTabs(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) {
+  return harness.groups
+    .filter((group) => group.locked)
+    .toSorted((left, right) => left.viewColumn - right.viewColumn)
+    .map((group) =>
+      group.tabs.map((tab) => tab.label.replace(/ [0-9a-f-]{8}$/, '')),
+    )
+}
+
+/**
+ * Runs the learner's Codebook: Open Study Workspace and tells how it ended.
+ * @param harness - The workspace harness.
+ * @returns `opened` when Open resolved with a view and no reader error; otherwise the error or the view's errors.
+ * @example await openStudyWorkspace(harness) // => 'opened'
+ */
+async function openStudyWorkspace(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+): Promise<string> {
+  return harness.reader.open().then(
+    () => {
+      const view = harness.reader.inspect().view
+      if (!view) return 'no view'
+      return view.errors.length ? view.errors.join(' | ') : 'opened'
+    },
+    (error: unknown) => String(error),
+  )
+}
+
+/**
  * Names the window that wrote a group record, as the record's `writer` field says.
  * @param record - The stored record, if any.
  * @returns The writer; `undefined` without a record.
@@ -1040,28 +1092,27 @@ test("a reloaded window's leftover Application group that is the main editor's o
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.addSeparateEditorPart()
   try {
-    const leftover = leaveLoneLeftoverBesideAgent(harness)
+    leaveLoneLeftoverBesideAgent(harness)
+    assert.deepEqual(groupLocks(harness), [
+      { column: 1, tabs: 0, locked: true },
+      { column: 2, tabs: 1, locked: false },
+    ])
 
     // Act
-    const outcome = await harness.reader.open().then(
-      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
-      (error: unknown) => String(error),
-    )
+    const outcome = await openStudyWorkspace(harness)
 
-    // Assert: Open succeeded, the leftover stands unlocked (the Study now uses it), and the earlier window's record gave way to this window's.
+    // Assert: Open built its view; no locked group remains (the leftover lost its lock and stays as an ordinary group), and the earlier window's record gave way to this window's.
     assert.deepEqual(
       {
         outcome,
-        leftoverStands: harness.groups.includes(leftover),
-        leftoverLocked: Boolean(leftover.locked),
+        lockedGroupTabs: lockedGroupTabs(harness),
         recordWriter: writerOfRecord(
           harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
         ),
       },
       {
-        outcome: '',
-        leftoverStands: true,
-        leftoverLocked: false,
+        outcome: 'opened',
+        lockedGroupTabs: [],
         recordWriter: harness.reader['applicationGroupMarkerWriter'],
       },
     )
@@ -1077,29 +1128,28 @@ test("after Close All Editors left Cursor's Agent part with no tab, a reloaded w
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   const chat = harness.addSeparateEditorPart()
   try {
-    const leftover = leaveLoneLeftoverBesideAgent(harness)
+    leaveLoneLeftoverBesideAgent(harness)
     chat.closeChatTab()
+    assert.deepEqual(groupLocks(harness), [
+      { column: 1, tabs: 0, locked: true },
+      { column: 2, tabs: 0, locked: false },
+    ])
 
     // Act
-    const outcome = await harness.reader.open().then(
-      () => harness.reader.inspect().view?.errors.join(' | ') ?? '',
-      (error: unknown) => String(error),
-    )
+    const outcome = await openStudyWorkspace(harness)
 
-    // Assert: Open succeeded, the leftover stands unlocked, and the earlier window's record gave way to this window's.
+    // Assert: Open built its view; no locked group remains (the leftover lost its lock), and the earlier window's record gave way to this window's.
     assert.deepEqual(
       {
         outcome,
-        leftoverStands: harness.groups.includes(leftover),
-        leftoverLocked: Boolean(leftover.locked),
+        lockedGroupTabs: lockedGroupTabs(harness),
         recordWriter: writerOfRecord(
           harness.applicationGroupMarkers.get('codebook.applicationGroup.v1'),
         ),
       },
       {
-        outcome: '',
-        leftoverStands: true,
-        leftoverLocked: false,
+        outcome: 'opened',
+        lockedGroupTabs: [],
         recordWriter: harness.reader['applicationGroupMarkerWriter'],
       },
     )

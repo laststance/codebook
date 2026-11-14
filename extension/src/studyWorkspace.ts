@@ -7770,14 +7770,17 @@ export class StudyWorkspace {
         // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
         keepsPaneOpen: async (attachSignal) => {
           await this.keepMovedApplicationTab(panel, attachSignal)
-          // The files an ended run left in front of the kept pane, read before the uncover step clears the notes: that step leaves them behind the pane, and opening them beside it again would let Cursor show them in the pane's group once more (Cycle 0132 task 8).
-          const leftoverFiles = new Set(this.leftoverStopTabUris)
+          // The files the uncover step leaves behind the kept pane, by canonical path: opening them beside it again would let Cursor show them in the pane's group once more (Cycle 0132 task 8).
+          const leftBehindFiles = new Set<string>()
           // An earlier run's paused file can still cover the kept pane; the run's first reveal would refuse over it (Cycle 0132 task 8).
           await this.uncoverApplicationFromLeftoverStopTab(
             panel,
             attachSignal,
             {
-              leave: (uri) => pausedSourceWatch?.leave(uri),
+              leave: (uri) => {
+                leftBehindFiles.add(canonicalFsPath(uri.fsPath))
+                pausedSourceWatch?.leave(uri)
+              },
               settled: async () => pausedSourceWatch?.settled(),
             },
           )
@@ -7789,8 +7792,7 @@ export class StudyWorkspace {
               ...(input.runStopFiles?.() ??
                 this.declaredRunStopFiles((path) => path, runId)),
             ].filter(
-              (stopFile) =>
-                !leftoverFiles.has(vscode.Uri.file(stopFile).toString()),
+              (stopFile) => !leftBehindFiles.has(canonicalFsPath(stopFile)),
             ),
           )
         },
@@ -8081,10 +8083,13 @@ export class StudyWorkspace {
         )
         .finally(() => {
           isMoving = false
-          // A stop that opened its file during this move announced it while the move ran.
-          moveCoveringSource()
-          // The look above started no next move: the chain ended here.
-          releaseSettledWaiters()
+          try {
+            // A stop that opened its file during this move announced it while the move ran.
+            moveCoveringSource()
+          } finally {
+            // The look above started no next move, or threw: the chain ended here.
+            releaseSettledWaiters()
+          }
         })
     }
     const watches = [
@@ -16619,10 +16624,16 @@ export class StudyWorkspace {
     this.applicationGroupChange = removal
     try {
       // The editor keeps the main editor's only group: its close would be accepted and remove nothing, as after Close All Editors (Cycle 0133 D12).
-      if (await this.isOnlyMainEditorGroup(group))
-        await this.retireOnlyMainGroupInPlace(identity)
+      const isOnlyMainGroup = await this.isOnlyMainEditorGroup(group)
+      // Found again after the layout read: a file the learner opened in the group meanwhile keeps it, as at the start (CodeRabbit CLI, Cycle 0133).
+      const current = vscode.window.tabGroups.all.find(
+        (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+      )
+      if (!current) return true
+      if (current.tabs.length) return false
+      if (isOnlyMainGroup) await this.retireOnlyMainGroupInPlace(current)
       else
-        await this.closeKnownNativeGroup(group, identity, {
+        await this.closeKnownNativeGroup(current, identity, {
           refusal: 'The editor refused to retire an empty Codebook group.',
           pending: 'owned Codebook group removal',
         })
@@ -16639,14 +16650,21 @@ export class StudyWorkspace {
    * Says whether a group is the main editor's only group, which no close removes; asked by {@link retireEmptyOwnedGroup} before it closes an owned group.
    * The editor keeps a part's last group (VS Code's `removeGroup`), and Cursor 3.30.8 accepts the close of its main editor's only group with no group event and no change, so the retirement used to wait 5 s and refuse (Cycle 0133 D12 Step 0, run 3). The main editor's groups come first, at column 1 on ({@link holdsOnlyChatsBeyond}); beside another part a layout read answers for the part that has the keyboard, so the group is the only one when the editor lists no other group, or when the read counts one group and the other group is another part's ({@link isSoleMainGroupBesideChat}).
    * @param group - The owned group about to be retired.
-   * @returns `true` when no close can remove the group; `false` when it is not at column 1 or the main editor has other groups.
+   * @returns `true` when no close can remove the group; `false` when it is not the first group listed at column 1 (a floating window's group may be) or the main editor has other groups.
    * @example await this.isOnlyMainEditorGroup(group) // => true for the empty Application group Close All Editors left beside Cursor's Agent part
    */
   private async isOnlyMainEditorGroup(
     group: vscode.TabGroup,
   ): Promise<boolean> {
-    if (group.viewColumn !== vscode.ViewColumn.One) return false
-    const groupCount = vscode.window.tabGroups.all.length
+    const groups = vscode.window.tabGroups.all
+    // The main editor's first group: a floating window's groups count their columns from 1 too.
+    if (
+      groups.find(
+        (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
+      ) !== group
+    )
+      return false
+    const groupCount = groups.length
     if (groupCount === 1) return true
     // A third group would make the read's count of one no proof of the main editor's grid.
     if (groupCount !== 2) return false
@@ -16664,16 +16682,13 @@ export class StudyWorkspace {
   /**
    * Releases the main editor's only group in place instead of closing it ({@link isOnlyMainEditorGroup}); called by {@link retireEmptyOwnedGroup}, as when Close All Editors left the empty Application group alone in the main editor (Cycle 0133 D12).
    * The group gets a new identity, so the allocation is gone for every reader that asks by the old one and the group is an ordinary empty group from then on. Codebook locked its Application group, so the group is unlocked too when it is the active one: the unlock acts only on the active group, and no keyboard is taken for a group that is not.
-   * @param identity - The allocation's identity; a group no longer listed under it is left as it is.
+   * @param group - The empty owned group, as the caller found it again after its layout read.
    * @returns Once the group is released, and unlocked where it was the active group.
-   * @example await this.retireOnlyMainGroupInPlace(identity) // the empty Application group stays as an unlocked empty group
+   * @example await this.retireOnlyMainGroupInPlace(group) // the empty Application group stays as an unlocked empty group
    */
-  private async retireOnlyMainGroupInPlace(identity: symbol): Promise<void> {
-    // Found again: the layout read may have let the editor give every group a new object.
-    const group = vscode.window.tabGroups.all.find(
-      (candidate) => this.editorGroupIdentities.get(candidate) === identity,
-    )
-    if (!group) return
+  private async retireOnlyMainGroupInPlace(
+    group: vscode.TabGroup,
+  ): Promise<void> {
     this.editorGroupIdentities.set(group, Symbol())
     // Unlocking a group that holds no lock changes nothing.
     if (vscode.window.tabGroups.activeTabGroup === group)

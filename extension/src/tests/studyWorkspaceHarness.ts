@@ -7862,8 +7862,16 @@ export async function workspaceHarness(
         closeChatTab(): void {
           const part = separateEditorPart
           assert.ok(part)
-          part.group.tabs.splice(0)
+          const closedTabs = part.group.tabs.splice(0)
           part.group.activeTab = undefined
+          // No chat is left to hold the keyboard; the editor names the main editor's first group again, as Step 0's journal showed after Close All Editors.
+          part.focused = false
+          part.lastActive = false
+          if (activeTabGroup === part.group)
+            activeTabGroup =
+              groups.find((group) => group.viewColumn === 1) ?? activeTabGroup
+          for (const listener of tabChangeListeners)
+            listener({ opened: [], closed: closedTabs, changed: [] })
           changedGroups({ opened: [], closed: [], changed: [part.group] })
         },
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */

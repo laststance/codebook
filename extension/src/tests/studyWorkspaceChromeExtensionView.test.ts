@@ -125,6 +125,7 @@ test('an extension run opens its stop file as a kept tab beside its view before 
     assert.ok(viewport)
     const applicationColumn = harness.reader['app']?.viewColumn
     assert.ok(applicationColumn)
+    assert.equal(groupShowing(harness, 'settings.js'), undefined)
     // Act: the run attaches its surface, which is all that happens before its first click.
     await viewport.attach(
       SILENT_SCREENCAST,
@@ -272,6 +273,58 @@ test('the next extension run still closes the earlier empty Application group wh
         { column: 2, tabs: ['article-source.ts', 'popup.js'] },
         { column: 3, tabs: [] },
       ],
+    )
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0133 review round (local CodeRabbit CLI, Major): a file the learner opens in the earlier run's empty Application group while the next run's retirement reads the editor's layout keeps that group and its tab; fails_when=the retirement closes the group it found before the read, and the learner's notes.ts closes with it; no_claim=how long a real layout read takes (the wrapper opens the file right after the read answered, which is the same moment for the retirement)
+test('the next extension run keeps the earlier Application group when the learner opens a file in it while the run reads the layout', async () => {
+  // Arrange: the earlier run's view closed, which leaves its locked group empty above the learner's group; no other editor part.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    const first = await openView(harness, 'layout-race-run-1', [])
+    first.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    first.close()
+    const earlierViewTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) => tab.label === 'codebook · Application layout-r')
+    assert.ok(earlierViewTab)
+    await harness.editor.window.tabGroups.close([earlierViewTab], true)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: [] },
+        { column: 2, tabs: ['article-source.ts', 'popup.js'] },
+      ],
+    )
+    const readLayoutOfOnlyGroup = harness.reader['isOnlyMainEditorGroup'].bind(
+      harness.reader,
+    )
+    harness.reader['isOnlyMainEditorGroup'] = async (group) => {
+      const answer = await readLayoutOfOnlyGroup(group)
+      // The learner opens notes.ts in the empty group while the layout read is on its way.
+      harness.focusMutableDraft('notes.ts', 1)
+      return answer
+    }
+
+    // Act
+    const second = await openView(harness, 'layout-race-run-2', [])
+
+    // Assert: notes.ts is still open in a group of its own column, and that group was not closed.
+    assert.deepEqual(
+      harness.groups
+        .filter((group) => group.tabs.some((tab) => tab.label === 'notes.ts'))
+        .map((group) => group.tabs.map((tab) => tab.label)),
+      [['notes.ts']],
     )
     second.close()
   } finally {
@@ -679,22 +732,36 @@ test('the next extension run waits for a move of the earlier run’s file that w
       ).toString()
       // The editor reports the view's state, so the run's watch starts moving the earlier run's file, and that show stalls.
       const show = harness.holdNextTextDocumentShow({ uri: settingsUri })
-      application.notifyViewState()
-      await show.started
-      // Act: the run attaches while the move is in flight; the show is released only after the attach had its time to finish.
-      let attachEnded = false
-      const attached = viewport
-        .attach(SILENT_SCREENCAST, new AbortController().signal, 'popup')
-        .finally(() => {
-          attachEnded = true
+      let attachEndedBeforeRelease = true
+      let attached: Promise<void> | undefined
+      try {
+        let showStarted = false
+        void show.started.then(() => {
+          showStarted = true
         })
-      // gstack-timing-ok: a negative check with a budget far below the 5 s bound; an attach that does not wait ends within it.
-      await Promise.race([
-        attached,
-        new Promise((resolve) => setTimeout(resolve, 1_000)),
-      ])
-      const attachEndedBeforeRelease = attachEnded
-      show.release()
+        application.notifyViewState()
+        await waitUntil(
+          () => showStarted,
+          'the watch’s held show of settings.js',
+          2_000,
+        )
+        // Act: the run attaches while the move is in flight; the show is released only after the attach had its time to finish.
+        let attachEnded = false
+        attached = viewport
+          .attach(SILENT_SCREENCAST, new AbortController().signal, 'popup')
+          .finally(() => {
+            attachEnded = true
+          })
+        // gstack-timing-ok: a negative check with a budget far below the 5 s bound; an attach that does not wait ends within it.
+        await Promise.race([
+          attached,
+          new Promise((resolve) => setTimeout(resolve, 1_000)),
+        ])
+        attachEndedBeforeRelease = attachEnded
+      } finally {
+        // Released on every path, so a failure above leaves no show held.
+        show.release()
+      }
       await attached
       // Assert
       assert.equal(attachEndedBeforeRelease, false)
