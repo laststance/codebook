@@ -13557,7 +13557,12 @@ export class StudyWorkspace {
       )
       if (existing) {
         // A live run that reuses the kept view still makes the stop files' destination the last active main group before the keyboard goes back (D25, D24).
-        if (!forAgentRun || manualEntry) return existing
+        if (
+          !forAgentRun ||
+          manualEntry ||
+          !this.keptApplicationNeedsStopFileDestination(existing)
+        )
+          return existing
         const restoreFocus = await this.withLayout(
           signal,
           async (_lifetime, assertCurrent) =>
@@ -14079,6 +14084,24 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether a run that reuses the kept Application must prepare the stop files' destination again, read before the layout queue is entered so a reuse that needs nothing never waits for it; asked by {@link prepareApplicationGroup} and {@link prepareRetainedStopFileDestination}.
+   * Only in Cursor beside another editor part that is no chat editor window ({@link holdsChatEditorTab}), and only when the editor names the Application's group as the active one (while the chat has the keyboard Cursor names the main editor's last active group, so that group is the one the next show opens in) or when no group stands beside the view for the stop files ({@link sourceGroupAfterApplication}).
+   * @param retained - The kept Application pane.
+   * @returns `true` when the destination must be made the last active group (or created); `false` in VS Code, beside a chat editor window, and when another group is already the named one.
+   * @example this.keptApplicationNeedsStopFileDestination(panel) // => true in Cursor after the learner selected the view
+   */
+  private keptApplicationNeedsStopFileDestination(
+    retained: vscode.WebviewPanel,
+  ): boolean {
+    if (!this.isCursorHost() || this.holdsChatEditorTab()) return false
+    const applicationColumn = this.viewColumnOf(retained)
+    return (
+      vscode.window.tabGroups.activeTabGroup.viewColumn === applicationColumn ||
+      this.sourceGroupAfterApplication(applicationColumn) === undefined
+    )
+  }
+
+  /**
    * Makes the stop files' destination the main editor's last active group for a run that reuses the kept Application, which {@link prepareApplicationLayout} never allocates again; called by {@link prepareApplicationGroup} and {@link completeApplicationPreparation} inside the layout queue for a live run's lease.
    * The learner may have selected the Application's group since the last run (or an entry left it active), which makes it the last active group, so this run's stop files and the debugger's reveals would open in front of the view, and with the Application's group alone the paused-file watch would have no destination. The return is captured before the destination's focus, and the keyboard goes back to where it was through the same return as a fresh preparation's.
    * @param signal - The run's cancellation.
@@ -14104,11 +14127,10 @@ export class StudyWorkspace {
     >['restoreFocus']
   > {
     const { assertCurrent } = input
-    // Cheap exits first: an entry, VS Code and a chat editor window never place the destination.
+    // Cheap exits first, before any native read.
     if (
       !input.placesStopFileDestination ||
-      !this.isCursorHost() ||
-      this.holdsChatEditorTab()
+      !this.keptApplicationNeedsStopFileDestination(retained)
     )
       return undefined
     // Captured before any effect: the destination's focus takes the keyboard from the chat.
