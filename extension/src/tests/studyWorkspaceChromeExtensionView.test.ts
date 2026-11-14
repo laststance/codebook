@@ -3864,3 +3864,153 @@ test('the next extension run in Cursor after Close All Editors goes on with its 
     await harness.close()
   }
 })
+
+/**
+ * Builds the reopened Study beside Cursor's Agent part: Close Study Workspace and Open Study Workspace left the Study's Application pane in front of the learner's files in the first group, the captured source in the next group and the Study pane in its own group; the learner worked in the captured source's group last, then clicked into the Agent chat, which has the keyboard, with the Live tab chosen and the redirect and preview-replacement models of Cursor 3.30.14 on (Cycle 0134 N2).
+ * @param harness - The workspace harness, attached to its service.
+ * @returns The Agent part the harness added.
+ * @example const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+ */
+async function reopenStudyBesideAgentPartWithKeyboardInChat(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) {
+  harness.useHostAppName('Cursor')
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.reportsMainThreadWebviewViewTypes()
+  harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+  harness.focusMutableDraft('App.tsx', 1)
+  await harness.reader.open()
+  await harness.reader.close()
+  await harness.reader.open()
+  readerSeams(harness).stopOwnTimer()
+  // The learner follows the current run on the Live tab.
+  harness.receiveContext({
+    type: 'tab',
+    tab: 'live',
+    revision: harness.reader.inspect().view!.revision,
+  })
+  await waitUntil(
+    () => harness.reader.presentationState().reader.contentTab === 'live',
+    'the Live tab the learner chose',
+    2_000,
+  )
+  // The learner last worked in the captured source's group.
+  const source = harness.editor.window.visibleTextEditors.find(
+    (editor) =>
+      editor.document.uri.toString() === harness.reader.inspect().sourceUri &&
+      editor.viewColumn ===
+        harness.reader.presentationState().panes.sourceColumn,
+  )
+  assert.ok(source)
+  harness.focusExistingSource(source)
+  harness.redirectShowsBesideChatToLastActiveGroup()
+  harness.replacesPreviewTabOnTextPreview()
+  chat.focusTab()
+  return chat
+}
+
+// protects=Cycle 0134 N2 (a): an extension run started from the Agent chat in the reopened Study, whose live entry follows the run while the run's own Application preparation is inside the layout queue, leaves the Study pane open until that preparation ended, shows the view in front of its own group without an error, and gives the chat its keyboard back; fails_when=the live entry disposes the Study pane between the preparation's effects (the preparation then reads shifted groups and its placement guard refuses its focus return), so the view is refused or the chat never gets the keyboard back; no_claim=that the fake editor refuses the view as Cursor 3.30.14 did ("The dedicated Application layout could not be confirmed."), which it does not model
+test('an extension run whose live entry interleaves with its own Application preparation after Close and Open Study Workspace shows its view and gives the chat its keyboard back', async () => {
+  // Arrange: the reopened Study beside Cursor's Agent part, the chat holding the keyboard, and the preparation held right after the group's insertion.
+  const harness = await workspaceHarness()
+  try {
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+    const lockHeld = harness.holdNextCommand('workbench.action.lockEditorGroup')
+
+    // Act: the run's lease starts its preparation and stops inside the layout queue; the reader's refresh enters the Live arrangement of that run meanwhile; the preparation goes on.
+    const lease = openView(harness, 'interleaved-run-1', [])
+    await lockHeld.started
+    const entry = readerSeams(harness).refresh()
+    // gstack-timing-ok: a negative check; an entry that changes the composition outside the layout queue closes the Study pane within one turn of the fake editor, so one settle shows it.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const studyPaneOpenWhileHeld = harness
+      .nativePanels()
+      .some((panel) => panel.kind === 'codebook.studyContext')
+    lockHeld.release()
+    const view = await lease
+    await entry
+
+    // Assert
+    assert.equal(studyPaneOpenWhileHeld, true)
+    assert.equal(harness.reader['errors'].size, 0)
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    assert.equal(application.visible, true)
+    assert.equal(
+      groupShowing(harness, 'codebook · Application interlea')?.tabs.length,
+      1,
+    )
+    assert.equal(chat.focused(), true)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 (b): in the reopened Study beside Cursor's Agent chat, the live entry of an agent's run keeps the moved Application tab and makes the group beside the view the main editor's last active group, so the file a library test run's debugger pauses in (open nowhere, no lease) opens beside the view and the Application pane stays; fails_when=the entry leaves the moved tab a preview in the last active group, so the paused file opens as a preview there and replaces the pane; no_claim=Cursor's own placement of the debugger's reveal beyond the observed cases (redirectShowsBesideChatToLastActiveGroup, replacesPreviewTabOnTextPreview and debuggerOpensStopFile stand in for it)
+test('a library test run that pauses in a file open nowhere after the live entry of an agent run in the reopened Study opens it beside the view and leaves the Application pane open', async () => {
+  // Arrange: the reopened Study with the chat holding the keyboard; a run is started, and the reader's live entry follows it (no lease).
+  const harness = await workspaceHarness()
+  try {
+    await writeRepositoryFile(harness, 'settings.test.js')
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+
+    // Act: the live entry moves the Application pane into its own group; the library test run's debugger pauses in a file nobody opened.
+    await readerSeams(harness).refresh()
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    harness.debuggerOpensStopFile('settings.test.js', applicationColumn)
+
+    // Assert
+    assert.deepEqual([...harness.reader['errors'].keys()], [])
+    assert.equal(
+      groupShowing(harness, 'settings.test.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    assert.deepEqual(
+      applicationGroupOf(harness, applicationColumn)?.tabs.map(
+        (tab) => tab.label,
+      ),
+      ['codebook · Application'],
+    )
+    assert.equal(
+      harness
+        .nativePanels()
+        .filter((panel) => panel.kind === 'codebook.scopedBrowser').length,
+      1,
+    )
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 N2 (c): when the reader's live entry of an agent's run arranges the panes before the run's own preparation in the reopened Study beside Cursor's Agent chat, the chat has the keyboard afterwards, after the entry and after the run's view opened; fails_when=the chat's give-back refuses because the keyboard stands where Codebook's own placement (the measurement's borrow of the captured source, the group beside the view) left it, so the learner types into nothing; no_claim=which group Cursor 3.30.14 reports as active after the placement (the fake names the group the focus command made active)
+test('the chat has its keyboard back after the live entry of an agent run and then the run’s own view in the reopened Study', async () => {
+  // Arrange: the reopened Study with the chat holding the keyboard and a run that was started.
+  const harness = await workspaceHarness()
+  try {
+    const chat = await reopenStudyBesideAgentPartWithKeyboardInChat(harness)
+    await startFakeChromeExtensionRun(harness)
+
+    // Act: the entry arranges first, then the run's lease opens its view.
+    await readerSeams(harness).refresh()
+    const chatAfterEntry = chat.focused()
+    const view = await openView(harness, 'entry-first-run-1', [])
+
+    // Assert
+    assert.equal(chatAfterEntry, true)
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.reader['errors'].size, 0)
+    assert.equal(harness.lastActiveMainColumn(), 2)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})

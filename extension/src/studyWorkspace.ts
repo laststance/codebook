@@ -1194,6 +1194,10 @@ export class StudyWorkspace {
   private mainEditorFocusBorrows = 0
   /** How often {@link focusApplicationSourceGroup} focused the main editor's first group for an Application preparation's new group; {@link performPresentation} compares it with {@link mainEditorFocusBorrows} for a refusal that comes after either (Cycle 0046 row 718). */
   private applicationFocusBorrows = 0
+  /** How often {@link prepareStopFileDestination} ran the focus command of the group beside the Application, the stop files' destination; {@link retainForeignTabFocus} compares it with the count it saw before an arrangement, because that focus is one more place where Codebook itself leaves the keyboard beside the chat (Cycle 0134 N2). */
+  private stopFileDestinationFocuses = 0
+  /** The Application preparations that are running ({@link prepareApplicationGroup}, from its start to the end of its focus return); {@link open} waits for them before it changes the composition, because a Study pane that closes between their effects shifts the groups they read (Cycle 0134 N2). */
+  private readonly applicationPreparations = new Set<Promise<unknown>>()
   /** The first group's front tab the last of those focus commands left in front ({@link frontTabOfFirstGroup}), noted once the borrow's own focus step ended and `undefined` until then; {@link assertKeyboardWhereBorrowLeftIt} compares the first group's front tab with it before a refused change gives the keyboard back (Cycle 0046 row 728). */
   private firstGroupFrontAtBorrow?: string
   /** How often {@link readMainEditorGrid} gave such a borrowed keyboard back itself, to the Study pane or the text editor that had it ({@link giveKeyboardBackBeyondMainEditor} among them); {@link captureRepositoryKeyboardReturn} compares it with {@link mainEditorFocusBorrows}, since an agent's cold Wiki is created in front of that editor afterwards and hides it (Cycle 0046 row 719). */
@@ -5942,8 +5946,8 @@ export class StudyWorkspace {
         ? undefined
         : this.retainForeignTabFocus(undefined, false, origin === 'repository')
     // An entry that owns its return notes its own borrows and its own refusal for the learner's newer input; a presentation's entry leaves both to the presentation (row 736).
-    const borrowsBefore = this.focusBorrowCount(),
-      ownsLearnerRefusal = returnForeignFocus !== undefined
+    const borrowsBefore = this.focusBorrowCount()
+    let ownsLearnerRefusal = returnForeignFocus !== undefined
     if (ownsLearnerRefusal) this.presentationYieldedToLearner = false
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.reserveSourceEntry(signal)
@@ -5976,62 +5980,38 @@ export class StudyWorkspace {
       await this.refreshProgress()
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
-      const currentRecord = this.currentRecord()
-      // A selected or opening test replay is read in the Study composition, whatever run is current (F208).
-      const liveComposition =
-        !this.browserReplayShown() &&
-        !this.testReplayHoldsComposition() &&
-        this.selection.follow &&
-        this.selection.tab === 'live' &&
-        Boolean(
-          this.liveComposition ||
-          this.isLiveCompositionRequested() ||
-          (currentRecord && !currentRecord.stopped),
+      // Only a change that closes the Study pane is serialized: an entry that disposes nothing changes no group a preparation reads.
+      const disposesStudyPane = this.compositionChangeClosesStudyPane()
+      let waitedForPreparation = false
+      while (disposesStudyPane && this.applicationPreparations.size > 0) {
+        waitedForPreparation = true
+        await Promise.all([...this.applicationPreparations])
+        this.assertLifetime(lifetime)
+        signal?.throwIfAborted()
+      }
+      // The preparation gave the keyboard back to the chat that held it when it started (a run codebook_start started): what this entry captured at its start was the keyboard where that preparation stood mid-way, so no tab was known to return to, and the entry's own placements (the captured source's show with the keyboard) left it in the editor (Cycle 0134 N2). The return is captured again from where the preparation left the keyboard.
+      if (waitedForPreparation && origin !== 'presentation') {
+        returnForeignFocus = this.retainForeignTabFocus(
+          undefined,
+          false,
+          origin === 'repository',
         )
-      // A browser recording and a selected or opening test replay share the summary composition (Cycle 0051, DS-A): the Learning summary stands in the chat's place and the Study pane closes.
-      const summaryComposition =
-        this.browserReplayShown() || this.testReplayHoldsComposition()
-      const compositionChanged =
-        liveComposition !== this.liveComposition ||
-        summaryComposition !== this.summaryComposition
-      const retiredContextGroup =
-        (liveComposition || summaryComposition) && this.contextPanel
-          ? vscode.window.tabGroups.all.find(
-              (group) =>
-                group.viewColumn === this.contextPanel?.viewColumn &&
-                this.isCreatedContextGroup(group) &&
-                group.tabs.every(
-                  (tab) =>
-                    tab.input instanceof vscode.TabInputWebview &&
-                    isCodebookPaneViewType(
-                      tab.input.viewType,
-                      'codebook.studyContext',
-                    ),
-                ),
-            )
-          : undefined
-      // Keep proved creation ownership if scope measurement fails after Context disposal but before queued retirement.
-      if (retiredContextGroup)
-        this.rememberCreatedContextGroup(retiredContextGroup.viewColumn)
-      if (compositionChanged) {
-        // A reader that leaves the summary composition withdraws the Learning summary's replay document, for a test replay as a browser replay's departure does, so no stale summary with controls that answer nothing stays beside the chat (Cycle 0051, DS-A).
-        if (this.summaryComposition && !summaryComposition)
-          this.clearLearningSummary()
-        this.layoutReceipt = undefined
-        this.presentationConfirmed = false
-        this.liveComposition = liveComposition
-        this.summaryComposition = summaryComposition
+        if (returnForeignFocus && !ownsLearnerRefusal) {
+          ownsLearnerRefusal = true
+          this.presentationYieldedToLearner = false
+        }
       }
-      if (this.liveComposition || this.summaryComposition) {
-        // Live uses the host chat; disposing only our panel never closes another editor's tabs.
-        const disposedStudyPane = this.contextPanel
-        this.disposePane(this.contextPanel)
-        this.contextPanel = undefined
-        this.presentationMode = 'study-workspace'
-        // A Study pane in a learner's group leaves no retired group for the arrangement to drain, yet the editor reports the group's next tab active before it closes the disposed tab; a guard armed meanwhile reads that as the learner's focus change (N55-F4 refusal 2). Every guard therefore starts after the close.
-        if (disposedStudyPane && this.hasRetiredStudyPaneTab())
-          await this.retiredStudyPaneClosed(signal)
-      }
+      // The composition change disposes the Study pane and waits for its tab to close: a run's own Application preparation can be inside the layout queue meanwhile (a run codebook_start started leases its view while the reader's Live entry follows it), and a pane that closes between that transaction's effects shifts the groups it reads, so the view was refused as unconfirmed (Cycle 0134 N2). The change therefore runs in the queue, reading the groups only after an earlier transaction drained.
+      const { compositionChanged, retiredContextGroup } = disposesStudyPane
+        ? await this.withLayout(
+            signal,
+            async (_queuedLifetime, assertCurrent) => {
+              const change = await this.changeCompositionForEntry(signal)
+              assertCurrent()
+              return change
+            },
+          )
+        : await this.changeCompositionForEntry(signal)
       // A Close or a newer Open that completed during the wait owns the reader's state: this Open writes none of it (Cycle 0056 pt3, CX1).
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
@@ -6060,6 +6040,9 @@ export class StudyWorkspace {
               }
             : borrowedFromForeignTab && selectionOwnsForeignReturn,
           forAgent,
+          // The Live entry of an agent's run places the stop files' destination as the run's lease does, so the debugger's shows of a run without a lease open beside the view (Cycle 0134 N2).
+          // A Live Return (origin presentation) keeps its own handoff and the command order its tests pin.
+          forAgent && this.liveComposition && origin === 'study',
         )
       else this.ensureApp()
       if (createsApp) unarrangedApp = this.app
@@ -6422,6 +6405,112 @@ export class StudyWorkspace {
       signal?.removeEventListener('abort', cancel)
       if (ownsLearnerRefusal) this.presentationYieldedToLearner = false
     }
+  }
+
+  /**
+   * Says whether the composition {@link open} enters closes the Study pane that stands now (the Live or the summary composition replaces it); asked by {@link open} before it decides to run its composition change inside the layout queue.
+   * @returns `true` when a Study pane exists and a live, summary or test-replay composition is, or is about to be, in effect.
+   * @example if (this.compositionChangeClosesStudyPane()) await this.withLayout(signal, change)
+   */
+  private compositionChangeClosesStudyPane(): boolean {
+    if (this.contextPanel === undefined) return false
+    const record = this.currentRecord()
+    return (
+      this.liveComposition ||
+      this.summaryComposition ||
+      this.isLiveCompositionRequested() ||
+      this.browserReplayShown() ||
+      this.testReplayHoldsComposition() ||
+      (this.selection.follow &&
+        this.selection.tab === 'live' &&
+        Boolean(record && !record.stopped))
+    )
+  }
+
+  /**
+   * Reads which composition {@link open} enters and which empty Context group it retires; the first half of {@link changeCompositionForEntry}.
+   * @returns The Live and summary compositions to enter, whether either differs from the current one, and the retired Study group, if any.
+   * @example const plan = this.planCompositionForEntry() // => { liveComposition: true, summaryComposition: false, compositionChanged: true, retiredContextGroup: undefined }
+   */
+  private planCompositionForEntry() {
+    const currentRecord = this.currentRecord()
+    // A selected or opening test replay is read in the Study composition, whatever run is current (F208).
+    const liveComposition =
+      !this.browserReplayShown() &&
+      !this.testReplayHoldsComposition() &&
+      this.selection.follow &&
+      this.selection.tab === 'live' &&
+      Boolean(
+        this.liveComposition ||
+        this.isLiveCompositionRequested() ||
+        (currentRecord && !currentRecord.stopped),
+      )
+    // A browser recording and a selected or opening test replay share the summary composition (Cycle 0051, DS-A): the Learning summary stands in the chat's place and the Study pane closes.
+    const summaryComposition =
+      this.browserReplayShown() || this.testReplayHoldsComposition()
+    const compositionChanged =
+      liveComposition !== this.liveComposition ||
+      summaryComposition !== this.summaryComposition
+    const retiredContextGroup =
+      (liveComposition || summaryComposition) && this.contextPanel
+        ? vscode.window.tabGroups.all.find(
+            (group) =>
+              group.viewColumn === this.contextPanel?.viewColumn &&
+              this.isCreatedContextGroup(group) &&
+              group.tabs.every(
+                (tab) =>
+                  tab.input instanceof vscode.TabInputWebview &&
+                  isCodebookPaneViewType(
+                    tab.input.viewType,
+                    'codebook.studyContext',
+                  ),
+              ),
+          )
+        : undefined
+    return {
+      liveComposition,
+      summaryComposition,
+      compositionChanged,
+      retiredContextGroup,
+    }
+  }
+
+  /**
+   * Enters the composition {@link open} chose and disposes the Study pane the Live or summary composition replaces, then waits for its tab to close; run inside the layout queue when the Study pane closes ({@link compositionChangeClosesStudyPane}), so that a run's own Application preparation never reads groups that change between its effects (Cycle 0134 N2).
+   * @param signal - The entry's cancellation.
+   * @returns Whether the composition changed and the empty Context group to retire.
+   * @example const { compositionChanged, retiredContextGroup } = await this.changeCompositionForEntry(signal)
+   */
+  private async changeCompositionForEntry(signal: AbortSignal | undefined) {
+    const {
+      liveComposition,
+      summaryComposition,
+      compositionChanged,
+      retiredContextGroup,
+    } = this.planCompositionForEntry()
+    // Keep proved creation ownership if scope measurement fails after Context disposal but before queued retirement.
+    if (retiredContextGroup)
+      this.rememberCreatedContextGroup(retiredContextGroup.viewColumn)
+    if (compositionChanged) {
+      // A reader that leaves the summary composition withdraws the Learning summary's replay document, for a test replay as a browser replay's departure does, so no stale summary with controls that answer nothing stays beside the chat (Cycle 0051, DS-A).
+      if (this.summaryComposition && !summaryComposition)
+        this.clearLearningSummary()
+      this.layoutReceipt = undefined
+      this.presentationConfirmed = false
+      this.liveComposition = liveComposition
+      this.summaryComposition = summaryComposition
+    }
+    if (this.liveComposition || this.summaryComposition) {
+      // Live uses the host chat; disposing only our panel never closes another editor's tabs.
+      const disposedStudyPane = this.contextPanel
+      this.disposePane(this.contextPanel)
+      this.contextPanel = undefined
+      this.presentationMode = 'study-workspace'
+      // A Study pane in a learner's group leaves no retired group for the arrangement to drain, yet the editor reports the group's next tab active before it closes the disposed tab; a guard armed meanwhile reads that as the learner's focus change (N55-F4 refusal 2). Every guard therefore starts after the close.
+      if (disposedStudyPane && this.hasRetiredStudyPaneTab())
+        await this.retiredStudyPaneClosed(signal)
+    }
+    return { compositionChanged, retiredContextGroup }
   }
 
   /**
@@ -8355,6 +8444,16 @@ export class StudyWorkspace {
     )
       return undefined
     return group
+  }
+
+  /**
+   * Names the column of the group where a run's stop files open beside the Application; asked by the give-back of {@link retainForeignTabFocus} to tell the keyboard {@link prepareStopFileDestination} left there from the learner's own.
+   * @returns The column of {@link sourceGroupAfterApplication}'s group; `undefined` when the Application has none or no such group stands beside it.
+   * @example this.stopFileDestinationColumn() // => 2 while a learner's group stands right after the Application's group at column 1
+   */
+  private stopFileDestinationColumn(): vscode.ViewColumn | undefined {
+    const applicationColumn = this.app && this.viewColumnOf(this.app)
+    return this.sourceGroupAfterApplication(applicationColumn)?.viewColumn
   }
 
   /**
@@ -13527,16 +13626,56 @@ export class StudyWorkspace {
    * @param manualEntry - Explicit Open may reconcile a parked App's later manual placement; background acquisition cannot borrow focus for it.
    * @param cancelEntryFocusReturn - Supplied when {@link open} owns the final foreign focus return; retire that older return when later learner input wins.
    * @param forAgentRun - `true` for a live run's viewport ({@link presentation}'s `createViewport`), which an agent starts while the learner may be typing in a chat view, and for an entry an agent asked for ({@link open}, row 613): beside such a view the focus return gives the keyboard only to a place the learner is known to work in ({@link captureApplicationPreparationReturn}, row 612).
+   * @param placesStopFileDestination - Whether the preparation makes the stop files' destination the main editor's last active group ({@link prepareStopFileDestination}); by default a live run's lease (`forAgentRun` without `manualEntry`), and `true` from {@link open} for the Live entry of an agent's run.
    * @returns The registered App in its new owned group, or its learner-chosen group on explicit manual reentry; original groups remain separate.
    * @throws When native scope, original groups or current lifetime cannot be retained safely.
    * @example const panel = await this.prepareApplicationGroup(signal)
    */
-  private async prepareApplicationGroup(
+  private prepareApplicationGroup(
     signal?: AbortSignal,
     retiredContextGroup?: vscode.TabGroup,
     manualEntry = false,
     cancelEntryFocusReturn?: () => void,
     forAgentRun = false,
+    placesStopFileDestination = forAgentRun && !manualEntry,
+  ): Promise<vscode.WebviewPanel> {
+    const running = this.runApplicationPreparation(
+      signal,
+      retiredContextGroup,
+      manualEntry,
+      cancelEntryFocusReturn,
+      forAgentRun,
+      placesStopFileDestination,
+    )
+    // Tracked until its focus return ended, whether it resolved or failed: {@link open} waits for it before it changes the composition.
+    const tracked = running.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.applicationPreparations.add(tracked)
+    void tracked.then(() => this.applicationPreparations.delete(tracked))
+    return running
+  }
+
+  /**
+   * Runs the Application preparation that {@link prepareApplicationGroup} tracks; the parameters are its own.
+   * @param signal - Cancellation of the reader entry or runtime preparation.
+   * @param retiredContextGroup - An empty group created for the reader's prior Context.
+   * @param manualEntry - Whether an explicit Open reconciles a parked App.
+   * @param cancelEntryFocusReturn - Supplied when {@link open} owns the final foreign focus return.
+   * @param forAgentRun - Whether an agent asked for the preparation.
+   * @param placesStopFileDestination - Whether the preparation makes the stop files' destination the main editor's last active group ({@link prepareStopFileDestination}): a live run's lease, and the reader's Live entry of an agent's run ({@link open}).
+   * @returns The registered App.
+   * @throws When native scope, original groups or current lifetime cannot be retained safely.
+   * @example const panel = await this.runApplicationPreparation(signal, undefined, false, undefined, true, true)
+   */
+  private async runApplicationPreparation(
+    signal: AbortSignal | undefined,
+    retiredContextGroup: vscode.TabGroup | undefined,
+    manualEntry: boolean,
+    cancelEntryFocusReturn: (() => void) | undefined,
+    forAgentRun: boolean,
+    placesStopFileDestination: boolean,
   ): Promise<vscode.WebviewPanel> {
     signal?.throwIfAborted()
     this.assertLifetime(this.lifetime)
@@ -13558,8 +13697,7 @@ export class StudyWorkspace {
       if (existing) {
         // A live run that reuses the kept view still makes the stop files' destination the last active main group before the keyboard goes back (D25, D24).
         if (
-          !forAgentRun ||
-          manualEntry ||
+          !placesStopFileDestination ||
           !this.keptApplicationNeedsStopFileDestination(existing)
         )
           return existing
@@ -13586,8 +13724,8 @@ export class StudyWorkspace {
             retiredContextGroup,
             cancelEntryFocusReturn,
             chatReturn,
-            // Only a live run's lease places its stop files; an entry the learner or an agent opens does not.
-            placesStopFileDestination: forAgentRun && !manualEntry,
+            // Only a live run's lease and the reader's Live entry of an agent's run place their stop files; an entry the learner opens does not.
+            placesStopFileDestination,
           }),
       )
       if (preparation.restoreFocus) owedChatReturn = undefined
@@ -14217,7 +14355,10 @@ export class StudyWorkspace {
     signal: AbortSignal | undefined,
     assertCurrent: () => void,
   ): Promise<number> {
-    // A preview Application tab is kept by Keep Open, which acts on the active group and so needs the Application's group to stay the active one ({@link keepMovedApplicationTab}); without it a stop file's preview replaces the pane (Cursor 3.27.22, N64p2-F2). Cursor 3.30.14 leaves the tab kept (Step 0), so only the earlier behavior stays as it was.
+    // Cursor lists the tab of a pane moved into its group as a preview (3.30.14 does so for a Study pane that was reopened and then moved, Cycle 0134 N2), and the debugger's preview of a stop file replaces a preview tab: the tab is kept first, while the Application's group still holds the keyboard from its placement.
+    await this.keepMovedApplicationTab(panel, signal, false)
+    assertCurrent()
+    // A tab that stays a preview needs the Application's group to stay the active one ({@link keepMovedApplicationTab}); without it a stop file's preview replaces the pane (Cursor 3.27.22, N64p2-F2), so the destination is not focused then.
     if (this.uniqueApplicationTab()?.isPreview) return 0
     const groupsBefore = vscode.window.tabGroups.all.length
     try {
@@ -14271,6 +14412,7 @@ export class StudyWorkspace {
     // The editor has no focus command past its eighth group: such a destination stays as it is.
     if (!command) return
     await this.executeEditorCommand(command)
+    this.stopFileDestinationFocuses++
     signal?.throwIfAborted()
     assertCurrent()
     if (destination) return
@@ -15089,13 +15231,15 @@ export class StudyWorkspace {
    * A stop file that is open nowhere would still open as a preview in the Application's group; {@link openRunStopFilesBesideApplication} opens the run's stop files outside it before the first pause (task 97), so this keep is the second line of defense.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
-   * @returns Once the tab is no preview, the editor left it one after the command, or the watch is armed.
+   * @param armsWatch - `false` for a caller that needs the tab kept only now, while its group holds the keyboard ({@link prepareStopFileDestination}): when the tab cannot be kept at once, no watch is armed.
+   * @returns Once the tab is no preview, the editor left it one after the command, or (with `armsWatch`) the watch is armed.
    * @throws The signal's reason when the run was cancelled during the command.
    * @example await this.keepMovedApplicationTab(panel, signal)
    */
   private async keepMovedApplicationTab(
     panel: vscode.WebviewPanel,
     signal: AbortSignal | undefined,
+    armsWatch = true,
   ): Promise<void> {
     // Read from the current groups each time: Cursor builds every tab object anew at a tab change.
     const readOwnTab = ():
@@ -15146,6 +15290,8 @@ export class StudyWorkspace {
     // Only the Application's own preview is kept; any other state needs no command.
     if (!isOwnPreview()) return
     if (isOwnPreviewInFront() && holdsKeyboard()) return keep()
+    // A preparation that keeps the tab for its own next step ({@link prepareStopFileDestination}) arms no watch for a later keep.
+    if (!armsWatch) return
     // A run cancelled before the watch is armed never fires its abort event again: nothing is armed and no command runs, as when it aborts later.
     if (signal?.aborted) return
     // The learner works elsewhere: wait for the pane to become active instead of taking the keyboard.

@@ -1400,6 +1400,8 @@ export class PresentationGuards {
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
     const borrowsBefore = this.host.mainEditorFocusBorrows,
+      // How often Codebook's own preparation focused the group beside the Application before the arrangement (Cycle 0134 N2).
+      destinationFocusesBefore = this.host.stopFileDestinationFocuses,
       // The learner's last click or key in a text editor before the arrangement (row 741).
       learnerSignBefore = this.host.learnerWorkedInEditorAtMs
     // VS Code's chat opened as an editor tab gets its keyboard back also where the editor took it (row 632).
@@ -1435,6 +1437,10 @@ export class PresentationGuards {
         (active.viewColumn === vscode.ViewColumn.One ||
           active.viewColumn === target?.viewColumn ||
           this.isFirstGroupEditorUnderAnotherPartsName(active))
+      // The preparation of an Application beside the chat focused the group beside the view itself, so that the stop files open there: the keyboard stands in that group as Codebook's own placement left it, never as the learner's choice (Cycle 0134 N2); the learner's own newer click or key is still checked below.
+      const leftByDestinationFocus =
+        this.host.stopFileDestinationFocuses !== destinationFocusesBefore &&
+        active.viewColumn === this.host.stopFileDestinationColumn()
       if (
         !vscode.window.state.focused ||
         (!heldByAnotherPart &&
@@ -1444,6 +1450,7 @@ export class PresentationGuards {
             ))) ||
         !(
           leftByMeasurement ||
+          leftByDestinationFocus ||
           takenByEditor ||
           this.host.app?.active ||
           this.host.contextPanel?.active ||

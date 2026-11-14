@@ -27,6 +27,8 @@ export interface PresentationGuardsHost {
   readonly arranging: StudyWorkspace['arranging']
   readonly assertPresentationAdmission: StudyWorkspace['assertPresentationAdmission']
   readonly mainEditorFocusBorrows: StudyWorkspace['mainEditorFocusBorrows']
+  readonly stopFileDestinationFocuses: StudyWorkspace['stopFileDestinationFocuses']
+  readonly stopFileDestinationColumn: StudyWorkspace['stopFileDestinationColumn']
   readonly namesAnotherEditorPartsTab: StudyWorkspace['namesAnotherEditorPartsTab']
   readonly arrange: StudyWorkspace['arrange']
   readonly showTextDocumentNoted: StudyWorkspace['showTextDocumentNoted']
@@ -206,6 +208,11 @@ export function createPresentationGuardsHost(
     get mainEditorFocusBorrows() {
       return workspace['mainEditorFocusBorrows']
     },
+    get stopFileDestinationFocuses() {
+      return workspace['stopFileDestinationFocuses']
+    },
+    stopFileDestinationColumn: (...args) =>
+      workspace['stopFileDestinationColumn'](...args),
     namesAnotherEditorPartsTab: (...args) =>
       workspace['namesAnotherEditorPartsTab'](...args),
     arrange: (...args): Promise<void> => workspace['arrange'](...args),
