@@ -15485,7 +15485,7 @@ export class StudyWorkspace {
 
   /**
    * Retires one leftover group for {@link retireProvenLeftoverGroups}: focuses its column where needed, proves the group, unlocks it, proves it again, closes it and confirms that the grid lost exactly that group.
-   * A leftover that is the main editor's only group (a record of one group) is retired in place once unlocked: the editor keeps a part's last group whatever closes it (VS Code's `removeGroup`; Cursor 3.30.8 accepts such a close with no group event and no change), so a close could only time out (Cycle 0133 D12, E3 probe run A).
+   * A leftover that is the main editor's only group (a record of one group) is retired in place once proven, still locked: the editor keeps a part's last group whatever closes it (VS Code's `removeGroup`; Cursor 3.30.8 accepts such a close with no group event and no change), so a close could only time out (Cycle 0133 D12, E3 probe run A), and an unlocked empty group is closed by Cursor 3.30.14 as soon as a group is added above it.
    * @param marker - The group's recorded column, with the group count and layout of the grid it must stand in.
    * @param focusCommand - The command that gives the group at that column the keyboard; `undefined` when that group is the active one of the only editor part already.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
@@ -15505,13 +15505,7 @@ export class StudyWorkspace {
     if (focusCommand) await this.executeEditorCommand(focusCommand)
     assertCurrent()
     if (!(await this.provenLeftoverGroup(marker))) return undefined
-    await this.executeEditorCommand('workbench.action.unlockEditorGroup')
-    const group = await this.provenLeftoverGroup(marker)
-    if (!group)
-      throw new Error(
-        'The editor refused to retire the empty Application group an earlier window left.',
-      )
-    // The main editor's only group is kept whatever closes it, so the unlocked leftover stays as the learner's empty group (Cycle 0133 D12).
+    // The main editor's only group is kept whatever closes it, so the proven leftover stays where it is with its lock: unlocked, Cursor 3.30.14 would close it once the Application's new group comes above it (Cycle 0133 D12).
     if (marker.groupCount === 1)
       return {
         groupCount: 1,
@@ -15519,6 +15513,12 @@ export class StudyWorkspace {
           'vscode.getEditorLayout',
         ),
       }
+    await this.executeEditorCommand('workbench.action.unlockEditorGroup')
+    const group = await this.provenLeftoverGroup(marker)
+    if (!group)
+      throw new Error(
+        'The editor refused to retire the empty Application group an earlier window left.',
+      )
     await this.closeLeftoverAsIssuedRemoval(group, groupsBefore, signal)
     const layout = await this.executeEditorCommand<unknown>(
       'vscode.getEditorLayout',
@@ -16631,7 +16631,7 @@ export class StudyWorkspace {
       )
       if (!current) return true
       if (current.tabs.length) return false
-      if (isOnlyMainGroup) await this.retireOnlyMainGroupInPlace(current)
+      if (isOnlyMainGroup) this.retireOnlyMainGroupInPlace(current)
       else
         await this.closeKnownNativeGroup(current, identity, {
           refusal: 'The editor refused to retire an empty Codebook group.',
@@ -16681,18 +16681,12 @@ export class StudyWorkspace {
 
   /**
    * Releases the main editor's only group in place instead of closing it ({@link isOnlyMainEditorGroup}); called by {@link retireEmptyOwnedGroup}, as when Close All Editors left the empty Application group alone in the main editor (Cycle 0133 D12).
-   * The group gets a new identity, so the allocation is gone for every reader that asks by the old one and the group is an ordinary empty group from then on. Codebook locked its Application group, so the group is unlocked too when it is the active one: the unlock acts only on the active group, and no keyboard is taken for a group that is not.
+   * The group gets a new identity, so the allocation is gone for every reader that asks by the old one, and the group stays where it is with the lock it has. It is not unlocked: Cursor 3.30.14 closes an empty group whose lock was removed as soon as the next preparation adds the Application's group above it, so that preparation's creation check refused and its run lost the group below the view (Cycle 0133 /ship QA, smoke S2 and its isolation).
    * @param group - The empty owned group, as the caller found it again after its layout read.
-   * @returns Once the group is released, and unlocked where it was the active group.
-   * @example await this.retireOnlyMainGroupInPlace(group) // the empty Application group stays as an unlocked empty group
+   * @example this.retireOnlyMainGroupInPlace(group) // the empty Application group stays, still locked, as the group the next view goes above
    */
-  private async retireOnlyMainGroupInPlace(
-    group: vscode.TabGroup,
-  ): Promise<void> {
+  private retireOnlyMainGroupInPlace(group: vscode.TabGroup): void {
     this.editorGroupIdentities.set(group, Symbol())
-    // Unlocking a group that holds no lock changes nothing.
-    if (vscode.window.tabGroups.activeTabGroup === group)
-      await this.executeEditorCommand('workbench.action.unlockEditorGroup')
   }
 
   /**

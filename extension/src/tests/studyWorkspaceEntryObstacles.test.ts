@@ -1085,11 +1085,12 @@ function writerOfRecord(record: unknown): unknown {
     : undefined
 }
 
-// Value: protects=Cycle 0133 D12 (E3 probe run A): a reloaded window whose record names the leftover Application group as the main editor's only group, beside Cursor's Agent part, opens the Study workspace, with the leftover unlocked and kept as the learner's empty group and the record gone; fails_when=Open closes that leftover and waits for a removal the editor never makes (it keeps a part's last group), failing after 5 s with "Timed out waiting for leftover Application group removal (groups before the close: 2, now: 2, after 5000 ms)"; no_claim=Cursor's real reload (the fake restores the empty locked group by hand) and the keyboard's path, which the leftover tests above own
-test("a reloaded window's leftover Application group that is the main editor's only group beside Cursor's Agent part stays unlocked and Open Study Workspace succeeds", async () => {
+// Value: protects=Cycle 0133 D12 (E3 probe run A): a reloaded window whose record names the leftover Application group as the main editor's only group, beside Cursor's Agent part, opens the Study workspace, with the leftover kept in place, still locked, and the record gone; fails_when=Open closes that leftover and waits for a removal the editor never makes (it keeps a part's last group), failing after 5 s with "Timed out waiting for leftover Application group removal (groups before the close: 2, now: 2, after 5000 ms)", or it unlocks the leftover, which Cursor 3.30.14 closes when the new group comes above it; no_claim=Cursor's real reload and New Group Above (the fake restores the empty locked group by hand; closeUnlockedEmptyGroupAtInsertion models the close) and the keyboard's path, which the leftover tests above own
+test("a reloaded window's leftover Application group that is the main editor's only group beside Cursor's Agent part is kept and Open Study Workspace succeeds", async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeUnlockedEmptyGroupAtInsertion()
   harness.addSeparateEditorPart()
   try {
     leaveLoneLeftoverBesideAgent(harness)
@@ -1101,7 +1102,7 @@ test("a reloaded window's leftover Application group that is the main editor's o
     // Act
     const outcome = await openStudyWorkspace(harness)
 
-    // Assert: Open built its view; no locked group remains (the leftover lost its lock and stays as an ordinary group), and the earlier window's record gave way to this window's.
+    // Assert: Open built its view, with the Application pane in the one locked group, and the earlier window's record gave way to this window's.
     assert.deepEqual(
       {
         outcome,
@@ -1112,7 +1113,7 @@ test("a reloaded window's leftover Application group that is the main editor's o
       },
       {
         outcome: 'opened',
-        lockedGroupTabs: [],
+        lockedGroupTabs: [['codebook · Application']],
         recordWriter: harness.reader['applicationGroupMarkerWriter'],
       },
     )
@@ -1122,7 +1123,7 @@ test("a reloaded window's leftover Application group that is the main editor's o
 })
 
 // Value: protects=Cycle 0133 D12 (Step 0 run 5): after Close All Editors and a window reload, when Cursor still lists its Agent part as a group with no tab, the main editor's one empty group counts as its whole grid, so Open Study Workspace retires the lone leftover in place and succeeds; fails_when=the one-group grid is proven only beside a chat part that holds a tab, so Open is refused at once with "The Codebook panes were not arranged: the first editor group (column 1) is empty, and beside the chat the editor reports no keyboard focus in an empty group. …"; no_claim=Cursor's own Close All Editors (closeChatTab stands in for it) and its real reload
-test("after Close All Editors left Cursor's Agent part with no tab, a reloaded window's lone leftover Application group stays unlocked and Open Study Workspace succeeds", async () => {
+test("after Close All Editors left Cursor's Agent part with no tab, a reloaded window's lone leftover Application group is kept and Open Study Workspace succeeds", async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
@@ -1138,7 +1139,7 @@ test("after Close All Editors left Cursor's Agent part with no tab, a reloaded w
     // Act
     const outcome = await openStudyWorkspace(harness)
 
-    // Assert: Open built its view; no locked group remains (the leftover lost its lock), and the earlier window's record gave way to this window's.
+    // Assert: Open built its view, with the Application pane in the one locked group, and the earlier window's record gave way to this window's.
     assert.deepEqual(
       {
         outcome,
@@ -1149,7 +1150,7 @@ test("after Close All Editors left Cursor's Agent part with no tab, a reloaded w
       },
       {
         outcome: 'opened',
-        lockedGroupTabs: [],
+        lockedGroupTabs: [['codebook · Application']],
         recordWriter: harness.reader['applicationGroupMarkerWriter'],
       },
     )
