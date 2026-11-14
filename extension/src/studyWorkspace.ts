@@ -327,7 +327,6 @@ import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarker
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
-import { isCodebookRunDebugSession } from './utils/isCodebookRunDebugSession'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import { isCurrentRunRememberedWhileClosed } from './utils/isCurrentRunRememberedWhileClosed'
@@ -1073,7 +1072,7 @@ export class StudyWorkspace {
   private readonly leftoverStopTabUris = new Set<string>()
   /** Whether the main editor's last active group is the Application's, kept by {@link noteActiveMainGroup}: Cursor names its Agent chat's group while the chat holds the keyboard, so the main editor's last active group is only known from the group events before it (Cycle 0134 D25, review round). */
   private applicationGroupLastActive = false
-  /** The debug sessions whose stop was read while the kept Application pane stood in front of its group ({@link noteApplicationFrontAtStop}), until the first frame of that session is reported ({@link noteStopFileCoveringApplication}) or its next stop is read ({@link noteApplicationFrontAtStop}); an id whose frame never comes stays until then. */
+  /** The debug sessions whose stop was read while the kept Application pane stood in front of its group ({@link noteApplicationFrontAtStop}), until the first frame of that session is reported ({@link noteStopFileCoveringApplication}) or its next stop is read ({@link noteApplicationFrontAtStop}); the stop tracker drops the id of a session that ended ({@link PresentationGuards}). */
   private readonly sessionsStoppedBehindApplication = new Set<string>()
   /** Every paused-file move in flight, whichever lease's watch started it, until its show and close end ({@link keepPausedSourceOutOfApplication}); a next run's uncover step waits for all of them, since a released lease's move still shows its file when the editor answers ({@link pausedSourceMovesSettled}, CodeRabbit, PR 334). */
   private readonly pausedSourceMovesInFlight = new Set<Promise<void>>()
@@ -7877,15 +7876,12 @@ export class StudyWorkspace {
 
   /**
    * Notes the stop file that came in front of the kept Application pane at a stop of a run that leases no pane, like the ended run's own leftover ({@link rememberLeftoverStopTab}), so the next extension run's attach brings the view back in front of it ({@link uncoverApplicationFromLeftoverStopTab}) instead of refusing it; called by the stop tracker ({@link PresentationGuards}) when the editor reports the frame of a stop.
-   * Cursor 3.30.14 opens a file that is open nowhere in the main editor's last active group, which is the Application's group unless the preparation left another one ({@link prepareStopFileDestination}), and a library test run (Vitest under js-debug) pauses in such files while the last extension run's view is kept (Cycle 0134 D22). Only a Codebook run's own stop is noted: the session is a Codebook run's attach or a child of it ({@link isCodebookRunDebugSession}, never the learner's own debug session), the pane stood in front when the stop was read ({@link noteApplicationFrontAtStop}), and the unedited `file:` tab that covers it now ({@link coveringTabOfApplication}) is a stop file one of the window's runs declared ({@link declaredRunStopFiles}). The first frame the editor reports for that stop counts, whether or not it came with the stop ({@link frameCameWithStop}): an editor may show the stop's file late. A file the learner opens in that group at any other time is never noted, and the reveal's guard still refuses over it. A run with a lease has its paused-file watch and its own release note.
+   * Cursor 3.30.14 opens a file that is open nowhere in the main editor's last active group, which is the Application's group unless the preparation left another one ({@link prepareStopFileDestination}), and a library test run (Vitest under js-debug) pauses in such files while the last extension run's view is kept (Cycle 0134 D22). Only a Codebook run's own stop is noted: the stop ledger counts it as Codebook's ({@link codebookStopLedger}: every stop of an owned Node test run's sessions, and a stop another run caused; never a stop of the learner's own debug session, whatever its launch configuration is named), the pane stood in front when the stop was read ({@link noteApplicationFrontAtStop}), and the unedited `file:` tab that covers it now ({@link coveringTabOfApplication}) is that stop's paused file ({@link StopKeyboardHandOver.showsPausedFileOf}) and a stop file one of the window's runs declared ({@link declaredRunStopFiles}). The first frame the editor reports for that stop counts, whether or not it came with the stop ({@link frameCameWithStop}): an editor may show the stop's file late, as long as the stop lasts. A file the learner brings in front meanwhile, or opens in that group at any other time, is never noted, and the reveal's guard still refuses over it. A run with a lease has its paused-file watch and its own release note.
    * @param session - The session whose frame the editor reported.
    * @example this.noteStopFileCoveringApplication(session) // settings.test.ts, a declared stop file of the library test run, covers the kept view
    */
   private noteStopFileCoveringApplication(
-    session: Pick<
-      vscode.DebugSession,
-      'id' | 'configuration' | 'parentSession'
-    >,
+    session: Pick<vscode.DebugSession, 'id'>,
   ): void {
     const stoodInFront = this.sessionsStoppedBehindApplication.delete(
       session.id,
@@ -7894,13 +7890,15 @@ export class StudyWorkspace {
       !stoodInFront ||
       this.leaseId !== undefined ||
       !this.app ||
-      !isCodebookRunDebugSession(session)
+      // A stop the learner's own debugger made is never Codebook's, whatever its launch configuration is named.
+      !codebookStopLedger.isCodebookCausedStop(session.id)
     )
       return
     const covering = this.coveringTabOfApplication(this.viewColumnOf(this.app))
-    // A file no run declared as a stop is the learner's, even when it covers the view.
+    // Only the stop's own paused file, and only one a run declared as a stop: a file the learner brought in front meanwhile stays theirs.
     if (
       covering &&
+      this.stopHandOver.showsPausedFileOf(session.id, covering.uri) &&
       this.declaredRunStopFiles().has(canonicalFsPath(covering.uri.fsPath))
     )
       this.leftoverStopTabUris.add(covering.uri.toString())
@@ -14256,7 +14254,7 @@ export class StudyWorkspace {
    * @param panel - The new Application pane.
    * @param signal - The run's cancellation, checked after each await and right before the group is created.
    * @param assertCurrent - Rejects a superseded preparation at the same points.
-   * @throws What the editor's command throws, the error of a group that did not appear, the signal's reason when cancelled, and what `assertCurrent` throws.
+   * @throws What the editor's command throws, the error of a group that did not appear, the refusal to create the group once the keyboard left the Application's group (the command would split the part that holds the keyboard), the signal's reason when cancelled, and what `assertCurrent` throws.
    * @example await this.focusOrCreateStopFileDestination(panel, signal, assertCurrent) // runs workbench.action.focusSecondEditorGroup
    */
   private async focusOrCreateStopFileDestination(
@@ -14284,6 +14282,21 @@ export class StudyWorkspace {
     signal?.throwIfAborted()
     assertCurrent()
     if (editorLayoutGroupCount(layout) !== 1) return
+    const applicationIdentity = this.applicationGroup?.identity
+    if (!applicationIdentity) return
+    const applicationGroupActive = (): boolean =>
+      this.editorGroupIdentities.get(vscode.window.tabGroups.activeTabGroup) ===
+      applicationIdentity
+    // The editor may name the focused group only after its command answered (N55-F4 H2-b).
+    if (!applicationGroupActive())
+      await this.waitForLateGroupActivation(applicationIdentity, signal)
+    signal?.throwIfAborted()
+    assertCurrent()
+    // The command splits the active part's active group: after the learner went to the chat, the chat's part would get the group and the main editor none (Cycle 0134 review).
+    if (!applicationGroupActive())
+      throw new Error(
+        'The keyboard left the Application’s group before a group for the run’s stop files was created beside it; no group was created.',
+      )
     const groupsBefore = vscode.window.tabGroups.all.length
     await this.executeEditorCommand('workbench.action.newGroupBelow')
     if (vscode.window.tabGroups.all.length !== groupsBefore + 1)

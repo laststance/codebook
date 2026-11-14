@@ -1846,8 +1846,6 @@ export const NODE_SCRIPT_PACKAGE_COPY_SCAN_LIMIT_COUNT = 500
 export const NODE_SERVER_ACTION = 'http-request'
 /** The prefix of the debug session name of a node-server run (`codebook node server <runId>`): the run recognizes only sessions whose root carries its own name. */
 export const NODE_SERVER_SESSION_NAME_PREFIX = 'codebook node server '
-/** The start of the configuration name of every run's root debug session (`codebook node test <runId>`, `codebook repository <runId>`, `codebook server <runId>`, `codebook node server <runId>`, `codebook chrome extension <runId>`): a session whose chain holds no such name is the learner's own debugger. */
-export const CODEBOOK_RUN_SESSION_NAME_PREFIX = 'codebook '
 /** How long a started server has, in running time, to accept connections on its declared port; time it spends held by a learner's pause does not count. */
 export const NODE_SERVER_READY_TIMEOUT_MS = 30_000
 /** How long the declared request may wait for its answer, in running time; time the server spends paused does not count. */

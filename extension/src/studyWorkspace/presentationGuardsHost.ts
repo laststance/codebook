@@ -49,6 +49,7 @@ export interface PresentationGuardsHost {
   readonly announcedStops: StudyWorkspace['announcedStops']
   readonly noteApplicationFrontAtStop: StudyWorkspace['noteApplicationFrontAtStop']
   readonly noteStopFileCoveringApplication: StudyWorkspace['noteStopFileCoveringApplication']
+  readonly sessionsStoppedBehindApplication: StudyWorkspace['sessionsStoppedBehindApplication']
   readonly applicationGroupChange: StudyWorkspace['applicationGroupChange']
   readonly holdsDebuggersFileOfPause: StudyWorkspace['holdsDebuggersFileOfPause']
   readonly focusPresentationPanel: StudyWorkspace['focusPresentationPanel']
@@ -244,6 +245,9 @@ export function createPresentationGuardsHost(
       workspace['noteApplicationFrontAtStop'](...args),
     noteStopFileCoveringApplication: (...args): void =>
       workspace['noteStopFileCoveringApplication'](...args),
+    get sessionsStoppedBehindApplication() {
+      return workspace['sessionsStoppedBehindApplication']
+    },
     get applicationGroupChange() {
       return workspace['applicationGroupChange']
     },

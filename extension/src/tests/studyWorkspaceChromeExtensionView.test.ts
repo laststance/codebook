@@ -11,6 +11,7 @@ import {
   PRESENTATION_READY_TIMEOUT_MS,
   STOP_OWN_FOCUS_BOUND_MS,
 } from '../constants'
+import { codebookStopLedger } from '../runtimeSupport/codebookStopLedger'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
@@ -3284,7 +3285,7 @@ test('the next extension run shows its view after a library test run paused in a
   }
 })
 
-/** The configuration name of the root attach a Codebook library test run gives its debug session; the harness names a session by its id. */
+/** The debug session of a Codebook library test run, named as the run names its root attach; the harness names a session by its id, and a test registers it in the stop ledger as the owned Node test run does. */
 const LIBRARY_TEST_SESSION = 'codebook node test library-tests-1'
 
 /**
@@ -3325,19 +3326,56 @@ async function declareRunStop(
 }
 
 /**
+ * Declares a stop in another file for one more run of the window, by copying a stand-in record that {@link declareRunStop} made: the service starts one run at a time, so a second stand-in cannot come from a second start.
+ * @param harness - The harness whose service holds the records.
+ * @param recordId - The stand-in record to copy.
+ * @param filename - The file of the copy's declared stop, relative to the repository.
+ * @returns The id of the copy, to delete it when the test ends.
+ * @example const otherId = declareAnotherRunStop(harness, recordId, 'other.test.js')
+ */
+function declareAnotherRunStop(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  recordId: string,
+  filename: string,
+): string {
+  const template = harness.service.records.get(recordId)
+  assert.ok(template?.definition)
+  const copyId = randomUUID()
+  harness.service.records.set(copyId, {
+    ...template,
+    id: `${harness.service.instanceId}_${copyId}`,
+    definition: {
+      ...template.definition,
+      configuration: {
+        ...template.definition.configuration,
+        source: { ...template.definition.configuration.source, path: filename },
+      },
+    },
+  })
+  return copyId
+}
+
+/**
  * Lets a first extension run end with its view kept in front of its group, then a session stop with its file opened in that group, as Cursor shows a stop of a run that leases no pane; then opens the next run's view and brings it forward.
  * @param harness - The harness.
- * @param options - `session` stops (its name is the id); the stop's file `pausedFile`; `lateFrame` makes the editor report the frame after the bound for a doubtful stop, so the frame does not count as the stop's own.
+ * @param options - `session` stops (its name is the id); the stop's file `pausedFile`; `fileInFront` is the file that comes in front of the view before the frame is reported (left out, the paused file; another one stands for a file the learner brought there meanwhile); `lateFrame` makes the editor report the frame after the bound for a doubtful stop, so the frame does not count as the stop's own.
  * @returns The label in front of the view's group after the next run's view was brought forward, and the text of the refusal when the reveal was refused.
  * @example const { frontLabel } = await stopBesideKeptView(harness, { session: LIBRARY_TEST_SESSION, pausedFile: 'settings.test.js' })
  */
 async function stopBesideKeptView(
   harness: Awaited<ReturnType<typeof workspaceHarness>>,
-  options: { session: string; pausedFile: string; lateFrame?: boolean },
+  options: {
+    session: string
+    pausedFile: string
+    fileInFront?: string
+    lateFrame?: boolean
+  },
 ): Promise<{ frontLabel: string | undefined; refusal: string | undefined }> {
+  const fileInFront = options.fileInFront ?? options.pausedFile
   readerSeams(harness).stopOwnTimer()
   await writeRepositoryFile(harness, 'settings.js')
   await writeRepositoryFile(harness, options.pausedFile)
+  await writeRepositoryFile(harness, fileInFront)
   await writeRepositoryFile(harness, 'popup.js')
   harness.focusMutableDraft('popup.js', 1)
   const first = await openView(harness, 'covered-run-1', ['settings.js'])
@@ -3352,7 +3390,8 @@ async function stopBesideKeptView(
     keepsFocus: options.lateFrame,
     pausedFile: options.pausedFile,
   })
-  harness.openPausedFileInLockedGroup(options.pausedFile, applicationColumn)
+  // Cursor opens the file in the view's group, the main editor's last active one.
+  harness.openPausedFileInLockedGroup(fileInFront, applicationColumn)
   if (options.lateFrame) {
     const stopReadAtMs = performance.now()
     await waitUntil(
@@ -3364,7 +3403,7 @@ async function stopBesideKeptView(
   harness.reportStopFrame(options.session)
   assert.equal(
     applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
-    options.pausedFile,
+    fileInFront,
   )
   const second = await openView(harness, 'covered-run-2', ['settings.js'])
   try {
@@ -3394,11 +3433,12 @@ async function stopBesideKeptView(
 
 // protects=Cycle 0134 D22 safety net (Step 0 probe-nsx-2): a stop file of a run that leases no pane, which still comes in front of the kept view at that run's own debugger stop, is noted like the ended run's own leftover, so the next extension run's view comes forward over it; fails_when=the stop tracker notes no such file, so the next run's attach has no note for the covering tab and refuses its view with "Application ownership changed"; no_claim=why the editor opens the file in the view's group (the fake opens it there, without the redirect model) and the stops of a run that has its own pane
 test('the next extension run shows its view over the stop file a library test run opened in front of the kept view at its own stop', async () => {
-  // Arrange: the library test run declared its stop in settings.test.js.
+  // Arrange: the library test run declared its stop in settings.test.js; the owned Node test run registers its sessions in the stop ledger.
   const harness = await workspaceHarness()
   let recordId: string | undefined
   try {
     recordId = await declareRunStop(harness, 'settings.test.js')
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
 
     // Act
     const { frontLabel, refusal } = await stopBesideKeptView(harness, {
@@ -3417,11 +3457,12 @@ test('the next extension run shows its view over the stop file a library test ru
 
 // protects=Cycle 0134 D22 safety net, review finding (late frame): a library test run's stop that the editor reports late, so its frame does not count as brought by the stop, is still noted when its file stands in front of the kept view; fails_when=the note is taken only for a frame that came with its stop, so the late-shown stop file stays unnoted and the next run's view is refused; no_claim=the length of the real editor's delay
 test('the next extension run shows its view over the stop file of a library test run whose frame the editor reported late', async () => {
-  // Arrange
+  // Arrange: the owned Node test run registers its sessions in the stop ledger.
   const harness = await workspaceHarness()
   let recordId: string | undefined
   try {
     recordId = await declareRunStop(harness, 'settings.test.js')
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
 
     // Act
     const { frontLabel, refusal } = await stopBesideKeptView(harness, {
@@ -3467,15 +3508,74 @@ test("the next extension run does not hide the file the learner's own debug sess
 
 // protects=Cycle 0134 D22, review finding (stop-file match): a file in front of the kept view at a Codebook run's stop that no run declared as a stop is the learner's and is never noted; fails_when=the note takes any unedited file that covers the view, so the next run's view comes in front of a file that is no stop file; no_claim=which file the real editor opens at a stop
 test('the next extension run does not hide a file in front of the kept view that no run declared as a stop file', async () => {
-  // Arrange: the library test run declared its stop in another file.
+  // Arrange: the library test run declared its stop in another file; its sessions are in the stop ledger.
   const harness = await workspaceHarness()
   let recordId: string | undefined
   try {
     recordId = await declareRunStop(harness, 'other.test.js')
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
 
     // Act
     const { frontLabel, refusal } = await stopBesideKeptView(harness, {
       session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'settings.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    if (recordId) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 safety net, /ship review (Codex adversarial and structured): at a library test run's stop that the editor shows late, a declared stop file the learner brought in front of the kept view meanwhile is not that stop's paused file and is never noted, so the next run does not hide it; fails_when=the note takes any declared stop file that covers the view at the stop's frame, so the next run's view comes in front of the learner's file; no_claim=where the real editor opens the late stop's own file (the fake opens it nowhere)
+test('the next extension run does not hide a declared stop file the learner brought in front of the kept view while a library test run’s stop waited to be shown', async () => {
+  // Arrange: two runs of the window declared stops, in settings.test.js and in other.test.js; the library test run's sessions are in the stop ledger.
+  const harness = await workspaceHarness()
+  const recordIds: string[] = []
+  try {
+    recordIds.push(await declareRunStop(harness, 'settings.test.js'))
+    recordIds.push(
+      declareAnotherRunStop(harness, recordIds[0]!, 'other.test.js'),
+    )
+    codebookStopLedger.ownSession(LIBRARY_TEST_SESSION)
+
+    // Act: the library test run stops in settings.test.js; before the editor shows that stop, other.test.js comes in front of the kept view.
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: LIBRARY_TEST_SESSION,
+      pausedFile: 'settings.test.js',
+      fileInFront: 'other.test.js',
+      lateFrame: true,
+    })
+
+    // Assert
+    assert.equal(frontLabel, 'other.test.js')
+    assert.equal(
+      refusal,
+      'Error: Application ownership changed. Use Codebook: Focus Application or Restore layout explicitly.',
+    )
+  } finally {
+    for (const recordId of recordIds) harness.service.records.delete(recordId)
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22, /ship review (Codex adversarial, specialist and native reviewers): a stop of the learner's own debug session whose launch configuration is named like a Codebook run is never noted, because only the stop ledger says which stops are Codebook's; fails_when=the note trusts the session's name ("codebook " at its start), so the next run's view comes in front of the file the learner's own session stopped in; no_claim=the real editor's handling of the learner's session
+test('the next extension run does not hide the file a learner’s debug session named like a Codebook run stopped in', async () => {
+  // Arrange: the file is a declared stop file, and the learner's launch configuration starts with "codebook "; the stop ledger holds none of its stops.
+  const harness = await workspaceHarness()
+  let recordId: string | undefined
+  try {
+    recordId = await declareRunStop(harness, 'settings.test.js')
+
+    // Act
+    const { frontLabel, refusal } = await stopBesideKeptView(harness, {
+      session: 'codebook local development',
       pausedFile: 'settings.test.js',
     })
 
@@ -3605,6 +3705,61 @@ test('the next extension run that reuses the kept view alone in the main editor 
     )
     assert.equal(chat.focused(), true)
     assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24, /ship review (Codex adversarial): a run that reuses the kept view alone in the main editor creates its stop files' group only while the view's group holds the keyboard, so when the chat has the keyboard again right after Codebook focused the view's group (a learner's click, or Cursor's own return seen in N60), the chat's part stays as it was and the layout line names why no group was made; fails_when=the preparation runs workbench.action.newGroupBelow while the chat holds the keyboard, which adds the group below the chat's group (the fake splits the group the editor names) and counts it as the main editor's; no_claim=what Cursor 3.30.14 itself does with newGroupBelow while its Agent part holds the keyboard (not observed natively) and where the run's stop files open without a destination
+test('the next extension run that reuses the kept view alone creates no group for its stop files when the chat has the keyboard again right after Codebook focuses the view', async () => {
+  // Arrange: a first run ended and kept its view in the main editor's only group; the learner clicked into the view; the chat has the keyboard again.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    harness.useHostAppName('Cursor')
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'reuse-click-1', [])
+    first.end('The first run ended.')
+    first.close()
+    // The learner closes every group but the kept view's and the Agent part's.
+    for (const group of harness.groups.filter(
+      (candidate) =>
+        candidate.viewColumn !== 1 && !candidate.tabs.includes(chat.tab),
+    )) {
+      await harness.editor.window.tabGroups.close([...group.tabs], true)
+      await harness.editor.window.tabGroups.close(group, true)
+    }
+    harness.activatePaneByHand('codebook.scopedBrowser')
+    chat.focusTab()
+    // Cursor's chat takes the keyboard back right after Codebook's focus of the view's group, and Cursor goes on naming the chat's group (N60).
+    harness.takesKeyboardBackFromFirstGroupBesideChat()
+
+    // Act: the next run reuses the view.
+    const second = await openView(harness, 'reuse-click-2', ['settings.js'])
+
+    // Assert: still the view's group and the Agent part's group only; the chat has the keyboard; the layout line names the refusal.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application reuse-cl'] },
+        { column: 2, tabs: ['New Agent'] },
+      ],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors'].keys()], ['layout'])
+    assert.equal(
+      harness.reader['errors'].get('layout'),
+      'Error: The keyboard left the Application’s group before a group for the run’s stop files was created beside it; no group was created.',
+    )
     second.close()
   } finally {
     await harness.close()

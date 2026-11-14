@@ -20,20 +20,77 @@ interface StoppedThread {
 interface HeldStop {
   /** `armed` while the stop waits for its hand-over, `done` once its paused file got the keyboard. */
   state: 'armed' | 'done'
-  /** The stopped thread, when the adapter named it. */
-  threadId: number | undefined
-  /** The stop's reason, which decides whether the editor focuses a deemphasized frame ({@link editorsPausedFrame}). */
-  reason: string | undefined
-  /** The stopped thread's frames by index, as far as the adapter answered the editor's `stackTrace` requests. */
-  frames: (DebugStackFrameOfAnswer | undefined)[]
+  /** The stopped thread's frames, as far as the adapter answered the editor's `stackTrace` requests. */
+  frames: StoppedThreadFrames
+}
+
+/**
+ * The frames of one stopped thread, as far as the adapter answered the editor's `stackTrace` requests for that thread; {@link StopKeyboardHandOver} keeps one for each held stop and one for each session's latest stop.
+ * @example
+ * const frames = new StoppedThreadFrames(1, 'breakpoint')
+ * frames.noteRequest({ seq: 7, threadId: 1, startFrame: 0 })
+ * frames.placeAnswer({ requestSeq: 7, frames: [{ id: 1000, source: { path: '/app/actions.ts' } }] })
+ * frames.pausedFrame() // => { id: 1000, source: { path: '/app/actions.ts' } }
+ */
+class StoppedThreadFrames {
+  /** The stopped thread's frames by index; a hole is a frame not answered yet. */
+  private readonly frames: (DebugStackFrameOfAnswer | undefined)[] = []
   /** The editor's `stackTrace` requests for that thread that wait for their answer, by sequence number, with the index of the first frame each asks for. */
-  requests: Map<number, number>
+  private readonly requests = new Map<number, number>()
+
+  /**
+   * @param threadId - The stopped thread, when the adapter named it.
+   * @param reason - The stop's reason, which decides whether the editor focuses a deemphasized frame ({@link editorsPausedFrame}).
+   */
+  constructor(
+    private readonly threadId: number | undefined,
+    private readonly reason: string | undefined,
+  ) {}
+
+  /**
+   * Notes the editor's `stackTrace` request for this thread, so the adapter's answer can be placed; a request for another thread is left alone.
+   * @param request - The request as {@link stackTraceRequestOf} reads it.
+   * @example frames.noteRequest({ seq: 7, threadId: 1, startFrame: 0 })
+   */
+  noteRequest(
+    request: NonNullable<ReturnType<typeof stackTraceRequestOf>>,
+  ): void {
+    // Only the stack of the thread that stopped tells which frame the editor focuses for the stop.
+    if (this.threadId !== undefined && this.threadId !== request.threadId)
+      return
+    this.requests.set(request.seq, request.startFrame)
+  }
+
+  /**
+   * Places the adapter's answer to a noted request among the frames; an answer to another request is left alone.
+   * @param response - The answer as {@link stackTraceResponseOf} reads it.
+   * @example frames.placeAnswer({ requestSeq: 7, frames: [{ id: 1000, source: { path: '/app/actions.ts' } }] })
+   */
+  placeAnswer(
+    response: NonNullable<ReturnType<typeof stackTraceResponseOf>>,
+  ): void {
+    const startFrame = this.requests.get(response.requestSeq)
+    if (startFrame === undefined) return
+    this.requests.delete(response.requestSeq)
+    // An answer that starts further down the stack keeps the frames above it in their places.
+    for (const [index, frame] of response.frames.entries())
+      this.frames[startFrame + index] = frame
+  }
+
+  /**
+   * Names the frame the editor focuses for the stop by its own rule, from the frames answered so far ({@link editorsPausedFrame}).
+   * @returns The frame; `undefined` while no frame qualifies.
+   * @example frames.pausedFrame()?.source // => { path: '/app/actions.ts' }
+   */
+  pausedFrame(): DebugStackFrameOfAnswer | undefined {
+    return editorsPausedFrame(this.frames, this.reason)
+  }
 }
 
 /**
  * The keyboard hand-over of every debug session's current stop: armed when the adapter reports a stop, done once Codebook gave the paused file the keyboard, idle again when the session goes on or when the editor reported a frame of it without a hand-over.
  * Keeps the rule "one hand-over per stop": a second frame of the same stop, or an invalidation that makes the editor handle the stop again, finds the stop done and does nothing. Only a resume of the session (its `continued` event or the learner's request) starts a new stop. Each session keeps its own state: a stop of another session, which the editor may read while it shows a handed-over stop (a Codebook run's stop beside the learner's own debug session), leaves that hand-over as it was (Cycle 0046 finding 605).
- * It also reads the editor's `stackTrace` requests and the adapter's answers for the stopped thread, and so knows the frame the editor focuses for the stop by its own rule ({@link pausedFrameIdOf}); a stop for which no frame qualifies is focused as a thread alone, and no frame the learner selects later is that stop's.
+ * It also reads the editor's `stackTrace` requests and the adapter's answers for the stopped thread, and so knows the frame the editor focuses for the stop by its own rule ({@link pausedFrameIdOf}); a stop for which no frame qualifies is focused as a thread alone, and no frame the learner selects later is that stop's. It reads the same of each session's latest stop, also one that waits for no hand-over, for the paused file the stop note of the kept Application asks for ({@link showsPausedFileOf}).
  * Owned by {@link StudyWorkspace}, which arms it in `noteStopOf`, feeds it every message of a followed session's tracker, disarms it in `noteSessionWentOn` and `forgetSession`, marks it done when it hands the keyboard over (`handOverStopKeyboard`) and settles it at every frame the editor reports.
  *
  * @example
@@ -45,6 +102,8 @@ interface HeldStop {
 export class StopKeyboardHandOver {
   /** The current stop of each session; a session without an entry holds no stop. */
   private readonly stops = new Map<string, HeldStop>()
+  /** The frames of each session's latest stop, also one that waits for no hand-over, until the session goes on or ends ({@link disarm}); read by {@link showsPausedFileOf}. */
+  private readonly latestStops = new Map<string, StoppedThreadFrames>()
 
   /**
    * Arms the hand-over for a stop the adapter reported, unless the same session's stop is already done or the adapter asked the editor to keep the focus where it is.
@@ -56,56 +115,45 @@ export class StopKeyboardHandOver {
    * handOver.arm('learner-node', { keepsFocus: true }) // learner-node's stop never waits for a hand-over
    */
   arm(sessionId: string, stop: StoppedThread = {}): void {
+    // Every stop's frames are read for the stop note of the kept Application, also those of a stop that gets no hand-over.
+    this.latestStops.set(
+      sessionId,
+      new StoppedThreadFrames(stop.threadId, stop.reason),
+    )
     // A stop already handed over stays done: an invalidation of the same stop must not hand the keyboard over again. A stop the editor never focuses gets no hand-over.
     if (stop.keepsFocus || this.stops.get(sessionId)?.state === 'done') return
     this.stops.set(sessionId, {
       state: 'armed',
-      threadId: stop.threadId,
-      reason: stop.reason,
-      frames: [],
-      requests: new Map(),
+      frames: new StoppedThreadFrames(stop.threadId, stop.reason),
     })
   }
 
   /**
-   * Notes the editor's `stackTrace` request for the thread of a session's armed stop, so the adapter's answer can be placed; called for every message the session's tracker sees going to the adapter.
+   * Notes the editor's `stackTrace` request for the thread of a session's armed stop and of its latest stop, so the adapter's answer can be placed; called for every message the session's tracker sees going to the adapter.
    * @param sessionId - The debug session the message goes to.
    * @param message - The message as the tracker receives it.
    * @example handOver.readEditorsMessage('learner-node', { type: 'request', seq: 7, command: 'stackTrace', arguments: { threadId: 1, startFrame: 0, levels: 1 } })
    */
   readEditorsMessage(sessionId: string, message: unknown): void {
     const request = stackTraceRequestOf(message)
+    if (request === undefined) return
     const held = this.stops.get(sessionId)
-    // Only the stack of the thread that stopped tells which frame the editor focuses for the stop.
-    if (
-      request === undefined ||
-      held?.state !== 'armed' ||
-      (held.threadId !== undefined && held.threadId !== request.threadId)
-    )
-      return
-    held.requests.set(request.seq, request.startFrame)
+    // A handed-over stop needs no more frames; the latest stop's are read for the stop note.
+    if (held?.state === 'armed') held.frames.noteRequest(request)
+    this.latestStops.get(sessionId)?.noteRequest(request)
   }
 
   /**
-   * Places the adapter's answer to a noted `stackTrace` request among the frames of the session's armed stop; called for every message the session's tracker sees coming from the adapter.
+   * Places the adapter's answer to a noted `stackTrace` request among the frames of the session's held stop and of its latest stop; called for every message the session's tracker sees coming from the adapter.
    * @param sessionId - The debug session the message comes from.
    * @param message - The message as the tracker receives it.
    * @example handOver.readAdaptersMessage('learner-node', { type: 'response', request_seq: 7, success: true, command: 'stackTrace', body: { stackFrames: [{ id: 1000, source: { path: '/app/actions.ts' } }] } })
    */
   readAdaptersMessage(sessionId: string, message: unknown): void {
     const response = stackTraceResponseOf(message)
-    const held = this.stops.get(sessionId)
-    const startFrame = response && held?.requests.get(response.requestSeq)
-    if (
-      response === undefined ||
-      held === undefined ||
-      startFrame === undefined
-    )
-      return
-    held.requests.delete(response.requestSeq)
-    // An answer that starts further down the stack keeps the frames above it in their places.
-    for (const [index, frame] of response.frames.entries())
-      held.frames[startFrame + index] = frame
+    if (response === undefined) return
+    this.stops.get(sessionId)?.frames.placeAnswer(response)
+    this.latestStops.get(sessionId)?.placeAnswer(response)
   }
 
   /**
@@ -116,9 +164,27 @@ export class StopKeyboardHandOver {
    */
   pausedFrameIdOf(sessionId: string): number | undefined {
     const held = this.stops.get(sessionId)
-    return held?.state === 'armed'
-      ? editorsPausedFrame(held.frames, held.reason)?.id
-      : undefined
+    return held?.state === 'armed' ? held.frames.pausedFrame()?.id : undefined
+  }
+
+  /**
+   * Says whether a document is the paused file of a session's latest stop: the source of the frame the editor focuses for it by its own rule ({@link editorsPausedFrame}), mapped as the editor maps a source to a document ({@link isEditorOfDebugSource}). Asked by the stop note of {@link StudyWorkspace} when the editor reports a frame, for every stop, also one that waits for no hand-over, so a file the learner brought in front meanwhile is never taken for the stop's.
+   * @param sessionId - The debug session of the stop.
+   * @param uri - The document of a tab.
+   * @param platform - The operating system, which decides whether a file's case counts.
+   * @returns `true` once the adapter answered the stopped thread's frames and the editor's paused frame lies in that document; `false` before that, for another document, and for a session that went on, ended or never stopped.
+   * @example handOver.showsPausedFileOf('library-tests', settingsTestUri) // => true once the adapter answered the stop's top frame in settings.test.js
+   */
+  showsPausedFileOf(
+    sessionId: string,
+    uri: DocumentUriParts,
+    platform: NodeJS.Platform = process.platform,
+  ): boolean {
+    const source = this.latestStops.get(sessionId)?.pausedFrame()?.source
+    return (
+      source !== undefined &&
+      isEditorOfDebugSource(uri, source, sessionId, platform)
+    )
   }
 
   /**
@@ -135,9 +201,7 @@ export class StopKeyboardHandOver {
     if (editor === undefined) return undefined
     for (const [sessionId, held] of this.stops) {
       const source =
-        held.state === 'armed'
-          ? editorsPausedFrame(held.frames, held.reason)?.source
-          : undefined
+        held.state === 'armed' ? held.frames.pausedFrame()?.source : undefined
       // The first armed stop whose paused file the editor shows is the stop that opened it.
       if (
         source !== undefined &&
@@ -149,12 +213,13 @@ export class StopKeyboardHandOver {
   }
 
   /**
-   * Ends the stop of a session that went on or ended, so its next stop starts a new hand-over; the stops of other sessions stay as they are.
+   * Ends the stop of a session that went on or ended, with its latest stop's frames, so its next stop starts a new hand-over; the stops of other sessions stay as they are.
    * @param sessionId - The debug session that continued, stepped or ended.
    * @example handOver.disarm('live-next-browser')
    */
   disarm(sessionId: string): void {
     this.stops.delete(sessionId)
+    this.latestStops.delete(sessionId)
   }
 
   /**

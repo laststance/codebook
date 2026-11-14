@@ -84,8 +84,6 @@ interface FakeStackThread {
 }
 /** The stack frame the fake editor reports as Run and Debug's active stack item while a session is paused. */
 interface FakeStackFrame extends FakeStackThread {
-  /** A frame's session carries the configuration name the product reads to tell a Codebook run's session from the learner's own. */
-  session: FakeStackThread['session'] & { configuration: { name: string } }
   frameId: number
 }
 /** What the fake editor calls of a debug adapter tracker: the adapter's messages to the editor, the editor's messages to the adapter, and the two ends of a session (the editor stops the adapter; the adapter exits), as the editor's extension host does. */
@@ -2498,8 +2496,7 @@ export async function workspaceHarness(
    */
   function reportFrameOf(sessionId: string, threadId = 1): void {
     activeStackItem = {
-      // The configuration name is the session id, so a test names a Codebook run's session (`codebook node test <runId>`) or the learner's own.
-      session: { id: sessionId, configuration: { name: sessionId } },
+      session: { id: sessionId },
       threadId,
       frameId:
         stopTopFrameIds.get(`${sessionId}#${threadId}`) ?? nextStackFrameId++,

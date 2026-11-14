@@ -1729,6 +1729,7 @@ export class PresentationGuards {
     this.storedStops.forget(sessionId)
     this.host.sessionsWentOnAtMs.delete(sessionId)
     this.host.stopHandOver.disarm(sessionId)
+    this.host.sessionsStoppedBehindApplication.delete(sessionId)
     codebookStopLedger.forget(sessionId)
   }
 
