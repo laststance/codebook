@@ -1070,6 +1070,8 @@ export class StudyWorkspace {
     []
   /** The document URIs of the paused files ended runs left in front of their kept Application pane, each until its tab closes or the next run's attach reads it, so that attach can tell such a run tab from a learner's ({@link uncoverApplicationFromLeftoverStopTab}, Cycle 0132 task 8). */
   private readonly leftoverStopTabUris = new Set<string>()
+  /** The debug sessions whose stop was read while the kept Application pane stood in front of its group ({@link noteApplicationFrontAtStop}), until the stop's frame is reported ({@link noteStopFileCoveringApplication}) or the session ends. */
+  private readonly sessionsStoppedBehindApplication = new Set<string>()
   /** Every paused-file move in flight, whichever lease's watch started it, until its show and close end ({@link keepPausedSourceOutOfApplication}); a next run's uncover step waits for all of them, since a released lease's move still shows its file when the editor answers ({@link pausedSourceMovesSettled}, CodeRabbit, PR 334). */
   private readonly pausedSourceMovesInFlight = new Set<Promise<void>>()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
@@ -7859,6 +7861,31 @@ export class StudyWorkspace {
   }
 
   /**
+   * Remembers whether the kept Application pane stood in front of its group when a debug session's stop was read, before the editor opens the stop's file; called by the stop tracker ({@link PresentationGuards}) for every `stopped` event.
+   * Only a pane in front can be covered by the stop's file; {@link noteStopFileCoveringApplication} reads this at the stop's frame.
+   * @param sessionId - The session that stopped.
+   * @example this.noteApplicationFrontAtStop('library-tests') // the kept view fronts its group when Vitest stops
+   */
+  private noteApplicationFrontAtStop(sessionId: string): void {
+    if (this.app && this.applicationFrontsItsGroup(this.app))
+      this.sessionsStoppedBehindApplication.add(sessionId)
+    else this.sessionsStoppedBehindApplication.delete(sessionId)
+  }
+
+  /**
+   * Notes the stop file that came in front of the kept Application pane at a stop of a run that leases no pane, like the ended run's own leftover ({@link rememberLeftoverStopTab}), so the next extension run's attach brings the view back in front of it ({@link uncoverApplicationFromLeftoverStopTab}) instead of refusing it; called by the stop tracker ({@link PresentationGuards}) when the editor reports the frame of a stop.
+   * Cursor 3.30.14 opens a file that is open nowhere in the main editor's last active group, which is the Application's group unless the preparation left another one ({@link prepareStopFileDestination}), and a library test run (Vitest under js-debug) pauses in such files while the last extension run's view is kept (Cycle 0134 D22). Only the stop's own opening is noted: the pane stood in front when the stop was read ({@link noteApplicationFrontAtStop}) and an unedited `file:` tab covers it now ({@link coveringTabOfApplication}); a file the learner opens in that group at any other time is never noted, and the reveal's guard still refuses over it. A run with a lease has its paused-file watch and its own release note.
+   * @param sessionId - The session whose stop frame the editor reported.
+   * @example this.noteStopFileCoveringApplication('library-tests') // settings.test.ts covers the kept view
+   */
+  private noteStopFileCoveringApplication(sessionId: string): void {
+    const stoodInFront = this.sessionsStoppedBehindApplication.delete(sessionId)
+    if (!stoodInFront || this.leaseId !== undefined || !this.app) return
+    const covering = this.coveringTabOfApplication(this.viewColumnOf(this.app))
+    if (covering) this.leftoverStopTabUris.add(covering.uri.toString())
+  }
+
+  /**
    * Says whether the Application pane's group still holds a text tab of a document; read by the tab listener of {@link installReaders}, which keeps a leftover note while a copy of its file stays in that group.
    * @param uri - The document.
    * @returns `true` when the pane is open and its group holds a text tab of `uri`.
@@ -13519,6 +13546,8 @@ export class StudyWorkspace {
             retiredContextGroup,
             cancelEntryFocusReturn,
             chatReturn,
+            // Only a live run's lease places its stop files; an entry the learner or an agent opens does not.
+            placesStopFileDestination: forAgentRun && !manualEntry,
           }),
       )
       if (preparation.restoreFocus) owedChatReturn = undefined
@@ -13651,6 +13680,8 @@ export class StudyWorkspace {
       retiredContextGroup?: vscode.TabGroup
       cancelEntryFocusReturn?: () => void
       chatReturn?: ReturnType<StudyWorkspace['retainForeignTabFocus']>
+      /** `true` for a live run's lease: {@link reserveApplicationGroup} then makes the stop files' destination the main editor's last active group ({@link prepareStopFileDestination}). */
+      placesStopFileDestination?: boolean
     },
   ): Promise<{
     panel: vscode.WebviewPanel
@@ -13705,7 +13736,11 @@ export class StudyWorkspace {
     signal: AbortSignal | undefined,
     input: Pick<
       Parameters<StudyWorkspace['prepareApplicationLayout']>[1],
-      'lifetime' | 'assertCurrent' | 'cancelEntryFocusReturn' | 'chatReturn'
+      | 'lifetime'
+      | 'assertCurrent'
+      | 'cancelEntryFocusReturn'
+      | 'chatReturn'
+      | 'placesStopFileDestination'
     >,
     retiredIdentity: symbol | undefined,
   ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
@@ -13719,6 +13754,7 @@ export class StudyWorkspace {
         assertCurrent,
         cancelEntryFocusReturn,
         input.chatReturn,
+        input.placesStopFileDestination,
       )
     }
     // A completed retained layout needs no native work unless its Context was retired.
@@ -13785,6 +13821,7 @@ export class StudyWorkspace {
     assertCurrent: () => void,
     cancelEntryFocusReturn?: () => void,
     chatReturn?: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
+    placesStopFileDestination = false,
   ): Promise<Awaited<ReturnType<StudyWorkspace['prepareApplicationLayout']>>> {
     let restorePreparationFocus: Awaited<
       ReturnType<StudyWorkspace['prepareApplicationLayout']>
@@ -13870,6 +13907,13 @@ export class StudyWorkspace {
         ),
         assertCurrent,
       )
+      // A second editor part (Cursor's Agent chat) can send later shows into the main editor's last active group; the stop files' destination is made that group before the keyboard goes back (D25, D24).
+      const createdDestinationGroups =
+        placesStopFileDestination &&
+        !onlyEditorPart &&
+        !this.holdsChatEditorTab()
+          ? await this.prepareStopFileDestination(panel, signal, assertCurrent)
+          : 0
       const assertPlaced = this.retainPresentationPlacement(
         'reserveApplicationGroup/assertPlaced',
       )
@@ -13891,7 +13935,8 @@ export class StudyWorkspace {
       layout = await this.stackRowsLeftAtMinimum(layout, lifetime, assertPlaced)
       const expectedCount =
         grid.groups.length +
-        insertedMainGroups -
+        insertedMainGroups +
+        createdDestinationGroups -
         (retiredSource ? 1 : 0) -
         removedByMove
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
@@ -13948,6 +13993,88 @@ export class StudyWorkspace {
     } finally {
       endPlacing()
     }
+  }
+
+  /**
+   * Makes the group where a run's stop files open beside the new Application the main editor's last active group, by focusing it while the main editor still holds the keyboard; called by {@link reserveApplicationGroup} for a live run's lease before the keyboard goes back to the chat, when another editor part exists that is not VS Code's chat editor window.
+   * Cursor 3.30.14 opens a `showTextDocument` into another group of the main editor, or into another part's group, in the main editor's last active group while its Agent chat holds the keyboard, and the debugger reveals a file that is open nowhere there. The preparation focuses and locks the Application's group, so without this step that group stays the last active one and every stop file opens in front of the view (Cycle 0134 D25). When the main editor holds the Application's group only (Cursor closes the emptied first group at the insertion after Close All Editors), no destination exists, and `workbench.action.newGroupBelow` run from the Application's group creates one (D24).
+   * Nothing is run while the Application's tab is a preview (see the guard in the body). The group is focused by its column; a column past the eighth has no command, and nothing is run for it. A command the editor refuses, or a group that is gone, is reported on the layout line and the preparation goes on as before; a cancelled run throws its signal's reason.
+   * @param panel - The new Application pane, in its own group.
+   * @param signal - The run's cancellation.
+   * @param assertCurrent - Rejects newer intent after the accepted native effects drained.
+   * @returns How many main groups the step created: `1` for the destination below a lone Application group, else `0`.
+   * @throws The signal's reason when the run was cancelled, and what `assertCurrent` throws.
+   * @example const created = await this.prepareStopFileDestination(panel, signal, assertCurrent) // => 1 when only the Application's group stood in the main editor
+   */
+  private async prepareStopFileDestination(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal | undefined,
+    assertCurrent: () => void,
+  ): Promise<number> {
+    // A preview Application tab is kept by Keep Open, which acts on the active group and so needs the Application's group to stay the active one ({@link keepMovedApplicationTab}); without it a stop file's preview replaces the pane (Cursor 3.27.22, N64p2-F2). Cursor 3.30.14 leaves the tab kept (Step 0), so only the earlier behavior stays as it was.
+    if (this.uniqueApplicationTab()?.isPreview) return 0
+    const groupsBefore = vscode.window.tabGroups.all.length
+    try {
+      await this.focusOrCreateStopFileDestination(panel)
+    } catch (error) {
+      // A cancelled run keeps its signal's reason; any other refusal leaves the preparation as it was.
+      signal?.throwIfAborted()
+      this.report('layout', error)
+    }
+    assertCurrent()
+    const column = this.viewColumnOf(panel)
+    const destination = this.sourceGroupAfterApplication(column)
+    const identity = destination && this.editorGroupIdentities.get(destination)
+    // The editor reports the focused group after its command answered; the guards that follow must start after that report (as for the lock, N55-F4 H2-b).
+    if (identity) await this.waitForLateGroupActivation(identity, signal)
+    assertCurrent()
+    return Math.max(0, vscode.window.tabGroups.all.length - groupsBefore)
+  }
+
+  /**
+   * Says whether a group of the editor holds VS Code's chat editor tab, as the chat of a floating window does ({@link isChatEditorTabInput}); read by {@link reserveApplicationGroup}, which leaves the keyboard's return to such a chat alone.
+   * @returns `true` when any group's tab is a chat editor tab; `false` otherwise, and in a host without that tab kind.
+   * @example this.holdsChatEditorTab() // => true in VS Code with its chat moved into a new window
+   */
+  private holdsChatEditorTab(): boolean {
+    const chatInput = Reflect.get(vscode, 'TabInputChat')
+    return vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some((tab) => isChatEditorTabInput(tab.input, chatInput)),
+    )
+  }
+
+  /**
+   * Runs the commands of {@link prepareStopFileDestination}: focuses the learner's group beside the Application by its column, or creates one below a lone Application group; a column without a focus command and a main editor with more groups than the Application's run nothing.
+   * @param panel - The new Application pane.
+   * @throws What the editor's command throws, and the error of a group that did not appear.
+   * @example await this.focusOrCreateStopFileDestination(panel) // runs workbench.action.focusSecondEditorGroup
+   */
+  private async focusOrCreateStopFileDestination(
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
+    const applicationColumn = this.viewColumnOf(panel)
+    if (applicationColumn === undefined) return
+    const destination = this.sourceGroupAfterApplication(applicationColumn)
+    const command = focusEditorGroupCommand(
+      destination?.viewColumn ?? applicationColumn,
+    )
+    // The editor has no focus command past its eighth group: such a destination stays as it is.
+    if (!command) return
+    await this.executeEditorCommand(command)
+    if (destination) return
+    // No destination: only a main editor that holds the Application's group alone gets one, below it, from the group that now holds the keyboard.
+    const layout = await this.executeEditorCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    if (editorLayoutGroupCount(layout) !== 1) return
+    const groupsBefore = vscode.window.tabGroups.all.length
+    await this.executeEditorCommand('workbench.action.newGroupBelow')
+    if (vscode.window.tabGroups.all.length !== groupsBefore + 1)
+      throw new Error(
+        'The editor did not create a group beside the Application for the run’s stop files.',
+      )
+    // The group is one of the main editor's: the destination check of {@link sourceGroupAfterApplication} counts it.
+    if (this.applicationGroup) this.applicationGroup.count++
   }
 
   /**

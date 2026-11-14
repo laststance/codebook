@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
@@ -184,6 +186,63 @@ test('the fake editor reports the active and visible editors when a numbered tab
     // Assert
     assert.deepEqual(afterSwitch, ['active first.ts', 'visible'])
     assert.deepEqual(reports, afterSwitch)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the fake Cursor sending a show into another group, or into another part, to the main editor's last active group while the Agent chat holds the keyboard, and honoring the same show once the main editor holds the keyboard or the requested group is the last active one, as Cursor 3.30.14 did in Cycle 0134 Step 0; fails_when=the model honors every requested column, so a test of the stop files' destination passes although Cursor opens them in the Application's group, or it redirects a show of the last active group too; why_new=Cycle 0134 D25 (Cursor opened an extension run's stop files in front of its view); seam=the harness's redirectShowsBesideChatToLastActiveGroup, fake showTextDocument and focus commands; no_claim=Cursor's rule for every column it redirects (one native show into column 1 with column 2 last active was honored; the model redirects it), or the timing of its focus reports
+test('the fake Cursor opens a show beside the chat in the main editor’s last active group and honors it after a focus command', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.focusMutableDraft('first.ts', 1)
+    harness.focusMutableDraft('second.ts', 2)
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    const chat = harness.addSeparateEditorPart()
+    for (const name of [
+      'redirected.ts',
+      'honored-after-first-focus.ts',
+      'honored-after-second-focus.ts',
+      'beyond-the-main-groups.ts',
+    ])
+      await writeFile(join(harness.directory, name), 'export {}\n')
+    const show = async (name: string, viewColumn: number): Promise<void> => {
+      await harness.editor.window.showTextDocument(
+        harness.editor.Uri.file(join(harness.directory, name)),
+        { viewColumn, preserveFocus: true, preview: false },
+      )
+    }
+    const columnHolding = (name: string): number | undefined =>
+      harness.groups.find((group) =>
+        group.tabs.some((tab) => tab.label === name),
+      )?.viewColumn
+    const { commands } = harness.editor
+
+    // Act
+    // The main editor's first group was the last active one when the chat took the keyboard.
+    await commands.executeCommand('workbench.action.focusFirstEditorGroup')
+    chat.focus()
+    await show('redirected.ts', 2)
+    const stopFileColumn = harness.debuggerOpensStopFile('unopened-stop.ts', 2)
+    // The main editor holds the keyboard: the same show is honored.
+    await commands.executeCommand('workbench.action.focusFirstEditorGroup')
+    await show('honored-after-first-focus.ts', 2)
+    // The second group is the last active one when the chat takes the keyboard back.
+    await commands.executeCommand('workbench.action.focusSecondEditorGroup')
+    chat.focus()
+    await show('honored-after-second-focus.ts', 2)
+    // A column past the main editor's groups, which Cursor opens in its Agent part first, ends in the last active group too.
+    await show('beyond-the-main-groups.ts', 9)
+
+    // Assert
+    assert.equal(columnHolding('redirected.ts'), 1)
+    assert.equal(stopFileColumn, 1)
+    assert.equal(columnHolding('honored-after-first-focus.ts'), 2)
+    assert.equal(columnHolding('honored-after-second-focus.ts'), 2)
+    assert.equal(columnHolding('beyond-the-main-groups.ts'), 2)
+    assert.equal(harness.lastActiveMainColumn(), 2)
   } finally {
     await harness.close()
   }

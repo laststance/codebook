@@ -47,6 +47,8 @@ export interface PresentationGuardsHost {
   readonly debuggerGaveEditorKeyboard: StudyWorkspace['debuggerGaveEditorKeyboard']
   readonly recordingActive: StudyWorkspace['recordingActive']
   readonly announcedStops: StudyWorkspace['announcedStops']
+  readonly noteApplicationFrontAtStop: StudyWorkspace['noteApplicationFrontAtStop']
+  readonly noteStopFileCoveringApplication: StudyWorkspace['noteStopFileCoveringApplication']
   readonly applicationGroupChange: StudyWorkspace['applicationGroupChange']
   readonly holdsDebuggersFileOfPause: StudyWorkspace['holdsDebuggersFileOfPause']
   readonly focusPresentationPanel: StudyWorkspace['focusPresentationPanel']
@@ -238,6 +240,10 @@ export function createPresentationGuardsHost(
     get announcedStops() {
       return workspace['announcedStops']
     },
+    noteApplicationFrontAtStop: (...args): void =>
+      workspace['noteApplicationFrontAtStop'](...args),
+    noteStopFileCoveringApplication: (...args): void =>
+      workspace['noteStopFileCoveringApplication'](...args),
     get applicationGroupChange() {
       return workspace['applicationGroupChange']
     },

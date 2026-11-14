@@ -271,7 +271,9 @@ test('the next extension run after Close All Editors opens its view while the ea
       })),
       [
         { column: 1, tabs: ['codebook · Application close-al'], locked: true },
+        // The group Codebook created below the view for the run's stop files (Cycle 0134 D24).
         { column: 2, tabs: [], locked: false },
+        { column: 3, tabs: [], locked: false },
       ],
     )
     assert.equal(harness.reader['errors'].size, 0)
@@ -390,7 +392,9 @@ test('the next extension run in Cursor after Close All Editors opens its view wh
       })),
       [
         { column: 1, tabs: ['codebook · Application replaced'], locked: true },
+        // The group Codebook created below the view for the run's stop files (Cycle 0134 D24).
         { column: 2, tabs: [], locked: false },
+        { column: 3, tabs: [], locked: false },
       ],
     )
     assert.equal(harness.reader['errors'].size, 0)
@@ -457,8 +461,10 @@ test('the next extension run in Cursor after Close All Editors and a new Agent c
       })),
       [
         { column: 1, tabs: ['codebook · Application new-chat'], locked: true },
+        // The group Codebook created below the view for the run's stop files (Cycle 0134 D24).
+        { column: 2, tabs: [], locked: false },
         {
-          column: 2,
+          column: 3,
           tabs: ['Codebook submit request detail'],
           locked: false,
         },
@@ -471,7 +477,7 @@ test('the next extension run in Cursor after Close All Editors and a new Agent c
   }
 })
 
-// protects=Cycle 0133 D12 (/ship QA revalidation R1b, Cursor 3.30.14): after Close All Editors left no learner's group, the next extension run's stop file is not shown into the Agent part's group beside the view, and the view stays in front of its group after the attach; fails_when=the column after the view counts as the learner's group although it lies beyond the main editor's measured groups, so the stop file lands in the Agent part (natively) or in front of the view (the fake redirects a show aimed at the chat part to the active group), and the paused-file watch then moves files between the view's group and the Agent part until the view is refused with "Application ownership changed"; no_claim=where the debugger opens the first pause's file when no learner's group exists (it may cover the view, the frozen D13 boundary) and Cursor's own Close All Editors (the explicit closes and replaceGroupObjectsOnTabChanges stand in for it)
+// protects=Cycle 0133 D12 (/ship QA revalidation R1b, Cursor 3.30.14; Cycle 0134 D24 now creates the learner's group the stop file opens in): after Close All Editors left no learner's group, the next extension run's stop file is not shown into the Agent part's group beside the view, and the view stays in front of its group after the attach; fails_when=the column after the view counts as the learner's group although it lies beyond the main editor's measured groups, so the stop file lands in the Agent part (natively) or in front of the view (the fake redirects a show aimed at the chat part to the active group), and the paused-file watch then moves files between the view's group and the Agent part until the view is refused with "Application ownership changed"; no_claim=where the debugger opens the first pause's file when no learner's group exists (it may cover the view, the frozen D13 boundary) and Cursor's own Close All Editors (the explicit closes and replaceGroupObjectsOnTabChanges stand in for it)
 test('the next extension run in Cursor after Close All Editors shows no stop file in the Agent part and keeps its view in front', async () => {
   // Arrange: an ended run kept its view; then every editor closed in Cursor 3.30.14's order, which leaves no learner's group beside the Agent part.
   const harness = await workspaceHarness()
@@ -512,8 +518,8 @@ test('the next extension run in Cursor after Close All Editors shows no stop fil
       'popup',
     )
 
-    // Assert: no group shows the stop file, the view stands in front of its group in column 1, and the Agent part's group still holds no tab.
-    assert.equal(groupShowing(harness, 'settings.js'), undefined)
+    // Assert: the stop file stands in the group Codebook created below the view (Cycle 0134 D24), never in the Agent part's group; the view stands in front of its group in column 1.
+    assert.equal(groupShowing(harness, 'settings.js')?.viewColumn, 2)
     assert.deepEqual(
       harness.groups.map((group) => ({
         column: group.viewColumn,
@@ -526,7 +532,8 @@ test('the next extension run in Cursor after Close All Editors shows no stop fil
           tabs: ['codebook · Application agent-st'],
           front: 'codebook · Application agent-st',
         },
-        { column: 2, tabs: [], front: undefined },
+        { column: 2, tabs: ['settings.js'], front: 'settings.js' },
+        { column: 3, tabs: [], front: undefined },
       ],
     )
     second.close()
@@ -2977,6 +2984,217 @@ test('the next extension run does not reveal the Application pane in place when 
     )
     assert.equal(harness.reader['errors'].size, 0)
     view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D25 (Step 0 probe-nsx-1, Cursor 3.30.14): the first extension run in a fresh window opens its stop file beside its view before the first click, and the view stays in front at the first pause, although Cursor sends every show into another group to the main editor's last active group while its Agent chat holds the keyboard; fails_when=the preparation hands the keyboard back to the chat with the Application's group as the last active one, so the show of the stop file lands in the view's group and the view is refused at the first pause with "Application ownership changed"; no_claim=Cursor's own redirect rule for every column (redirectShowsBesideChatToLastActiveGroup models the observed cases) and the debugger's real reveal (debuggerOpensStopFile stands in for it)
+test('the first extension run in a new Cursor window opens its stop files beside its view before the first click and keeps the view in front at the first pause', async () => {
+  // Arrange: one empty main group, the Agent part beside it, and the chat holding the keyboard, as a new window starts.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // The window's one group is empty: the fake opens a draft there unless it is emptied.
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const view = await openView(harness, 'new-window-run-1', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+
+    // Act: the run attaches its surface, and the debugger's first pause reveals the stop file, then the viewport brings the view forward.
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    harness.debuggerOpensStopFile('settings.js', applicationColumn)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    const stopFileGroup = groupShowing(harness, 'settings.js')
+    assert.equal(stopFileGroup?.viewColumn, applicationColumn + 1)
+    assert.equal(
+      stopFileGroup?.tabs.find((tab) => tab.label === 'settings.js')?.isPreview,
+      false,
+    )
+    assert.deepEqual(
+      applicationGroupOf(harness, applicationColumn)?.tabs.map(
+        (tab) => tab.label,
+      ),
+      ['codebook · Application new-wind'],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors']], [])
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D24 (Step 0 U4, Cursor 3.30.14): when Close All Editors left the earlier Application group alone in the main editor and Cursor closed the emptied first group at the next run's insertion, the preparation creates the learner's group below the view, so the run's stop file opens beside the view; fails_when=no destination exists for the stop files, so no stop file opens beside the view and a paused file Cursor opens lands in the view's group; no_claim=Cursor's own newGroupBelow and Close All Editors (the fake models them) and that Cursor keeps the new empty group when the learner's next command comes
+test('the next extension run after Close All Editors creates a group below its view and opens its stop file there while the main editor held only the view’s group', async () => {
+  // Arrange: the earlier run's view is kept in the main editor's only group, which is empty and locked, beside the Agent part with no tab.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.closeEmptiedGroupAtInsertion()
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'only-group-run-1', [])
+    first.end('The first run ended.')
+    first.close()
+    await closeAllEditors(harness, chat)
+    // The learner opens a new Agent chat and types in it.
+    chat.openChatTab('Codebook submit request detail')
+    chat.focus()
+
+    // Act: the next run opens its view, attaches its surface, and the debugger's first pause reveals the stop file.
+    const second = await openView(harness, 'only-group-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    harness.debuggerOpensStopFile('settings.js', applicationColumn)
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the view's group, the new group holding the stop file, and the Agent part's group after them.
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        locked: Boolean(group.locked),
+      })),
+      [
+        {
+          column: 1,
+          tabs: ['codebook · Application only-gro'],
+          locked: true,
+        },
+        { column: 2, tabs: ['settings.js'], locked: false },
+        { column: 3, tabs: ['Codebook submit request detail'], locked: false },
+      ],
+    )
+    assert.equal(chat.focused(), true)
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 (Step 0 probe-nsx-2, Cursor 3.30.14): after an extension run ended and kept its view, a library test run that leases no pane pauses in a file that is open nowhere, and Cursor opens that file beside the view, so the next extension run shows its view; fails_when=the kept view's group is still the main editor's last active group when the test run pauses, so the paused file opens in front of the view and the next run's view is refused with "Application ownership changed"; no_claim=the test run's own debugger (debuggerOpensStopFile stands in for js-debug's reveal) and Cursor's redirect rule beyond the observed cases
+test('the next extension run shows its view after a library test run paused in a file that was open nowhere while the earlier view was kept', async () => {
+  // Arrange: a first extension run ended and kept its view; the Agent chat holds the keyboard.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'settings.test.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    // The window's one group is empty: the fake opens a draft there unless it is emptied.
+    harness.groups[0]!.tabs = []
+    harness.groups[0]!.activeTab = undefined
+    harness.redirectShowsBesideChatToLastActiveGroup()
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const first = await openView(harness, 'library-test-run-1', ['settings.js'])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    first.end('The first run ended.')
+    first.close()
+
+    // Act: the library test run pauses in a file nobody opened; then the next extension run starts and attaches.
+    harness.debuggerOpensStopFile('settings.test.js', applicationColumn)
+    const second = await openView(harness, 'library-test-run-2', [
+      'settings.js',
+    ])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    assert.equal(
+      groupShowing(harness, 'settings.test.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application library-',
+    )
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D22 safety net (Step 0 probe-nsx-2): a stop file of a run that leases no pane, which still comes in front of the kept view at that run's own debugger stop, is noted like the ended run's own leftover, so the next extension run's view comes forward over it; fails_when=the stop tracker notes no such file, so the next run's attach has no note for the covering tab and refuses its view with "Application ownership changed"; no_claim=why the editor opens the file in the view's group (the fake opens it there, without the redirect model) and the stops of a run that has its own pane
+test('the next extension run shows its view over the stop file a library test run opened in front of the kept view at its own stop', async () => {
+  // Arrange: a first extension run ended and kept its view in front of its group.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    await writeRepositoryFile(harness, 'settings.test.js')
+    await writeRepositoryFile(harness, 'popup.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const first = await openView(harness, 'covered-run-1', ['settings.js'])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    first.end('The first run ended.')
+    first.close()
+    // The library test run stops: the editor reads the adapter's stop, then opens the paused file in the view's group and reports the frame.
+    harness.pauseDebugger({
+      session: 'library-tests',
+      staysInBackground: true,
+      pausedFile: 'settings.test.js',
+    })
+    harness.openPausedFileInLockedGroup('settings.test.js', applicationColumn)
+    harness.reportStopFrame('library-tests')
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'settings.test.js',
+    )
+    const second = await openView(harness, 'covered-run-2', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+
+    // Act
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application covered-',
+    )
+    assert.deepEqual([...harness.reader['errors']], [])
+    second.close()
   } finally {
     await harness.close()
   }

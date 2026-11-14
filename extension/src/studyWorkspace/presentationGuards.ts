@@ -1749,6 +1749,8 @@ export class PresentationGuards {
       isDoubtful: stop.keepsFocus,
       behindSessionId: this.sessionOfFrameShownBeside(sessionId),
     })
+    // Before the editor opens the stop's file: a kept Application pane in front can be covered by it (Cycle 0134 D22).
+    this.host.noteApplicationFrontAtStop(sessionId)
     if (this.isLearnersStopFromEditor(stop.reason))
       this.host.keyboardOutsideEditors = undefined
     // The stop waits for the keyboard hand-over, which the editor's report of its frame resolves; a stop whose adapter asked to keep the focus never does.
@@ -1848,6 +1850,8 @@ export class PresentationGuards {
     // What the learner did before this item says nothing about it: the editor opened the frame's file before it reported the frame.
     this.host.learnerChoseEditorAtFrame = false
     this.previewTabOfFrame = this.previewTabInFront()
+    if (isStackFrameItem(item) && this.host.frameCameWithStop)
+      this.host.noteStopFileCoveringApplication(item.session.id)
     if (this.host.frameCameWithStop) this.judgeKeyboardAtPauseBegin()
     else if (isStackFrameItem(item)) this.host.leavePauseToLearner()
     else this.judgeKeyboardAtPauseEnd()
