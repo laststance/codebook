@@ -8260,27 +8260,27 @@ export class StudyWorkspace {
   /**
    * Finds the learner's group right after the Application's, where a run's stop file is shown outside the Application's group; read by {@link coveringSourceMove} and {@link openRunStopFilesBesideApplication}.
    * @param applicationColumn - The Application pane's column; `undefined` when it has none.
-   * @returns The group; `undefined` when there is none, it lies beyond the main editor's measured groups (another part), or it is a chat part or holds a Codebook pane.
+   * @returns The group; `undefined` when there is none, it is an empty group beyond the main editor's measured groups (maybe another part's), or it is a chat part or holds a Codebook pane.
    * @example this.sourceGroupAfterApplication(1)?.viewColumn // => 2
    */
   private sourceGroupAfterApplication(
     applicationColumn: vscode.ViewColumn | undefined,
   ): vscode.TabGroup | undefined {
     const mainCount = this.applicationGroup?.count
-    // A column beyond the main editor's measured groups belongs to another part (Cursor's Agent part, listed with no tab after Close All Editors; a floating window), which is never a destination (Cycle 0133 D12).
-    if (
-      applicationColumn !== undefined &&
-      mainCount !== undefined &&
-      applicationColumn + 1 > mainCount
-    )
-      return undefined
     const group = vscode.window.tabGroups.all.find(
       (candidate) =>
         applicationColumn !== undefined &&
         candidate.viewColumn === applicationColumn + 1,
     )
+    // An empty group beyond the main editor's measured groups may be another part's (Cursor's Agent part, listed with no tab after Close All Editors), which is never a destination; a group holding the learner's editors stands in the main editor whatever the recorded count (Cycle 0133 D12).
+    const isEmptyBeyondMainGroups =
+      applicationColumn !== undefined &&
+      mainCount !== undefined &&
+      applicationColumn + 1 > mainCount &&
+      !group?.tabs.length
     if (
       !group ||
+      isEmptyBeyondMainGroups ||
       !(
         group.tabs.length === 0 ||
         holdsEditorTab(group, editorTabInputKinds(vscode))

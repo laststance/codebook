@@ -796,6 +796,48 @@ test('a paused file Cursor opens in front of the extension view moves to the sou
   }
 })
 
+// protects=Cycle 0133 /ship review (final native reader, Medium): the learner's group beside the extension view that holds the learner's editors stays the paused file's destination when the recorded main-editor count is lower than the groups now standing (a group the learner added after the view was prepared); fails_when=every group beyond the recorded count is refused as another part's, so the paused file stays in front of the extension view; no_claim=an empty group the learner adds after the preparation (it is refused, since it looks like Cursor's Agent part with no tab) and how a count goes stale (the test lowers it by hand)
+test('a paused file moves into the learner’s group holding files beside the extension view when the recorded main-editor count is stale', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const view = await openView(harness, 'stale-count-run-1')
+    const pane = harness.reader['app']
+    assert.ok(pane?.viewColumn)
+    const applicationColumn = pane.viewColumn
+    const applicationGroupRecord = harness.reader['applicationGroup']
+    assert.ok(applicationGroupRecord)
+    assert.equal(
+      groupShowing(harness, 'popup.js')?.viewColumn,
+      applicationColumn + 1,
+    )
+    // The record counts only the view's own group, as one taken before the learner's group was added.
+    applicationGroupRecord.count = applicationColumn
+
+    // Act
+    harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+
+    // Assert
+    await waitUntil(
+      () =>
+        groupShowing(harness, 'settings.js')?.viewColumn ===
+        applicationColumn + 1,
+      'the paused file moves into the learner’s group',
+      5_000,
+    )
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application stale-co',
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=N62 attempt 2 (Cycle 0062 task 2, Cursor 3.27.22): a stop's paused file that Cursor opens kept (no preview) in the locked Application group moves out too, and stays kept in the group beside the view; fails_when=only a preview moves, so the kept paused file covers the extension view for the rest of the run, as N62 attempt 2 recorded (preview at 265.0 s, kept at 265.5 s); no_claim=why Cursor keeps the tab
 test('a paused file Cursor keeps in front of the extension view moves to the source group as a kept tab', async () => {
   // Arrange
