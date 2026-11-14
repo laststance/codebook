@@ -281,6 +281,111 @@ test('the next extension run after Close All Editors opens its view while the ea
   }
 })
 
+// protects=Cycle 0133 D12 (/ship QA revalidation R1, Cursor 3.30.14): in a window whose only main group is empty and whose Agent part is listed with no tab, so no group has a tab, an extension run opens its view in a new group above the empty one, although Cursor answers the insertion and the lock with every group a new object; fails_when=the group tracker gives every replaced empty group a new identity, so the earlier groups read as gone and the run's view is refused with "The editor did not create one empty owned Application group." or "Original editor groups changed while preparing the Application."; no_claim=why Cursor keeps this group at the insertion (a group the fake did not empty by a close stays, as after a window reload) and where the editor gives the keyboard
+test('an extension run in Cursor opens its view when no group has a tab and Cursor answers each group change with new group objects', async () => {
+  // Arrange: the main editor's one group is empty and the Agent part lists no tab, as after Close All Editors and a reload.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.replaceGroupObjectsOnTabChanges()
+    const chat = harness.addSeparateEditorPart()
+    chat.closeChatTab()
+    await harness.editor.window.tabGroups.close(
+      [...harness.groups[0]!.tabs],
+      true,
+    )
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.length,
+      })),
+      [
+        { column: 1, tabs: 0 },
+        { column: 2, tabs: 0 },
+      ],
+    )
+
+    // Act
+    const view = await openView(harness, 'no-tab-run-1', [])
+
+    // Assert: the view stands in its own locked group in column 1; the earlier empty group follows, then the Agent part's group.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.equal(application?.viewColumn, 1)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        locked: Boolean(group.locked),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application no-tab-r'], locked: true },
+        { column: 2, tabs: [], locked: false },
+        { column: 3, tabs: [], locked: false },
+      ],
+    )
+    assert.equal(harness.reader['errors'].size, 0)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0133 D12 (/ship QA smoke S3, Cursor 3.30.14): after Close All Editors left the earlier run's empty Application group alone beside Cursor's Agent part with no tab, the next extension run opens its view, although Cursor answers every group change with new group objects and closes the old empty group when the new group comes above it; fails_when=the group tracker loses the identities of the empty groups, or the creation check expects one group more than before, so the run's view is refused with "Original editor groups changed while preparing the Application." or "The editor did not create one empty owned Application group."; no_claim=Cursor's own Close All Editors and New Group Above (closeAllEditors, replaceGroupObjectsOnTabChanges and closeEmptiedGroupAtInsertion stand in for them) and where the editor gives the keyboard
+test('the next extension run in Cursor after Close All Editors opens its view while Cursor replaces every group object and closes the old empty group', async () => {
+  // Arrange: an ended run kept its view; then every editor closed, which leaves the locked Application group empty and alone in the main editor.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.closeEmptiedGroupAtInsertion()
+    const chat = harness.addSeparateEditorPart()
+    const first = await openView(harness, 'replaced-run-1', [])
+    first.end('Clicked Add note; the saved title read "Bookmark Notes".')
+    first.close()
+    await closeAllEditors(harness, chat)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.length,
+        locked: Boolean(group.locked),
+      })),
+      [
+        { column: 1, tabs: 0, locked: true },
+        { column: 2, tabs: 0, locked: false },
+      ],
+    )
+
+    // Act
+    const second = await openView(harness, 'replaced-run-2', [])
+
+    // Assert: the next run's view stands in its own locked group in column 1; the editor closed the old group, and the Agent part's group follows with no tab.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.equal(application?.viewColumn, 1)
+    assert.deepEqual(
+      harness.groups.map((group) => ({
+        column: group.viewColumn,
+        tabs: group.tabs.map((tab) => tab.label),
+        locked: Boolean(group.locked),
+      })),
+      [
+        { column: 1, tabs: ['codebook · Application replaced'], locked: true },
+        { column: 2, tabs: [], locked: false },
+      ],
+    )
+    assert.equal(harness.reader['errors'].size, 0)
+    second.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0133 D12 (VS Code shape, no other editor part): after Close All Editors left the earlier run's empty locked Application group as the editor's only group, the next extension run opens its view at once and the old group stays below it as an empty group, still locked; fails_when=the only-group check counts a single listed group as no proof and closes the group, so the editor keeps it and the run waits 5 s for a removal that never comes ("Timed out waiting for owned Codebook group removal"); no_claim=VS Code's own Close All Editors (the fake closes the tabs and keeps the locked group) and where the editor gives the keyboard
 test('the next extension run after Close All Editors opens its view when the earlier Application group is the editor’s only group', async () => {
   // Arrange: an ended run kept its view; then every tab closed, which leaves the locked Application group empty and alone, with no other editor part.

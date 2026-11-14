@@ -75,6 +75,8 @@ export class PresentationGuards {
   private observedEditorGroups: {
     group: vscode.TabGroup
     column: vscode.ViewColumn
+    /** How many tabs the group held when it was recorded; an object the editor keeps can change its tabs afterwards. */
+    tabCount: number
   }[] = []
 
   /**
@@ -3096,6 +3098,12 @@ export class PresentationGuards {
         return undefined
       return soleEmptyGroupBefore(group)
     }
+    // With no tab in any group, before or after the event, the groups that stay keep their order (Cycle 0133 D12).
+    const orderedEmptyPairs = this.orderedEmptySurvivors(
+      event,
+      current,
+      previous,
+    )
     for (const group of current) {
       if (event?.opened.includes(group)) {
         this.host.editorGroupIdentities.set(group, Symbol())
@@ -3115,7 +3123,8 @@ export class PresentationGuards {
       }
       const emptyMatch =
         this.groupEmptiedByOwnRemoval(group, previous, isOwnRemovalReport) ??
-        emptySurvivor(group)
+        emptySurvivor(group) ??
+        orderedEmptyPairs?.get(group)
       if (emptyMatch) {
         this.host.editorGroupIdentities.set(
           group,
@@ -3155,7 +3164,57 @@ export class PresentationGuards {
     this.observedEditorGroups = current.map((group) => ({
       group,
       column: group.viewColumn,
+      tabCount: group.tabs.length,
     }))
+  }
+
+  /**
+   * Pairs each group an event replaced with the earlier group it still is, by the groups' order, when no group holds a tab before or after the event; asked by {@link observeEditorGroups} for a group that is neither opened nor recognized otherwise.
+   * Cursor 3.30.14 lists its Agent part with no tab after **View: Close All Editors**, so a window whose main groups are empty too has nothing to recognize its groups by, and Cursor answers an insertion, a close or a lock with every group a new object (Cycle 0133 D12, `/ship` QA smoke). The extension host names the groups an event opened and closed; the others keep their order, since inserting or closing a group moves no other group. With no tab anywhere, a wrong pairing could take nothing of the learner's.
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @returns
+   * - The earlier entry of each current group that stayed, by group object, in column order
+   * - `undefined` when there is no event, a group holds a tab, the groups that stayed differ in number, or a group object that stayed is not in its own place
+   * @example this.orderedEmptySurvivors(event, current, previous)?.get(group) // => the earlier first group, now in column 2 below the group New Group Above added
+   */
+  private orderedEmptySurvivors(
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: PresentationGuards['observedEditorGroups'],
+  ):
+    | Map<vscode.TabGroup, PresentationGuards['observedEditorGroups'][number]>
+    | undefined {
+    // The earlier groups count as they were recorded: groups that held Codebook's panes then never pass for empty ones.
+    if (
+      !event ||
+      current.some((group) => group.tabs.length) ||
+      previous.some((entry) => entry.tabCount || entry.group.tabs.length)
+    )
+      return undefined
+    const stayedBefore = previous
+      .filter((entry) => !event.closed.includes(entry.group))
+      .toSorted((left, right) => left.column - right.column)
+    const stayedNow = current
+      .filter((group) => !event.opened.includes(group))
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)
+    if (stayedBefore.length !== stayedNow.length) return undefined
+    const pairs = new Map<
+      vscode.TabGroup,
+      PresentationGuards['observedEditorGroups'][number]
+    >()
+    for (const [index, group] of stayedNow.entries()) {
+      const entry = stayedBefore[index]!
+      // A group object the event kept must stand in its own place, or the order did not hold.
+      if (
+        previous.some((candidate) => candidate.group === group) &&
+        entry.group !== group
+      )
+        return undefined
+      pairs.set(group, entry)
+    }
+    return pairs
   }
 
   /**
