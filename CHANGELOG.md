@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.132.0] - 2026-11-15 (development candidate)
+
+Cycle 0134 ([Issue #335](https://github.com/laststance/codebook/issues/335)), a bug-fix cycle for the three defects that Cycle 0133 carried, and the ones its own checks found. **In Cursor, a Chrome-extension run now keeps its Application view and its recording after a library test run, after you close and reopen the Study workspace, and after View: Close All Editors, and the Agent chat gets its keyboard back.** On laststance/nsx's WXT popup and options page, Cursor's Agent chat ran the extension in a new window, then ran the library's tests and the page again, then ran it after **Codebook: Close Study Workspace** and **Codebook: Open Study Workspace**, ran a test after another reopen, and ran it after **View: Close All Tabs** with a new Agent chat. Every run showed its view, recorded its frames and opened its paused files beside the view, and the chat's input held the keyboard at each pause. VS Code's Copilot Chat ran the same kinds of runs, including one after a reopened Study, and each saved replay reopened after a window reload in both editors.
+
+### Fixed
+- **A run's paused files open beside the Application view, not in front of it,** for the first extension run in a new window and after a library test run while the last run's view is kept. Codebook makes the group beside the view the place where Cursor opens them, so the view is no longer refused with `Application ownership changed.`.
+- **After View: Close All Editors, the run's paused files still have a place beside the view**, also when Cursor closed the emptied group: Codebook creates a group below the view for them.
+- **After you close and reopen the Study workspace, the next extension run shows its view and records its frames.** Codebook takes the first group's keyboard through the Study's Application pane and no longer brings one of your files in front of it. The view also stays shown when the run starts while the Study is still switching over to it.
+- **A library test run after that reopen opens its paused file beside the view**, instead of replacing the Application view, also when the file was open nowhere.
+- **The Agent chat gets its keyboard back** after such a run's view is placed, and after an agent's Study restore while the editor named an empty group. A click or key of yours in an editor meanwhile still wins.
+- A paused file of a test run that still comes in front of the kept view at that run's own stop is noted, and the next run's view comes forward over it. A file you opened there yourself, or a file your own debug session stops in, is never noted.
+
+**Compatibility.** No MCP API, study format or skill change.
+
 ## [0.2.131.0] - 2026-11-14 (development candidate)
 
 Cycle 0133 ([Issue #332](https://github.com/laststance/codebook/issues/332)), a bug-fix cycle for the three defects that Cycle 0132 carried. **In Cursor, a Chrome-extension run now pauses with its Application view still in front, and after Close All Editors the next run opens its view instead of refusing it.** On laststance/nsx's WXT popup, Cursor's Agent chat ran the popup after a window reload and after Close All Tabs with a new Agent chat, and each run showed its view; the run after Close All Tabs paused at three stops and recorded its frames. VS Code's Copilot Chat ran it twice in one window, each time with its view; its run straight after Close All Editors did not run, because the chat's Study restore was refused until **Codebook: Open Study Workspace**. These checks found two more defects, which the next cycle fixes. In Cursor a library test run's paused file can cover a kept extension view, and after **Codebook: Open Study Workspace** the next extension run can lose its view.

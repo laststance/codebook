@@ -27,7 +27,10 @@ export interface PresentationGuardsHost {
   readonly arranging: StudyWorkspace['arranging']
   readonly assertPresentationAdmission: StudyWorkspace['assertPresentationAdmission']
   readonly mainEditorFocusBorrows: StudyWorkspace['mainEditorFocusBorrows']
+  readonly stopFileDestinationFocuses: StudyWorkspace['stopFileDestinationFocuses']
+  readonly stopFileDestinationColumn: StudyWorkspace['stopFileDestinationColumn']
   readonly namesAnotherEditorPartsTab: StudyWorkspace['namesAnotherEditorPartsTab']
+  readonly chatPartHasKeyboard: StudyWorkspace['chatPartHasKeyboard']
   readonly arrange: StudyWorkspace['arrange']
   readonly showTextDocumentNoted: StudyWorkspace['showTextDocumentNoted']
   readonly isCursorHost: StudyWorkspace['isCursorHost']
@@ -47,6 +50,9 @@ export interface PresentationGuardsHost {
   readonly debuggerGaveEditorKeyboard: StudyWorkspace['debuggerGaveEditorKeyboard']
   readonly recordingActive: StudyWorkspace['recordingActive']
   readonly announcedStops: StudyWorkspace['announcedStops']
+  readonly noteApplicationFrontAtStop: StudyWorkspace['noteApplicationFrontAtStop']
+  readonly noteStopFileCoveringApplication: StudyWorkspace['noteStopFileCoveringApplication']
+  readonly sessionsStoppedBehindApplication: StudyWorkspace['sessionsStoppedBehindApplication']
   readonly applicationGroupChange: StudyWorkspace['applicationGroupChange']
   readonly holdsDebuggersFileOfPause: StudyWorkspace['holdsDebuggersFileOfPause']
   readonly focusPresentationPanel: StudyWorkspace['focusPresentationPanel']
@@ -203,8 +209,14 @@ export function createPresentationGuardsHost(
     get mainEditorFocusBorrows() {
       return workspace['mainEditorFocusBorrows']
     },
+    get stopFileDestinationFocuses() {
+      return workspace['stopFileDestinationFocuses']
+    },
+    stopFileDestinationColumn: (...args) =>
+      workspace['stopFileDestinationColumn'](...args),
     namesAnotherEditorPartsTab: (...args) =>
       workspace['namesAnotherEditorPartsTab'](...args),
+    chatPartHasKeyboard: (...args) => workspace['chatPartHasKeyboard'](...args),
     arrange: (...args): Promise<void> => workspace['arrange'](...args),
     showTextDocumentNoted: (...args) =>
       workspace['showTextDocumentNoted'](...args),
@@ -237,6 +249,13 @@ export function createPresentationGuardsHost(
     },
     get announcedStops() {
       return workspace['announcedStops']
+    },
+    noteApplicationFrontAtStop: (...args): void =>
+      workspace['noteApplicationFrontAtStop'](...args),
+    noteStopFileCoveringApplication: (...args): void =>
+      workspace['noteStopFileCoveringApplication'](...args),
+    get sessionsStoppedBehindApplication() {
+      return workspace['sessionsStoppedBehindApplication']
     },
     get applicationGroupChange() {
       return workspace['applicationGroupChange']

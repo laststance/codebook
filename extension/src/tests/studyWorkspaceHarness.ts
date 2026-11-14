@@ -696,6 +696,12 @@ export async function workspaceHarness(
   /** See `redirectEveryTextDocumentShow`. */
   let lastingTextDocumentShowRedirect:
     { uri: string; viewColumn: number } | undefined
+  /** See `redirectShowsBesideChatToLastActiveGroup`. */
+  let redirectsShowsToLastActiveMainGroup = false
+  /** See `failNewGroupBelow`. */
+  let newGroupBelowFails = false
+  /** The main editor's last active group, as {@link noteLastActiveMainGroup} followed it; only read by the model of `redirectShowsBesideChatToLastActiveGroup` and by `lastActiveMainColumn`. */
+  let lastActiveMainGroup: (typeof groups)[number] | undefined
   /** See `holdNextTabCloseEffect`. */
   let heldTabCloseEffect:
     { entered: () => void; wait: Promise<void> } | undefined
@@ -1559,6 +1565,10 @@ export async function workspaceHarness(
   let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
   let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  /** Set by `namesStudyPaneGroupAfterFocusAgent`. */
+  let namesStudyPaneGroupAfterFocusAgentFlag = false
+  // Cursor 3.30.14 (Cycle 0134 D23): while a Codebook pane in another group holds the keyboard, `workbench.action.focusFirstEditorGroup` leaves that pane's group active and the first group's front pane inactive; see `ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard`.
+  let ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag = false
   // The editor ran a numbered group focus command (second to eighth group) and left the active group where it was; see `ignoreNumberedGroupFocusCommands`.
   let ignoresNumberedGroupFocusCommandsFlag = false
   // An editor that lists every webview tab under the main-thread view type (`mainThreadWebview-<viewType>`), Codebook's own panes included; see `reportsMainThreadWebviewViewTypes`.
@@ -2646,6 +2656,8 @@ export async function workspaceHarness(
     group.activeTab = opened.tab
     activeTabGroup = group
     leaveChatForMainEditor()
+    // The learner's selection makes this group the main editor's last active one.
+    noteLastActiveMainGroup()
     keyboardOnBody = false
     keyboardInView = false
     activeTextEditorChanged(opened.editor)
@@ -2926,16 +2938,95 @@ export async function workspaceHarness(
     )
   }
   /**
+   * Remembers the main editor's active group while the main editor holds the keyboard, so the model of `redirectShowsBesideChatToLastActiveGroup` knows which group is its last active one once the chat has taken the keyboard; called after every native command and every show that takes the keyboard, and before the chat takes it.
+   * @example noteLastActiveMainGroup() // the group the focus command made active is remembered
+   */
+  function noteLastActiveMainGroup(): void {
+    if (
+      separateEditorPart?.focused ||
+      activeTabGroup === separateEditorPart?.group
+    )
+      return
+    lastActiveMainGroup = activeTabGroup
+  }
+  /**
+   * Follows the remembered last active main group through the group objects the model replaced since; the main editor's first group when none was remembered.
+   * @returns The live group, or `undefined` for a model without a main group.
+   * @example lastActiveMainGroupNow()?.viewColumn // => 2 after workbench.action.focusSecondEditorGroup
+   */
+  function lastActiveMainGroupNow(): (typeof groups)[number] | undefined {
+    const remembered =
+      lastActiveMainGroup && currentGroupOf(lastActiveMainGroup)
+    return (
+      remembered ??
+      groups.find(
+        (group) =>
+          group !== separateEditorPart?.group && group.viewColumn === 1,
+      )
+    )
+  }
+  /**
+   * Adds the empty main-editor group below the active group, as `workbench.action.newGroupBelow` does with the main editor holding the keyboard (Cursor 3.30.14, Cycle 0134 Step 0 U4: from the first group it created a group below it, which became the main editor's last active group): the new group takes the next column, every later group (the Agent part's) moves one column on, the new group is the active one, and no text editor is active. The model splits a main editor of one group only.
+   * @example insertNativeGroupBelowActiveGroup() // column 2 is the new empty group; the Agent part's group moves to column 3
+   */
+  function insertNativeGroupBelowActiveGroup(): void {
+    // The command acts on the active part's active group: a chat that is still the active part would get the group.
+    assert.equal(Boolean(separateEditorPart?.lastActive), false)
+    const mainGroups = groups.filter(
+      (group) => group !== separateEditorPart?.group,
+    )
+    assert.equal(
+      mainGroups.length,
+      1,
+      'the model of newGroupBelow splits a main editor of one group only',
+    )
+    const column = activeTabGroup.viewColumn + 1
+    for (const group of groups)
+      if (group.viewColumn >= column) group.viewColumn++
+    for (const current of panels)
+      current.viewColumn = groups.find((group) =>
+        group.tabs.includes(current.nativeTab),
+      )?.viewColumn
+    editorLayout = { orientation: 1, groups: [{}, {}] }
+    const created: (typeof groups)[number] = { viewColumn: column, tabs: [] }
+    groups.push(created)
+    groups.sort((left, right) => left.viewColumn - right.viewColumn)
+    activeTabGroup = created
+    innerFocusedPanel = undefined
+    // The new empty group's own element takes the keyboard from the editor area, which this model counts as the page body.
+    if (!keyboardInView && !keyboardInSideBar) keyboardOnBody = true
+    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([], created)
+    else
+      changedGroups({
+        opened: [created],
+        closed: [],
+        changed: groups.filter((group) => group !== created),
+      })
+    activeTextEditorChanged(undefined)
+  }
+  /**
    * Gives Cursor's chat input the keyboard as its Focus Agent does: the chat's part is the active part and has the keyboard, no tab or group changes and the named group stays the named one, no text editor is active any more, and layout reads answer the chat part's grid; run by the fake editor for `composer.focusComposer`, at once or, with `focusAgentLater`, after the command answered. Cursor 3.23.12 answered so from a file of the main editor and from the chat (C61 c61-702-probe steps 2 and 5: no active text editor, the file's group 1 still named, the chat part's grid; Cycle 0046 row 702).
    * @example focusChatInput()
    */
   function focusChatInput(): void {
     if (!separateEditorPart) return
+    noteLastActiveMainGroup()
     separateEditorPart.focused = true
     separateEditorPart.lastActive = true
     keyboardOnBody = false
     keyboardInView = false
     innerFocusedPanel = undefined
+    // Cursor goes on naming a main group while the chat input has the keyboard; this model names the Study pane's group, with no event.
+    if (namesStudyPaneGroupAfterFocusAgentFlag) {
+      const studyGroup = groups.find((group) =>
+        [...panels].some(
+          (panel) =>
+            panel.kind === 'codebook.studyContext' &&
+            group.tabs.includes(panel.nativeTab),
+        ),
+      )
+      if (studyGroup) staleNamedGroup = studyGroup
+    }
     // The chat has the keyboard again: a pane revealed beside it no longer reports itself active (Cursor 3.27.22 model).
     if (ignoresFirstGroupFocusCommandBesideChatFlag) {
       heldActivePane = undefined
@@ -2958,6 +3049,7 @@ export async function workspaceHarness(
    * @example focusSeparatePartGroup()
    */
   function focusSeparatePartGroup(): void {
+    noteLastActiveMainGroup()
     const previous = activeTabGroup
     activeTabGroup = separateEditorPart!.group
     separateEditorPart!.focused = true
@@ -4406,6 +4498,22 @@ export async function workspaceHarness(
           layout?: unknown,
           contextValue?: unknown,
         ): Promise<unknown> {
+          try {
+            return await this.executeCommandUnsampled(
+              name,
+              layout,
+              contextValue,
+            )
+          } finally {
+            // A focus command or a group insertion can have made another main group the active one.
+            noteLastActiveMainGroup()
+          }
+        },
+        async executeCommandUnsampled(
+          name: string,
+          layout?: unknown,
+          contextValue?: unknown,
+        ): Promise<unknown> {
           // Cursor's chat input takes the keyboard of an earlier Focus Agent now, before this command reaches the editor.
           if (commandsUntilAgentFocus > 0 && --commandsUntilAgentFocus === 0)
             focusChatInput()
@@ -4552,6 +4660,12 @@ export async function workspaceHarness(
                 newGroupActivationDelayMs,
               )
             }
+            return
+          }
+          if (name === 'workbench.action.newGroupBelow') {
+            if (newGroupBelowFails)
+              throw new Error('workbench.action.newGroupBelow is unavailable')
+            insertNativeGroupBelowActiveGroup()
             return
           }
           if (name === 'workbench.action.lockEditorGroup') {
@@ -4760,6 +4874,13 @@ export async function workspaceHarness(
               separateEditorPart.lastActive)
           ) {
             // Cursor 3.27.22 measured in the Agent chat: the command resolved without any editor event.
+          } else if (
+            name === 'workbench.action.focusFirstEditorGroup' &&
+            ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag &&
+            activeTabGroup.viewColumn !== 1 &&
+            activeTabGroup.activeTab?.input instanceof TabInputWebview
+          ) {
+            // Cursor 3.30.14: the command resolved without any editor event; the pane in the active group keeps the keyboard.
           } else if (name === 'workbench.action.focusFirstEditorGroup') {
             // The first group is the main window's: focusing it makes that window the focused one.
             if (floatingEditorWindow) floatingEditorWindow.active = false
@@ -5304,6 +5425,18 @@ export async function workspaceHarness(
               viewColumn: lastingTextDocumentShowRedirect.viewColumn,
             }
           }
+          // In the model of `redirectShowsBesideChatToLastActiveGroup`, a show into any group but the main editor's last active one lands in that group while the chat has the keyboard.
+          if (
+            redirectsShowsToLastActiveMainGroup &&
+            separateEditorPart?.focused &&
+            !separateEditorPart.floatingVsCodeChat &&
+            options &&
+            options.viewColumn >= 1
+          ) {
+            const lastActive = lastActiveMainGroupNow()
+            if (lastActive && options.viewColumn !== lastActive.viewColumn)
+              options = { ...options, viewColumn: lastActive.viewColumn }
+          }
           textDocumentShows.push({
             name: basename(sourceDocument.uri.path),
             viewColumn: options?.viewColumn,
@@ -5371,6 +5504,7 @@ export async function workspaceHarness(
             activeTabGroup = group
             innerFocusedPanel = undefined
             leaveChatForMainEditor()
+            noteLastActiveMainGroup()
             // A text document shown with the focus takes the keyboard from the page body.
             keyboardOnBody = false
             keyboardInView = false
@@ -6335,6 +6469,8 @@ export async function workspaceHarness(
       activeTabGroup = group
       // The learner's click ends the chat's keyboard ownership and puts the keyboard in the pane's document, as the reveal path does.
       leaveChatForMainEditor()
+      // The pane's group is the main editor's last active one from now on.
+      noteLastActiveMainGroup()
       keyboardOnBody = false
       keyboardInView = false
       innerFocusedPanel = kind
@@ -7159,11 +7295,20 @@ export async function workspaceHarness(
         ),
       )
       if (!holder) {
-        openAnnouncedTextTab(filename, applicationColumn, {
+        // In the model of `redirectShowsBesideChatToLastActiveGroup`, Cursor opens a file that is open nowhere as a preview in the main editor's last active group while the chat has the keyboard (Cycle 0134 Step 0, observation 2); with the main editor holding the keyboard it opens in the active group.
+        const redirected =
+          redirectsShowsToLastActiveMainGroup &&
+          separateEditorPart?.focused === true
+        const openedColumn = redirectsShowsToLastActiveMainGroup
+          ? ((redirected
+              ? lastActiveMainGroupNow()?.viewColumn
+              : activeTabGroup.viewColumn) ?? applicationColumn)
+          : applicationColumn
+        openAnnouncedTextTab(filename, openedColumn, {
           isPreview: true,
           isDirty: false,
         })
-        return applicationColumn
+        return openedColumn
       }
       // Revealed where it stands: the tab comes to the front of its group, the keyboard stays.
       const tab = holder.tabs.find(
@@ -7681,6 +7826,25 @@ export async function workspaceHarness(
       replacesGroupObjectsOnTabChanges = true
     },
     /**
+     * Makes the fake editor name the group of Codebook's Study pane, with no group event, after the Agent chat's input took the keyboard through Focus Agent (`composer.focusComposer`): the editor then names a main group while the chat has the keyboard, and the tab it names is a Study pane's, so a return captured at that moment remembers no tab to give the keyboard back to (the shape Cursor 3.30.14's native check of Cycle 0134 N2 round 2 met: the entry's recapture found none; which group Cursor named there is not known, the fake only models the consequence).
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.namesStudyPaneGroupAfterFocusAgent()
+     * chat.focus()
+     */
+    namesStudyPaneGroupAfterFocusAgent(): void {
+      namesStudyPaneGroupAfterFocusAgentFlag = true
+    },
+    /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` as Cursor 3.30.14 was seen to while a Codebook pane in another group holds the keyboard (Cycle 0134 D23): the command resolves with no event, the pane's group stays the active one, and the pane in front of the first group reports no focus until it is revealed with the keyboard.
+     * @example
+     * harness.activatePaneByHand('codebook.studyContext')
+     * harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+     */
+    ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard(): void {
+      ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag = true
+    },
+    /**
      * Makes the fake editor answer the numbered focus commands of its second to eighth group (`workbench.action.focusSecondEditorGroup` and the others) without changing the active group, as an editor does that has not taken the focus when the command resolves; the commands are still logged. The numbered tab commands (`workbench.action.openEditorAtIndexN`) keep acting on the active group.
      * @example harness.ignoreNumberedGroupFocusCommands()
      */
@@ -7876,6 +8040,7 @@ export async function workspaceHarness(
         layout: () => structuredClone(separateEditorPart?.layout),
         focused: () => separateEditorPart?.focused,
         focus(): void {
+          noteLastActiveMainGroup()
           separateEditorPart!.focused = true
           separateEditorPart!.lastActive = true
           keyboardOnBody = false
@@ -8185,6 +8350,28 @@ export async function workspaceHarness(
      */
     redirectNextTextDocumentShow(uri: string, viewColumn: number): void {
       redirectedTextDocumentShow = { uri, viewColumn }
+    },
+    /**
+     * Models Cursor 3.30.14's redirect of shows while its Agent chat holds the keyboard (Cycle 0134 Step 0): a `showTextDocument` into a main-editor group that is not the main editor's last active group, or into another part's group, opens in that last active group instead; the debugger's reveal of a file that is open nowhere opens it as a preview there (`debuggerOpensStopFile`). The last active group follows the focus commands, the groups a command creates and the shows that take the keyboard, and stays while the chat has the keyboard. Native observations it pins: a show into column 2 while column 1 was last active opened in column 1; the same show right after `workbench.action.focusFirstEditorGroup` (the main editor holding the keyboard), and after `workbench.action.focusSecondEditorGroup` before the keyboard went back to the chat, opened in column 2. Off unless a test calls it.
+     * @example harness.redirectShowsBesideChatToLastActiveGroup()
+     */
+    redirectShowsBesideChatToLastActiveGroup(): void {
+      redirectsShowsToLastActiveMainGroup = true
+    },
+    /**
+     * Makes `workbench.action.newGroupBelow` reject, as an editor that cannot split the group does, so no group is created below the Application's. A test of the destination's creation that wrongly leaves the main editor with more than one group fails in the model's own assertion; a broken precondition otherwise surfaces only through the group list the test compares.
+     * @example harness.failNewGroupBelow()
+     */
+    failNewGroupBelow(): void {
+      newGroupBelowFails = true
+    },
+    /**
+     * Names the column of the main editor's last active group, as the model of `redirectShowsBesideChatToLastActiveGroup` follows it.
+     * @returns The column; `undefined` for a model without a main group.
+     * @example harness.lastActiveMainColumn() // => 1 after the Application's preparation handed the keyboard back to the chat
+     */
+    lastActiveMainColumn(): number | undefined {
+      return lastActiveMainGroupNow()?.viewColumn
     },
     /**
      * Makes the editor show every `showTextDocument` of a document in one column, whatever column is asked, as Cursor 3.30.8 reveals a run's stop file in front of the Application while its Agent chat holds the keyboard (Cycle 0132 task 8: "The editor showed … in column 1, not outside the Application group", twice, for a paused file).
