@@ -16422,8 +16422,8 @@ export class StudyWorkspace {
       'focusFirstGroupThroughApplicationPane/assertGroups',
       false,
     )
-    // In place and with the keyboard: no column changes, so no learner file leaves its tab.
-    pane.reveal(undefined, false)
+    // In place and with the keyboard: no column changes, so no learner file leaves its tab; noted as Codebook's own effect for the placement guards.
+    this.revealPane(pane, undefined, false)
     await waitUntil(
       () => this.isApplicationPaneActiveInFirstGroup(),
       'the Application pane in the first group to report itself active',
