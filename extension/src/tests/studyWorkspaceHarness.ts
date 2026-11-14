@@ -1559,6 +1559,8 @@ export async function workspaceHarness(
   let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
   let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  // Cursor 3.30.14 (Cycle 0134 D23): while a Codebook pane in another group holds the keyboard, `workbench.action.focusFirstEditorGroup` leaves that pane's group active and the first group's front pane inactive; see `ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard`.
+  let ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag = false
   // The editor ran a numbered group focus command (second to eighth group) and left the active group where it was; see `ignoreNumberedGroupFocusCommands`.
   let ignoresNumberedGroupFocusCommandsFlag = false
   // An editor that lists every webview tab under the main-thread view type (`mainThreadWebview-<viewType>`), Codebook's own panes included; see `reportsMainThreadWebviewViewTypes`.
@@ -4760,6 +4762,13 @@ export async function workspaceHarness(
               separateEditorPart.lastActive)
           ) {
             // Cursor 3.27.22 measured in the Agent chat: the command resolved without any editor event.
+          } else if (
+            name === 'workbench.action.focusFirstEditorGroup' &&
+            ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag &&
+            activeTabGroup.viewColumn !== 1 &&
+            activeTabGroup.activeTab?.input instanceof TabInputWebview
+          ) {
+            // Cursor 3.30.14: the command resolved without any editor event; the pane in the active group keeps the keyboard.
           } else if (name === 'workbench.action.focusFirstEditorGroup') {
             // The first group is the main window's: focusing it makes that window the focused one.
             if (floatingEditorWindow) floatingEditorWindow.active = false
@@ -7679,6 +7688,15 @@ export async function workspaceHarness(
     ignoresFirstGroupFocusCommandBesideChat(): void {
       ignoresFirstGroupFocusCommandBesideChatFlag = true
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` as Cursor 3.30.14 was seen to while a Codebook pane in another group holds the keyboard (Cycle 0134 D23): the command resolves with no event, the pane's group stays the active one, and the pane in front of the first group reports no focus until it is revealed with the keyboard.
+     * @example
+     * harness.activatePaneByHand('codebook.studyContext')
+     * harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+     */
+    ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard(): void {
+      ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag = true
     },
     /**
      * Makes the fake editor answer the numbered focus commands of its second to eighth group (`workbench.action.focusSecondEditorGroup` and the others) without changing the active group, as an editor does that has not taken the focus when the command resolves; the commands are still logged. The numbered tab commands (`workbench.action.openEditorAtIndexN`) keep acting on the active group.

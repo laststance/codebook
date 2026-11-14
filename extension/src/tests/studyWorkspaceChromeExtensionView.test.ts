@@ -292,6 +292,8 @@ test('an extension run in Cursor opens its view when no group has a tab and Curs
     chat.closeChatTab()
     for (const tab of [...harness.groups[0]!.tabs]) harness.closeTabByHand(tab)
     harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.useCursorGroupWrappers()
     assert.deepEqual(
       harness.groups.map((group) => ({
         column: group.viewColumn,
@@ -2858,6 +2860,123 @@ test('the status item of an extension run shows its phase text and its learning 
       command: 'codebook.saveLearningReplay',
       arguments: [`${harness.service.instanceId}_${record.id}`],
     })
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 (Cursor 3.30.14, Cycle 0133 N2 run 122e9d6c): after Close Study Workspace and Open Study Workspace left the Study's Application pane in front of the learner's files in the first group, with the Study pane holding the keyboard, the next extension run shows its view, and its preparation takes the first group's keyboard through the Application pane without showing a learner file in column 1 with the keyboard; the learner's files stay as tabs behind the pane; fails_when=the preparation shows the retained learner file in front of the Study's Application pane (Cursor then reports the pane hidden and the placement guard refuses the run's view with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."); no_claim=that this fake reproduces the refusal itself (it shows the learner file and no guard fires, so the test names the show), Cursor's own placement of the reopened Application pane (the reopen after a close stands in for it) and where the editor gives the keyboard (ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard stands in for Cursor 3.30.14's focus command)
+test('the next extension run after Close and Open Study Workspace shows its view without putting a learner file in front of the Study’s Application pane in the first group', async () => {
+  // Arrange: the Study is open beside Cursor's Agent part, closed and opened again; the reopened Application pane stands in front of both learner files in the first group while the Study pane holds the keyboard.
+  const harness = await workspaceHarness(false)
+  const refusals: string[] = []
+  const shows: {
+    filename: string
+    column?: number
+    preserveFocus?: boolean
+  }[] = []
+  try {
+    harness.reader.diagnostics = {
+      log: (entry): void => {
+        if (entry.surface === 'presentation:placement-refused')
+          refusals.push(entry.surface)
+      },
+      show: () => undefined,
+    }
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+    readerSeams(harness).stopOwnTimer()
+    const showTextDocument = harness.editor.window.showTextDocument
+    harness.editor.window.showTextDocument = async (...args) => {
+      const [document, options] = args
+      shows.push({
+        filename:
+          ('uri' in document ? document.uri : document).path
+            .split('/')
+            .at(-1) ?? '',
+        column: options?.viewColumn,
+        preserveFocus: options?.preserveFocus,
+      })
+      return showTextDocument(...args)
+    }
+    assert.equal(harness.groups[0]?.activeTab?.label, 'codebook · Application')
+
+    // Act
+    const view = await openView(harness, 'reopened-study-run-1', [])
+
+    // Assert
+    assert.deepEqual(
+      shows.filter((show) => show.column === 1 && !show.preserveFocus),
+      [],
+    )
+    assert.deepEqual(refusals, [])
+    assert.equal(harness.reader['errors'].size, 0)
+    const learnerGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) => tab.label === 'App.tsx'),
+    )
+    assert.deepEqual(
+      learnerGroup?.tabs
+        .map((tab) => tab.label)
+        .filter((label) =>
+          ['buildStockRequestConfig.ts', 'App.tsx'].includes(label),
+        ),
+      ['buildStockRequestConfig.ts', 'App.tsx'],
+    )
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 rule 4: when the first group's front tab is the learner's own file, not the Study's Application pane, the extension run's preparation does not take the first group's keyboard through the Application pane, so the pane is not revealed in place with the keyboard behind the learner's file and the run's view is shown; fails_when=the pane route of the preparation covers a first group whose front tab is a learner file, so the Application pane is revealed over the file the learner chose; no_claim=that the learner-file borrow still shows the file (the existing Cursor chat tests of the borrow, such as "starting a run after idle Live selection preserves the separate chat keyboard without rearranging its prepared panes", run through it), and Cursor's own focus events
+test('the next extension run does not reveal the Application pane in place when a learner file, not the pane, is in front of the first group', async () => {
+  // Arrange: the reopened Study's Application pane shares the first group, the learner has brought App.tsx in front of it, and the Study pane holds the keyboard.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    const learnerFile = harness.groups[0]!.tabs.find(
+      (tab) => tab.label === 'App.tsx',
+    )
+    assert.ok(learnerFile)
+    harness.groups[0]!.activeTab = learnerFile
+    harness.activatePaneByHand('codebook.studyContext')
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    const inPlaceReveals: (boolean | undefined)[] = []
+    const reveal = application.reveal.bind(application)
+    application.reveal = (column, preserveFocus): void => {
+      if (column === undefined) inPlaceReveals.push(preserveFocus)
+      reveal(column, preserveFocus)
+    }
+
+    // Act
+    const view = await openView(harness, 'learner-file-front-run-1', [])
+
+    // Assert
+    assert.deepEqual(
+      inPlaceReveals.filter((preserveFocus) => !preserveFocus),
+      [],
+    )
+    assert.equal(harness.reader['errors'].size, 0)
+    view.close()
   } finally {
     await harness.close()
   }

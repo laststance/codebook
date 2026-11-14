@@ -16168,9 +16168,27 @@ export class StudyWorkspace {
       }
       assertCurrent()
       sourceReceipt?.assertRetained()
-      const borrow = this.preparationSourceToBorrow(primary)
-      // A known existing source, rather than a guessed pane focus, supplies the main-part acknowledgement beside Cursor chat.
+      const borrow = this.preparationSourceToBorrow(primary),
+        // Only while a Codebook pane in another group holds the keyboard, the shape of the reopened Study (Cycle 0134 D23); beside Cursor's chat the borrow below stays.
+        paneInFront = this.isCodebookPaneInput(
+          vscode.window.tabGroups.activeTabGroup.activeTab?.input,
+          ...STUDY_PANE_KINDS,
+        )
+          ? this.applicationPaneInFrontOfFirstGroup()
+          : undefined
+      // The Study's own Application pane in front of the first group takes the keyboard through itself; a learner file shown over it would hide the pane and the placement guard would refuse the run (Cycle 0134 D23).
       if (
+        takesKeyboard &&
+        !this.hasMainEditorFocus(vscode.ViewColumn.One) &&
+        !sourceReceipt &&
+        paneInFront
+      )
+        await this.focusFirstGroupThroughApplicationPane(
+          paneInFront,
+          assertCurrent,
+        )
+      // A known existing source, rather than a guessed pane focus, supplies the main-part acknowledgement beside Cursor chat.
+      else if (
         takesKeyboard &&
         !this.hasMainEditorFocus(vscode.ViewColumn.One) &&
         !sourceReceipt &&
@@ -16361,6 +16379,64 @@ export class StudyWorkspace {
   }
 
   /**
+   * Finds the Study's own Application pane when its tab is the one in front of the first main group, which is where a reopened Study leaves it in the learner's group; asked by {@link focusApplicationSourceGroup} to take the first group's keyboard through that pane.
+   * @returns The Application pane, or `undefined` when it is not the pane in front of column 1 (a learner file or no pane is), so the learner's source borrow stays as it is.
+   * @example const pane = this.applicationPaneInFrontOfFirstGroup() // => the Application pane after Open Study Workspace put it in front of the learner's files
+   */
+  private applicationPaneInFrontOfFirstGroup():
+    vscode.WebviewPanel | undefined {
+    const pane = this.app,
+      front = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === vscode.ViewColumn.One,
+      )?.activeTab
+    return pane?.viewColumn === vscode.ViewColumn.One &&
+      front?.input instanceof vscode.TabInputWebview &&
+      isCodebookPaneViewType(front.input.viewType, 'codebook.scopedBrowser')
+      ? pane
+      : undefined
+  }
+
+  /**
+   * Tells that the Application pane in front of the first group reports itself active there; the pane's own report is the acknowledgement of {@link hasApplicationPreparationFocus} when Cursor names another group.
+   * @returns `true` when the Application pane is in front of column 1 and reports itself active; `false` otherwise.
+   * @example this.isApplicationPaneActiveInFirstGroup() // => true once the pane in front of the first group holds the keyboard
+   */
+  private isApplicationPaneActiveInFirstGroup(): boolean {
+    return Boolean(this.applicationPaneInFrontOfFirstGroup()?.active)
+  }
+
+  /**
+   * Takes the first group's keyboard through the Application pane in front of it, for {@link focusApplicationSourceGroup} when `workbench.action.focusFirstEditorGroup` left that pane without a focus report.
+   * The pane is revealed in place with the keyboard, so the learner's files stay behind it, and the wait for its own active report ends at {@link PRESENTATION_READY_TIMEOUT_MS}; a pane that never reports leaves {@link hasApplicationPreparationFocus} to refuse the preparation.
+   * @param pane - The Application pane in front of the first group.
+   * @param assertCurrent - The queue's lifetime/cancellation guard, checked after the reveal and the wait.
+   * @throws When the learner changed a group or pane meanwhile ({@link retainPresentationPlacement}), or the preparation was cancelled.
+   * @example await this.focusFirstGroupThroughApplicationPane(pane, assertCurrent)
+   */
+  private async focusFirstGroupThroughApplicationPane(
+    pane: vscode.WebviewPanel,
+    assertCurrent: () => void,
+  ): Promise<void> {
+    if (this.isApplicationPaneActiveInFirstGroup()) return
+    const assertGroups = this.retainPresentationPlacement(
+      'focusFirstGroupThroughApplicationPane/assertGroups',
+      false,
+    )
+    // In place and with the keyboard: no column changes, so no learner file leaves its tab.
+    pane.reveal(undefined, false)
+    await waitUntil(
+      () => this.isApplicationPaneActiveInFirstGroup(),
+      'the Application pane in the first group to report itself active',
+      PRESENTATION_READY_TIMEOUT_MS,
+    ).catch((error: unknown) => {
+      // No report: the caller's focus check refuses with its own sentence.
+      if (!(error instanceof WaitTimeoutError)) throw error
+    })
+    assertCurrent()
+    assertGroups()
+  }
+
+  /**
    * Confirms the native focus result for {@link focusApplicationSourceGroup} before it returns an allocation guard.
    * @param primary - The original first group, required by the empty single-part fallback.
    * @param mainCount - Main groups measured before the issued focus command.
@@ -16377,6 +16453,8 @@ export class StudyWorkspace {
     return (
       this.hasMainEditorFocus(vscode.ViewColumn.One) ||
       Boolean(sourceReceipt?.acknowledged()) ||
+      // The Study's Application pane in front of the first group reports itself active there, while Cursor may go on naming another group.
+      this.isApplicationPaneActiveInFirstGroup() ||
       (mainCount === vscode.window.tabGroups.all.length &&
         primary === vscode.window.tabGroups.activeTabGroup &&
         !primary.activeTab) ||
