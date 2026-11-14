@@ -109,6 +109,46 @@ test('the Application pane of an extension run released without a last view is c
   }
 })
 
+// protects=Cycle 0133 D13 (Cycle 0132 E3, observation 2): an extension run's stop file that is open nowhere stands as a kept tab in the learner's group beside the view before the run's first click, so the debugger's first pause reveals that editor instead of opening the file in the view's group; fails_when=the lease opens only a repository run's declared stop files, so an extension run's stop file stays unopened and Cursor shows it in front of the view at the first pause; no_claim=the real Cursor's answer to the debugger's first show (native N1); the fake editor stands in for the editor's groups, tabs and keyboard
+test('an extension run opens its stop file as a kept tab beside its view before the first pause without taking the keyboard', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('popup.js', 1)
+    const chat = harness.addSeparateEditorPart()
+    chat.focus()
+    const view = await openView(harness, 'stop-file-run-1', ['settings.js'])
+    const viewport = harness.reader['viewport']
+    assert.ok(viewport)
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    // Act: the run attaches its surface, which is all that happens before its first click.
+    await viewport.attach(
+      SILENT_SCREENCAST,
+      new AbortController().signal,
+      'popup',
+    )
+    // Assert
+    const stopFileGroup = groupShowing(harness, 'settings.js')
+    assert.equal(stopFileGroup?.viewColumn, applicationColumn + 1)
+    assert.equal(
+      stopFileGroup?.tabs.find((tab) => tab.label === 'settings.js')?.isPreview,
+      false,
+    )
+    assert.equal(
+      applicationGroupOf(harness, applicationColumn)?.activeTab?.label,
+      'codebook · Application stop-fil',
+    )
+    assert.equal(chat.focused(), true)
+    view.close()
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=N61-1 (Cycle 0062 task 3): an extension run started from Cursor's Agent chat, with the first main editor group empty, opens its Application view and leaves the chat its keyboard; fails_when=the lease refuses with "Focus the first main source group before preparing the Application." because the Agent chat's tab group is counted beside the main groups; no_claim=Cursor's native focus events (N62)
 test('an extension run started from Cursor\u2019s Agent chat with an empty first group opens its Application view and keeps the chat\u2019s keyboard', async () => {
   // Arrange

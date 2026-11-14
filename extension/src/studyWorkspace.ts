@@ -5732,6 +5732,8 @@ export class StudyWorkspace {
       let isFinal = false
       // The run's stop files, known once its configuration resolves (before that nothing moves).
       let stopFilePaths = new Set<string>()
+      // The same files as the run resolved them, for opening ({@link leaseApplicationViewport}'s `runStopFiles`); the canonical set above is for comparing only.
+      let resolvedStopFiles: readonly string[] = []
       const viewport = await this.leaseApplicationViewport({
         runId,
         // The extension run journals its own events; the pane's delivery detail has no reader.
@@ -5744,12 +5746,15 @@ export class StudyWorkspace {
         keepsEndedPane: () => isFinal,
         movesPausedSourceOut: (fsPath) =>
           stopFilePaths.has(canonicalFsPath(fsPath)),
+        // An extension run reports its stop files through its identity, not through a repository run's record.
+        runStopFiles: () => resolvedStopFiles,
       })
       return new ChromeExtensionViewportView(viewport, {
         onFinal: () => {
           isFinal = true
         },
         onStopFiles: (stopFiles) => {
+          resolvedStopFiles = [...stopFiles]
           stopFilePaths = new Set(
             stopFiles.map((file) => canonicalFsPath(file)),
           )
@@ -7708,7 +7713,7 @@ export class StudyWorkspace {
    * Prepares the Application pane for one run and wraps it in a leased {@link BrowserViewport}; called by {@link presentation}'s `createViewport` (repository, server and test runs) and `createChromeExtensionViewport`.
    * The lease's release closes the pane of an ended run, except when `keepsEndedPane` says the run reached its last content: an ended extension run keeps its pane and last frame, without the keyboard, until a next run's view replaces it or the learner closes the tab (ER22). A retired lease never touches a newer one's pane.
    * The pane an ended run keeps may still be covered by that run's paused file: the release notes it ({@link rememberLeftoverStopTab}) and the next run's attach brings the pane back in front of it ({@link uncoverApplicationFromLeftoverStopTab}).
-   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question and `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files.
+   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question, `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files, and `runStopFiles` (an extension run's lease): the stop files, as the run resolved them, that {@link openRunStopFilesBesideApplication} opens beside the view; a lease without it opens its repository run's declared stop files.
    * @returns The viewport, already registered as the workspace's live one.
    * @throws What {@link prepareApplicationGroup} throws when no safe pane can be prepared.
    * @example const viewport = await this.leaseApplicationViewport({ runId, record, fail, scenario, signal })
@@ -7722,6 +7727,7 @@ export class StudyWorkspace {
     observer?: ViewportRecordingObserver
     keepsEndedPane?: () => boolean
     movesPausedSourceOut?: (fsPath: string) => boolean
+    runStopFiles?: () => readonly string[]
   }): Promise<BrowserViewport> {
     const { runId, keepsEndedPane } = input
     // A new run may replace a closed reader, but an open recording keeps its independently selected film.
@@ -7758,16 +7764,25 @@ export class StudyWorkspace {
         // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
         keepsPaneOpen: async (attachSignal) => {
           await this.keepMovedApplicationTab(panel, attachSignal)
+          // The files an ended run left in front of the kept pane, read before the uncover step clears the notes: that step leaves them behind the pane, and opening them beside it again would let Cursor show them in the pane's group once more (Cycle 0132 task 8).
+          const leftoverFiles = new Set(this.leftoverStopTabUris)
           // An earlier run's paused file can still cover the kept pane; the run's first reveal would refuse over it (Cycle 0132 task 8).
           await this.uncoverApplicationFromLeftoverStopTab(
             panel,
             attachSignal,
             (uri) => pausedSourceWatch?.leave(uri),
           )
+          // Read at this moment: a run declares its stops when its configuration resolves, after its lease exists. Written as the run resolved them (the canonical form is for comparing only); only this lease's run, never an earlier run's or another study's.
           await this.openRunStopFilesBesideApplication(
             panel,
             attachSignal,
-            runId,
+            [
+              ...(input.runStopFiles?.() ??
+                this.declaredRunStopFiles((path) => path, runId)),
+            ].filter(
+              (stopFile) =>
+                !leftoverFiles.has(vscode.Uri.file(stopFile).toString()),
+            ),
           )
         },
         // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
@@ -8169,18 +8184,16 @@ export class StudyWorkspace {
    * A file already open in a group other than the Application's is skipped. A file open only in the Application's own group is opened again beside it on purpose: the debugger must find the file outside the Application's group. Only a text tab in front of a destination group is restored afterwards ({@link restoreFrontTabsAfterStopFiles}); an image, webview or settings tab in front stays behind the stop file, since the API cannot show it again. No tab of the learner's is closed, moved or edited. A file that cannot be opened (missing, binary, refused) is no error: the run goes on and reports it on the layout line.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
-   * @param runId - The run whose lease this is; only its own stop files are opened.
+   * @param stopFiles - The run's stop files as the run resolved them (an extension run's identity, or a repository run's declared stops).
    * @returns Once every stop file is open outside the Application's group, or skipped.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.openRunStopFilesBesideApplication(panel, signal, runId) // src/index.tsx is a kept tab in column 2
+   * @example await this.openRunStopFilesBesideApplication(panel, signal, ['/repo/src/index.tsx']) // src/index.tsx is a kept tab in column 2
    */
   private async openRunStopFilesBesideApplication(
     panel: vscode.WebviewPanel,
     signal: AbortSignal | undefined,
-    runId: string,
+    stopFiles: readonly string[],
   ): Promise<void> {
-    // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only; only this lease's run, never an earlier run's or another study's.
-    const stopFiles = this.declaredRunStopFiles((path) => path, runId)
     // The learner's front text tab of each destination group before the first stop file opened there, by column.
     const frontTabsBefore = new Map<vscode.ViewColumn, vscode.Uri>()
     // The canonical path of the stop file this call last put in front of each group, by column: only that front tab is this call's to replace.
