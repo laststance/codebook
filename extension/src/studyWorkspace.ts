@@ -498,7 +498,7 @@ type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 /** Where a file a paused-file watch left behind the Application pane stands in its skip ({@link StudyWorkspace}'s `refreshLeftBehindFiles`): `until-hidden` while the pane has not yet been seen in front of it, `until-front` while it stays behind the pane. */
 type LeftBehindFileState = 'until-hidden' | 'until-front'
 
-/** What the attach's uncover step uses of a run's paused-file watch ({@link StudyWorkspace.keepPausedSourceOutOfApplication}): marking a file left behind the pane, and waiting for a move in flight. */
+/** What the attach's uncover step uses of a run's paused-file watch ({@link StudyWorkspace.keepPausedSourceOutOfApplication}): marking a file left behind the pane, and waiting until no paused-file move is in flight, the run's own or one an earlier run's watch started before its release. */
 interface PausedSourceWatchGuard {
   leave: (uri: vscode.Uri) => void
   settled: () => Promise<void>
@@ -1070,6 +1070,8 @@ export class StudyWorkspace {
     []
   /** The document URIs of the paused files ended runs left in front of their kept Application pane, each until its tab closes or the next run's attach reads it, so that attach can tell such a run tab from a learner's ({@link uncoverApplicationFromLeftoverStopTab}, Cycle 0132 task 8). */
   private readonly leftoverStopTabUris = new Set<string>()
+  /** Every paused-file move in flight, whichever lease's watch started it, until its show and close end ({@link keepPausedSourceOutOfApplication}); a next run's uncover step waits for all of them, since a released lease's move still shows its file when the editor answers ({@link pausedSourceMovesSettled}, CodeRabbit, PR 334). */
+  private readonly pausedSourceMovesInFlight = new Set<Promise<void>>()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
   private readonly placementEffects = new PlacementEventLog(
     REFUSAL_REPORT_EFFECTS,
@@ -7781,7 +7783,11 @@ export class StudyWorkspace {
                 leftBehindFiles.add(canonicalFsPath(uri.fsPath))
                 pausedSourceWatch?.leave(uri)
               },
-              settled: async () => pausedSourceWatch?.settled(),
+              settled: async () => {
+                await pausedSourceWatch?.settled()
+                // An earlier run's watch released with the lease, but its move in flight still shows the file when the editor answers (CodeRabbit, PR 334).
+                await this.pausedSourceMovesSettled()
+              },
             },
           )
           // Read at this moment: a run declares its stops when its configuration resolves, after its lease exists. Written as the run resolved them (the canonical form is for comparing only); only this lease's run, never an earlier run's or another study's.
@@ -8002,9 +8008,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Waits, within the placement bound, until the run's paused-file watch has no move in flight; called by {@link uncoverNotedLeftover} after it marked the earlier run's file left behind the pane.
+   * Waits, within the placement bound, until no paused-file move is in flight, the run's own or one an earlier run's watch started before its release; called by {@link uncoverNotedLeftover} after it marked the earlier run's file left behind the pane.
    * A move that outlasts the bound is gone on from; the caller then covers the pane again once that move ends ({@link recoverPaneAfterLateMove}).
-   * @param watch - The run's paused-file watch.
+   * @param watch - The run's paused-file watch guard, whose `settled` also waits for the moves of released leases ({@link pausedSourceMovesSettled}).
    * @param signal - The attach's cancellation.
    * @returns
    * - `true` once the watch is settled within the bound
@@ -8033,11 +8039,23 @@ export class StudyWorkspace {
   }
 
   /**
+   * Waits until no paused-file move is in flight, whichever lease's watch started it; awaited by the `settled` guard that {@link leaseApplicationViewport} gives the uncover step ({@link awaitMoveInFlight}, {@link recoverPaneAfterLateMove}).
+   * A run that ends while its watch's move is still showing the paused file releases the watch, but the editor still answers that show, which in Cursor 3.30.14 can bring the file in front of the next run's view in the same pane (CodeRabbit, PR 334). A move that a finished move starts is waited for too.
+   * @returns Once {@link pausedSourceMovesInFlight} is empty; a move whose show never answers keeps it pending, so callers bound the wait.
+   * @example await this.pausedSourceMovesSettled() // the released run's show of settings.js has answered
+   */
+  private async pausedSourceMovesSettled(): Promise<void> {
+    // A move's end can start the next move of the same watch before the waiters go on.
+    while (this.pausedSourceMovesInFlight.size)
+      await Promise.all([...this.pausedSourceMovesInFlight])
+  }
+
+  /**
    * Brings the kept pane back in front once a paused-file move that outlasted the uncover step's bound has ended, when that move's late show put the earlier run's file in front of the pane again; called by {@link uncoverNotedLeftover} after it went on without the move (Codex review, Cycle 0133).
    * Cursor 3.30.14 answers such a show by bringing the file's copy in the pane's group to the front while its Agent chat holds the keyboard, and the watch, which leaves that file behind the pane, would not move it. Only that file, still the unedited front tab of the same pane's group in the same lease, is covered again, without the keyboard; another tab in front of the pane (one the learner chose meanwhile) stays, and a failure is reported on the layout line.
    * @param panel - The lease's Application pane.
    * @param column - The pane's column when the uncover step revealed it.
-   * @param watch - The run's paused-file watch, whose `settled` ends with the late move.
+   * @param watch - The run's paused-file watch guard, whose `settled` ends with the late move, also one a released lease started.
    * @param covered - The earlier run's file the uncover step left behind the pane.
    * @example this.recoverPaneAfterLateMove(panel, column, watch, settingsUri) // the view is in front again once the late show of settings.js answered
    */
@@ -8112,26 +8130,28 @@ export class StudyWorkspace {
       if (!move) return
       isMoving = true
       const key = move.uri.toString()
-      void this.movePausedSource(move, isWatching)
-        .then(
-          () => {
-            failedMoves.delete(key)
-          },
-          (error: unknown) => {
-            failedMoves.set(key, (failedMoves.get(key) ?? 0) + 1)
-            this.report('layout', error)
-          },
-        )
-        .finally(() => {
-          isMoving = false
-          try {
-            // A stop that opened its file during this move announced it while the move ran.
-            moveCoveringSource()
-          } finally {
-            // The look above started no next move, or threw: the chain ended here.
-            releaseSettledWaiters()
-          }
-        })
+      const moveEnded = this.movePausedSource(move, isWatching).then(
+        () => {
+          failedMoves.delete(key)
+        },
+        (error: unknown) => {
+          failedMoves.set(key, (failedMoves.get(key) ?? 0) + 1)
+          this.report('layout', error)
+        },
+      )
+      // Known workspace-wide until it ends, so a next run's attach waits for it after this lease's release too.
+      this.pausedSourceMovesInFlight.add(moveEnded)
+      void moveEnded.finally(() => {
+        this.pausedSourceMovesInFlight.delete(moveEnded)
+        isMoving = false
+        try {
+          // A stop that opened its file during this move announced it while the move ran.
+          moveCoveringSource()
+        } finally {
+          // The look above started no next move, or threw: the chain ended here.
+          releaseSettledWaiters()
+        }
+      })
     }
     const watches = [
       vscode.window.tabGroups.onDidChangeTabs(moveCoveringSource),

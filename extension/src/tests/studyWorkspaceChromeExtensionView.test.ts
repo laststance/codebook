@@ -1321,6 +1321,83 @@ test('the next extension run opens only its new stop file beside the view when t
   }
 })
 
+// protects=Cycle 0133 PR 334 hosted review (CodeRabbit, Major): a move of the earlier run's paused file that the earlier run's own watch started, and whose show the editor still held when that run ended, ends before the next run's view is revealed, so its late show cannot cover the next run's view; fails_when=the uncover step waits only for the next run's own watch, reveals the view while the released watch's show is still held, and the show that lands in the view's group afterwards covers the view; no_claim=how long a native show stalls or how often a run ends during one (the held show and the redirect of every show to the view's group stand in for Cursor 3.30.14 with its Agent chat holding the keyboard)
+test('the next extension run waits for a move that the earlier run started before it ended, so the file does not cover the next run’s view', async () => {
+  // Arrange: the first run's watch starts moving its paused file out of the view's group, the editor holds that show, and the run ends meanwhile.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await writeRepositoryFile(harness, 'settings.js')
+    harness.focusMutableDraft('popup.js', 1)
+    const first = await openView(harness, 'prev-mv-run', ['settings.js'])
+    const applicationColumn = harness.reader['app']?.viewColumn
+    assert.ok(applicationColumn)
+    const settingsUri = harness.editor.Uri.file(
+      join(harness.directory, 'settings.js'),
+    ).toString()
+    const endRedirect = harness.redirectEveryTextDocumentShow(
+      settingsUri,
+      applicationColumn,
+    )
+    let second: Awaited<ReturnType<typeof openView>> | undefined
+    try {
+      const show = harness.holdNextTextDocumentShow({ uri: settingsUri })
+      let attachEndedBeforeRelease = true
+      let attached: Promise<void> | undefined
+      try {
+        let showStarted = false
+        void show.started.then(() => {
+          showStarted = true
+        })
+        harness.openPausedFileInLockedGroup('settings.js', applicationColumn)
+        await waitUntil(
+          () => showStarted,
+          'the first run’s held move of settings.js',
+          2_000,
+        )
+        first.end('The first run ended while its move was in flight.')
+        first.close()
+        second = await openView(harness, 'next-mv-run', ['settings.js'])
+        const viewport = harness.reader['viewport']
+        assert.ok(viewport)
+        // Act: the next run attaches while the first run's move is in flight; the show is released only after the attach had its time to finish.
+        let attachEnded = false
+        attached = viewport
+          .attach(SILENT_SCREENCAST, new AbortController().signal, 'popup')
+          .finally(() => {
+            attachEnded = true
+          })
+        // gstack-timing-ok: a negative check with a budget far below the 5 s bound; an attach that does not wait for the released run's move ends within it.
+        await Promise.race([
+          attached,
+          new Promise((resolve) => setTimeout(resolve, 1_000)),
+        ])
+        attachEndedBeforeRelease = attachEnded
+      } finally {
+        // Released on every path, so a failure above leaves no show held.
+        show.release()
+      }
+      await attached
+      // Assert: the attach waited for the first run's move, and the view stands in front of the file that move showed in its group.
+      assert.equal(attachEndedBeforeRelease, false)
+      const applicationGroup = applicationGroupOf(harness, applicationColumn)
+      assert.equal(
+        applicationGroup?.activeTab?.label,
+        'codebook · Application next-mv-',
+      )
+      assert.deepEqual(
+        applicationGroup?.tabs.map((tab) => tab.label),
+        ['codebook · Application next-mv-', 'settings.js'],
+      )
+    } finally {
+      second?.close()
+      endRedirect()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // protects=Cycle 0133 D21 (cancellation): aborting the attach while the uncover step waits for a move in flight ends the attach with the signal's reason, not a timeout, and the view is not revealed over the earlier run's file; fails_when=the wait swallows the abort (waits out the 5 s bound or ends with a timeout) or the uncover step goes on to reveal the pane after the abort; no_claim=what the run does with the cancelled attach afterwards
 test('the next extension run’s cancelled attach ends with its signal’s reason while a move of the earlier run’s file is in flight and reveals nothing', async () => {
   // Arrange
