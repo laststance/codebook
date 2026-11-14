@@ -344,6 +344,8 @@ export class PresentationGuards {
       const returnForeignFocus = this.host.retainForeignTabFocus(
         undefined,
         !this.isPressInStudyPane(fromPane),
+        false,
+        true,
       )
       const recordedBundle = this.host.recordingActive
         ? this.host.playback?.bundle()
@@ -475,7 +477,7 @@ export class PresentationGuards {
     const returnForeignFocus =
       input.action === 'save-preference'
         ? undefined
-        : this.host.retainForeignTabFocus(activatedByClose)
+        : this.host.retainForeignTabFocus(activatedByClose, false, false, true)
     const transition = {
       id: this.host.presentationId,
       cancellation: new AbortController(),
@@ -1348,6 +1350,7 @@ export class PresentationGuards {
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
    * @param fromWiki - `true` for an entry the Repository Wiki asked for ({@link open} with the origin `repository`: a recording or observation visit): the Wiki's tab in front of the active group has the keyboard although VS Code may still report a text editor of another group as the active one ({@link activeTextEditorWithKeyboard}, row 659), so that report does not end the search for the tab to give the keyboard back to. Another extension's webview in front of the active group is read past for every entry (row 671); the Wiki only for its own entries, since Cursor reports the text editor the Wiki took the keyboard from for a moment after a learner's own entry from it, which keeps its own handoff.
    * @param withoutPanePress - `true` for an arrangement of the live or recording panes that no control of a Study pane or view asked for (the composition branch of {@link admitPresentation}): an agent's (row 628), and the learner's Arrange Study Workspace run from the command palette or a shortcut (row 638). A Study pane's tab the editor names while no Study pane and no text editor is active is then read as the chat input of another editor part over that tab, as a learner's file is, because Cursor's Focus Agent, with which an agent's Return Current gave the chat its keyboard back, changes no tab or group. A press in a Study pane or view keeps its rule: such a tab is no foreign tab to return to.
+   * @param namesEmptyGroupHeldByChat - `true` for a caller that arranges panes (an entry, an admitted change, a Return Current): a main group that shows no tab, named active while Cursor's Agent chat input has the keyboard ({@link StudyWorkspace.chatPartHasKeyboard}), then gets the chat's own give-back through {@link CURSOR_FOCUS_AGENT_COMMAND}, only after Codebook's measurement borrowed the main editor's keyboard. Readers of the keyboard's place (the pause record, a close, a leftover proof) leave it `false` and keep their rules.
    * @returns
    * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's (outside `withoutPanePress`), or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
    * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Its third argument names why a chat gets the keyboard back, where the editor cannot tell that chat's input from a view: a return to a chat then tells the learner the sentence of that cause once ({@link CHAT_KEYBOARD_RETURNED_MESSAGES}, row 648); left out, nothing is told. Called with `true` by {@link returnsKeyboardToChatAtPause} and {@link judgeKeyboardAtPauseEnd}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that a text editor has it: the paused file the editor's debugger opened, or the captured source shown in its place), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. {@link returnsKeyboardToChatAfterSideBars} calls it with `true` in the same way after a close showed a side bar a Read hid: the caller knows that the bar's command took the keyboard. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused) and, outside a pause's return (the cause `pause`), the learner clicked or typed in no text editor since this capture (row 741); in every other case the focus stays and nothing is guessed.
@@ -1362,6 +1365,7 @@ export class PresentationGuards {
     activatedByClose: vscode.Tab | undefined,
     withoutPanePress = false,
     fromWiki = false,
+    namesEmptyGroupHeldByChat = false,
   ):
     | ((
         takenByEditor?: boolean,
@@ -1379,7 +1383,13 @@ export class PresentationGuards {
     const paneHeldByChat =
       (withoutPanePress && this.isStudyPaneInput(activeTab?.input)) ||
       this.isWikiTabWithoutKeyboard(activeTab)
-    const heldByAnotherPart = heldUri !== undefined || paneHeldByChat
+    // Cursor's Agent chat input has the keyboard while the editor names a main group that shows no tab at all (the empty destination of a run's stop files, Cycle 0134 N3 round 2): no tab is remembered, and the chat itself gets the keyboard back.
+    const emptyGroupHeldByChat =
+      namesEmptyGroupHeldByChat &&
+      activeTab === undefined &&
+      this.host.chatPartHasKeyboard()
+    const heldByAnotherPart =
+      heldUri !== undefined || paneHeldByChat || emptyGroupHeldByChat
     const tab = paneHeldByChat
       ? activeTab
       : this.foreignTabToReturnTo(
@@ -1387,7 +1397,7 @@ export class PresentationGuards {
           activatedByClose,
           heldByAnotherPart,
         )
-    if (!tab) return undefined
+    if (!tab && !emptyGroupHeldByChat) return undefined
     const column = group.viewColumn,
       groupCount = vscode.window.tabGroups.all.length
     /** Names the kind of a tab's input; a tab the editor API has no input kind for (the chat) has none. */
@@ -1397,6 +1407,7 @@ export class PresentationGuards {
         : undefined
     // The editor may replace its tab objects with every tab change, so the tab is known by its label and its kind of input.
     const showsThatTab = (candidate: vscode.TabGroup): boolean =>
+      tab !== undefined &&
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
     const borrowsBefore = this.host.mainEditorFocusBorrows,
@@ -1406,7 +1417,7 @@ export class PresentationGuards {
       learnerSignBefore = this.host.learnerWorkedInEditorAtMs
     // VS Code's chat opened as an editor tab gets its keyboard back also where the editor took it (row 632).
     const chatEditorTab = isChatEditorTabInput(
-      tab.input,
+      tab?.input,
       Reflect.get(vscode, 'TabInputChat'),
     )
     return async (
@@ -1441,6 +1452,11 @@ export class PresentationGuards {
       const leftByDestinationFocus =
         this.host.stopFileDestinationFocuses !== destinationFocusesBefore &&
         active.viewColumn === this.host.stopFileDestinationColumn()
+      // The measurement focused the main editor beside the chat's empty group: the keyboard stands where Codebook's own borrow left it.
+      const leftByBorrowBesideEmptyGroup =
+        emptyGroupHeldByChat &&
+        this.host.mainEditorFocusBorrows !== borrowsBefore &&
+        !this.showsLearnersOtherTabInFirstGroup()
       if (
         !vscode.window.state.focused ||
         (!heldByAnotherPart &&
@@ -1451,6 +1467,7 @@ export class PresentationGuards {
         !(
           leftByMeasurement ||
           leftByDestinationFocus ||
+          leftByBorrowBesideEmptyGroup ||
           takenByEditor ||
           this.host.app?.active ||
           this.host.contextPanel?.active ||

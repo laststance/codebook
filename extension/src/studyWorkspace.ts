@@ -1196,6 +1196,8 @@ export class StudyWorkspace {
   private applicationFocusBorrows = 0
   /** How often {@link prepareStopFileDestination} ran the focus command of the group beside the Application, the stop files' destination; {@link retainForeignTabFocus} compares it with the count it saw before an arrangement, because that focus is one more place where Codebook itself leaves the keyboard beside the chat (Cycle 0134 N2). */
   private stopFileDestinationFocuses = 0
+  /** How often {@link runFocusReturnCommand} gave Cursor's Agent chat its keyboard back (Focus Agent ran); {@link open} compares it before and after it waits for a run's Application preparation, because that preparation's return leaves no foreign tab for the entry to remember (Cycle 0134 N2 round 2). */
+  private chatPartKeyboardReturns = 0
   /** The Application preparations that are running ({@link prepareApplicationGroup}, from its start to the end of its focus return); {@link open} waits for them before it changes the composition, because a Study pane that closes between their effects shifts the groups they read (Cycle 0134 N2). */
   private readonly applicationPreparations = new Set<Promise<unknown>>()
   /** The first group's front tab the last of those focus commands left in front ({@link frontTabOfFirstGroup}), noted once the borrow's own focus step ended and `undefined` until then; {@link assertKeyboardWhereBorrowLeftIt} compares the first group's front tab with it before a refused change gives the keyboard back (Cycle 0046 row 728). */
@@ -2275,6 +2277,9 @@ export class StudyWorkspace {
       PresentationGuards['retainForeignTabFocus']
     >[1],
     fromWiki?: Parameters<PresentationGuards['retainForeignTabFocus']>[2],
+    namesEmptyGroupHeldByChat?: Parameters<
+      PresentationGuards['retainForeignTabFocus']
+    >[3],
   ):
     | ((
         takenByEditor?: boolean,
@@ -2286,6 +2291,7 @@ export class StudyWorkspace {
       activatedByClose,
       withoutPanePress,
       fromWiki,
+      namesEmptyGroupHeldByChat,
     )
   }
 
@@ -2339,6 +2345,8 @@ export class StudyWorkspace {
       })
       return false
     }
+    // Cursor's Agent chat got its keyboard back: an entry that waited for this return owes its own after its placements ({@link open}).
+    if (command === CURSOR_FOCUS_AGENT_COMMAND) this.chatPartKeyboardReturns++
     // Only a chat is told about; a learner's page of the main editor that got its group's focus back is not.
     if (toldCause && (chatEditorTab || command === CURSOR_FOCUS_AGENT_COMMAND))
       this.tellChatKeyboardReturned(toldCause)
@@ -5892,7 +5900,7 @@ export class StudyWorkspace {
     return giveBack
   }
 
-  /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome.
+  /** Opens the shared reader for commands and {@link loadPlayback} without runtime input while preserving the learner's navigation chrome. An entry that waited for a run's Application preparation, which gave Cursor's Agent chat its keyboard back, gives the chat its keyboard back again at its end through the chat's own command, unless it remembered a foreign tab, the learner clicked or typed in an editor since the wait, a newer Open or Close took over, or the entry failed (Cycle 0134 N2 round 2).
    * @param signal - Cancels an obsolete reader entry.
    * @param origin - Identifies the existing navigation/placement contract for this entry.
    * @param preserveRecordingKeyboard - Keeps the native keyboard owned before a recording load while revealing its views.
@@ -5944,7 +5952,12 @@ export class StudyWorkspace {
     let returnForeignFocus =
       origin === 'presentation'
         ? undefined
-        : this.retainForeignTabFocus(undefined, false, origin === 'repository')
+        : this.retainForeignTabFocus(
+            undefined,
+            false,
+            origin === 'repository',
+            true,
+          )
     // An entry that owns its return notes its own borrows and its own refusal for the learner's newer input; a presentation's entry leaves both to the presentation (row 736).
     const borrowsBefore = this.focusBorrowCount()
     let ownsLearnerRefusal = returnForeignFocus !== undefined
@@ -5959,6 +5972,8 @@ export class StudyWorkspace {
     let borrowedFromForeignTab: ReturnType<
       StudyWorkspace['retainForeignTabFocus']
     >
+    // Set when the preparation this entry waited for gave Cursor's Agent chat its keyboard back and no foreign tab was remembered: the learner's last sign in an editor then, which a later one revokes.
+    let chatReturnAfterWait: { learnerSignAtMs: number | undefined } | undefined
     try {
       await this.initialize()
       this.assertLifetime(lifetime)
@@ -5983,6 +5998,7 @@ export class StudyWorkspace {
       // Only a change that closes the Study pane is serialized: an entry that disposes nothing changes no group a preparation reads.
       const disposesStudyPane = this.compositionChangeClosesStudyPane()
       let waitedForPreparation = false
+      const chatReturnsBeforeWait = this.chatPartKeyboardReturns
       while (disposesStudyPane && this.applicationPreparations.size > 0) {
         waitedForPreparation = true
         await Promise.all([...this.applicationPreparations])
@@ -5995,11 +6011,20 @@ export class StudyWorkspace {
           undefined,
           false,
           origin === 'repository',
+          true,
         )
         if (returnForeignFocus && !ownsLearnerRefusal) {
           ownsLearnerRefusal = true
           this.presentationYieldedToLearner = false
         }
+        // Cursor's Agent chat got its keyboard back from that preparation while the editor named a group with no tab to return to: the entry's own placements take the keyboard again, so the entry owns a return to the chat at its end (Cycle 0134 N2 round 2).
+        if (
+          !returnForeignFocus &&
+          this.chatPartKeyboardReturns !== chatReturnsBeforeWait
+        )
+          chatReturnAfterWait = {
+            learnerSignAtMs: this.learnerWorkedInEditorAtMs,
+          }
       }
       // The composition change disposes the Study pane and waits for its tab to close: a run's own Application preparation can be inside the layout queue meanwhile (a run codebook_start started leases its view while the reader's Live entry follows it), and a pane that closes between that transaction's effects shifts the groups it reads, so the view was refused as unconfirmed (Cycle 0134 N2). The change therefore runs in the queue, reading the groups only after an earlier transaction drained.
       const { compositionChanged, retiredContextGroup } = disposesStudyPane
@@ -6038,7 +6063,11 @@ export class StudyWorkspace {
             ? (): void => {
                 returnForeignFocus = undefined
               }
-            : borrowedFromForeignTab && selectionOwnsForeignReturn,
+            : chatReturnAfterWait
+              ? (): void => {
+                  chatReturnAfterWait = undefined
+                }
+              : borrowedFromForeignTab && selectionOwnsForeignReturn,
           forAgent,
           // The Live entry of an agent's run places the stop files' destination as the run's lease does, so the debugger's shows of a run without a lease open beside the view (Cycle 0134 N2).
           // A Live Return (origin presentation) keeps its own handoff and the command order its tests pin.
@@ -6369,6 +6398,16 @@ export class StudyWorkspace {
         this.initialAppPlacement = undefined
       // Last, because the editor answers a layout read for the focused editor part.
       await returnForeignFocus?.().catch(() => undefined)
+      // The chat's own command gives its input the keyboard back after the entry's placements, unless the learner clicked or typed in an editor since the wait, or a newer Open or Close took over.
+      const chatReturn = chatReturnAfterWait
+      if (chatReturn)
+        await this.returnKeyboardToChatPart(
+          () =>
+            lifetime === this.lifetime &&
+            !this.closing &&
+            request === this.readerOpenNumber &&
+            this.learnerWorkedInEditorAtMs === chatReturn.learnerSignAtMs,
+        )
     } catch (error) {
       // A failed first entry remains retryable without retiring a newer Open or discarding accepted native effects.
       if (
@@ -7109,6 +7148,8 @@ export class StudyWorkspace {
       returnForeignFocus = this.retainForeignTabFocus(
         undefined,
         requester === 'agent',
+        false,
+        true,
       ),
       // Only the learner's press has a place of its own: the pane or the view whose control was pressed.
       learnersPlace =
@@ -14355,6 +14396,8 @@ export class StudyWorkspace {
     signal: AbortSignal | undefined,
     assertCurrent: () => void,
   ): Promise<number> {
+    // The editor may have named another group of the main editor active since the placement (Cursor 3.30.14 did, Cycle 0134 N2 round 2): the Application's group takes the keyboard back first, so the keep below can run.
+    await this.focusApplicationGroupToKeepTab(panel, signal, assertCurrent)
     // Cursor lists the tab of a pane moved into its group as a preview (3.30.14 does so for a Study pane that was reopened and then moved, Cycle 0134 N2), and the debugger's preview of a stop file replaces a preview tab: the tab is kept first, while the Application's group still holds the keyboard from its placement.
     await this.keepMovedApplicationTab(panel, signal, false)
     assertCurrent()
@@ -14376,6 +14419,42 @@ export class StudyWorkspace {
     if (identity) await this.waitForLateGroupActivation(identity, signal)
     assertCurrent()
     return Math.max(0, vscode.window.tabGroups.all.length - groupsBefore)
+  }
+
+  /**
+   * Focuses the Application's group by its column when its moved tab is a preview in front of the group and the editor names another main group active, so that {@link keepMovedApplicationTab} can keep the tab; called by {@link prepareStopFileDestination}, where the main editor holds the keyboard as the preparation's own commands left it.
+   * Cursor 3.30.14 named the learner's group active between the preparation's lock and its reveal of the pane (80 ms after the lock, Cycle 0134 N2 round 2): the tab stayed a preview, and a later text preview in its group replaced the view. Nothing is run while the chat part holds the keyboard (the command would take it for a tab the learner may not want kept), for a column past the eighth (no focus command), and for a tab that is no preview in front; the keyboard then goes back through the preparation's own return.
+   * @param panel - The new Application pane, in its own group.
+   * @param signal - The run's cancellation.
+   * @param assertCurrent - Rejects newer intent after the accepted native effects drained.
+   * @throws The signal's reason when the run was cancelled, what `assertCurrent` throws, and what the editor's command throws.
+   * @example await this.focusApplicationGroupToKeepTab(panel, signal, assertCurrent) // runs workbench.action.focusFirstEditorGroup while the learner's group 2 is named
+   */
+  private async focusApplicationGroupToKeepTab(
+    panel: vscode.WebviewPanel,
+    signal: AbortSignal | undefined,
+    assertCurrent: () => void,
+  ): Promise<void> {
+    const column = this.viewColumnOf(panel)
+    const applicationIdentity = this.applicationGroup?.identity
+    if (column === undefined || !applicationIdentity) return
+    const tab = this.uniqueApplicationTab()
+    // Only a preview in front of its group needs the keep, and only another named group needs the focus.
+    if (
+      !tab?.isPreview ||
+      vscode.window.tabGroups.activeTabGroup.viewColumn === column ||
+      this.chatPartHasKeyboard()
+    )
+      return
+    const command = focusEditorGroupCommand(column)
+    if (!command) return
+    await this.executeEditorCommand(command)
+    signal?.throwIfAborted()
+    assertCurrent()
+    // The editor reports the focused group after its command answered; the keep reads the active group only after that report.
+    await this.waitForLateGroupActivation(applicationIdentity, signal)
+    signal?.throwIfAborted()
+    assertCurrent()
   }
 
   /**

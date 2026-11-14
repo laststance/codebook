@@ -30,6 +30,7 @@ export interface PresentationGuardsHost {
   readonly stopFileDestinationFocuses: StudyWorkspace['stopFileDestinationFocuses']
   readonly stopFileDestinationColumn: StudyWorkspace['stopFileDestinationColumn']
   readonly namesAnotherEditorPartsTab: StudyWorkspace['namesAnotherEditorPartsTab']
+  readonly chatPartHasKeyboard: StudyWorkspace['chatPartHasKeyboard']
   readonly arrange: StudyWorkspace['arrange']
   readonly showTextDocumentNoted: StudyWorkspace['showTextDocumentNoted']
   readonly isCursorHost: StudyWorkspace['isCursorHost']
@@ -215,6 +216,7 @@ export function createPresentationGuardsHost(
       workspace['stopFileDestinationColumn'](...args),
     namesAnotherEditorPartsTab: (...args) =>
       workspace['namesAnotherEditorPartsTab'](...args),
+    chatPartHasKeyboard: (...args) => workspace['chatPartHasKeyboard'](...args),
     arrange: (...args): Promise<void> => workspace['arrange'](...args),
     showTextDocumentNoted: (...args) =>
       workspace['showTextDocumentNoted'](...args),

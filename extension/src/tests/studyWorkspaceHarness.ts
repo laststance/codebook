@@ -1565,6 +1565,8 @@ export async function workspaceHarness(
   let chatRetakesKeyboardFromFirstGroup = false
   // Cursor 3.27.22: while the Agent chat part has the keyboard `workbench.action.focusFirstEditorGroup` does nothing, and a pane revealed with the focus takes the keyboard (it reports itself active) while the editor goes on naming the chat's group; see `ignoresFirstGroupFocusCommandBesideChat`.
   let ignoresFirstGroupFocusCommandBesideChatFlag = false
+  /** Set by `namesStudyPaneGroupAfterFocusAgent`. */
+  let namesStudyPaneGroupAfterFocusAgentFlag = false
   // Cursor 3.30.14 (Cycle 0134 D23): while a Codebook pane in another group holds the keyboard, `workbench.action.focusFirstEditorGroup` leaves that pane's group active and the first group's front pane inactive; see `ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard`.
   let ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboardFlag = false
   // The editor ran a numbered group focus command (second to eighth group) and left the active group where it was; see `ignoreNumberedGroupFocusCommands`.
@@ -3014,6 +3016,17 @@ export async function workspaceHarness(
     keyboardOnBody = false
     keyboardInView = false
     innerFocusedPanel = undefined
+    // Cursor goes on naming a main group while the chat input has the keyboard; this model names the Study pane's group, with no event.
+    if (namesStudyPaneGroupAfterFocusAgentFlag) {
+      const studyGroup = groups.find((group) =>
+        [...panels].some(
+          (panel) =>
+            panel.kind === 'codebook.studyContext' &&
+            group.tabs.includes(panel.nativeTab),
+        ),
+      )
+      if (studyGroup) staleNamedGroup = studyGroup
+    }
     // The chat has the keyboard again: a pane revealed beside it no longer reports itself active (Cursor 3.27.22 model).
     if (ignoresFirstGroupFocusCommandBesideChatFlag) {
       heldActivePane = undefined
@@ -7811,6 +7824,16 @@ export async function workspaceHarness(
     ignoresFirstGroupFocusCommandBesideChat(): void {
       ignoresFirstGroupFocusCommandBesideChatFlag = true
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor name the group of Codebook's Study pane, with no group event, after the Agent chat's input took the keyboard through Focus Agent (`composer.focusComposer`): the editor then names a main group while the chat has the keyboard, and the tab it names is a Study pane's, so a return captured at that moment remembers no tab to give the keyboard back to (the shape Cursor 3.30.14's native check of Cycle 0134 N2 round 2 met: the entry's recapture found none; which group Cursor named there is not known, the fake only models the consequence).
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.namesStudyPaneGroupAfterFocusAgent()
+     * chat.focus()
+     */
+    namesStudyPaneGroupAfterFocusAgent(): void {
+      namesStudyPaneGroupAfterFocusAgentFlag = true
     },
     /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` as Cursor 3.30.14 was seen to while a Codebook pane in another group holds the keyboard (Cycle 0134 D23): the command resolves with no event, the pane's group stays the active one, and the pane in front of the first group reports no focus until it is revealed with the keyboard.
