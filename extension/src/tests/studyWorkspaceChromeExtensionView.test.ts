@@ -2921,12 +2921,28 @@ test('the next extension run after Close and Open Study Workspace shows its view
     const view = await openView(harness, 'reopened-study-run-1', [])
 
     // Assert
+    // No show takes the keyboard into a learner file, whether it names column 1 or the active group.
     assert.deepEqual(
-      shows.filter((show) => show.column === 1 && !show.preserveFocus),
+      shows.filter(
+        (show) =>
+          (show.column === undefined || show.column === 1) &&
+          !show.preserveFocus,
+      ),
       [],
     )
     assert.deepEqual(refusals, [])
     assert.equal(harness.reader['errors'].size, 0)
+    // The view is shown: the Application pane stays in front of the first group, reports itself active, and the learner's tabs are behind it.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    assert.equal(
+      harness.groups[0]?.activeTab?.label,
+      'codebook · Application reopened',
+    )
+    assert.equal(application.active, true)
+    assert.equal(application.visible, true)
     const learnerGroup = harness.groups.find((group) =>
       group.tabs.some((tab) => tab.label === 'App.tsx'),
     )
@@ -2964,25 +2980,131 @@ test('the next extension run does not reveal the Application pane in place when 
     assert.ok(learnerFile)
     harness.groups[0]!.activeTab = learnerFile
     harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
     readerSeams(harness).stopOwnTimer()
     const application = harness.reader['app']
     assert.ok(application)
-    const inPlaceReveals: (boolean | undefined)[] = []
+    // Preconditions: the Study pane holds the keyboard and the learner's file, not the Application pane, is in front of the first group.
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab?.label,
+      'codebook · Study',
+    )
+    assert.equal(harness.groups[0]?.activeTab?.label, 'App.tsx')
+    // Every reveal of the pane with the keyboard, in place or with a column.
+    const keyboardReveals: (number | undefined)[] = []
     const reveal = application.reveal.bind(application)
     application.reveal = (column, preserveFocus): void => {
-      if (column === undefined) inPlaceReveals.push(preserveFocus)
+      if (!preserveFocus) keyboardReveals.push(column)
       reveal(column, preserveFocus)
     }
 
-    // Act
-    const view = await openView(harness, 'learner-file-front-run-1', [])
+    // Act: the editor ignores the first group's focus command here, so the run's own outcome is not what this test reads.
+    const view = await openView(harness, 'learner-file-front-run-1', []).catch(
+      () => undefined,
+    )
 
     // Assert
-    assert.deepEqual(
-      inPlaceReveals.filter((preserveFocus) => !preserveFocus),
-      [],
+    assert.deepEqual(keyboardReveals, [])
+    view?.close()
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 (cancellation): cancelling the run while its preparation waits for the Application pane in the first group to report itself active ends the run with the cancellation's reason at once, not after the presentation-ready bound; fails_when=the wait ignores the cancellation and holds the layout queue until PRESENTATION_READY_TIMEOUT_MS; no_claim=what the editor does with the pane afterwards
+test('the next extension run cancelled while it waits for the Application pane in the first group ends with its reason without waiting out the bound', async () => {
+  // Arrange: the reopened Study as above, but the pane never reports itself active.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('buildStockRequestConfig.ts', 1)
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    harness.ignoresFirstGroupFocusCommandWhileOtherPaneHoldsKeyboard()
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    // The reveal is swallowed, so the pane stays inactive and the wait goes on.
+    let revealed = false
+    application.reveal = (): void => {
+      revealed = true
+    }
+    const create = harness.reader.presentation.createChromeExtensionViewport
+    assert.ok(create)
+    const reason = new Error('The run was cancelled during the pane wait.')
+    const controller = new AbortController()
+    const startedMs = performance.now()
+
+    // Act
+    const outcome = create('cancelled-pane-wait-run-1', controller.signal).then(
+      () => undefined,
+      (error: unknown) => error,
     )
-    assert.equal(harness.reader['errors'].size, 0)
+    await waitUntil(() => revealed, 'the preparation’s in-place reveal', 2_000)
+    controller.abort(reason)
+    const rejection = await outcome
+
+    // Assert
+    assert.equal(rejection, reason)
+    assert.ok(performance.now() - startedMs < 3_000)
+  } finally {
+    await harness.close()
+  }
+})
+
+// protects=Cycle 0134 D23 (acknowledgement scope): a stale active report of the Application pane in front of the first group is no proof that the first group holds the keyboard unless the preparation took the pane route; fails_when=the pane's report is accepted whatever route the preparation took, so a stale active:true passes just after the keyboard moved elsewhere; no_claim=the whole preparation (the focus check is read directly with a stale report forced)
+test('the first group’s keyboard is not acknowledged by the Application pane’s stale active report when the preparation did not take the pane route', async () => {
+  // Arrange: the reopened Study; the Study pane holds the keyboard, and the Application pane in front of the first group still reports itself active.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.reportsMainThreadWebviewViewTypes()
+    harness.focusMutableDraft('App.tsx', 1)
+    await harness.reader.open()
+    await harness.reader.close()
+    await harness.reader.open()
+    harness.activatePaneByHand('codebook.studyContext')
+    readerSeams(harness).stopOwnTimer()
+    const application = harness.reader['app']
+    assert.ok(application)
+    Object.defineProperty(application, 'active', { get: () => true })
+    // The preparation's own call supplies the native first group the check reads.
+    const original = harness.reader['hasApplicationPreparationFocus'].bind(
+      harness.reader,
+    )
+    const calls: Parameters<typeof original>[] = []
+    harness.reader['hasApplicationPreparationFocus'] = (...args) => {
+      calls.push(args)
+      return original(...args)
+    }
+    const view = await openView(harness, 'stale-active-run-1', [])
+    const [primary] = calls[0] ?? []
+    assert.ok(primary)
+    // The keyboard moves back to the Study pane after the run's preparation, while the Application pane's report stays stale.
+    harness.activatePaneByHand('codebook.studyContext')
+    // A main-group count that does not match the editor's, so only the pane's report can answer.
+    const unmatchedMainCount = 99
+
+    // Act
+    const withoutPaneRoute = original(
+      primary,
+      unmatchedMainCount,
+      undefined,
+      false,
+    )
+    const withPaneRoute = original(primary, unmatchedMainCount, undefined, true)
+
+    // Assert
+    assert.equal(withoutPaneRoute, false)
+    assert.equal(withPaneRoute, true)
     view.close()
   } finally {
     await harness.close()

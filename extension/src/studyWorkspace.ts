@@ -16304,16 +16304,19 @@ export class StudyWorkspace {
           ? this.applicationPaneInFrontOfFirstGroup()
           : undefined
       // The Study's own Application pane in front of the first group takes the keyboard through itself; a learner file shown over it would hide the pane and the placement guard would refuse the run (Cycle 0134 D23).
+      let tookPaneRoute = false
       if (
         takesKeyboard &&
         !this.hasMainEditorFocus(vscode.ViewColumn.One) &&
         !sourceReceipt &&
         paneInFront
-      )
+      ) {
+        tookPaneRoute = true
         await this.focusFirstGroupThroughApplicationPane(
           paneInFront,
           assertCurrent,
         )
+      }
       // A known existing source, rather than a guessed pane focus, supplies the main-part acknowledgement beside Cursor chat.
       else if (
         takesKeyboard &&
@@ -16368,7 +16371,12 @@ export class StudyWorkspace {
         }
       }
       if (
-        !this.hasApplicationPreparationFocus(primary, mainCount, sourceReceipt)
+        !this.hasApplicationPreparationFocus(
+          primary,
+          mainCount,
+          sourceReceipt,
+          tookPaneRoute,
+        )
       )
         throw new Error(
           'Focus the first main source group before preparing the Application.',
@@ -16536,7 +16544,7 @@ export class StudyWorkspace {
    * Takes the first group's keyboard through the Application pane in front of it, for {@link focusApplicationSourceGroup} when `workbench.action.focusFirstEditorGroup` left that pane without a focus report.
    * The pane is revealed in place with the keyboard, so the learner's files stay behind it, and the wait for its own active report ends at {@link PRESENTATION_READY_TIMEOUT_MS}; a pane that never reports leaves {@link hasApplicationPreparationFocus} to refuse the preparation.
    * @param pane - The Application pane in front of the first group.
-   * @param assertCurrent - The queue's lifetime/cancellation guard, checked after the reveal and the wait.
+   * @param assertCurrent - The queue's lifetime/cancellation guard, checked on every poll of the wait and after it; a cancelled run throws its reason.
    * @throws When the learner changed a group or pane meanwhile ({@link retainPresentationPlacement}), or the preparation was cancelled.
    * @example await this.focusFirstGroupThroughApplicationPane(pane, assertCurrent)
    */
@@ -16552,7 +16560,11 @@ export class StudyWorkspace {
     // In place and with the keyboard: no column changes, so no learner file leaves its tab; noted as Codebook's own effect for the placement guards.
     this.revealPane(pane, undefined, false)
     await waitUntil(
-      () => this.isApplicationPaneActiveInFirstGroup(),
+      () => {
+        // A cancelled run ends the wait with its reason instead of holding the layout queue.
+        assertCurrent()
+        return this.isApplicationPaneActiveInFirstGroup()
+      },
       'the Application pane in the first group to report itself active',
       PRESENTATION_READY_TIMEOUT_MS,
     ).catch((error: unknown) => {
@@ -16568,7 +16580,8 @@ export class StudyWorkspace {
    * @param primary - The original first group, required by the empty single-part fallback.
    * @param mainCount - Main groups measured before the issued focus command.
    * @param sourceReceipt - The exact source or opaque-tab acknowledgement retained across that command.
-   * @returns Whether a current native report, retained acknowledgement, unchanged empty primary or the sole empty main group beside a chat part proves the destination.
+   * @param tookPaneRoute - Whether this preparation took the first group's keyboard through the Application pane; only then is the pane's own active report an acknowledgement, so a stale report after the keyboard moved elsewhere proves nothing.
+   * @returns Whether a current native report, retained acknowledgement, the pane's own report after the pane route, unchanged empty primary or the sole empty main group beside a chat part proves the destination.
    * @example this.hasApplicationPreparationFocus(primary, mainCount, input)
    */
   private hasApplicationPreparationFocus(
@@ -16576,12 +16589,13 @@ export class StudyWorkspace {
     mainCount: number,
     sourceReceipt:
       ReturnType<StudyWorkspace['retainPreparationPrimaryInput']> | undefined,
+    tookPaneRoute: boolean,
   ): boolean {
     return (
       this.hasMainEditorFocus(vscode.ViewColumn.One) ||
       Boolean(sourceReceipt?.acknowledged()) ||
-      // The Study's Application pane in front of the first group reports itself active there, while Cursor may go on naming another group.
-      this.isApplicationPaneActiveInFirstGroup() ||
+      // After the pane route, the Application pane in front of the first group reports itself active there, while Cursor may go on naming another group.
+      (tookPaneRoute && this.isApplicationPaneActiveInFirstGroup()) ||
       (mainCount === vscode.window.tabGroups.all.length &&
         primary === vscode.window.tabGroups.activeTabGroup &&
         !primary.activeTab) ||
