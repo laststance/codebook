@@ -42,7 +42,7 @@ const REACT_COPY_ENTRY = {
   hitBreakpointIds: [12],
 }
 
-// protects=a page pause in React's copy of a server component that names only a declared server stop's breakpoint, before the operation's input (the entry load's window), is resumed and journaled as breakpoint.react-copy; fails_when=the pause is not journaled with its address and place, or ends the run; no_claim=the harness's adapter stands in for js-debug, and its load is not a Next.js entry load (the native Cursor run does)
+// protects=a page pause in React's copy of a server component that names only a declared server stop's breakpoint, before the operation's input (the entry load's window), is resumed at once (no hold) and journaled as breakpoint.react-copy; fails_when=the pause is not journaled with its address and place, is held, or ends the run; no_claim=a regression of the path before F2's fix: the page answers the registration at once at an accepted place; the harness's adapter stands in for js-debug, and its load is not a Next.js entry load
 test('a page pause in React’s copy of a server component at a declared server stop is resumed and journaled before the operation’s input', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -61,9 +61,10 @@ test('a page pause in React’s copy of a server component at a declared server 
   assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [
     { sessionId: 'browser-session', ...REACT_COPY_ENTRY },
   ])
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [])
 })
 
-// protects=the same pause during an operation, after its input was sent, is resumed and the run goes on to commit the server stop; fails_when=the pause ends the run as an unowned browser stop or is not journaled; no_claim=a harness adapter, not js-debug
+// protects=the same pause during an operation, after its input was sent, is resumed and the run goes on to commit the server stop; fails_when=the pause ends the run as an unowned browser stop or is not journaled; no_claim=a regression of the path before F2's fix (the page answers at once at an accepted place); a harness adapter, not js-debug
 test('a page pause in React’s copy of a server component at a declared server stop is resumed and journaled during an operation', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -87,7 +88,7 @@ test('a page pause in React’s copy of a server component at a declared server 
   ])
 })
 
-// protects=the same pause between two server stops (after the first was continued) is resumed and the run reaches the second stop; fails_when=the pause ends the continuation or is not journaled; no_claim=a harness adapter, not js-debug
+// protects=the same pause between two server stops (after the first was continued) is resumed and the run reaches the second stop; fails_when=the pause ends the continuation or is not journaled; no_claim=a regression of the path before F2's fix (the page answers at once at an accepted place); a harness adapter, not js-debug
 test('a page pause in React’s copy of a server component at the next server stop is resumed and journaled between two server stops', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server', 'server'])
@@ -184,6 +185,7 @@ test('a page pause in React’s copy that names a server stop’s breakpoint bef
   // Act
   harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
   await setTimeout(LATE_ANSWER_MS)
+  const failuresBeforeAnswer = harness.run.view().failures.join('; ')
   answers.answer()
   await resumedOrFailed(harness)
   harness.emitPause('server')
@@ -192,6 +194,7 @@ test('a page pause in React’s copy that names a server stop’s breakpoint bef
     return view.status === 'failed' || view.snapshots.length > 0
   }, 'the server stop was captured')
   // Assert
+  assert.equal(failuresBeforeAnswer, '')
   assert.equal(harness.run.view().failures.join('; '), '')
   assert.equal(harness.run.view().snapshots.length, 1)
   assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
@@ -200,6 +203,7 @@ test('a page pause in React’s copy that names a server stop’s breakpoint bef
       hitBreakpointIds: [12],
       awaitedStops: [0],
       answered: true,
+      resumedMeanwhile: false,
     },
   ])
   assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [
@@ -232,6 +236,7 @@ test('a page pause in React’s copy whose server stop’s registration the brow
       hitBreakpointIds: [12],
       awaitedStops: [0],
       answered: false,
+      resumedMeanwhile: false,
     },
   ])
   assert.deepEqual(journaled(harness, 'browser.unowned-stop'), [
@@ -322,4 +327,44 @@ test('a page pause in React’s copy under the id the page gave a server stop’
     { sessionId: 'browser-session', ...REACT_COPY_ENTRY },
   ])
   assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [])
+})
+
+// protects=a page pause held for the page's registration answer whose runtime resumed meanwhile is journaled and dropped: the run neither resumes nor judges a pause that no longer exists, and the server stop still commits; fails_when=the held event is judged after the resume (a continue sent for an ended pause, or the run ended as an unowned page stop); no_claim=the harness reports the page's resume directly, not a js-debug or learner resume
+test('a page pause held for the page’s registration answer is dropped when the page resumed meanwhile', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  const answers = harness.holdBrowserAnswers()
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+  // Act
+  harness.emitResume('browser')
+  answers.answer()
+  await waitUntil(
+    () => journaled(harness, 'breakpoint.browser-stop-held').length,
+    'the held page pause was released',
+  )
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the server stop was captured')
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
+    {
+      sessionId: 'browser-session',
+      hitBreakpointIds: [12],
+      awaitedStops: [0],
+      answered: true,
+      resumedMeanwhile: true,
+    },
+  ])
+  assert.deepEqual(
+    journaled(harness, 'dap.server-breakpoint-browser-stop-resumed'),
+    [],
+  )
 })

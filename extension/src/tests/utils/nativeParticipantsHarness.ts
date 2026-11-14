@@ -872,15 +872,18 @@ export async function nativeParticipantsHarness(
               })),
             },
           })
-        // The page's reply waits while a test holds the page's answers; every other reply is sent at once.
+        // The adapter resolved the breakpoints after it answered: it verifies them by news.
+        const answer = (): void => {
+          respond()
+          const news = verifiedByNewsAt[name]
+          if (news) announceVerified(name, news.line, news.column)
+        }
+        // The page's reply and its news wait while a test holds the page's answers; every other reply is sent at once.
         if (name === 'browser' && heldBrowserAnswers) {
-          heldBrowserAnswers.push(respond)
+          heldBrowserAnswers.push(answer)
           continue
         }
-        respond()
-        // The adapter resolved the breakpoints after it answered: it verifies them by news.
-        const news = verifiedByNewsAt[name]
-        if (news) announceVerified(name, news.line, news.column)
+        answer()
       }
     }
   }
@@ -1651,6 +1654,7 @@ export async function nativeParticipantsHarness(
     },
     /**
      * Keeps the page's adapter's replies to every later registration back until `answer` is called, as js-debug answers a registration only once it has set the breakpoint in every script of the page while the page can already pause at it (Cycle 0136, F2): until the reply the run knows no id of that breakpoint in the page.
+     * A held reply sends its verification news ({@link verifyRegistrationsByNews}) when it is released; replies a test never releases are dropped with the harness on purpose (the bounded-hold test needs an answer that never comes).
      * @returns `answer`, which sends the held replies in order and lets later ones through at once.
      * @example
      * const answers = harness.holdBrowserAnswers()

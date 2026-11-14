@@ -1088,7 +1088,7 @@ test('a place the adapter withdrew stays withdrawn for the pause stand-in when t
 
 // protects=F2's located cause (Cycle 0136 E-F2): the page answers a server stop's registration at a place the stop refuses, and still pauses under that id, so the breakpoint knows the id of a refused answer, keeps it after the next registration, and knows none from a reply that does not identify the breakpoint; fails_when=a refused or replaced answer leaves the id unknown and a page pause under it ends the run; no_claim=js-debug's own ids
 test('a breakpoint knows every id a session answered for it, also refused and replaced ones, and none from a reply that does not identify it', async () => {
-  // Arrange
+  // Arrange: the first reply verifies the owned breakpoint at line 40, a place it refuses; the second gives it id 7, which the same reply also gives the breakpoint at line 2, so it identifies nothing.
   const { breakpoint, session, request, response } = await breakpointHarness()
   // Act
   breakpoint.onRequest(session, request(1))

@@ -200,7 +200,7 @@ export class OwnedRepositoryBreakpoint {
       refusedAt?: VerifiedPlace
     } & VerifiedRegistration
   >()
-  /** Every id each session's adapter gave this breakpoint in a registration reply that identified it, whether its owner accepted the place or refused it, kept across later registrations until the breakpoint is removed or retired; read by {@link wasAnsweredWith} and {@link answeredIds}. */
+  /** Every id each session's adapter gave this breakpoint in a registration reply that identified it, whether its owner accepted the place or refused it, kept across later registrations until the breakpoint is removed or retired; read by {@link wasAnsweredWith} and {@link answeredIds}. An adapter that numbers its breakpoints upward (js-debug) never gives another breakpoint an id kept here. */
   private readonly answeredIdsBySession = new Map<string, Set<number>>()
   /** `ownedBreakpointId` is the adapter id acknowledged for this breakpoint; with it, a learner breakpoint left on the same line is told apart from the owned one. */
   private retirement?: {
@@ -555,12 +555,18 @@ export class OwnedRepositoryBreakpoint {
   /**
    * Lists every id each session's adapter gave this breakpoint ({@link wasAnsweredWith}), for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring forgets the breakpoint's registrations and ids, while a page that keeps hitting it in its copies of server components still names an old id (Cycle 0095, C95-N1).
    * Like {@link movedTo} it never throws.
-   * @returns The ids per session id; empty when no session answered a registration that identified the breakpoint.
+   * @returns A copy of the ids per session id; empty when no session answered a registration that identified the breakpoint.
    * @example
    * owned.answeredIds() // => Map { 'server-session' => Set { 7 }, 'page-session' => Set { 101, 104 } }
    */
   answeredIds(): ReadonlyMap<string, ReadonlySet<number>> {
-    return this.answeredIdsBySession
+    // A copy: the caller keeps it past the retirement that empties the breakpoint's own sets.
+    return new Map(
+      [...this.answeredIdsBySession].map(([sessionId, ids]) => [
+        sessionId,
+        new Set(ids),
+      ]),
+    )
   }
 
   /** Keeps an id a session's adapter gave this breakpoint, for {@link onResponse}. @example this.rememberAnsweredId('page-session', 9) */

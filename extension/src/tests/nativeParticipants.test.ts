@@ -1440,7 +1440,7 @@ test('a paused frame at another column than the paused binding on the same line 
   // Assert
   assert.match(
     harness.run.view().failures[0]!,
-    /^Error: DAP frame differs from the bound configured source position \(frame .+:\d+:\d+, bound .+:\d+:\d+\)$/,
+    /^Error: DAP frame differs from the bound configured source position \(frame .+[\\/]mode\.ts:1:7, bound .+[\\/]mode\.ts:1:1\)$/,
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })

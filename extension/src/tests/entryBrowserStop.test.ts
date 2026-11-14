@@ -304,7 +304,7 @@ test('a pause at another column of the declared line is not recorded as the entr
   assert.equal(view.snapshots.length, 0)
   assert.match(
     view.failures[0]!,
-    /^Error: DAP frame differs from the bound configured source position \(frame .+:\d+:\d+, bound .+:unknown\)$/,
+    /^Error: DAP frame differs from the bound configured source position \(frame .+[\\/]theme\.ts:1:5, bound .+[\\/]theme\.ts:unknown\)$/,
   )
 })
 
