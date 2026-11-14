@@ -498,6 +498,12 @@ type NodeMomentReturn = 'returned' | 'superseded' | 'not-shown'
 /** Where a file a paused-file watch left behind the Application pane stands in its skip ({@link StudyWorkspace}'s `refreshLeftBehindFiles`): `until-hidden` while the pane has not yet been seen in front of it, `until-front` while it stays behind the pane. */
 type LeftBehindFileState = 'until-hidden' | 'until-front'
 
+/** What the attach's uncover step uses of a run's paused-file watch ({@link StudyWorkspace.keepPausedSourceOutOfApplication}): marking a file left behind the pane, and waiting until no paused-file move is in flight, the run's own or one an earlier run's watch started before its release. */
+interface PausedSourceWatchGuard {
+  leave: (uri: vscode.Uri) => void
+  settled: () => Promise<void>
+}
+
 /** What the native surfaces present for an Extension replay's moment; see {@link StudyWorkspace.extensionMomentOf}. */
 type ExtensionMomentPresentation = {
   moment: ExtensionReplayPresentation['model']['moments'][number]
@@ -1064,6 +1070,8 @@ export class StudyWorkspace {
     []
   /** The document URIs of the paused files ended runs left in front of their kept Application pane, each until its tab closes or the next run's attach reads it, so that attach can tell such a run tab from a learner's ({@link uncoverApplicationFromLeftoverStopTab}, Cycle 0132 task 8). */
   private readonly leftoverStopTabUris = new Set<string>()
+  /** Every paused-file move in flight, whichever lease's watch started it, until its show and close end ({@link keepPausedSourceOutOfApplication}); a next run's uncover step waits for all of them, since a released lease's move still shows its file when the editor answers ({@link pausedSourceMovesSettled}, CodeRabbit, PR 334). */
+  private readonly pausedSourceMovesInFlight = new Set<Promise<void>>()
   /** The native effects this host itself issued (reveals, disposals, editor commands, shown documents), for {@link refusePlacement}'s report (N55-F4). */
   private readonly placementEffects = new PlacementEventLog(
     REFUSAL_REPORT_EFFECTS,
@@ -5732,6 +5740,8 @@ export class StudyWorkspace {
       let isFinal = false
       // The run's stop files, known once its configuration resolves (before that nothing moves).
       let stopFilePaths = new Set<string>()
+      // The same files as the run resolved them, for opening ({@link leaseApplicationViewport}'s `runStopFiles`); the canonical set above is for comparing only.
+      let resolvedStopFiles: readonly string[] = []
       const viewport = await this.leaseApplicationViewport({
         runId,
         // The extension run journals its own events; the pane's delivery detail has no reader.
@@ -5744,12 +5754,15 @@ export class StudyWorkspace {
         keepsEndedPane: () => isFinal,
         movesPausedSourceOut: (fsPath) =>
           stopFilePaths.has(canonicalFsPath(fsPath)),
+        // An extension run reports its stop files through its identity, not through a repository run's record.
+        runStopFiles: () => resolvedStopFiles,
       })
       return new ChromeExtensionViewportView(viewport, {
         onFinal: () => {
           isFinal = true
         },
         onStopFiles: (stopFiles) => {
+          resolvedStopFiles = [...stopFiles]
           stopFilePaths = new Set(
             stopFiles.map((file) => canonicalFsPath(file)),
           )
@@ -7708,7 +7721,7 @@ export class StudyWorkspace {
    * Prepares the Application pane for one run and wraps it in a leased {@link BrowserViewport}; called by {@link presentation}'s `createViewport` (repository, server and test runs) and `createChromeExtensionViewport`.
    * The lease's release closes the pane of an ended run, except when `keepsEndedPane` says the run reached its last content: an ended extension run keeps its pane and last frame, without the keyboard, until a next run's view replaces it or the learner closes the tab (ER22). A retired lease never touches a newer one's pane.
    * The pane an ended run keeps may still be covered by that run's paused file: the release notes it ({@link rememberLeftoverStopTab}) and the next run's attach brings the pane back in front of it ({@link uncoverApplicationFromLeftoverStopTab}).
-   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question and `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files.
+   * @param input - The run's identity, its journal and failure hooks, and optionally the recording observer, the keep-at-end question, `movesPausedSourceOut` ({@link keepPausedSourceOutOfApplication}, an extension run's lease): whether a document's file is one of the run's stop files, and `runStopFiles` (an extension run's lease): the stop files, as the run resolved them, that {@link openRunStopFilesBesideApplication} opens beside the view; a lease without it opens its repository run's declared stop files.
    * @returns The viewport, already registered as the workspace's live one.
    * @throws What {@link prepareApplicationGroup} throws when no safe pane can be prepared.
    * @example const viewport = await this.leaseApplicationViewport({ runId, record, fail, scenario, signal })
@@ -7722,6 +7735,7 @@ export class StudyWorkspace {
     observer?: ViewportRecordingObserver
     keepsEndedPane?: () => boolean
     movesPausedSourceOut?: (fsPath: string) => boolean
+    runStopFiles?: () => readonly string[]
   }): Promise<BrowserViewport> {
     const { runId, keepsEndedPane } = input
     // A new run may replace a closed reader, but an open recording keeps its independently selected film.
@@ -7758,16 +7772,34 @@ export class StudyWorkspace {
         // The run's stop file opens as a preview in this group; a preview Application would be replaced by it (N64p2-F2).
         keepsPaneOpen: async (attachSignal) => {
           await this.keepMovedApplicationTab(panel, attachSignal)
+          // The files the uncover step leaves behind the kept pane, by canonical path: opening them beside it again would let Cursor show them in the pane's group once more (Cycle 0132 task 8).
+          const leftBehindFiles = new Set<string>()
           // An earlier run's paused file can still cover the kept pane; the run's first reveal would refuse over it (Cycle 0132 task 8).
           await this.uncoverApplicationFromLeftoverStopTab(
             panel,
             attachSignal,
-            (uri) => pausedSourceWatch?.leave(uri),
+            {
+              leave: (uri) => {
+                leftBehindFiles.add(canonicalFsPath(uri.fsPath))
+                pausedSourceWatch?.leave(uri)
+              },
+              settled: async () => {
+                await pausedSourceWatch?.settled()
+                // An earlier run's watch released with the lease, but its move in flight still shows the file when the editor answers (CodeRabbit, PR 334).
+                await this.pausedSourceMovesSettled()
+              },
+            },
           )
+          // Read at this moment: a run declares its stops when its configuration resolves, after its lease exists. Written as the run resolved them (the canonical form is for comparing only); only this lease's run, never an earlier run's or another study's.
           await this.openRunStopFilesBesideApplication(
             panel,
             attachSignal,
-            runId,
+            [
+              ...(input.runStopFiles?.() ??
+                this.declaredRunStopFiles((path) => path, runId)),
+            ].filter(
+              (stopFile) => !leftBehindFiles.has(canonicalFsPath(stopFile)),
+            ),
           )
         },
         // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
@@ -7883,18 +7915,18 @@ export class StudyWorkspace {
    * The run's own paused-file watch ({@link keepPausedSourceOutOfApplication}) is told to leave that file behind the pane before the pane comes forward: a run that also stops in the file would otherwise move it, and Cursor 3.30.8, whose Agent chat still holds the keyboard, answers that show by bringing the file's copy in the pane's group to the front again, so the attach's reveal refused after all (Cycle 0132 E4, E2-2 run 2). Once the run's own stop shows the file in front again, the watch moves it as any paused file. The notes are read live during the keyboard question, so a tab the learner closes and opens again meanwhile is not covered.
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
-   * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
+   * @param watch - The run's paused-file watch: `leave` tells it not to move a file left behind the pane, and `settled` ends once a move it had in flight has ended.
    * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.uncoverApplicationFromLeftoverStopTab(panel, signal, (uri) => watch.leave(uri)) // settings.js of run 1 stays behind run 2's view
+   * @example await this.uncoverApplicationFromLeftoverStopTab(panel, signal, { leave: (uri) => watch.leave(uri), settled: () => watch.settled() }) // settings.js of run 1 stays behind run 2's view
    */
   private async uncoverApplicationFromLeftoverStopTab(
     panel: vscode.WebviewPanel,
     signal: AbortSignal,
-    leaveBehind: (uri: vscode.Uri) => void,
+    watch: PausedSourceWatchGuard,
   ): Promise<void> {
     try {
-      await this.uncoverNotedLeftover(panel, signal, leaveBehind)
+      await this.uncoverNotedLeftover(panel, signal, watch)
     } finally {
       // The note is read once, whatever the attach did with it: a later run notes its own.
       this.leftoverStopTabUris.clear()
@@ -7905,15 +7937,15 @@ export class StudyWorkspace {
    * The body of {@link uncoverApplicationFromLeftoverStopTab}: reads the notes live, so a tab the learner closes meanwhile (the tab listener drops its note) is not covered when it is opened again.
    * @param panel - The lease's Application pane.
    * @param signal - The attach's cancellation.
-   * @param leaveBehind - Tells the run's paused-file watch not to move a file left behind the pane.
+   * @param watch - The run's paused-file watch: `leave` tells it not to move a file left behind the pane, and `settled` ends once a move it had in flight has ended.
    * @returns Once the pane stands in front of its group, or nothing needed or allowed the reveal.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.uncoverNotedLeftover(panel, signal, (uri) => watch.leave(uri))
+   * @example await this.uncoverNotedLeftover(panel, signal, { leave: (uri) => watch.leave(uri), settled: () => watch.settled() })
    */
   private async uncoverNotedLeftover(
     panel: vscode.WebviewPanel,
     signal: AbortSignal,
-    leaveBehind: (uri: vscode.Uri) => void,
+    watch: PausedSourceWatchGuard,
   ): Promise<void> {
     const column = this.viewColumnOf(panel)
     const coveringLeftover = (): vscode.Uri | undefined => {
@@ -7937,18 +7969,25 @@ export class StudyWorkspace {
       ? await this.keepsKeyboardFromPane()
       : true
     signal.throwIfAborted()
-    // Read again after the keyboard's answer: the pane may be gone or moved, or the learner may have changed the group meanwhile.
-    if (
-      this.app !== panel ||
-      this.viewColumnOf(panel) !== column ||
-      !coveringLeftover()
-    )
-      return
-    // An editor the learner chose while the rule answered keeps the keyboard (CodeRabbit, PR 331).
+    /** Tells that the pane is still where the notes were read and still covered by a noted file: the pane may be gone or moved, or the learner may have changed the group meanwhile. */
+    const isStillCovered = (): boolean =>
+      this.app === panel &&
+      this.viewColumnOf(panel) === column &&
+      Boolean(coveringLeftover())
+    // Read again after the keyboard's answer.
+    if (!isStillCovered()) return
+    watch.leave(covered)
+    // A move of the earlier run's file that the watch started before this step may still be showing it; its show would bring the file in front of the pane again after the reveal below (Cycle 0133 D21). The file is marked left, so no move starts after the one in flight.
+    const hasMoveEnded = await this.awaitMoveInFlight(watch, signal)
+    // Read again after the move's end.
+    if (!isStillCovered()) return
+    // An editor the learner chose while the rule answered or the move ended keeps the keyboard (CodeRabbit, PR 331).
     const takesKeyboard = !comesWithoutKeyboard && coveredEditorIsActive()
-    leaveBehind(covered)
     this.revealPane(panel, column, !takesKeyboard)
     if (takesKeyboard) this.tellPaneTookKeyboard()
+    // A move that outlasted the bound can still put the file in front of the pane when its show answers.
+    if (!hasMoveEnded)
+      this.recoverPaneAfterLateMove(panel, column, watch, covered)
     try {
       await waitUntil(
         () => {
@@ -7969,22 +8008,112 @@ export class StudyWorkspace {
   }
 
   /**
+   * Waits, within the placement bound, until no paused-file move is in flight, the run's own or one an earlier run's watch started before its release; called by {@link uncoverNotedLeftover} after it marked the earlier run's file left behind the pane.
+   * A move that outlasts the bound is gone on from; the caller then covers the pane again once that move ends ({@link recoverPaneAfterLateMove}).
+   * @param watch - The run's paused-file watch guard, whose `settled` also waits for the moves of released leases ({@link pausedSourceMovesSettled}).
+   * @param signal - The attach's cancellation.
+   * @returns
+   * - `true` once the watch is settled within the bound
+   * - `false` when {@link PRESENTATION_READY_TIMEOUT_MS} passed with a move still in flight
+   * @throws The signal's reason when the run was cancelled.
+   * @example const hasMoveEnded = await this.awaitMoveInFlight(watch, signal) // => false when the move's show is still pending after 5 s
+   */
+  private async awaitMoveInFlight(
+    watch: PausedSourceWatchGuard,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      await awaitResponse(
+        watch.settled(),
+        'the paused-file move in flight',
+        signal,
+        PRESENTATION_READY_TIMEOUT_MS,
+      )
+      return true
+    } catch (error) {
+      // A cancelled run keeps its signal's reason; the bound only ends the wait.
+      signal.throwIfAborted()
+      if (!(error instanceof WaitTimeoutError)) throw error
+      return false
+    }
+  }
+
+  /**
+   * Waits until no paused-file move is in flight, whichever lease's watch started it; awaited by the `settled` guard that {@link leaseApplicationViewport} gives the uncover step ({@link awaitMoveInFlight}, {@link recoverPaneAfterLateMove}).
+   * A run that ends while its watch's move is still showing the paused file releases the watch, but the editor still answers that show, which in Cursor 3.30.14 can bring the file in front of the next run's view in the same pane (CodeRabbit, PR 334). A move that a finished move starts is waited for too.
+   * @returns Once {@link pausedSourceMovesInFlight} is empty; a move whose show never answers keeps it pending, so callers bound the wait.
+   * @example await this.pausedSourceMovesSettled() // the released run's show of settings.js has answered
+   */
+  private async pausedSourceMovesSettled(): Promise<void> {
+    // A move's end can start the next move of the same watch before the waiters go on.
+    while (this.pausedSourceMovesInFlight.size)
+      await Promise.all([...this.pausedSourceMovesInFlight])
+  }
+
+  /**
+   * Brings the kept pane back in front once a paused-file move that outlasted the uncover step's bound has ended, when that move's late show put the earlier run's file in front of the pane again; called by {@link uncoverNotedLeftover} after it went on without the move (Codex review, Cycle 0133).
+   * Cursor 3.30.14 answers such a show by bringing the file's copy in the pane's group to the front while its Agent chat holds the keyboard, and the watch, which leaves that file behind the pane, would not move it. Only that file, still the unedited front tab of the same pane's group in the same lease, is covered again, without the keyboard; another tab in front of the pane (one the learner chose meanwhile) stays, and a failure is reported on the layout line.
+   * @param panel - The lease's Application pane.
+   * @param column - The pane's column when the uncover step revealed it.
+   * @param watch - The run's paused-file watch guard, whose `settled` ends with the late move, also one a released lease started.
+   * @param covered - The earlier run's file the uncover step left behind the pane.
+   * @example this.recoverPaneAfterLateMove(panel, column, watch, settingsUri) // the view is in front again once the late show of settings.js answered
+   */
+  private recoverPaneAfterLateMove(
+    panel: vscode.WebviewPanel,
+    column: vscode.ViewColumn,
+    watch: PausedSourceWatchGuard,
+    covered: vscode.Uri,
+  ): void {
+    const leaseId = this.leaseId
+    void watch
+      .settled()
+      .then(() => {
+        // Only the same lease's pane, in the same column, over the same file.
+        const isSamePane =
+          this.leaseId === leaseId &&
+          this.app === panel &&
+          this.viewColumnOf(panel) === column
+        if (
+          isSamePane &&
+          this.coveringTabOfApplication(column)?.uri.toString() ===
+            covered.toString()
+        )
+          this.revealPane(panel, column, true)
+      })
+      .catch((error: unknown) => this.report('layout', error))
+  }
+
+  /**
    * Moves the paused file that opens in front of a live extension run's Application pane to the source group below it, so the stopped source and the extension view stay visible in separate groups (DR6); called by {@link leaseApplicationViewport} for an extension run's lease.
    * Cursor 3.27.22 opens a stop's paused file in the Application group although that group is locked, as a preview tab in front of the view (Cycle 0062 task 2, dry run of 2026-10-30); VS Code opens it in another group. An extension run has no captured source of its own: the paused file is where the learner reads the stop.
    * The watch ends with the lease's release or the pane's disposal. It looks again after each move, for a stop that came meanwhile, and gives a file up after {@link PAUSED_SOURCE_MOVE_ATTEMPTS} failed moves in a row, so a show the editor keeps refusing never loops while the next stop's file still moves.
    * @param panel - The lease's Application pane.
    * @param isCurrent - Whether the lease is still the workspace's current one.
    * @param isStopFile - Whether a file (its `fsPath`) is one of this run's declared stop files; only such a file moves, so a file the learner opens there as a preview during the run stays, and nothing moves before the run's stops are known.
-   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while it stays behind the pane, until a stop shows it in front again ({@link uncoverApplicationFromLeftoverStopTab}, {@link refreshLeftBehindFiles}).
+   * @returns The watch: `dispose` ends it (the lease's release); `leave` marks a file the watch is not to move while it stays behind the pane, until a stop shows it in front again ({@link uncoverApplicationFromLeftoverStopTab}, {@link refreshLeftBehindFiles}); `settled` ends at once when no move is in flight, else when the move in flight and the chain of moves after it ended (a failed move counts as ended; disposal ends nothing early, a move in flight ends when its show answers).
    * @example const watch = this.keepPausedSourceOutOfApplication(panel, () => this.leaseId === leaseId, (fsPath) => stopFiles.has(fsPath)); watch.leave(settingsUri)
    */
   private keepPausedSourceOutOfApplication(
     panel: vscode.WebviewPanel,
     isCurrent: () => boolean,
     isStopFile: (fsPath: string) => boolean,
-  ): { dispose: () => void; leave: (uri: vscode.Uri) => void } {
+  ): {
+    dispose: () => void
+    leave: (uri: vscode.Uri) => void
+    settled: () => Promise<void>
+  } {
     let isMoving = false,
       isDisposed = false
+    // Callers of `settled` waiting for the move in flight and the chain after it to end.
+    let settledWaiters: Array<() => void> = []
+    /** Lets the callers of `settled` go on once no move is in flight. */
+    const releaseSettledWaiters = (): void => {
+      if (isMoving) return
+      const waiters = settledWaiters
+      settledWaiters = []
+      for (const resolve of waiters) resolve()
+    }
     const failedMoves = new Map<string, number>()
     // Files left behind the pane on purpose, by document URI: kept until the pane is seen in front of them, then until a stop brings them in front again.
     const leftBehind = new Map<string, LeftBehindFileState>()
@@ -8001,21 +8130,28 @@ export class StudyWorkspace {
       if (!move) return
       isMoving = true
       const key = move.uri.toString()
-      void this.movePausedSource(move, isWatching)
-        .then(
-          () => {
-            failedMoves.delete(key)
-          },
-          (error: unknown) => {
-            failedMoves.set(key, (failedMoves.get(key) ?? 0) + 1)
-            this.report('layout', error)
-          },
-        )
-        .finally(() => {
-          isMoving = false
+      const moveEnded = this.movePausedSource(move, isWatching).then(
+        () => {
+          failedMoves.delete(key)
+        },
+        (error: unknown) => {
+          failedMoves.set(key, (failedMoves.get(key) ?? 0) + 1)
+          this.report('layout', error)
+        },
+      )
+      // Known workspace-wide until it ends, so a next run's attach waits for it after this lease's release too.
+      this.pausedSourceMovesInFlight.add(moveEnded)
+      void moveEnded.finally(() => {
+        this.pausedSourceMovesInFlight.delete(moveEnded)
+        isMoving = false
+        try {
           // A stop that opened its file during this move announced it while the move ran.
           moveCoveringSource()
-        })
+        } finally {
+          // The look above started no next move, or threw: the chain ended here.
+          releaseSettledWaiters()
+        }
+      })
     }
     const watches = [
       vscode.window.tabGroups.onDidChangeTabs(moveCoveringSource),
@@ -8031,7 +8167,11 @@ export class StudyWorkspace {
     const leave = (uri: vscode.Uri): void => {
       leftBehind.set(uri.toString(), 'until-hidden')
     }
-    return { dispose, leave }
+    const settled = (): Promise<void> =>
+      isMoving
+        ? new Promise<void>((resolve) => settledWaiters.push(resolve))
+        : Promise.resolve()
+    return { dispose, leave, settled }
   }
 
   /**
@@ -8140,19 +8280,27 @@ export class StudyWorkspace {
   /**
    * Finds the learner's group right after the Application's, where a run's stop file is shown outside the Application's group; read by {@link coveringSourceMove} and {@link openRunStopFilesBesideApplication}.
    * @param applicationColumn - The Application pane's column; `undefined` when it has none.
-   * @returns The group; `undefined` when there is none, or it is a chat part or holds a Codebook pane.
+   * @returns The group; `undefined` when there is none, it is an empty group beyond the main editor's measured groups (maybe another part's), or it is a chat part or holds a Codebook pane.
    * @example this.sourceGroupAfterApplication(1)?.viewColumn // => 2
    */
   private sourceGroupAfterApplication(
     applicationColumn: vscode.ViewColumn | undefined,
   ): vscode.TabGroup | undefined {
+    const mainCount = this.applicationGroup?.count
     const group = vscode.window.tabGroups.all.find(
       (candidate) =>
         applicationColumn !== undefined &&
         candidate.viewColumn === applicationColumn + 1,
     )
+    // An empty group beyond the main editor's measured groups may be another part's (Cursor's Agent part, listed with no tab after Close All Editors), which is never a destination; a group holding the learner's editors stands in the main editor whatever the recorded count (Cycle 0133 D12).
+    const isEmptyBeyondMainGroups =
+      applicationColumn !== undefined &&
+      mainCount !== undefined &&
+      applicationColumn + 1 > mainCount &&
+      !group?.tabs.length
     if (
       !group ||
+      isEmptyBeyondMainGroups ||
       !(
         group.tabs.length === 0 ||
         holdsEditorTab(group, editorTabInputKinds(vscode))
@@ -8169,18 +8317,16 @@ export class StudyWorkspace {
    * A file already open in a group other than the Application's is skipped. A file open only in the Application's own group is opened again beside it on purpose: the debugger must find the file outside the Application's group. Only a text tab in front of a destination group is restored afterwards ({@link restoreFrontTabsAfterStopFiles}); an image, webview or settings tab in front stays behind the stop file, since the API cannot show it again. No tab of the learner's is closed, moved or edited. A file that cannot be opened (missing, binary, refused) is no error: the run goes on and reports it on the layout line.
    * @param panel - The run's Application pane.
    * @param signal - The run's cancellation.
-   * @param runId - The run whose lease this is; only its own stop files are opened.
+   * @param stopFiles - The run's stop files as the run resolved them (an extension run's identity, or a repository run's declared stops).
    * @returns Once every stop file is open outside the Application's group, or skipped.
    * @throws The signal's reason when the run was cancelled.
-   * @example await this.openRunStopFilesBesideApplication(panel, signal, runId) // src/index.tsx is a kept tab in column 2
+   * @example await this.openRunStopFilesBesideApplication(panel, signal, ['/repo/src/index.tsx']) // src/index.tsx is a kept tab in column 2
    */
   private async openRunStopFilesBesideApplication(
     panel: vscode.WebviewPanel,
     signal: AbortSignal | undefined,
-    runId: string,
+    stopFiles: readonly string[],
   ): Promise<void> {
-    // Written as the run resolved them: the canonical form is lowercased on macOS and Windows and is for comparing only; only this lease's run, never an earlier run's or another study's.
-    const stopFiles = this.declaredRunStopFiles((path) => path, runId)
     // The learner's front text tab of each destination group before the first stop file opened there, by column.
     const frontTabsBefore = new Map<vscode.ViewColumn, vscode.Uri>()
     // The canonical path of the stop file this call last put in front of each group, by column: only that front tab is this call's to replace.
@@ -8212,16 +8358,22 @@ export class StudyWorkspace {
         )
           frontTabsBefore.set(destination.viewColumn, frontInput.uri)
         try {
-          await this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
-            viewColumn: destination.viewColumn,
-            preserveFocus: true,
-            // A kept tab replaces no preview of the learner's.
-            preview: false,
-          })
+          // Bounded: a show the editor never answers must not hold the attach until the run's setup deadline fails the whole run (Codex review, Cycle 0133).
+          await awaitResponse(
+            this.showTextDocumentNoted(vscode.Uri.file(stopFile), {
+              viewColumn: destination.viewColumn,
+              preserveFocus: true,
+              // A kept tab replaces no preview of the learner's.
+              preview: false,
+            }),
+            'the stop file shown beside the Application',
+            signal,
+            PRESENTATION_READY_TIMEOUT_MS,
+          )
           lastShownStopFiles.set(destination.viewColumn, canonicalStopFile)
         } catch (error) {
-          // A file the editor cannot open leaves the run as it was; only a cancelled run ends here.
-          if (signal?.aborted) throw error
+          // A cancelled run keeps its signal's reason; a file the editor cannot open, or does not open within the bound, leaves the run as it was.
+          signal?.throwIfAborted()
           this.report('layout', error)
         }
       }
@@ -8267,10 +8419,16 @@ export class StudyWorkspace {
       )
         continue
       try {
-        await this.showTextDocumentNoted(previousUri, {
-          viewColumn: column,
-          preserveFocus: true,
-        })
+        // Bounded like the stop file's own show: an unanswered show leaves that tab behind and ends nothing else.
+        await awaitResponse(
+          this.showTextDocumentNoted(previousUri, {
+            viewColumn: column,
+            preserveFocus: true,
+          }),
+          'the earlier front tab shown again',
+          undefined,
+          PRESENTATION_READY_TIMEOUT_MS,
+        )
       } catch (error) {
         this.report('layout', error)
       }
@@ -13648,6 +13806,7 @@ export class StudyWorkspace {
     const originals = vscode.window.tabGroups.all.map((group) => ({
       identity: this.editorGroupIdentities.get(group),
       column: group.viewColumn,
+      isEmpty: group.tabs.length === 0,
     }))
     let allocated: symbol | undefined,
       createdPanel: vscode.WebviewPanel | undefined
@@ -13667,10 +13826,13 @@ export class StudyWorkspace {
         sourceFocus.dispose()
         this.applicationGroupChange = undefined
       }
-      const { group, identity } = this.newApplicationGroup(originals)
+      const { group, identity, hasClosedFirstOriginal } =
+        this.newApplicationGroup(originals)
+      // The editor closed the empty group the insertion went above (Cursor 3.30.14, Cycle 0133 D12): the main grid keeps its count.
+      const insertedMainGroups = hasClosedFirstOriginal ? 0 : 1
       allocated = identity
       assertCurrent()
-      this.assertApplicationLockTarget(group, originals)
+      this.assertApplicationLockTarget(group, originals, hasClosedFirstOriginal)
       const lockReport = await this.lockActiveEditorGroup()
       assertCurrent()
       // Cursor can activate the group that held the keyboard again before the lock reaches it (row 644), or only after it (row 650).
@@ -13682,7 +13844,10 @@ export class StudyWorkspace {
       // The editor reports the new group's activation after the commands answered; no guard of the preparation arms before that report, which would read it as a change the learner made (N55-F4 refusal 1, H2-b).
       await this.waitForLateGroupActivation(identity, signal)
       assertCurrent()
-      this.claimApplicationAllocation(identity, grid.groups.length + 1)
+      this.claimApplicationAllocation(
+        identity,
+        grid.groups.length + insertedMainGroups,
+      )
       // Decided right before the pane exists: an Open may have made one outside the queue since this transaction began (Cycle 0046 OCR1-7).
       const paneBefore = this.app
       const panel = this.ensureApp()
@@ -13700,7 +13865,8 @@ export class StudyWorkspace {
       // Move Source only after App leaves its old group, so native preview replacement cannot dispose the retained renderer.
       const retiredSource = await this.retireSourceDerivedGroup(
         vscode.window.tabGroups.all.filter(
-          (group) => group.viewColumn <= grid.groups.length + 1,
+          (group) =>
+            group.viewColumn <= grid.groups.length + insertedMainGroups,
         ),
         assertCurrent,
       )
@@ -13724,7 +13890,10 @@ export class StudyWorkspace {
       // A row the new group left at the minimum height would be expanded by its first activation, the focus return among them (row 691).
       layout = await this.stackRowsLeftAtMinimum(layout, lifetime, assertPlaced)
       const expectedCount =
-        grid.groups.length + (retiredSource ? 0 : 1) - removedByMove
+        grid.groups.length +
+        insertedMainGroups -
+        (retiredSource ? 1 : 0) -
+        removedByMove
       this.rememberPreparedApplication(panel, identity, layout, expectedCount)
       // The record never rejects and is not awaited, so the preparation keeps its timing.
       this.rememberApplicationGroupMarker(identity)
@@ -14800,32 +14969,65 @@ export class StudyWorkspace {
 
   /**
    * Identifies the newly created empty allocation for {@link reserveApplicationGroup} before cleanup authority is recorded.
-   * @param originals - Group identities and columns captured before the issued insertion.
-   * @returns The new first group and its existing observed identity.
+   * The editor adds one group; Cursor 3.30.14 may also close the empty first group the insertion went above, in the same command ({@link hasClosedFirstOriginalGroup}), so the count then stays the same.
+   * @param originals - Group identities, columns and emptiness captured before the issued insertion.
+   * @returns The new first group, its existing observed identity, and whether the editor closed the empty first original group.
    * @throws When count, emptiness or provenance differs from the issued creation.
-   * @example const allocation = this.newApplicationGroup(originals)
+   * @example const allocation = this.newApplicationGroup(originals) // => { group, identity, hasClosedFirstOriginal: true } after Close All Editors in Cursor
    */
   private newApplicationGroup(
     originals: readonly {
       identity: symbol | undefined
       column: vscode.ViewColumn
+      isEmpty: boolean
     }[],
-  ): { group: vscode.TabGroup; identity: symbol } {
+  ): {
+    group: vscode.TabGroup
+    identity: symbol
+    hasClosedFirstOriginal: boolean
+  } {
     const group = vscode.window.tabGroups.all.find(
         (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
       ),
-      identity = group && this.editorGroupIdentities.get(group)
+      identity = group && this.editorGroupIdentities.get(group),
+      hasClosedFirstOriginal = this.hasClosedFirstOriginalGroup(originals)
     if (
       !group ||
       !identity ||
       group.tabs.length ||
       originals.some((original) => original.identity === identity) ||
-      vscode.window.tabGroups.all.length !== originals.length + 1
+      vscode.window.tabGroups.all.length !==
+        originals.length + (hasClosedFirstOriginal ? 0 : 1)
     )
       throw new Error(
         'The editor did not create one empty owned Application group.',
       )
-    return { group, identity }
+    return { group, identity, hasClosedFirstOriginal }
+  }
+
+  /**
+   * Tells that the editor closed the empty first group the Application's insertion went above, within the same `workbench.action.newGroupAbove`; read by {@link newApplicationGroup} and passed on to {@link assertApplicationLockTarget}.
+   * Cursor 3.30.14 closes a main group whose last editor's close left it empty, while it was the main editor's only group, as soon as a group is added above it, whatever its lock (Cycle 0133 D12: `/ship` pass 2 smoke S3 after **View: Close All Editors**, and two probes without Codebook, one after Close All Editors and one after closing the group's last editor). VS Code keeps such a group below the new one.
+   * @param originals - The groups captured right before the insertion.
+   * @returns
+   * - `true` when the group at column 1 was empty and is no longer listed
+   * - `false` when it is still listed, held a tab, or had no identity Codebook knows
+   * @example this.hasClosedFirstOriginalGroup(originals) // => true after Close All Editors left the earlier Application group alone in Cursor's main editor
+   */
+  private hasClosedFirstOriginalGroup(
+    originals: Parameters<StudyWorkspace['newApplicationGroup']>[0],
+  ): boolean {
+    const first = originals.find(
+      (original) => original.column === vscode.ViewColumn.One,
+    )
+    return Boolean(
+      first?.isEmpty &&
+      first.identity &&
+      !vscode.window.tabGroups.all.some(
+        (candidate) =>
+          this.editorGroupIdentities.get(candidate) === first.identity,
+      ),
+    )
   }
 
   /**
@@ -14937,23 +15139,28 @@ export class StudyWorkspace {
    * Validates original-group survival and current native input for {@link reserveApplicationGroup} immediately before locking its new group.
    * @param group - The newly observed empty allocation.
    * @param originals - The pre-insertion identity/column snapshot.
+   * @param hasClosedFirstOriginal - Whether the editor closed the empty first group the insertion went above ({@link hasClosedFirstOriginalGroup}); that group is not expected to survive.
    * @throws When original groups or native focus changed.
-   * @example this.assertApplicationLockTarget(group, originals)
+   * @example this.assertApplicationLockTarget(group, originals, false)
    */
   private assertApplicationLockTarget(
     group: vscode.TabGroup,
-    originals: readonly {
-      identity: symbol | undefined
-      column: vscode.ViewColumn
-    }[],
+    originals: Parameters<StudyWorkspace['newApplicationGroup']>[0],
+    hasClosedFirstOriginal: boolean,
   ): void {
-    // Every previous group must survive at its shifted column, including auxiliary chat parts.
+    // Every previous group must survive at its shifted column, including auxiliary chat parts; when the editor closed the empty first group the insertion went above, the others stand at their own columns again.
+    const survivors = hasClosedFirstOriginal
+      ? originals.filter(
+          (original) => original.column !== vscode.ViewColumn.One,
+        )
+      : originals
+    const columnShift = hasClosedFirstOriginal ? 0 : 1
     if (
-      !originals.every((original) =>
+      !survivors.every((original) =>
         vscode.window.tabGroups.all.some(
           (candidate) =>
             this.editorGroupIdentities.get(candidate) === original.identity &&
-            candidate.viewColumn === original.column + 1,
+            candidate.viewColumn === original.column + columnShift,
         ),
       )
     )
@@ -15408,11 +15615,12 @@ export class StudyWorkspace {
 
   /**
    * Retires one leftover group for {@link retireProvenLeftoverGroups}: focuses its column where needed, proves the group, unlocks it, proves it again, closes it and confirms that the grid lost exactly that group.
+   * A leftover that is the main editor's only group (a record of one group) is retired in place once proven, still locked: the editor keeps a part's last group whatever closes it (VS Code's `removeGroup`; Cursor 3.30.8 accepts such a close with no group event and no change), so a close could only time out (Cycle 0133 D12, E3 probe run A), and an unlocked empty group is closed by Cursor 3.30.14 as soon as a group is added above it.
    * @param marker - The group's recorded column, with the group count and layout of the grid it must stand in.
    * @param focusCommand - The command that gives the group at that column the keyboard; `undefined` when that group is the active one of the only editor part already.
    * @param assertCurrent - The layout queue's check that this entry still owns native work ({@link withLayout}).
    * @param signal - The entry's cancellation.
-   * @returns The grid the removal left (one group fewer, the layout the editor answered), or `undefined` when the proof failed and nothing was unlocked or closed.
+   * @returns The grid the removal left (one group fewer, the layout the editor answered), the same one-group grid for a leftover retired in place, or `undefined` when the proof failed and nothing was unlocked or closed.
    * @throws When the editor refuses the close, or the grid does not lose exactly that group.
    * @example const left = await this.retireProvenLeftoverGroup({ column: 1, groupCount: 3, layout }, 'workbench.action.focusFirstEditorGroup', assertCurrent, signal)
    */
@@ -15427,6 +15635,14 @@ export class StudyWorkspace {
     if (focusCommand) await this.executeEditorCommand(focusCommand)
     assertCurrent()
     if (!(await this.provenLeftoverGroup(marker))) return undefined
+    // The main editor's only group is kept whatever closes it, so the proven leftover stays where it is with its lock: unlocked, Cursor 3.30.14 would close it once the Application's new group comes above it (Cycle 0133 D12).
+    if (marker.groupCount === 1)
+      return {
+        groupCount: 1,
+        layout: await this.executeEditorCommand<unknown>(
+          'vscode.getEditorLayout',
+        ),
+      }
     await this.executeEditorCommand('workbench.action.unlockEditorGroup')
     const group = await this.provenLeftoverGroup(marker)
     if (!group)
@@ -16516,8 +16732,9 @@ export class StudyWorkspace {
 
   /**
    * Retires only a verified empty created group; Context retirement, Return and final App cleanup share the issued-removal identity boundary.
+   * A group that is the main editor's only group cannot be removed, so it is released in place instead of closed ({@link retireOnlyMainGroupInPlace}, Cycle 0133 D12).
    * @param identity - The allocation identity retained by this reader, never a borrowed parking group.
-   * @returns Whether the allocation is gone; a newly adopted nonempty group stays intact.
+   * @returns Whether the allocation is gone (closed, or released in place); a newly adopted nonempty group stays intact.
    * @throws When the host refuses an empty-group close or never publishes its accepted removal.
    * @example await this.retireEmptyOwnedGroup(owned.identity)
    */
@@ -16536,10 +16753,20 @@ export class StudyWorkspace {
     }
     this.applicationGroupChange = removal
     try {
-      await this.closeKnownNativeGroup(group, identity, {
-        refusal: 'The editor refused to retire an empty Codebook group.',
-        pending: 'owned Codebook group removal',
-      })
+      // The editor keeps the main editor's only group: its close would be accepted and remove nothing, as after Close All Editors (Cycle 0133 D12).
+      const isOnlyMainGroup = await this.isOnlyMainEditorGroup(group)
+      // Found again after the layout read: a file the learner opened in the group meanwhile keeps it, as at the start (CodeRabbit CLI, Cycle 0133).
+      const current = vscode.window.tabGroups.all.find(
+        (candidate) => this.editorGroupIdentities.get(candidate) === identity,
+      )
+      if (!current) return true
+      if (current.tabs.length) return false
+      if (isOnlyMainGroup) this.retireOnlyMainGroupInPlace(current)
+      else
+        await this.closeKnownNativeGroup(current, identity, {
+          refusal: 'The editor refused to retire an empty Codebook group.',
+          pending: 'owned Codebook group removal',
+        })
       // The retired group leaves the record until the next confirmed layout names the groups that remain (finding 599); the removal never rejects and is not awaited, so the identity boundary below is released at once.
       if (retiresRecordedGroup) void this.forgetRecordedGroup(identity)
       return true
@@ -16547,6 +16774,49 @@ export class StudyWorkspace {
       if (this.applicationGroupChange === removal)
         this.applicationGroupChange = previous
     }
+  }
+
+  /**
+   * Says whether a group is the main editor's only group, which no close removes; asked by {@link retireEmptyOwnedGroup} before it closes an owned group.
+   * The editor keeps a part's last group (VS Code's `removeGroup`), and Cursor 3.30.8 accepts the close of its main editor's only group with no group event and no change, so the retirement used to wait 5 s and refuse (Cycle 0133 D12 Step 0, run 3). The main editor's groups come first, at column 1 on ({@link holdsOnlyChatsBeyond}); beside another part a layout read answers for the part that has the keyboard, so the group is the only one when the editor lists no other group, or when the read counts one group and the other group is another part's ({@link isSoleMainGroupBesideChat}).
+   * @param group - The owned group about to be retired.
+   * @returns `true` when no close can remove the group; `false` when it is not the first group listed at column 1 (a floating window's group may be) or the main editor has other groups.
+   * @example await this.isOnlyMainEditorGroup(group) // => true for the empty Application group Close All Editors left beside Cursor's Agent part
+   */
+  private async isOnlyMainEditorGroup(
+    group: vscode.TabGroup,
+  ): Promise<boolean> {
+    const groups = vscode.window.tabGroups.all
+    // The main editor's first group: a floating window's groups count their columns from 1 too.
+    if (
+      groups.find(
+        (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
+      ) !== group
+    )
+      return false
+    const groupCount = groups.length
+    if (groupCount === 1) return true
+    // A third group would make the read's count of one no proof of the main editor's grid.
+    if (groupCount !== 2) return false
+    const layout = await this.executeEditorCommand<unknown>(
+      'vscode.getEditorLayout',
+    )
+    // A layout the editor did not answer proves nothing.
+    const layoutGroupCount = editorLayoutGroupCount(layout)
+    return (
+      layoutGroupCount !== undefined &&
+      this.isSoleMainGroupBesideChat(layoutGroupCount)
+    )
+  }
+
+  /**
+   * Releases the main editor's only group in place instead of closing it ({@link isOnlyMainEditorGroup}); called by {@link retireEmptyOwnedGroup}, as when Close All Editors left the empty Application group alone in the main editor (Cycle 0133 D12).
+   * The group gets a new identity, so the allocation is gone for every reader that asks by the old one, and the group stays where it is with the lock it has. It is not unlocked: Cursor 3.30.14 closes an empty group whose lock was removed as soon as the next preparation adds the Application's group above it, so that preparation's creation check refused and its run lost the group below the view (Cycle 0133 /ship QA, smoke S2 and its isolation).
+   * @param group - The empty owned group, as the caller found it again after its layout read.
+   * @example this.retireOnlyMainGroupInPlace(group) // the empty Application group stays, still locked, as the group the next view goes above
+   */
+  private retireOnlyMainGroupInPlace(group: vscode.TabGroup): void {
+    this.editorGroupIdentities.set(group, Symbol())
   }
 
   /**
@@ -17865,6 +18135,8 @@ export class StudyWorkspace {
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabs((event) => {
         this.notePlacementTabEvent(event)
+        // The recorded groups follow the tabs that leave with a tab event only (Cursor 3.30.14's Close All Editors, Cycle 0133 D12).
+        this.presentationGuards.noteObservedGroupTabs()
         // A closed run tab is no leftover any more: a tab the learner opens again in its place is theirs. A closed copy in another group leaves the note of the one still in front of the pane.
         for (const tab of event.closed)
           if (
@@ -18437,7 +18709,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or holding only Codebook's own panes: an entry places its Application pane there before it measures) and one group of another part that holds only a chat, so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389).
+   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or holding only Codebook's own panes: an entry places its Application pane there before it measures) and one group of another part that holds no editor tab (only a chat, or no tab at all: Cursor 3.30.8 keeps listing its Agent part's group after Close All Editors closed the chat's tab, Cycle 0133 D12), so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389). With two groups and a read of one, the second group cannot be the main editor's: two main groups would read two.
    * Cursor reports no keyboard focus for an empty group or a Codebook pane beside its Agent chat part, so the wait of {@link readMainEditorGrid} could never end for an empty main editor. With one group on each side the count a read answers is the main editor's whichever part answered, which is the proof the focus report gives elsewhere. Any other shape (a learner's tab in the first group, more groups, a second part with editors) still needs the report.
    * @param count - The group count the layout read answered.
    * @returns `true` for that shape; `false` otherwise.
@@ -18446,13 +18718,16 @@ export class StudyWorkspace {
   private isSoleMainGroupBesideChat(count: number): boolean {
     const groups = vscode.window.tabGroups.all
     if (count !== 1 || groups.length !== 2) return false
-    const [first, other] = groups
+    // Found by column: Cursor lists its groups in the order they were created, not by column (Cycle 0133 D12 Step 0).
+    const first = groups.find(
+      (group) => group.viewColumn === vscode.ViewColumn.One,
+    )
+    const other = groups.find((group) => group !== first)
     return Boolean(
       first &&
       other &&
-      first.viewColumn === vscode.ViewColumn.One &&
       first.tabs.every((tab) => this.isCodebookPaneInput(tab.input)) &&
-      other.tabs.length > 0 &&
+      // A chat part holds only its chat tab, or no tab at all once Close All Editors closed it (Cursor 3.30.8, Cycle 0133 D12).
       !holdsEditorTab(other, editorTabInputKinds(vscode)),
     )
   }

@@ -75,6 +75,8 @@ export class PresentationGuards {
   private observedEditorGroups: {
     group: vscode.TabGroup
     column: vscode.ViewColumn
+    /** How many tabs the group held when it was recorded; an object the editor keeps can change its tabs afterwards. */
+    tabCount: number
   }[] = []
 
   /**
@@ -3096,6 +3098,12 @@ export class PresentationGuards {
         return undefined
       return soleEmptyGroupBefore(group)
     }
+    // With no tab in any group, before or after the event, the groups that stay keep their order (Cycle 0133 D12).
+    const orderedEmptyPairs = this.orderedEmptySurvivors(
+      event,
+      current,
+      previous,
+    )
     for (const group of current) {
       if (event?.opened.includes(group)) {
         this.host.editorGroupIdentities.set(group, Symbol())
@@ -3115,7 +3123,15 @@ export class PresentationGuards {
       }
       const emptyMatch =
         this.groupEmptiedByOwnRemoval(group, previous, isOwnRemovalReport) ??
-        emptySurvivor(group)
+        emptySurvivor(group) ??
+        orderedEmptyPairs?.get(group) ??
+        this.emptySurvivorAfterClosedGroups(
+          group,
+          event,
+          current,
+          previous,
+          everyGroupReplaced && hasRecognizedReplacement(),
+        )
       if (emptyMatch) {
         this.host.editorGroupIdentities.set(
           group,
@@ -3143,7 +3159,13 @@ export class PresentationGuards {
             issuedColumnShift,
             match.column,
             group.viewColumn,
-          ))
+          ) ||
+          this.columnAfterClosedGroups(
+            event,
+            current,
+            previous,
+            match.column,
+          ) === group.viewColumn)
       this.host.editorGroupIdentities.set(
         group,
         retained
@@ -3155,7 +3177,71 @@ export class PresentationGuards {
     this.observedEditorGroups = current.map((group) => ({
       group,
       column: group.viewColumn,
+      tabCount: group.tabs.length,
     }))
+  }
+
+  /**
+   * Updates how many tabs each recorded group holds after a tab event, for the groups whose objects the editor kept; called by the reader's `onDidChangeTabs` listener in `StudyWorkspace.installReaders`.
+   * Cursor 3.30.14 reports the last tab **View: Close All Editors** closes with a tab event only, after its last group event (Cycle 0133 D12, `/ship` QA journal), so the recorded groups would still count that tab; {@link orderedEmptySurvivors} reads the counts. A tab that leaves without any event changes no count.
+   * @example this.noteObservedGroupTabs() // the recorded first group counts 0 tabs once its last tab closed
+   */
+  noteObservedGroupTabs(): void {
+    const current = vscode.window.tabGroups.all
+    this.observedEditorGroups = this.observedEditorGroups.map((entry) =>
+      current.includes(entry.group)
+        ? { ...entry, tabCount: entry.group.tabs.length }
+        : entry,
+    )
+  }
+
+  /**
+   * Pairs each group an event replaced with the earlier group it still is, by the groups' order, when no group holds a tab before or after the event; asked by {@link observeEditorGroups} for a group that is neither opened nor recognized otherwise.
+   * Cursor 3.30.14 lists its Agent part with no tab after **View: Close All Editors**, so a window whose main groups are empty too has nothing to recognize its groups by, and Cursor answers an insertion, a close or a lock with every group a new object (Cycle 0133 D12, `/ship` QA smoke). The extension host names the groups an event opened and closed; the others keep their order, since inserting or closing a group moves no other group. With no tab anywhere, a wrong pairing could take nothing of the learner's.
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @returns
+   * - The earlier entry of each current group that stayed, by group object, in column order
+   * - `undefined` when there is no event, a group holds a tab, the groups that stayed differ in number, or a group object that stayed is not in its own place
+   * @example this.orderedEmptySurvivors(event, current, previous)?.get(group) // => the earlier first group, now in column 2 below the group New Group Above added
+   */
+  private orderedEmptySurvivors(
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: PresentationGuards['observedEditorGroups'],
+  ):
+    | Map<vscode.TabGroup, PresentationGuards['observedEditorGroups'][number]>
+    | undefined {
+    // The earlier groups count as they were recorded: groups that held Codebook's panes then never pass for empty ones.
+    if (
+      !event ||
+      current.some((group) => group.tabs.length) ||
+      previous.some((entry) => entry.tabCount || entry.group.tabs.length)
+    )
+      return undefined
+    const stayedBefore = previous
+      .filter((entry) => !event.closed.includes(entry.group))
+      .toSorted((left, right) => left.column - right.column)
+    const stayedNow = current
+      .filter((group) => !event.opened.includes(group))
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)
+    if (stayedBefore.length !== stayedNow.length) return undefined
+    const pairs = new Map<
+      vscode.TabGroup,
+      PresentationGuards['observedEditorGroups'][number]
+    >()
+    for (const [index, group] of stayedNow.entries()) {
+      const entry = stayedBefore[index]!
+      // A group object the event kept must stand in its own place, or the order did not hold.
+      if (
+        previous.some((candidate) => candidate.group === group) &&
+        entry.group !== group
+      )
+        return undefined
+      pairs.set(group, entry)
+    }
+    return pairs
   }
 
   /**
@@ -3277,6 +3363,68 @@ export class PresentationGuards {
     to: vscode.ViewColumn,
   ): boolean {
     return shift !== undefined && from + shift === to
+  }
+
+  /**
+   * Names the column an earlier group stands in after an event that only closed groups: one column to the left for each closed group that stood before it; asked by {@link observeEditorGroups} and {@link emptySurvivorAfterClosedGroups}.
+   * Cursor 3.30.14 closes the main editor's emptied only group as soon as New Group Above adds the Application's group above it, so the groups after it move up one column, Cursor's Agent part among them (Cycle 0133 D12, `/ship` native check N2). A close moves no group that stays out of its order; a learner's move closes no group, so it stays unexplained.
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @param column - The earlier group's column before the event.
+   * @returns
+   * - The column the closes leave that group in, when the event closed groups, opened none, and the recorded groups it closed account for every group that is gone
+   * - `undefined` for every other event
+   * @example this.columnAfterClosedGroups(event, current, previous, 3) // => 2 when the event closed the group of column 2
+   */
+  private columnAfterClosedGroups(
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: PresentationGuards['observedEditorGroups'],
+    column: vscode.ViewColumn,
+  ): number | undefined {
+    if (!event?.closed.length || event.opened.length) return undefined
+    const closedRecorded = previous.filter((entry) =>
+      event.closed.includes(entry.group),
+    )
+    // A group that left without a close report leaves the columns unexplained.
+    if (current.length !== previous.length - closedRecorded.length)
+      return undefined
+    const closedBefore = closedRecorded.filter(
+      (entry) => entry.column < column,
+    ).length
+    return column - closedBefore
+  }
+
+  /**
+   * Finds the earlier empty group that a group without tabs still is after an event that only closed groups, an event in which the editor gave every group a new object; asked by {@link observeEditorGroups} for a group nothing else recognized.
+   * Cursor answers its close of the emptied group with every group a new object, so the new empty Application group has nothing to be recognized by (Cycle 0133 D12, `/ship` native check N2: after Close All Editors and a new Agent chat). The groups that stay keep their order, so it stands where the closes leave its earlier column.
+   * @param group - A group of the editor's current model that is neither opened nor known.
+   * @param event - The tab-group event the observer runs for, if any.
+   * @param current - The editor's groups now.
+   * @param previous - The groups the observer recorded last.
+   * @param isRecognizedRebuild - Whether the event gave every group a new object and recognized another group by its tabs.
+   * @returns The only earlier empty group that stayed and that the closes move to the group's column; `undefined` when the group has tabs, the event is no recognized rebuild, or that group is not unique.
+   * @example this.emptySurvivorAfterClosedGroups(emptyGroupAtColumn1, event, current, previous, true) // => the entry of the Application's empty group, column 1 before and after the close of column 2
+   */
+  private emptySurvivorAfterClosedGroups(
+    group: vscode.TabGroup,
+    event: vscode.TabGroupChangeEvent | undefined,
+    current: readonly vscode.TabGroup[],
+    previous: PresentationGuards['observedEditorGroups'],
+    isRecognizedRebuild: boolean,
+  ): PresentationGuards['observedEditorGroups'][number] | undefined {
+    if (!isRecognizedRebuild || group.tabs.length) return undefined
+    // The earlier groups count as they were recorded, as in {@link orderedEmptySurvivors}.
+    const survivors = previous.filter(
+      (entry) =>
+        !entry.tabCount &&
+        !entry.group.tabs.length &&
+        !event?.closed.includes(entry.group) &&
+        this.columnAfterClosedGroups(event, current, previous, entry.column) ===
+          group.viewColumn,
+    )
+    return survivors.length === 1 ? survivors[0] : undefined
   }
 
   /**

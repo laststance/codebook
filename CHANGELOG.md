@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.131.0] - 2026-11-14 (development candidate)
+
+Cycle 0133 ([Issue #332](https://github.com/laststance/codebook/issues/332)), a bug-fix cycle for the three defects that Cycle 0132 carried. **In Cursor, a Chrome-extension run now pauses with its Application view still in front, and after Close All Editors the next run opens its view instead of refusing it.** On laststance/nsx's WXT popup, Cursor's Agent chat ran the popup after a window reload and after Close All Tabs with a new Agent chat, and each run showed its view; the run after Close All Tabs paused at three stops and recorded its frames. VS Code's Copilot Chat ran it twice in one window, each time with its view; its run straight after Close All Editors did not run, because the chat's Study restore was refused until **Codebook: Open Study Workspace**. These checks found two more defects, which the next cycle fixes. In Cursor a library test run's paused file can cover a kept extension view, and after **Codebook: Open Study Workspace** the next extension run can lose its view.
+
+### Fixed
+- **An extension run's first pause leaves its view in front.** Codebook opens the run's stop files beside the Application view before the run's first click, without your keyboard, so the first stop shows its file there and not in front of the view. A file you already have open elsewhere stays where it is, and a file that cannot be opened is skipped.
+- **After View: Close All Editors, the next run or Open no longer waits 5 s or refuses its view in Cursor**, also when you opened a new Agent chat after closing the editors. Cursor closes the released group as soon as the new group comes above it. VS Code keeps the released group below the view, still locked, and **View: Unlock Editor Group** unlocks it.
+- **After a window reload, Open keeps the main editor's only group** when the earlier window left it as its empty Application group, instead of timing out on a removal the editor never makes.
+
+**Compatibility.** No MCP API, study format or skill change.
+
 ## [0.2.130.0] - 2026-11-14 (development candidate)
 
 Cycle 0132 ([Issue #330](https://github.com/laststance/codebook/issues/330)), a feature cycle. **In Cursor, the next Chrome-extension run of a window now shows its Application view and records its frames when the earlier run's paused file was left in front of that view.** On laststance/nsx's WXT-built popup, the chats in VS Code and Cursor ran the popup with its private-network host acknowledged, paused in its own TypeScript source and saved Extension replays. In Cursor, whose Agent chat keeps the keyboard, the earlier run's paused file stayed in front of the view the run kept, and the next run went on without its view and without frames. Now that run brings the view forward and records its frames.

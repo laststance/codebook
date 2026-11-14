@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.130",
+  "version": "0.2.131",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -656,7 +656,7 @@
     "@modelcontextprotocol/sdk": "1.32.2",
     "entities": "9.0.0",
     "parse5": "8.1.1",
-    "ws": "8.22.2",
+    "ws": "8.23.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
