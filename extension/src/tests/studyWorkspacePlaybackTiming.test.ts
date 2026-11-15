@@ -56,9 +56,15 @@ test('a seek to a recorded stop writes one playback timing line that names every
 
 /** The reader's private pieces that the timing tests drive directly. */
 interface TimingInternals {
-  replayDebuggers: { current?: { selectionTimes: () => unknown } }
+  replayDebuggers: {
+    current?: {
+      selectionTimes: () => unknown
+      invalidate: (label?: string) => void
+    }
+  }
+  replayApplicationCovered: boolean
   journalPresentation: (timing: {
-    trigger: 'command'
+    trigger: 'command' | 'tick'
     positionMs: number
     stopChanged: boolean
     totalMs: number
@@ -157,6 +163,102 @@ test('a commit that ran no presentation is journaled without the steps of a pres
     assert.equal(timings.length, 1)
     assert.equal(timings[0].presentMs, 0)
     assert.equal('steps' in timings[0], false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the playback timing journal leaves out film frames inside one stop but keeps a tick that crossed into another stop; fails_when=a tick that kept the stop writes a line, or a tick that changed the stop writes none; why_new=the other timing tests only drive command and seek triggers, so the tick filter never ran; seam=none; no_claim=a real playing replay reaching the tick (the commit is reported directly through the reader's private journal, the controller's own tick timing is not driven)
+// protects=Cycle 0137 C1-E: Output › Codebook does not fill with one line per film frame while a replay plays, yet a tick that crosses a boundary is still journaled; fails_when=a tick that kept the shown stop writes a playback timing line, or a tick that changed the stop writes none; no_claim=a real playing replay reaching the tick, the steps' durations
+test('a film frame inside one stop writes no playback timing line while a tick that changes the stop writes one', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(false, true)
+  const lines: string[] = []
+  harness.reader.diagnostics = {
+    log(): void {},
+    show(): void {},
+    info: (line): void => {
+      lines.push(line)
+    },
+  }
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const internals = harness.reader as unknown as TimingInternals
+    lines.length = 0
+
+    // Act: the controller reports a frame within the stop, then a tick that reached another stop.
+    internals.journalPresentation({
+      trigger: 'tick',
+      positionMs: 400,
+      stopChanged: false,
+      totalMs: 5,
+      frameMs: 1,
+      presentMs: 0,
+    })
+    const afterFrame = lines.filter((line) => line.startsWith(TIMING_PREFIX))
+    internals.journalPresentation({
+      trigger: 'tick',
+      positionMs: 1200,
+      stopChanged: true,
+      totalMs: 7,
+      frameMs: 2,
+      presentMs: 0,
+    })
+
+    // Assert
+    const timings = lines
+      .filter((line) => line.startsWith(TIMING_PREFIX))
+      .map((line) => JSON.parse(line.slice(TIMING_PREFIX.length)))
+    assert.equal(afterFrame.length, 0)
+    assert.equal(timings.length, 1)
+    assert.equal(timings[0].trigger, 'tick')
+    assert.equal(timings[0].positionMs, 1200)
+    assert.equal(timings[0].stopChanged, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=native Run and Debug's retired recorded moment reads "covered by another tab" even when it has recorded history, and "Loading recorded values…" otherwise; fails_when=the reader passes the loading label while another tab covers the application, or passes no label for a recorded moment that loads; why_new=replayInvalidationLabel.test.ts only unit-tests the choice function, not that the reader hands it its covered flag and the moment's history; seam=none; no_claim=what the real native session paints (the debugger's invalidate is recorded, not rendered)
+// protects=Cycle 0137 C1-L: a recorded moment that loads reads "Loading recorded values…" in native Run and Debug, and one hidden behind another tab reads "covered" instead; fails_when=covered does not win over loading, or a loading recorded moment gets no label; no_claim=what the real native session paints
+test('a stop change retires native values as covered when another tab covers the application and as loading otherwise', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(false, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const internals = harness.reader as unknown as TimingInternals
+    const current = internals.replayDebuggers.current
+    assert.ok(current)
+    const labels: (string | undefined)[] = []
+    current.invalidate = (label?: string): void => {
+      labels.push(label)
+    }
+    const seekTo = async (positionMs: number): Promise<void> => {
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs,
+      })
+      await harness.controller.settle()
+    }
+
+    // Act: the same recorded stop is entered once while loading and once while another tab covers the application.
+    await seekTo(300)
+    const loading = [...labels]
+    await seekTo(0)
+    labels.length = 0
+    internals.replayApplicationCovered = true
+    await seekTo(300)
+
+    // Assert
+    assert.equal(loading.at(-1), 'Loading recorded values…')
+    assert.equal(
+      labels.at(-1),
+      'Recorded application is covered by another tab',
+    )
   } finally {
     await harness.close()
   }

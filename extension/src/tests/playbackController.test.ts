@@ -2281,3 +2281,45 @@ test('a timing journal that throws leaves the committed presentation ready at it
   assert.equal(player.controller.state().presentedMs, 50)
   await player.controller.dispose()
 })
+
+// Value: protects=the bound-blanking leave of a slow frame read still telling the native session that the moment being read has recorded history; fails_when=the timer's leave drops the loading flag, so a slow seek to a recorded stop reads "Not recorded at this moment"; why_new=the existing flag tests read the frame at once, so only the leave after the read passes; seam=none (a gated frame read and frameReadBoundMs, as the bound test above); no_claim=what the native session renders for the flag
+// protects=a slow frame read blanking the pane with the loading flag for a recorded stop; fails_when=the bound's leave announces no history; no_claim=real frame read latency
+test('a seek to a recorded stop whose frame read passes its bound blanks the pane announcing that recorded debugger history is loading', async () => {
+  // Arrange
+  let releaseRead = (): void => {}
+  const readHeld = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  let holdNextRead = false
+  const loadsHistoryFlags: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    frameReadBoundMs: 1,
+    frame: async (_study, hash) => {
+      if (holdNextRead) await readHeld
+      return Buffer.from(hash)
+    },
+    invalidate: (_keepPixels, _next, loadsHistory) => {
+      loadsHistoryFlags.push(loadsHistory)
+    },
+  })
+  recordDebuggerHistory(player.data)
+  player.open()
+  await player.controller.settle()
+  const leavesBeforeSeek = loadsHistoryFlags.length
+  holdNextRead = true
+
+  // Act
+  player.seek(100)
+  await waitUntil(
+    () => loadsHistoryFlags.length > leavesBeforeSeek,
+    'the pane blanks at the bound',
+    READER_RESULT_BOUND_MS,
+  )
+  const flagsAtBound = loadsHistoryFlags.slice(leavesBeforeSeek)
+  releaseRead()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(flagsAtBound, [true])
+  await player.controller.dispose()
+})
