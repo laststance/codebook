@@ -1411,7 +1411,7 @@ async function check(page, options, collected) {
   })
 
   // Cycle 0138 T1: the timeline's width follows the position label's width, so it must not change when the presented time gains a digit.
-  // protects=a learner's click aimed at a stop's tick on the timeline lands on that tick while a replay plays past 10 s and 100 s, because the timeline keeps its width; fails_when=the slider is narrower or wider at 10.00 s than at 9.99 s, or at 100.00 s than at 99.99 s, by more than 0.5 px, in either pane at either width, or the label's text changes; no_claim=native webview fonts and zoom (stand-ins: Chromium with the product's own styles and a simulated host message)
+  // protects=a learner's click aimed at a stop's tick on the timeline lands on that tick while a replay plays past 10 s and 100 s, because the timeline keeps its width; fails_when=the slider is narrower or wider at 10.00 s than at 9.99 s, or at 100.00 s than at 99.99 s, by more than 0.5 px, in either pane at either width, the slider is hidden or under 40 px at any time, or a label's text changes; no_claim=native webview fonts and zoom (stand-ins: Chromium with the product's own styles and a simulated host message)
   const longReplay = (step, presentedMs) =>
     operationReplay(step, {
       presentedMs,
@@ -1470,7 +1470,9 @@ async function check(page, options, collected) {
       timelineTexts.length === 16 &&
       timelineTexts.includes('Presented 99.99 s / 155.82 s') &&
       timelineTexts.includes('Presented 100.00 s / 155.82 s') &&
-      timelineTexts.includes('Presented 9.99 s / 155.82 s'),
+      timelineTexts.includes('Presented 9.99 s / 155.82 s') &&
+      timelineTexts.includes('Presented 10.00 s / 155.82 s') &&
+      timelineWidths.every((entry) => entry.track > 40),
   })
 }
 
