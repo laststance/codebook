@@ -7,6 +7,7 @@ import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
+  REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS,
   REPLAY_LOADING_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
@@ -981,9 +982,11 @@ export class ReplayDebugger {
   ): Promise<ReplayInspection> {
     return new Promise((resolve, reject) => {
       let graceTimer: ReturnType<typeof setTimeout> | undefined,
+        scopesTimer: ReturnType<typeof setTimeout> | undefined,
         expired = false
       const finish = (outcome: InspectionOutcome): void => {
         clearTimeout(graceTimer)
+        clearTimeout(scopesTimer)
         clearTimeout(stoppedTimer)
         signal.removeEventListener('abort', check)
         this.inspectionWaiters.delete(check)
@@ -998,6 +1001,7 @@ export class ReplayDebugger {
           expired,
         )
         if (outcome) return finish(outcome)
+        scopesTimer = this.trackScopesRequestBound(adapter, expire, scopesTimer)
         if (graceTimer !== undefined) return
         graceTimer = this.startInspectionGrace(adapter, expire)
         // Native Run and Debug now knows about this stop; the grace from that moment replaces the stopped-event deadline.
@@ -1090,6 +1094,30 @@ export class ReplayDebugger {
         Math.max(0, stoppedAt + REPLAY_DEBUG_INSPECTION_GRACE_MS - Date.now()),
       ),
     )
+  }
+
+  /**
+   * Ends an {@link awaitInspection} wait early when native Run and Debug read the stop's stack but asks for no scopes within {@link REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS}.
+   * Why it exists: with Run and Debug's Variables view hidden (VS Code), Call Stack still reads the stack, and the first stop of a replay would wait the whole {@link REPLAY_DEBUG_INSPECTION_GRACE_MS} for values nobody asks for (Cycle 0137, D8).
+   * Called by {@link awaitInspection}'s check on every wake; the timer starts once, at the first check that sees the stack read, and a scopes request cancels it for good.
+   * @param adapter - Adapter that received the waited selection.
+   * @param expire - Ends the wait without loaded values, as the grace's expiry does.
+   * @param timer - The timer this wait started before, or `undefined` before the stack was read.
+   * @returns The timer to keep for the next call; `undefined` while the stack is unread.
+   * @example scopesTimer = this.trackScopesRequestBound(adapter, expire, scopesTimer)
+   */
+  private trackScopesRequestBound(
+    adapter: ReplayDebugAdapter,
+    expire: () => void,
+    timer: ReturnType<typeof setTimeout> | undefined,
+  ): ReturnType<typeof setTimeout> | undefined {
+    // Already started: a scopes request within the bound keeps the wait for the values.
+    if (timer !== undefined) {
+      if (adapter.scopesRetrieved) clearTimeout(timer)
+      return timer
+    }
+    if (!adapter.stackRetrieved) return undefined
+    return setTimeout(expire, REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS)
   }
 
   /** Re-runs every pending {@link awaitInspection} and {@link awaitRetrieval} check after a native request was served, values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */
