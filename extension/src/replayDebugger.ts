@@ -7,6 +7,7 @@ import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
+  REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS,
   REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS,
   REPLAY_LOADING_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
@@ -75,6 +76,10 @@ export class ReplayDebugger {
   /** Positive discovery of {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, kept for this owner by {@link nativeInspectionCommands}, so later stops need no catalog roundtrip; a host that did not register it is asked again at its next new selection. */
   private registeredNativeFocusCommand = false
   private hasPresented = false
+  /** The editor left the last in-session placeholder unread ({@link retire} fell back to ending the session), so later stop changes skip the in-session wait until a presented stop's stack is read again ({@link noteStackReadAfterPresentation}). */
+  private placeholderLeftUnread = false
+  /** The selection ({@link selected}) whose {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} the host ran without error: the editor focused its stack frame explicitly, so a visible Variables view asks for scopes at once ({@link scopesRequestBoundMs}). Unlike {@link modelSelectionSettledFor}, a host without the command never sets it. */
+  private explicitlyFocusedFor?: ReplayDebugger['selected']
   private lastPresentedSnapshot?: ReplayDebugSnapshot
   /** The last committed moment's values were not loaded and native Run and Debug has requested none since. */
   private valuesUnrequested = false
@@ -328,6 +333,7 @@ export class ReplayDebugger {
       this.session &&
       this.adapter &&
       !this.retiring &&
+      !this.placeholderLeftUnread &&
       (await this.retireInSession(snapshot, signal))
     )
       return
@@ -360,7 +366,20 @@ export class ReplayDebugger {
       signal,
     )
     signal.throwIfAborted()
+    // The editor's Call Stack may show another session: waiting again at every stop change would only add the bound to each one.
+    if (isRead === false) this.placeholderLeftUnread = true
     return isRead === true
+  }
+
+  /**
+   * Re-enables {@link retireInSession} once native Run and Debug read the stack of a stop this owner presented.
+   * Why it exists: after an unread placeholder ({@link placeholderLeftUnread}) every stop change ends the session at once; a read stack shows the editor follows this owner's session again, so the in-session path pays off again.
+   * Called by {@link present} after the native model selection waited for the stop's stack.
+   * @param adapter - Adapter that received the presented stop.
+   * @example this.noteStackReadAfterPresentation(adapter)
+   */
+  private noteStackReadAfterPresentation(adapter: ReplayDebugAdapter): void {
+    if (adapter.stackRetrieved) this.placeholderLeftUnread = false
   }
 
   /**
@@ -534,6 +553,7 @@ export class ReplayDebugger {
     // Gaps and scope-less stops have nothing for Variables to load: commit at once and leave the session-level state alone.
     if (!adapter.hasLoadableValues) return 'no-values'
     await this.selectNativeInspectionModel(adapter, revision, signal)
+    this.noteStackReadAfterPresentation(adapter)
     // While Run and Debug requests no values, waiting on every stop would stall playback without ever loading them.
     // A paused frame of another session keeps the Run and Debug focus, so this stop's values are not requested either: the grace would only delay the frame.
     const inspection = adapter.inspectionReady
@@ -713,8 +733,10 @@ export class ReplayDebugger {
     )
       .then((selected) => {
         // A later moment may have been selected meanwhile; only the still current selection is settled.
-        if (selected && this.selected === selection)
+        if (selected && this.selected === selection) {
           this.modelSelectionSettledFor = selection
+          this.explicitlyFocusedFor = selection
+        }
         return selected
       })
       .finally(() => {
@@ -1099,7 +1121,7 @@ export class ReplayDebugger {
   /**
    * Ends an {@link awaitInspection} wait early when native Run and Debug read the stop's stack but asks for no scopes within {@link REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS}.
    * Why it exists: with Run and Debug's Variables view hidden (VS Code), Call Stack still reads the stack, and the first stop of a replay would wait the whole {@link REPLAY_DEBUG_INSPECTION_GRACE_MS} for values nobody asks for (Cycle 0137, D8).
-   * Called by {@link awaitInspection}'s check on every wake; the timer starts once, at the first check that sees the stack read, and a scopes request cancels it for good.
+   * Called by {@link awaitInspection}'s check on every wake; the timer starts once, at the first check that sees the stack read and no scopes read yet, and a scopes request cancels it for good.
    * @param adapter - Adapter that received the waited selection.
    * @param expire - Ends the wait without loaded values, as the grace's expiry does.
    * @param timer - The timer this wait started before, or `undefined` before the stack was read.
@@ -1116,8 +1138,22 @@ export class ReplayDebugger {
       if (adapter.scopesRetrieved) clearTimeout(timer)
       return timer
     }
-    if (!adapter.stackRetrieved) return undefined
-    return setTimeout(expire, REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS)
+    // Scopes read already: the values are loading, so no bound may end the wait before them.
+    if (!adapter.stackRetrieved || adapter.scopesRetrieved) return undefined
+    return setTimeout(expire, this.scopesRequestBoundMs())
+  }
+
+  /**
+   * Picks how long {@link trackScopesRequestBound} waits for a scopes request of the current selection.
+   * Why it exists: VS Code refreshes a visible Variables view at once after an explicit stack-frame focus, which {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} performs, but 400 ms after the automatic focus that follows a `stopped` event.
+   * Called by {@link trackScopesRequestBound} when its timer starts.
+   * @returns {@link REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS} once the host ran the focus command for the current selection; otherwise {@link REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS}.
+   * @example this.scopesRequestBoundMs() // => 450 on a host without the command
+   */
+  private scopesRequestBoundMs(): number {
+    return this.explicitlyFocusedFor === this.selected
+      ? REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS
+      : REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS
   }
 
   /** Re-runs every pending {@link awaitInspection} and {@link awaitRetrieval} check after a native request was served, values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */

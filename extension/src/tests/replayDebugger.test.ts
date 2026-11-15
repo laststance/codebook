@@ -9,6 +9,7 @@ import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
+  REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS,
   REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS,
   REPLAY_LOADING_LABEL,
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
@@ -98,6 +99,13 @@ function focusRead(editor: { debug: object }): Promise<void> {
 async function flushNative(): Promise<void> {
   for (let turn = 0; turn < 5; turn++)
     await new Promise<void>((resolve) => setImmediate(resolve))
+}
+/** Gives the fixture an editor whose model-selection command succeeds, as VS Code's explicit stack-frame focus does, and leaves every value to the test. @example grantExplicitFocus(fixture) */
+function grantExplicitFocus(fixture: ReturnType<typeof harness>): void {
+  fixture.editor.commands = {
+    getCommands: async () => ['workbench.action.debug.focusProcess'],
+    executeCommand: async () => undefined,
+  }
 }
 /** Lets the in-session retirement's wait for the placeholder's read run out under fake timers, so the stop change falls back to ending the session; the fake client must have been told to leave that read out. @example await passInSessionRetirementBound(context) */
 async function passInSessionRetirementBound(
@@ -1563,6 +1571,69 @@ test('when the editor does not read the placeholder within the bound, the stop c
   assert.deepEqual(stopped, ['historical-owned', 'historical-owned-2'])
 })
 
+// protects=a stop change after an unread placeholder ending the session at once instead of paying the in-session wait again; fails_when=every stop change of an editor that does not read the placeholder still waits the whole in-session bound before ending the session; no_claim=the editor's real read timing, which the native check measures
+test('after the editor left one placeholder unread, the next stop change ends the session without waiting the in-session bound', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness()
+  const signal = new AbortController().signal
+  await fixture.owner.present(firstSnapshot, 'First recorded stop', signal)
+  fixture.leaveNextStopsUnread()
+  fixture.owner.invalidate()
+  const firstRetirement = fixture.owner.retire(undefined, signal)
+  try {
+    await passInSessionRetirementBound(context)
+    await firstRetirement
+    // A gap commits at once, so no stack read of the new session clears the unread mark.
+    await fixture.owner.present(undefined, 'Gap in the recording', signal)
+
+    // Act
+    // No tick of the in-session bound is given: only a path that skips the wait settles.
+    await fixture.owner.retire(inspectedSnapshot, signal)
+
+    // Assert
+    assert.deepEqual(fixture.stopped, [
+      'historical-owned',
+      'historical-owned-2',
+    ])
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// protects=the in-session stop change coming back once the editor reads a stack of this owner's session again; fails_when=one unread placeholder sends every later stop change to the session end for good; no_claim=the editor's real read timing, which the native check measures
+test('once the editor reads a presented stop again after an unread placeholder, the next stop change retires in place without ending the session', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const fixture = harness()
+  const signal = new AbortController().signal
+  await fixture.owner.present(firstSnapshot, 'First recorded stop', signal)
+  fixture.leaveNextStopsUnread()
+  fixture.owner.invalidate()
+  const firstRetirement = fixture.owner.retire(undefined, signal)
+  try {
+    await passInSessionRetirementBound(context)
+    await firstRetirement
+    // The editor reads this stop's stack again.
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Second recorded stop',
+      signal,
+    )
+    fixture.owner.invalidate()
+
+    // Act
+    await fixture.owner.retire(undefined, signal)
+
+    // Assert
+    assert.deepEqual(fixture.stopped, ['historical-owned'])
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
 // protects=the thread description reading that recorded values load while a recorded stop follows, and "Not recorded at this moment" while a gap follows; fails_when=a recorded moment that only loads reads as not recorded, or a gap reads as loading; no_claim=what the editor draws from the description
 test('an in-session retirement toward a recorded stop reads Loading recorded values and toward a gap reads Not recorded at this moment', async () => {
   // Arrange
@@ -2472,11 +2543,12 @@ test('video frames at an already inspected stop reuse recorded values without as
   }
 })
 
-// protects=the first recorded stop of a replay committing without values soon after Call Stack read its stack while Variables asks for nothing; fails_when=the stop waits the whole inspection grace for values nobody requests; no_claim=VS Code's real timing of a hidden Variables view
+// protects=(after an explicit focus) the first recorded stop of a replay committing without values soon after Call Stack read its stack while Variables asks for nothing; fails_when=the stop waits the whole inspection grace for values nobody requests; no_claim=VS Code's real timing of a hidden Variables view
 test('with Variables hidden, a stop whose stack Run and Debug read commits without values once no scopes request follows within its bound, well before the inspection grace', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
   const fixture = harness(undefined, undefined, 0, false, 'stack on stop')
+  grantExplicitFocus(fixture)
   let outcome = 'pending'
   const showing = fixture.owner
     .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
@@ -2501,6 +2573,123 @@ test('with Variables hidden, a stop whose stack Run and Debug read commits witho
       REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS < REPLAY_DEBUG_INSPECTION_GRACE_MS,
       true,
     )
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// protects=a stop whose stack and scopes were both read before the wait began still waiting for its values past the scopes bound; fails_when=the bound starts although the scopes were read and commits the stop as uninspected while the values are still loading; no_claim=VS Code's real timing of a visible Variables view
+test('when Run and Debug read the stack and the scopes before the wait starts, values arriving after the scopes bound still make the stop inspected', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(undefined, undefined, 0, false, 'stack on stop')
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    // The stop's frame appears a few microtasks after the launch; read its stack and scopes in the same turn, before the wait for its values can look.
+    const readFrame = () => {
+      const [thread] = fixture.request('threads').body.threads
+      return thread
+        ? fixture.request('stackTrace', { threadId: thread.id }).body
+            .stackFrames[0]
+        : undefined
+    }
+    let frame = readFrame()
+    for (let turn = 0; turn < 200 && !frame; turn++) {
+      await Promise.resolve()
+      frame = readFrame()
+    }
+    const scopes = fixture.request('scopes', { frameId: frame.id }).body.scopes
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS + 50)
+    await flushNative()
+    const afterBound = outcome
+    fixture.request('variables', {
+      variablesReference: scopes[0].variablesReference,
+    })
+    await showing
+
+    // Assert
+    assert.equal(afterBound, 'pending')
+    assert.equal(outcome, 'inspected')
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// protects=a visible Variables view that refreshes 400 ms after the automatic focus keeping the wait when Codebook could not focus the stop explicitly; fails_when=the 150 ms bound ends the wait as uninspected before the late scopes request; no_claim=VS Code's real timing of a visible Variables view
+test('without an explicit focus, a scopes request 300 ms after the stack read keeps the wait until the values load', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(undefined, undefined, 0, false, 'stack on stop')
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(300)
+    await flushNative()
+    const beforeRequest = outcome
+    const threadId = fixture.request('threads').body.threads[0].id
+    const frame = fixture.request('stackTrace', { threadId }).body
+      .stackFrames[0]
+
+    // Act
+    const scopes = fixture.request('scopes', { frameId: frame.id }).body.scopes
+    fixture.request('variables', {
+      variablesReference: scopes[0].variablesReference,
+    })
+    await showing
+
+    // Assert
+    assert.equal(beforeRequest, 'pending')
+    assert.equal(outcome, 'inspected')
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// protects=a hidden Variables view still ending the wait before the grace when the stop was not focused explicitly; fails_when=the deferred bound is missing so the stop waits the whole inspection grace, or ends earlier than 450 ms; no_claim=VS Code's real timing of a hidden Variables view
+test('without an explicit focus, no scopes request within 450 ms ends the wait as uninspected before the inspection grace', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(undefined, undefined, 0, false, 'stack on stop')
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS - 1)
+    await flushNative()
+    const beforeBound = outcome
+    context.mock.timers.tick(1)
+    await showing
+
+    // Assert
+    assert.equal(beforeBound, 'pending')
+    assert.equal(outcome, 'uninspected')
+    assert.equal(REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS, 450)
+    assert.equal(REPLAY_DEBUG_INSPECTION_GRACE_MS, 1_000)
   } finally {
     context.mock.timers.reset()
     await fixture.owner.dispose()
