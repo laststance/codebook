@@ -2157,3 +2157,127 @@ test('a playback tick that reaches a recorded stop reports a tick with the stop 
   )
   await player.controller.dispose()
 })
+
+/** Gives the fixture's stop at 100 ms recorded debugger history, so projections at that stop carry a debugger snapshot. @example recordDebuggerHistory(player.data) */
+function recordDebuggerHistory(data: PlaybackData): void {
+  const stop = data.context!.study.observations[0]!
+  stop.debugger = {
+    version: 1,
+    frames: [
+      {
+        name: 'applyTheme',
+        line: 1,
+        column: 1,
+        source: {
+          name: 'theme.ts',
+          text: stop.source.text,
+          hash: stop.source.hash,
+          line: 1,
+        },
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [{ name: 'nextTheme', value: 'dark', children: [] }],
+    limitations: [],
+  }
+  data.context!.pausedIntervals = [
+    { snapshotId: stop.id, startMs: 100, endMs: 150 },
+  ]
+}
+
+// protects=the native debugger saying it is loading when a seek lands on a stop with recorded history; fails_when=a seek leaves the shown moment without telling the workspace the next moment has history; no_claim=what the native session renders for the flag
+test('a seek to a recorded stop retires the shown moment announcing that recorded debugger history is loading', async () => {
+  // Arrange
+  const loadsHistoryFlags: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    invalidate: (_keepPixels, _next, loadsHistory) => {
+      loadsHistoryFlags.push(loadsHistory)
+    },
+  })
+  recordDebuggerHistory(player.data)
+  player.open()
+  await player.controller.settle()
+  const leavesBeforeSeek = loadsHistoryFlags.length
+
+  // Act
+  player.seek(100)
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().observationId, 'browser-session:1')
+  assert.deepEqual(loadsHistoryFlags.slice(leavesBeforeSeek), [true])
+  await player.controller.dispose()
+})
+
+// protects=a seek to a moment without recorded history not announcing a loading debugger; fails_when=a gap moment is announced as loading recorded values; no_claim=what the native session renders for the flag
+test('a seek to a gap without recorded debugger history retires the shown moment without announcing loading', async () => {
+  // Arrange
+  const loadsHistoryFlags: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    invalidate: (_keepPixels, _next, loadsHistory) => {
+      loadsHistoryFlags.push(loadsHistory)
+    },
+  })
+  recordDebuggerHistory(player.data)
+  player.open()
+  await player.controller.settle()
+  const leavesBeforeSeek = loadsHistoryFlags.length
+
+  // Act
+  player.seek(50)
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().observationId, undefined)
+  assert.deepEqual(loadsHistoryFlags.slice(leavesBeforeSeek), [false])
+  await player.controller.dispose()
+})
+
+// protects=Play reaching a stop with recorded history announcing that its values are loading; fails_when=a tick into a recorded stop retires the shown moment without the flag; no_claim=what the native session renders for the flag
+test('Play that reaches a recorded stop retires the shown moment announcing that recorded debugger history is loading', async () => {
+  // Arrange
+  const loadsHistoryFlags: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    invalidate: (_keepPixels, _next, loadsHistory) => {
+      loadsHistoryFlags.push(loadsHistory)
+    },
+  })
+  recordDebuggerHistory(player.data)
+  player.open()
+  await player.controller.settle()
+  player.seek(50)
+  await player.controller.settle()
+  player.play()
+  const leavesBeforeTick = loadsHistoryFlags.length
+
+  // Act
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().observationId, 'browser-session:1')
+  assert.deepEqual(loadsHistoryFlags.slice(leavesBeforeTick), [true])
+  await player.controller.dispose()
+})
+
+// protects=a presentation staying ready when the timing journal throws; fails_when=a diagnostic error marks playback failed and clears the pane; no_claim=that the journal reports the error anywhere
+test('a timing journal that throws leaves the committed presentation ready at its position', async () => {
+  // Arrange
+  const player = playbackHarness({
+    presented: () => {
+      throw new Error('journal disk full')
+    },
+  })
+  player.open()
+  await player.controller.settle()
+
+  // Act
+  player.seek(50)
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().readiness, 'ready')
+  assert.equal(player.controller.state().presentedMs, 50)
+  await player.controller.dispose()
+})

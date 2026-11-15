@@ -534,7 +534,8 @@ export class PlaybackController {
             projectRecording(data.index, data.context, positionMs)
           const frameHash = projection.frame?.hash
           // A moment with no frame leaves at once: the pane shows its gap, not the old pixels.
-          if (!frameHash && this.leaveOwed) this.leaveShownMoment()
+          if (!frameHash && this.leaveOwed)
+            this.leaveShownMoment(undefined, Boolean(projection.debugger))
           let image =
             request.restore?.image ??
             (frameHash && this.presented?.projection.frame?.hash === frameHash
@@ -544,7 +545,7 @@ export class PlaybackController {
             presentMs = 0
           if (frameHash && !image) {
             // The shown pixels stay while the bytes are read; only a read that passes its bound blanks the pane.
-            this.armLeaveBound()
+            this.armLeaveBound(Boolean(projection.debugger))
             const frameStartedMs = this.clock()
             try {
               image = await untilAborted(
@@ -563,7 +564,10 @@ export class PlaybackController {
           }
           // The frame is read: the shown moment leaves in one step, and the pane swaps to the next frame without a blank.
           if (this.leaveOwed)
-            this.leaveShownMoment(image && { image, positionMs })
+            this.leaveShownMoment(
+              image && { image, positionMs },
+              Boolean(projection.debugger),
+            )
           const bundle: PlaybackBundle = request.restore ?? {
             studyId: request.studyId,
             contextHash: data.contextHash,
@@ -650,10 +654,15 @@ export class PlaybackController {
    * Hands one committed presentation's timing to {@link PlaybackDependencies.presented}, for the playback timing journal (Cycle 0137, C1-E).
    * Called by {@link pump} right after the playhead commits, never for a superseded or failed request.
    * @param timing - Why the presentation was asked for, where, whether the stop changed, and its durations.
+   * A throwing journal is ignored: a diagnostic must never fail a presentation that already committed.
    * @example this.reportPresented({ trigger: 'tick', positionMs: 100, stopChanged: true, totalMs: 540, frameMs: 12, presentMs: 520 })
    */
   private reportPresented(timing: PlaybackPresentationTiming): void {
-    this.dependencies.presented?.(timing)
+    try {
+      this.dependencies.presented?.(timing)
+    } catch {
+      // The timing journal is diagnostic only; its failure must not mark playback failed.
+    }
   }
 
   /**
@@ -695,17 +704,24 @@ export class PlaybackController {
   /**
    * Retires the shown moment's pixels and native state after an explicit move read its frame; called by {@link pump} with the frame, or without one when the moment has none or the read passed its bound.
    * @param next - The next moment's frame, shown at once in place of a blank pane.
-   * @example this.leaveShownMoment(image && { image, positionMs })
+   * @param loadsHistory - Whether the moment that replaces the shown one has recorded debugger history, so the native session says it is loading rather than unrecorded.
+   * @example this.leaveShownMoment(image && { image, positionMs }, true)
    */
-  private leaveShownMoment(next?: PlaybackFramePreview): void {
+  private leaveShownMoment(
+    next?: PlaybackFramePreview,
+    loadsHistory = false,
+  ): void {
     this.leaveOwed = false
     clearTimeout(this.leaveTimer)
-    this.dependencies.invalidate(false, next)
+    this.dependencies.invalidate(false, next, loadsHistory)
     this.dependencies.changed()
   }
 
-  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave, for the time that remains since the leave became owed. @example this.armLeaveBound() */
-  private armLeaveBound(): void {
+  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave, for the time that remains since the leave became owed.
+   * @param loadsHistory - Whether the moment being read has recorded debugger history; handed to the blanking leave.
+   * @example this.armLeaveBound(true)
+   */
+  private armLeaveBound(loadsHistory: boolean): void {
     if (!this.leaveOwed) return
     clearTimeout(this.leaveTimer)
     const boundMs =
@@ -715,7 +731,7 @@ export class PlaybackController {
       boundMs - (this.clock() - this.leaveOwedSinceMs),
     )
     this.leaveTimer = setTimeout(() => {
-      if (this.leaveOwed) this.leaveShownMoment()
+      if (this.leaveOwed) this.leaveShownMoment(undefined, loadsHistory)
     }, remainingMs)
     this.leaveTimer.unref()
   }
