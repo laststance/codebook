@@ -61,7 +61,6 @@ import {
   type ReaderErrorKind,
   RECORDED_APPLICATION_PANE_TITLE,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
-  REPLAY_COVERED_LABEL,
   REPOSITORY_SOURCE_SCHEME,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_OPERATION_ACTION,
@@ -235,6 +234,7 @@ import { PresentationGuards } from './studyWorkspace/presentationGuards'
 import { createPresentationGuardsHost } from './studyWorkspace/presentationGuardsHost'
 import { PresentationReceipts } from './studyWorkspace/presentationState'
 import { createPresentationReceiptsHost } from './studyWorkspace/presentationStateHost'
+import { replayInvalidationLabel } from './studyWorkspace/replayInvalidationLabel'
 import { ReplayOpening } from './studyWorkspace/replayOpening'
 import { createReplayOpeningHost } from './studyWorkspace/replayOpeningHost'
 import {
@@ -9516,9 +9516,12 @@ export class StudyWorkspace {
         presentable: () =>
           this.replayReaderOpen &&
           this.replayDebuggers.current?.available !== false,
-        invalidate: (keepPixels, next) => {
+        invalidate: (keepPixels, next, loadsHistory) => {
           this.replayDebuggers.current?.invalidate(
-            this.replayApplicationCovered ? REPLAY_COVERED_LABEL : undefined,
+            replayInvalidationLabel(
+              this.replayApplicationCovered,
+              loadsHistory,
+            ),
           )
           // The stopped line and its end-of-line label leave together (D29, F410); the next commit's render draws both again.
           if (this.highlight && this.sourceIdentity)

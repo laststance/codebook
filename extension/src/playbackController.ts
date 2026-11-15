@@ -36,7 +36,12 @@ export interface PlaybackDependencies {
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
   /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, when Play leaves a stop for no stop with a recorded frame on both sides (the end of the stop's pause), or when Pause finds no frame in flight: the frame on screen stays until the next moment paints, instead of a blank pane. */
-  invalidate(keepPixels?: boolean, next?: PlaybackFramePreview): void
+  invalidate(
+    keepPixels?: boolean,
+    next?: PlaybackFramePreview,
+    /** Whether the moment that replaces the shown one has recorded debugger history, so the native session can say it is loading rather than unrecorded (Cycle 0137, C1-L); false when no moment follows. */
+    loadsHistory?: boolean,
+  ): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
@@ -583,6 +588,7 @@ export class PlaybackController {
             this.dependencies.invalidate(
               leavesStopForNoStop(this.presented?.projection, projection),
               image && { image, positionMs },
+              Boolean(projection.debugger),
             )
             this.dependencies.changed()
           }

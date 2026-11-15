@@ -5,7 +5,9 @@ import type * as vscode from 'vscode'
 import {
   NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+  REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
+  REPLAY_LOADING_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
   REPLAY_DEBUG_TYPE,
@@ -299,9 +301,11 @@ export class ReplayDebugger {
   }
 
   /**
-   * Retires the owned session before {@link StudyWorkspace.presentPlayback} shows a different historical stop; video frames within one stop keep their native context.
+   * Retires the shown stop before {@link StudyWorkspace.presentPlayback} shows a different historical stop; video frames within one stop keep their native context.
    *
-   * The retirement is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}, counted once any
+   * A running session retires it in place ({@link retireInSession}): the placeholder replaces the stop and native Run and Debug reads it before the next stop shows (Cycle 0137, D8). Only an owner without a running session, or one whose editor did not read the placeholder within {@link REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS}, ends the owned session, as every stop change did before.
+   *
+   * That session end is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}, counted once any
    * pending startup has settled: an editor that never answers makes this owner unavailable, so only an explicit replay
    * reopen restarts it. An aborted caller leaves at once.
    *
@@ -318,11 +322,44 @@ export class ReplayDebugger {
     if (this.closed || this.detached)
       throw new Error(HISTORICAL_DEBUGGER_CLOSED)
     if (this.hasPresented && this.lastPresentedSnapshot === snapshot) return
+    // A running session retires the shown stop in place: ending the session cost about half a second at every stop change (Cycle 0137, D8).
+    if (
+      this.session &&
+      this.adapter &&
+      !this.retiring &&
+      (await this.retireInSession(snapshot, signal))
+    )
+      return
     this.retiring ??= this.retireAfterStartup().finally(() => {
       this.retiring = undefined
     })
     await untilAborted(this.retiring, signal)
     signal.throwIfAborted()
+  }
+
+  /**
+   * Retires the shown stop inside the running recorded session: the placeholder replaces it, and the next stop shows only once native Run and Debug has read the placeholder's empty stack (Cycle 0137, D8).
+   * Why it exists: ending and starting the session at every stop change cost about half a second each time in both editors (C1-E), while the adapter's own selection already retires the previous stop's frames and thread identity, so the editor drops its Variables tree.
+   * Called by {@link retire} while the owner holds a running session and no session end is under way.
+   * @param snapshot - The recorded stop about to be shown; a recorded one makes the placeholder read {@link REPLAY_LOADING_LABEL}.
+   * @param signal - The presentation's cancellation.
+   * @returns `true` once the editor read the placeholder; `false` when it did not within {@link REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS} or the session ended meanwhile, so {@link retire} ends the session as before.
+   * @throws The signal's reason once it aborts.
+   * @example if (await this.retireInSession(nextSnapshot, signal)) return
+   */
+  private async retireInSession(
+    snapshot: ReplayDebugSnapshot | undefined,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    // The playback's own invalidate usually showed the placeholder already; a stop still selected is replaced now.
+    if (this.selected)
+      this.invalidate(snapshot ? REPLAY_LOADING_LABEL : undefined)
+    const isRead = await untilAborted(
+      this.awaitRetrieval('stack', REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS),
+      signal,
+    )
+    signal.throwIfAborted()
+    return isRead === true
   }
 
   /**
