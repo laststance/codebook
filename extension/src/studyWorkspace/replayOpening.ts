@@ -83,6 +83,8 @@ import { showPlainNotice } from '../utils/showPlainNotice'
 import { untilAborted } from '../utils/untilAborted'
 import { withoutErrorName } from '../utils/withoutErrorName'
 
+import type { PresentationStepTiming } from './formatPresentationTiming'
+import { PresentationStopwatch } from './presentationStopwatch'
 import type { ReplayOpeningHost } from './replayOpeningHost'
 import { type NodeHistoryOpening, recordedFrameLabel } from './support'
 
@@ -98,6 +100,9 @@ export class ReplayOpening {
   constructor(private readonly host: ReplayOpeningHost) {}
 
   private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 }
+
+  /** The steps of the latest presentation that ran to its end ({@link presentPlayback}), for the playback timing journal (Cycle 0137, C1-E); cleared when the next presentation starts and when {@link takePresentationTiming} hands it out, so a commit without a presentation never reads an older one. */
+  private lastPresentationTiming?: PresentationStepTiming
 
   /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; the last superseded entry to end leaves the empty summary composition an earlier one built only when none is under way to fill it (Cycle 0052 task 12). */
   private nodeHistoryEntriesUnderWay = 0
@@ -1490,6 +1495,9 @@ export class ReplayOpening {
     signal: AbortSignal,
   ): Promise<void> {
     signal.throwIfAborted()
+    // Each step's duration feeds the playback timing journal; an earlier presentation's record never stands for this one.
+    this.lastPresentationTiming = undefined
+    const watch = new PresentationStopwatch()
     // Reading a replay keeps an attached live run's held pause, which would otherwise expire while the learner studies.
     for (const record of this.host.service?.records.values() ?? [])
       record.runtime?.renewPauseHold?.()
@@ -1499,6 +1507,7 @@ export class ReplayOpening {
       signal,
     )
     signal.throwIfAborted()
+    watch.lap('retire')
     this.host.playbackPending = bundle
     this.host.playbackPresentingReady = false
     this.host.selection = retainedStudySelectionSchema.parse({
@@ -1510,6 +1519,7 @@ export class ReplayOpening {
     })
     const viewport = await this.host.ensureReplayViewport(signal)
     signal.throwIfAborted()
+    watch.lap('viewport')
     // Opening the workspace may focus context over a manually moved source group; restore only when its native tab is inactive.
     await this.host.renderSelection(
       true,
@@ -1523,6 +1533,7 @@ export class ReplayOpening {
       throw new Error(
         'Recorded source has not reached the matching native reader.',
       )
+    watch.lap('source')
     // Keep Application loading until native Run and Debug loads the historical values or its short grace elapses.
     let inspection: ReplayInspection | undefined
     if (
@@ -1534,6 +1545,7 @@ export class ReplayOpening {
       // An owner replaced by an earlier request may still be stopping; this presentation creates the next one only while it is current.
       await this.host.replayDebuggers.retired(signal)
       signal.throwIfAborted()
+      watch.lap('debuggerOwner')
       inspection = await this.host.replayDebuggers.ensure().present(
         bundle.projection.debugger,
         bundle.projection.debugger
@@ -1549,6 +1561,7 @@ export class ReplayOpening {
         // The stop's recorded inspections, so a declared value outside the captured scopes stays inspectable; one array per stop, so presenting it again is no new selection.
         recordedInspectionsOfObservation(bundle.projection.observation),
       )
+      watch.lap('debugger')
     }
     // Committing without native values stays truthful only with a visible way to load them in Run and Debug; later ticks of this stop keep it.
     this.host.replayUninspectedSnapshot =
@@ -1599,6 +1612,7 @@ export class ReplayOpening {
           signal,
         )
       signal.throwIfAborted()
+      watch.lap('paint')
       this.host.playbackPresentingReady = true
       this.host.replayApplicationCovered = false
       this.host.lastRendered = undefined
@@ -1619,10 +1633,43 @@ export class ReplayOpening {
         signal,
       )
       signal.throwIfAborted()
+      watch.lap('studyRender')
+      this.recordPresentationTiming(watch, inspection)
     } finally {
       signal.removeEventListener('abort', endSupersededPaint)
       this.endReplayPaint(paint)
     }
+  }
+
+  /**
+   * Keeps the steps of a presentation that ran to its end in {@link lastPresentationTiming}, with the native debugger's own times for the stop, for the playback timing journal (Cycle 0137, C1-E).
+   * Called by {@link presentPlayback} once the Study pane rendered the moment, never for a superseded or failed presentation.
+   * @param watch - The presentation's stopwatch, its last step lapped.
+   * @param inspection - How the native debugger step ended; `undefined` when the moment had no debugger history to present.
+   * @example this.recordPresentationTiming(watch, 'inspected') // lastPresentationTiming.steps.debugger is that step's whole milliseconds
+   */
+  private recordPresentationTiming(
+    watch: PresentationStopwatch,
+    inspection: ReplayInspection | undefined,
+  ): void {
+    this.lastPresentationTiming = {
+      steps: watch.laps,
+      totalMs: watch.totalMs(),
+      inspection,
+      debugger: this.host.replayDebuggers.current?.selectionTimes(),
+    }
+  }
+
+  /**
+   * Hands the latest finished presentation's steps to the playback timing journal and forgets them, so each record serves only the commit that follows it (Cycle 0137, C1-E).
+   * Called by {@link StudyWorkspace} for every committed presentation, journaled or not.
+   * @returns The steps of the latest presentation that ran to its end since the previous call; `undefined` when none did.
+   * @example replayOpening.takePresentationTiming() // => { steps: { retire: 3, viewport: 0, source: 58, debugger: 301, paint: 41, studyRender: 96 }, totalMs: 499, inspection: 'inspected', debugger: { … } }
+   */
+  takePresentationTiming(): PresentationStepTiming | undefined {
+    const timing = this.lastPresentationTiming
+    this.lastPresentationTiming = undefined
+    return timing
   }
 
   /**

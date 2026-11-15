@@ -510,6 +510,23 @@ export class ReplayDebugger {
   }
 
   /**
+   * Reads when the current selection was made, announced to native Run and Debug and loaded there, for the playback timing journal that {@link presentPlayback} feeds (Cycle 0137, C1-E).
+   * @returns `Date.now()` of the latest select, of its `stopped` event and of the first moment Variables held its values; `undefined` before the session has an adapter.
+   * @example replayDebugger.selectionTimes() // => { selectedAt: 1_790_805_319_000, stoppedAt: 1_790_805_319_040, inspectionReadyAt: 1_790_805_319_310 }
+   */
+  selectionTimes():
+    | { selectedAt: number; stoppedAt?: number; inspectionReadyAt?: number }
+    | undefined {
+    const adapter = this.adapter
+    if (!adapter) return undefined
+    return {
+      selectedAt: adapter.selectedAt,
+      stoppedAt: adapter.stoppedAt,
+      inspectionReadyAt: adapter.inspectionReadyAt,
+    }
+  }
+
+  /**
    * Waits until native Variables retrieved the presented stop's scopes or its first values, on behalf of {@link StudyWorkspace.showNativeVariables}, without polling.
    *
    * A Variables view that was hidden while the stop changed loads it only in its own deferred refresh (400 ms after it is shown

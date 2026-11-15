@@ -47,6 +47,22 @@ export interface PlaybackDependencies {
   manualTicks?: boolean
   /** How long a read of the next frame may keep the shown pixels before the pane blanks; defaults to {@link PLAYBACK_FRAME_READ_BOUND_MS}. */
   frameReadBoundMs?: number
+  /** Receives the timing of every committed presentation, for the playback timing journal (Cycle 0137, C1-E); nothing receives it by default. */
+  presented?(timing: PlaybackPresentationTiming): void
+}
+
+/** What the controller reports about one committed presentation ({@link PlaybackDependencies.presented}): why it was asked for, where, whether the shown stop changed, and how its time was spent. */
+export interface PlaybackPresentationTiming {
+  /** `tick` when playback reached the position by itself; `command` for a seek, a step, an open or a restore. */
+  trigger: 'tick' | 'command'
+  positionMs: number
+  stopChanged: boolean
+  /** From the request being queued to the playhead's commit, on the controller's clock. */
+  totalMs: number
+  /** Reading the frame's bytes; 0 when its pixels were already shown or the moment has no frame. */
+  frameMs: number
+  /** The {@link PlaybackDependencies.present} call; 0 when the moment was already presented as it is. */
+  presentMs: number
 }
 /** The next moment's frame, handed to {@link PlaybackDependencies.invalidate} when it is already read, so the pane shows it at once and never blanks. */
 export interface PlaybackFramePreview {
@@ -59,6 +75,10 @@ interface PresentationRequest {
   positionMs?: number
   restore?: PlaybackBundle
   save: boolean
+  /** Why the request was queued ({@link PlaybackPresentationTiming.trigger}). */
+  trigger: PlaybackPresentationTiming['trigger']
+  /** The controller's clock when the request was queued, where its presentation time starts. */
+  queuedAtMs: number
 }
 
 /** Serializes requested→loaded→painted bundles without runtime authority; newer controls synchronously retire older asynchronous work. @example controller.command({studyId,action:'seek',expectedRevision:2,positionMs:500}) */
@@ -426,7 +446,7 @@ export class PlaybackController {
 
   /** Reserves new presentation ownership before reading; changed bundles remain hidden until matching ACK. @example this.queue({studyId,positionMs:500,save:true}) */
   private queue(
-    input: Omit<PresentationRequest, 'revision'>,
+    input: Omit<PresentationRequest, 'revision' | 'trigger' | 'queuedAtMs'>,
     clear = true,
     keepPixels = false,
   ): void {
@@ -443,7 +463,13 @@ export class PlaybackController {
       this.presentationRevision++
       this.abort?.abort(new Error('New playback frame'))
     }
-    this.request = { ...input, revision: this.presentationRevision }
+    this.request = {
+      ...input,
+      revision: this.presentationRevision,
+      // Only a playback tick queues without clearing the shown moment; every command clears it.
+      trigger: clear ? 'command' : 'tick',
+      queuedAtMs: this.clock(),
+    }
     this.requestedMs = input.positionMs
     this.readiness = 'loading'
     this.reason = undefined
@@ -509,9 +535,12 @@ export class PlaybackController {
             (frameHash && this.presented?.projection.frame?.hash === frameHash
               ? this.presented.image
               : undefined)
+          let frameMs = 0,
+            presentMs = 0
           if (frameHash && !image) {
             // The shown pixels stay while the bytes are read; only a read that passes its bound blanks the pane.
             this.armLeaveBound()
+            const frameStartedMs = this.clock()
             try {
               image = await untilAborted(
                 this.dependencies.frame(
@@ -524,6 +553,7 @@ export class PlaybackController {
             } finally {
               clearTimeout(this.leaveTimer)
             }
+            frameMs = this.clock() - frameStartedMs
             if (!current()) continue
           }
           // The frame is read: the shown moment leaves in one step, and the pane swaps to the next frame without a blank.
@@ -557,10 +587,12 @@ export class PlaybackController {
             this.dependencies.changed()
           }
           if (changed) {
+            const presentStartedMs = this.clock()
             await untilAborted(
               this.dependencies.present(bundle, abort.signal),
               abort.signal,
             )
+            presentMs = this.clock() - presentStartedMs
             if (!current()) continue
           }
           if (!current()) continue
@@ -581,6 +613,14 @@ export class PlaybackController {
             }
           }
           if (request.save) this.remember()
+          this.reportPresented({
+            trigger: request.trigger,
+            positionMs,
+            stopChanged,
+            totalMs: this.clock() - request.queuedAtMs,
+            frameMs,
+            presentMs,
+          })
           this.dependencies.changed()
         } catch (error) {
           if (!current()) continue
@@ -598,6 +638,16 @@ export class PlaybackController {
       if (this.request) this.pump()
     })
     this.running = pending
+  }
+
+  /**
+   * Hands one committed presentation's timing to {@link PlaybackDependencies.presented}, for the playback timing journal (Cycle 0137, C1-E).
+   * Called by {@link pump} right after the playhead commits, never for a superseded or failed request.
+   * @param timing - Why the presentation was asked for, where, whether the stop changed, and its durations.
+   * @example this.reportPresented({ trigger: 'tick', positionMs: 100, stopChanged: true, totalMs: 540, frameMs: 12, presentMs: 520 })
+   */
+  private reportPresented(timing: PlaybackPresentationTiming): void {
+    this.dependencies.presented?.(timing)
   }
 
   /**

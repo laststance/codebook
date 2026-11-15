@@ -161,6 +161,7 @@ import {
   PlaybackController,
   type PlaybackBundle,
   type PlaybackData,
+  type PlaybackPresentationTiming,
 } from './playbackController'
 import {
   presentationModeSchema,
@@ -229,6 +230,7 @@ import {
 import { itemSchema, type StudyCatalogEntry } from './studySchemas'
 import { CapturedSourceReturn } from './studyWorkspace/capturedSourceReturn'
 import { createCapturedSourceReturnHost } from './studyWorkspace/capturedSourceReturnHost'
+import { formatPresentationTiming } from './studyWorkspace/formatPresentationTiming'
 import { PresentationGuards } from './studyWorkspace/presentationGuards'
 import { createPresentationGuardsHost } from './studyWorkspace/presentationGuardsHost'
 import { PresentationReceipts } from './studyWorkspace/presentationState'
@@ -9508,6 +9510,7 @@ export class StudyWorkspace {
           return bytes
         },
         present: (bundle, signal) => this.presentPlayback(bundle, signal),
+        presented: (timing) => this.journalPresentation(timing),
         readerOpen: () => this.replayReaderOpen,
         // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
         presentable: () =>
@@ -10711,6 +10714,21 @@ export class StudyWorkspace {
     signal: AbortSignal,
   ): Promise<void> {
     return this.replayOpening.presentPlayback(bundle, signal)
+  }
+
+  /**
+   * Writes one committed replay presentation to the playback timing journal in Output › Codebook (Cycle 0137, C1-E), when it changed the shown stop or answered a command.
+   * Why it exists: a boundary crossing or a seek took 0.47–0.83 s natively (Cycle 0135, C1), and the journal says which presentation step holds the playhead. The film frames within one stop are left out, so the journal stays readable while a replay plays.
+   * Called by {@link PlaybackController} through its `presented` dependency, after every commit.
+   * @param timing - The controller's report of the committed presentation.
+   * @example this.journalPresentation({ trigger: 'command', positionMs: 122990, stopChanged: true, totalMs: 610, frameMs: 9, presentMs: 598 }) // one playback.presentation-timing line
+   */
+  private journalPresentation(timing: PlaybackPresentationTiming): void {
+    // Each record belongs to the commit right after its presentation, journaled or not.
+    const steps = this.replayOpening.takePresentationTiming()
+    // A film frame within one stop is neither a boundary nor a seek.
+    if (timing.trigger === 'tick' && !timing.stopChanged) return
+    this.diagnostics?.info?.(formatPresentationTiming(timing, steps))
   }
 
   /**

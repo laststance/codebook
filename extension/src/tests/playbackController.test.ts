@@ -9,6 +9,7 @@ import {
   type PlaybackBundle,
   type PlaybackData,
   type PlaybackDependencies,
+  type PlaybackPresentationTiming,
 } from '../playbackController'
 import type * as PlaybackSchemasModule from '../playbackSchemas'
 import type {
@@ -2086,5 +2087,73 @@ test('Play that reaches a recorded stop hands the stop’s frame to the leave', 
   assert.deepEqual(leaves.slice(leavesAtPlay), [
     { keepPixels: false, next: 100 },
   ])
+  await player.controller.dispose()
+})
+
+// protects=Cycle 0137 C1-E: a seek that lands on a recorded stop reports, after its commit, a command trigger, the stop change and how long the frame read, the presentation and the whole request took on the controller's clock; fails_when=no timing is reported, the seek is reported as a playback tick, or a duration is measured from the wrong mark; no_claim=the presentation's own steps (the study workspace's journal adds them) and real frame or present durations (the test clock moves inside the stand-in dependencies)
+test('a seek to a recorded stop reports a command with the time its frame read, its presentation and the whole request took', async () => {
+  // Arrange
+  const timings: PlaybackPresentationTiming[] = []
+  let clock = 0
+  const player = playbackHarness({
+    now: () => clock,
+    frame: async (_study, hash) => {
+      clock += 7
+      return Buffer.from(hash)
+    },
+    present: async () => {
+      clock += 40
+    },
+    presented: (timing) => timings.push(timing),
+  })
+  player.open()
+  await player.controller.settle()
+  timings.length = 0
+  clock = 1000
+
+  // Act
+  player.seek(100)
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(timings, [
+    {
+      trigger: 'command',
+      positionMs: 100,
+      stopChanged: true,
+      totalMs: 47,
+      frameMs: 7,
+      presentMs: 40,
+    },
+  ])
+  await player.controller.dispose()
+})
+
+// protects=Cycle 0137 C1-E: a playback tick that reaches a recorded stop is reported as a tick with the stop change, so the journal tells boundary crossings from seeks; fails_when=the tick is reported as a command, its stop change is lost, or the boundary commit reports nothing; no_claim=the film clock's own rules (other tests here cover them)
+test('a playback tick that reaches a recorded stop reports a tick with the stop change', async () => {
+  // Arrange
+  const timings: PlaybackPresentationTiming[] = []
+  const player = playbackHarness({
+    presented: (timing) => timings.push(timing),
+  })
+  player.open()
+  await player.controller.settle()
+  player.play()
+  timings.length = 0
+
+  // Act
+  player.clock(200)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(
+    timings.map(({ trigger, positionMs, stopChanged }) => ({
+      trigger,
+      positionMs,
+      stopChanged,
+    })),
+    [{ trigger: 'tick', positionMs: 100, stopChanged: true }],
+  )
   await player.controller.dispose()
 })

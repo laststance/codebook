@@ -85,6 +85,8 @@ export class ReplayDebugAdapter {
   private inspectionDue = false
   private selectedAtMs = Date.now()
   private stoppedAtMs?: number
+  /** `Date.now()` when native Run and Debug first held the current selection's values ({@link reportInspection}); none for a gap or a scope-less stop. */
+  private inspectionReadyAtMs?: number
 
   /**
    * Serves one owned historical session for {@link ReplayDebugger}.
@@ -198,6 +200,15 @@ export class ReplayDebugAdapter {
   }
 
   /**
+   * Tells the playback timing journal when native Run and Debug first held the current selection's values: its stack, the inspection frame's scopes and the first scope's initial rows (Cycle 0137, C1-E).
+   * @returns `Date.now()` of that moment; `undefined` until then, and for a gap or a stop without loadable values.
+   * @example adapter.select(snapshot, 'Recorded pause'); adapter.inspectionReadyAt // => 1_790_805_320_270 once Variables loaded its rows
+   */
+  get inspectionReadyAt(): number | undefined {
+    return this.inspectionReadyAtMs
+  }
+
+  /**
    * Identifies the frame whose retrieval {@link inspectionReady} requires: native Call Stack focuses the first frame with source, so a library frame on top cannot hold the stop.
    *
    * Native Call Stack only focuses among the frames it loaded: once its first page ({@link REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES}) holds no frame with source, it focuses the top frame.
@@ -305,6 +316,7 @@ export class ReplayDebugAdapter {
     this.inspectionDue = false
     this.selectedAtMs = Date.now()
     this.stoppedAtMs = undefined
+    this.inspectionReadyAtMs = undefined
     this.snapshot = undefined
     this.inspectionsFrameId = undefined
     this.clearRecordedHandles()
@@ -582,6 +594,7 @@ export class ReplayDebugAdapter {
     )
       return
     this.reportedInspection = true
+    this.inspectionReadyAtMs = Date.now()
     this.inspectionDue = true
   }
 

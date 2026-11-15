@@ -4182,3 +4182,34 @@ test('a presentation abandoned during the session start rejects with the abandon
     await fixture.owner.dispose()
   }
 })
+
+// protects=Cycle 0137 C1-E: once Run and Debug has loaded a presented stop's values, the historical debugger reports when the stop was selected, announced in its `stopped` event and loaded, in that order, so the playback timing journal can split the debugger step and show the editor's own share; fails_when=a mark is missing after the values loaded, or a later mark reads earlier than the one before it; no_claim=the wall clock's values and VS Code's real request delays (the test's native client asks at once)
+test('after a presented stop’s values load, the historical debugger reports its select, stopped and values times in order', async () => {
+  // Arrange
+  const fixture = harness()
+  try {
+    // Act
+    const inspection = await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 1.00 s',
+      new AbortController().signal,
+    )
+    const times = fixture.owner.selectionTimes()
+
+    // Assert
+    assert.equal(inspection, 'inspected')
+    assert.deepEqual(
+      times && {
+        hasStopped: times.stoppedAt !== undefined,
+        hasValues: times.inspectionReadyAt !== undefined,
+        isInOrder:
+          times.selectedAt <= (times.stoppedAt ?? Number.NEGATIVE_INFINITY) &&
+          (times.stoppedAt ?? Number.POSITIVE_INFINITY) <=
+            (times.inspectionReadyAt ?? Number.NEGATIVE_INFINITY),
+      },
+      { hasStopped: true, hasValues: true, isInOrder: true },
+    )
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
