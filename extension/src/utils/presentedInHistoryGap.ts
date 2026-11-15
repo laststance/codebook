@@ -1,7 +1,7 @@
 /**
  * Decides whether the presented replay position lies in an unrecorded (source/debugger history) gap, so the Study pane can say "Not recorded at this moment".
  *
- * Gaps are half-open (`startMs <= presentedMs < endMs`), except at the recording's last instant: Play and a seek to the end both land exactly on `recordingEndMs`, which a gap running to the end must still cover.
+ * Gaps are half-open (`startMs <= presentedMs < endMs`), except at the recording's last instant: Play stops exactly on `recordingEndMs`, which a gap running to the end must still cover.
  * Called by the Study pane's page at every Study message, and self-contained (no imports, no closure) because the page receives it as source text through `toString()`.
  *
  * @param input.presentedMs - The presented position, if any.

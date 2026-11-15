@@ -1579,41 +1579,6 @@ test('Play across a new recorded frame of the stop on screen presents that frame
   await player.controller.dispose()
 })
 
-// Value: protects=Play ending on the same presented state as a seek to the end, with the Application label and Study context naming the end position; fails_when=the tick that reaches the end has the key of the tick before it and is not presented, so the last presented position stays before the end, or a tick before the end with an unchanged key presents again; no_claim=how the Application label or the Study status draw the end
-test('Play that reaches the end after the last recorded frame presents the end position once and pauses, while earlier ticks with the same presentation present nothing', async () => {
-  // Arrange: the last frame is at 200 ms, the recording ends at 250 ms; a seek to 210 ms shows that frame.
-  const presentedPositions: number[] = []
-  const player = playbackHarness({
-    present: async (bundle) => {
-      presentedPositions.push(bundle.projection.positionMs)
-    },
-  })
-  player.open()
-  await player.controller.settle()
-  player.seek(210)
-  await player.controller.settle()
-  player.play()
-
-  // Act: two ticks stay inside the last frame's interval, the third reaches the end.
-  player.clock(10)
-  player.controller.tick()
-  await player.controller.settle()
-  player.clock(20)
-  player.controller.tick()
-  await player.controller.settle()
-  const presentedBeforeEnd = [...presentedPositions]
-  player.clock(100)
-  player.controller.tick()
-  await player.controller.settle()
-
-  // Assert
-  assert.deepEqual(presentedBeforeEnd, [0, 210])
-  assert.deepEqual(presentedPositions, [0, 210, 250])
-  assert.equal(player.controller.state().presentedMs, 250)
-  assert.equal(player.controller.state().mode, 'paused')
-  await player.controller.dispose()
-})
-
 // Value: protects=Play retiring the moment before a recorded stop and presenting the stop when it reaches it; fails_when=the controller treats the stop as the same moment, so the Application pane and Run and Debug keep the moment before it, or keeps the previous image while the stop's new frame loads; why_new=Cycle 0045 FXU narrowed the presentation key and keeps the image only where a stop's pause ends; seam=none
 test('Play that reaches a recorded stop retires the moment before it, clears its image and presents the stop', async () => {
   // Arrange: the playhead stands at 50 ms, before the stop committed at 100 ms with a frame of its own.

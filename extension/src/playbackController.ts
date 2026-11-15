@@ -576,12 +576,8 @@ export class PlaybackController {
             image,
           }
           // Explicit seeks clear pixels even when their frame/context matches the last committed bundle.
-          // Play's tick that reaches the end is presented even with an unchanged key, so the Application label and context name the end position as a direct seek there does.
-          const reachesEnd =
-            this.mode === 'playing' && positionMs >= range.endMs
           const changed =
             this.cleared ||
-            reachesEnd ||
             Boolean(request.restore) ||
             this.presentationKey(bundle) !==
               (this.presented && this.presentationKey(this.presented))
