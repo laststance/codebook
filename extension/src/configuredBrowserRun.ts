@@ -1452,6 +1452,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly retiredServerCopyIds = new Map<string, Set<number>>()
   /** The `stopped` events whose pause kind the run already settled, so a deferred event is handled once ({@link settleServerStop}). */
   private readonly settledStops = new WeakSet<object>()
+  /** Each page `stopped` held for registration answers, with the declared server stops whose page answer it awaits and its judgment ({@link holdsBrowserStopForRegistration}); a retirement of one of those stops' breakpoints waits for that judgment ({@link judgeHeldBrowserStopsOf}). */
+  private readonly heldBrowserStops = new Set<{
+    awaiting: readonly PreparedStop[]
+    judged: Promise<void>
+  }>()
   /** The active bound as it was last set for a stop, so a resumed hit gives back the time the held pause took ({@link restoreActiveBound}). */
   private activeBound?: {
     endsAtMs: number
@@ -9398,6 +9403,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     Awaited<ReturnType<ConfiguredBrowserRun['serverAcknowledgement']>>
   > {
     try {
+      // A page pause held for this stop's page answer is judged before the retirement forgets the breakpoint's ids.
+      await this.judgeHeldBrowserStopsOf(stop)
       this.rememberServerCopyId(stop)
       await stop.breakpoint!.retire(
         this.participants[stop.participant].selected!,
@@ -9723,6 +9730,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       firstRequest.column,
     )
     try {
+      // A page pause held for this stop's page answer is judged before the retirement forgets the breakpoint's ids.
+      await this.judgeHeldBrowserStopsOf(stop)
       this.rememberServerCopyId(stop)
       await stop.breakpoint!.retire(
         this.participants[stop.participant].selected!,
@@ -16047,14 +16056,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (body.reason !== 'breakpoint' || hitIds.every(isPlaced)) return false
     const awaiting = this.awaitingBrowserRegistrations(session)
     if (awaiting.length === 0) return false
-    this.track(
-      this.releaseHeldBrowserStop(
+    const held = {
+      awaiting,
+      judged: this.releaseHeldBrowserStop(
         session,
         event,
         awaiting,
         this.continuedCount(session),
       ),
-    )
+    }
+    this.heldBrowserStops.add(held)
+    this.track(held.judged.finally(() => this.heldBrowserStops.delete(held)))
     return true
   }
 
@@ -16101,6 +16113,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (isResumedMeanwhile) return
     this.settledStops.add(event)
     this.onEvent(session, event)
+  }
+
+  /**
+   * Waits until every page `stopped` held for the page's answer to a declared stop's registration is judged ({@link heldBrowserStops}), before the run retires that stop's breakpoint.
+   * Why it exists: retiring forgets the breakpoint's registrations and every id its answers gave (D19), and a retired registration awaits no answer, so a page pause that paused at this stop's breakpoint before the page answered, and is still held when the stop commits or is requested again, would be judged at once without its id and end the run as an unowned page stop (Cycle 0136 review, local CodeRabbit CLI on PR 343's final range). The hold has its own bound ({@link BROWSER_STOP_REGISTRATION_ANSWER_MS}), so this wait is bounded too.
+   * Called by {@link inspect}, {@link requestAgainUnderBreakLocations} and {@link rearmOnRequestedLine} just before they retire a declared stop's breakpoint.
+   * @param stop - The declared stop whose breakpoint is about to be retired.
+   * @example await this.judgeHeldBrowserStopsOf(stop) // returns once a page pause held for this stop's page answer was resumed as its copy, judged unowned or dropped
+   */
+  private async judgeHeldBrowserStopsOf(stop: PreparedStop): Promise<void> {
+    const judgments = [...this.heldBrowserStops]
+      .filter((held) => held.awaiting.includes(stop))
+      .map((held) => held.judged)
+    // A judgment that fails ends the run through track; the retirement only waits for it.
+    await Promise.allSettled(judgments)
   }
 
   /**
@@ -17654,6 +17681,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.capture(phase, current, pause)
       current()
       // Retire this position before authorizing continuation; the next declared position is armed separately.
+      // A page pause held for this stop's page answer is judged before the retirement forgets the breakpoint's ids.
+      await this.judgeHeldBrowserStopsOf(stop)
       this.rememberServerCopyId(stop)
       await stop.breakpoint!.retire(participant.selected!, this.abort.signal)
       current()

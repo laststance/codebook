@@ -520,6 +520,44 @@ test('a page pause held for the page’s registration answer is resumed when the
   ])
 })
 
+// protects=Cycle 0136 review (local CodeRabbit CLI on PR 343's final range): a page pause at a server stop's breakpoint held for the page's registration answer stays that stop's copy when the server stop pauses and commits before the answer arrives: the stop's retirement, which forgets the breakpoint's ids, waits for the held pause's judgment, the page is resumed as the stop's copy once the answer comes, and the server stop commits; fails_when=the retirement makes the hold read the registration as answered and forgets its ids, so the held pause is judged at once without its id and ends the run as an unowned page stop; no_claim=the harness keeps the page's reply back to stand in for js-debug's late answer while the server stop commits, and its React copy is a stand-in script; this order is not observed natively
+test('a page pause held for the page’s registration answer is resumed as the server stop’s copy when that stop commits before the answer arrives', async (context) => {
+  // Arrange: the page's answers are held, the operation's input is sent, and the page pauses in React's copy at the server stop's breakpoint.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  const answers = harness.holdBrowserAnswers()
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+  // Act: the server stop pauses and is committed while the page's answer is held; the answer comes later.
+  harness.emitPause('server')
+  // gstack-timing-ok: real time must let the server stop's commit reach its breakpoint's retirement while the page's answer is held; a timer that fires late under load only gives the commit more time, which the assertions below still read
+  await setTimeout(LATE_ANSWER_MS)
+  const failuresBeforeAnswer = harness.run.view().failures.join('; ')
+  answers.answer()
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the server stop was captured')
+  // Assert
+  assert.equal(failuresBeforeAnswer, '')
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
+    {
+      sessionId: 'browser-session',
+      hitBreakpointIds: [12],
+      awaitedStops: [0],
+      answered: true,
+      resumedMeanwhile: false,
+    },
+  ])
+  assert.deepEqual(journaled(harness, 'breakpoint.react-copy'), [
+    { sessionId: 'browser-session', ...REACT_COPY_ENTRY },
+  ])
+})
+
 // Value: protects=F2's journal cap: a page that keeps pausing in React’s copies is still resumed every time but journals breakpoint.react-copy only up to the shared cap; fails_when=the journal grows past the cap or a copy past it is no longer resumed; why_new=the cap of the page-side entry is separate from the server-side copy-hit cap test; seam=none; no_claim=js-debug's real pause rate
 test('page pauses in React’s copies past the journal cap are still resumed but not journaled', async (context) => {
   // Arrange
