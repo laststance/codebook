@@ -652,9 +652,8 @@ export class PlaybackController {
 
   /**
    * Hands one committed presentation's timing to {@link PlaybackDependencies.presented}, for the playback timing journal (Cycle 0137, C1-E).
-   * Called by {@link pump} right after the playhead commits, never for a superseded or failed request.
+   * Called by {@link pump} right after the playhead commits, never for a superseded or failed request. A throwing journal is ignored: a diagnostic must never fail a presentation that already committed.
    * @param timing - Why the presentation was asked for, where, whether the stop changed, and its durations.
-   * A throwing journal is ignored: a diagnostic must never fail a presentation that already committed.
    * @example this.reportPresented({ trigger: 'tick', positionMs: 100, stopChanged: true, totalMs: 540, frameMs: 12, presentMs: 520 })
    */
   private reportPresented(timing: PlaybackPresentationTiming): void {
