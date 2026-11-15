@@ -1552,6 +1552,47 @@ test('seeking another recorded stop retires the shown stop inside the running se
   assert.deepEqual(stopped, ['historical-owned'])
 })
 
+// protects=the reader hearing about the next stop's values only after that stop's own paint allowance; fails_when=the previous stop's pending notice fires inside the running session and tells the reader early, so the next stop's hint leaves before its values are drawn; no_claim=native Variables' real paint time, which the native check measures; the fake client loads values at once and fake timers stand in for the editor's clock
+test("a stop change inside the running session does not let the previous stop cut the next stop's paint allowance short", async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness()
+  const signal = new AbortController().signal
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'First recorded stop',
+      signal,
+    )
+    await flushNative()
+    // The first stop's notice is due 50 ms from now.
+    context.mock.timers.tick(REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS - 50)
+    fixture.owner.invalidate()
+    await fixture.owner.retire(undefined, signal)
+
+    // Act
+    // The next stop's values load now, so its own notice is due 150 ms from now.
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Second recorded stop',
+      signal,
+    )
+    await flushNative()
+    context.mock.timers.tick(50)
+    const changesWhenFirstNoticeWasDue = fixture.changes()
+    context.mock.timers.tick(REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS - 50)
+    const changesWhenSecondNoticeWasDue = fixture.changes()
+
+    // Assert
+    assert.equal(fixture.startCalls(), 1)
+    assert.equal(changesWhenFirstNoticeWasDue, 0)
+    assert.equal(changesWhenSecondNoticeWasDue, 1)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
 // protects=the stop change ending the session as before when the editor never reads the placeholder; fails_when=the next stop shows in a session whose editor still displays the old stop's values; no_claim=the editor's real read timing, which the native check measures
 test('when the editor does not read the placeholder within the bound, the stop change ends the session and the next stop opens in a new one', async () => {
   // Arrange
@@ -2701,6 +2742,8 @@ test('with Variables visible, a scopes request within the bound after the stack 
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
   const fixture = harness(undefined, undefined, 0, false, 'stack on stop')
+  // Explicit focus makes the 150 ms bound apply, so the ticks below pass the real deadline of an uncancelled timer.
+  grantExplicitFocus(fixture)
   let outcome = 'pending'
   const showing = fixture.owner
     .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)

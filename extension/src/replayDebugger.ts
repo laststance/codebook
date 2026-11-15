@@ -289,6 +289,17 @@ export class ReplayDebugger {
     )
   }
 
+  /**
+   * Cancels every notice of {@link notifyValuesLoaded} that still waits for its paint allowance.
+   *
+   * Called when the shown stop is retired or replaced ({@link invalidate}, {@link present}) and when the owner releases its adapter, so a notice never reports a stop that is no longer shown.
+   * @example this.clearValuesLoadedTimers()
+   */
+  private clearValuesLoadedTimers(): void {
+    for (const timer of this.valuesLoadedTimers) clearTimeout(timer)
+    this.valuesLoadedTimers.clear()
+  }
+
   /** Reports whether playback may still present history; false after the learner stops the owned session or a startup or presentation bound expired, so the next explicit replay open, or an explicit selection or Inspect of a test replay's stop, replaces this owner ({@link ReplayDebuggerSlot.replaceUnavailable}); a seek or Play never does. @example if (!debuggerView.available) await debuggerView.dispose() */
   get available(): boolean {
     return !this.closed && !this.detached
@@ -303,6 +314,8 @@ export class ReplayDebugger {
     this.revision++
     this.wakeInspection()
     this.selected = undefined
+    // A stop change inside the running session keeps this adapter, so the shown stop's pending notice would otherwise tell the reader during the next stop's own paint allowance.
+    this.clearValuesLoadedTimers()
     this.adapter?.select(undefined, label)
   }
 
@@ -537,6 +550,8 @@ export class ReplayDebugger {
     ) {
       // A select that throws must not leave this stop recorded as shown, so presenting it again selects it again.
       this.selected = undefined
+      // The replaced stop's pending notice must not outlive it (same reason as in invalidate); cancelling beats binding the timer to a selection, which is only assigned after select and so unknown when the adapter serves values during select.
+      this.clearValuesLoadedTimers()
       adapter.select(snapshot, label, sourceDocument, inspections)
       this.selected = {
         snapshot,
@@ -1199,7 +1214,6 @@ export class ReplayDebugger {
     this.adapter?.dispose()
     for (const disposable of this.disposables) disposable.dispose()
     // A disposed owner tells its reader nothing more, so no timer of it keeps the event loop alive.
-    for (const timer of this.valuesLoadedTimers) clearTimeout(timer)
-    this.valuesLoadedTimers.clear()
+    this.clearValuesLoadedTimers()
   }
 }
