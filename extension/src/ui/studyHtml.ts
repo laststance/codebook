@@ -25,6 +25,7 @@ import type { PauseNameParts } from '../utils/describePauseName'
 import type { StudyDescriptor } from '../utils/describeStudy'
 import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
 import { installShortcutHelp } from '../utils/installShortcutHelp'
+import { presentedInHistoryGap } from '../utils/presentedInHistoryGap'
 import type { projectLearningSummary } from '../utils/projectLearningSummary'
 import type { NodeLearningSummaryProjection } from '../utils/projectNodeLearningSummary'
 import type { NodeTestApplicationView } from '../utils/projectNodeTestApplication'
@@ -255,7 +256,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><div id="operation-row" class="operation-row" role="group" aria-label="${STUDY_UI_OPTIONS.operations.groupName}" hidden></div><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span><span id="playback-events" class="playback-events" role="group" aria-label="${STUDY_UI_OPTIONS.testReplay.eventsGroup}" hidden><button id="previous-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="next-event" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}" disabled>${STUDY_UI_OPTIONS.testReplay.nextEvent}</button><button id="previous-operation" type="button" title="${STUDY_UI_OPTIONS.operations.previous}" hidden disabled>${STUDY_UI_OPTIONS.operations.previous}</button><button id="next-operation" type="button" title="${STUDY_UI_OPTIONS.operations.next}" hidden disabled>${STUDY_UI_OPTIONS.operations.next}</button></span></div><p id="operation-caption" class="muted" hidden></p><div id="first-execution-note" class="first-execution-note" hidden><span id="first-execution-text">${STUDY_UI_OPTIONS.pauses.firstExecutionNote}</span> <details id="first-execution-details"><summary>${STUDY_UI_OPTIONS.pauses.firstExecutionDetailsSummary}</summary><p>${STUDY_UI_OPTIONS.pauses.firstExecutionDetails}</p></details></div><span id="pause-announcement" class="visually-hidden" role="status" aria-live="polite"></span><span id="operation-status" class="visually-hidden" role="status" aria-live="polite"></span><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details>${markupOnlyIn(kind, 'moments', learningSummaryButton)}</div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
-<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()}, ${selectedLearningStep.toString()})</script></body></html>`
+<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()}, ${selectedLearningStep.toString()}, ${presentedInHistoryGap.toString()})</script></body></html>`
 }
 
 /** Keeps control DOM stable on state updates so native webview messages do not discard keyboard focus. @example studyClient() */
@@ -266,6 +267,7 @@ function studyClient(
   savedNote: typeof savedLaterNote,
   installFocusMemory: typeof installPaneFocusMemory,
   pickLearningStep: typeof selectedLearningStep,
+  isInHistoryGap: typeof presentedInHistoryGap,
 ): void {
   const api = acquireVsCodeApi(),
     visited = new Set(api.getState()?.visited ?? [])
@@ -4767,11 +4769,12 @@ function studyClient(
       const presentedMs = recording.presentedMs
       const selectedHistoryGap =
         timeline.status === 'mapped' &&
-        presentedMs !== undefined &&
-        !timeline.recordedPoints.includes(presentedMs) &&
-        timeline.gaps.some(
-          (gap) => presentedMs >= gap.startMs && presentedMs < gap.endMs,
-        )
+        isInHistoryGap({
+          presentedMs,
+          gaps: timeline.gaps,
+          recordedPoints: timeline.recordedPoints,
+          recordingEndMs: range?.endMs,
+        })
       // The transport's status regions carry text only in the pane that shows the transport; in the other pane they stay as empty as {@link offerTransport} left them.
       if (isTransportShown) {
         text(
