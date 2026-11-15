@@ -84,7 +84,7 @@ Exit codes:
   64  usage error
 
 Error codes:
-  E_USAGE E_GH E_PR_STATE E_GATE_MISSING E_GATE_SUMMARY_OLD E_GATE_NOT_PASSED
+  E_USAGE E_GH E_PR_STATE E_GATE_MISSING E_GATE_UNREADABLE E_GATE_SUMMARY_OLD E_GATE_NOT_PASSED
   E_CHECKOUT_HEAD E_CHECKS_PENDING E_CHECKS_FAILED E_CHECKS_NONE E_CHECKS_MISSING E_WORKFLOWS_UNREADABLE
   E_MERGE_FAILED E_MERGE_UNKNOWN E_MERGED_OTHER_HEAD E_LOCAL_MAIN E_INTERNAL`
 
@@ -249,7 +249,7 @@ export async function readPr(run, pr, environment) {
  * @param {string} repositoryRoot - Repository root holding `artifacts/gate/`.
  * @param {(path: string) => Promise<string>} readText - Reads a UTF-8 file (injected).
  * @returns {Promise<void>} Resolves when the summary qualifies.
- * @throws {CommandRefusal} `E_GATE_MISSING`, `E_GATE_SUMMARY_OLD` (no `Checkout:` line) or `E_GATE_NOT_PASSED`; each ends with the gate command as its fix.
+ * @throws {CommandRefusal} `E_GATE_MISSING` (the file does not exist), `E_GATE_UNREADABLE` (it exists but cannot be read), `E_GATE_SUMMARY_OLD` (no `Checkout:` line) or `E_GATE_NOT_PASSED`; each ends with the gate command as its fix.
  * @example await checkGateSummary('9f2c…', '/work/codebook', readText)
  */
 export async function checkGateSummary(head, repositoryRoot, readText) {
@@ -263,7 +263,14 @@ export async function checkGateSummary(head, repositoryRoot, readText) {
   let text
   try {
     text = await readText(summaryPath)
-  } catch {
+  } catch (error) {
+    // Only a file that does not exist counts as missing; any other read failure must never let the fallback skip an existing summary.
+    if (error?.code !== 'ENOENT')
+      throw new CommandRefusal(
+        'E_GATE_UNREADABLE',
+        `gate summary at ${summaryPath} exists but cannot be read (${error?.code ?? String(error?.message ?? error)})`,
+        { fix: GATE_COMMAND },
+      )
     throw new CommandRefusal(
       'E_GATE_MISSING',
       `no gate summary at ${summaryPath}`,
@@ -310,7 +317,7 @@ const DOCS_ONLY_PATHS = ['CHANGELOG.md', 'README.md', 'extension/README.md']
 
 /**
  * Whether a changed path is one a docs-only commit may touch.
- * @param {string} path - Repository-relative path from `git diff-tree`.
+ * @param {string} path - Repository-relative path from `git diff-tree -z`, compared exactly (no trimming: `README.md ` is another file).
  * @returns {boolean} `true` for the three documentation files and `extension/src/tests/<name>Docs.test.ts`.
  * @example isDocsOnlyPath('extension/src/tests/readmeDocs.test.ts') // => true
  */
@@ -332,7 +339,7 @@ function isDocsOnlyPath(path) {
  * @param {string} repositoryRoot - Repository root holding `artifacts/gate/`.
  * @param {(path: string) => Promise<string>} readText - Reads a UTF-8 file (injected).
  * @returns {Promise<{ ancestor: string, docsCommits: string[] } | undefined>} `undefined` when the head's own summary qualifies; otherwise the gated ancestor and the docs-only commits after it (oldest first, the head last).
- * @throws {CommandRefusal} Whatever {@link checkGateSummary} throws for an existing summary; `E_GATE_MISSING` when no gated ancestor exists or a commit after it is a merge or changes another path (the message names the first one).
+ * @throws {CommandRefusal} Whatever {@link checkGateSummary} throws for an existing summary, including `E_GATE_UNREADABLE` for the head or an ancestor met during the walk; `E_GATE_MISSING` when the walk fails, does not start at the head, no gated ancestor exists or a commit after it is a merge or changes another path (the message names the first one).
  * @example await checkGateOrDocsAncestor(run, '9f2c…', '/work/codebook', readText) // => { ancestor: '4b1c…', docsCommits: ['7d0e…'] }
  */
 export async function checkGateOrDocsAncestor(
@@ -360,6 +367,8 @@ export async function checkGateOrDocsAncestor(
       '--parents',
       `${base.stdout.trim()}..${head}`,
     ])
+    // A failed walk cannot show what lies between the head and an ancestor.
+    if (walk.status !== 0) throw error
     // Newest first, the head included; each line is `<sha> <parent>…`.
     const chain = walk.stdout
       .split('\n')
@@ -368,6 +377,8 @@ export async function checkGateOrDocsAncestor(
         const [sha, ...parents] = line.trim().split(/\s+/)
         return { sha, parents }
       })
+    // The walk must start at the head itself, else its commits are not the head's history.
+    if (chain[0]?.sha !== head) throw error
     let ancestorIndex = -1
     // The head itself has no summary, so the search starts below it.
     for (let index = 1; index < chain.length; index += 1) {
@@ -376,11 +387,19 @@ export async function checkGateOrDocsAncestor(
         ancestorIndex = index
         break
       } catch (summaryError) {
+        // A summary that exists but cannot be read stops the walk; skipping it could hide a gate result.
+        if (
+          !(summaryError instanceof CommandRefusal) ||
+          summaryError.code === 'E_GATE_UNREADABLE'
+        )
+          throw summaryError
         // A commit whose summary is missing or did not pass is never the ancestor; keep walking down.
-        if (!(summaryError instanceof CommandRefusal)) throw summaryError
       }
     }
-    if (ancestorIndex === -1) throw error
+    if (ancestorIndex === -1)
+      throw refuse(
+        'the docs-only ancestor fallback found no gated first-parent ancestor',
+      )
     const ancestor = chain[ancestorIndex].sha
     // Commits after the ancestor, oldest first.
     const after = chain.slice(0, ancestorIndex).reverse()
@@ -391,19 +410,21 @@ export async function checkGateOrDocsAncestor(
         )
       const diff = await run('git', [
         'diff-tree',
+        '-z',
         '--no-commit-id',
         '--name-only',
         '-r',
+        '--no-renames',
         commit.sha,
       ])
       if (diff.status !== 0)
         throw refuse(
           `cannot list the paths of commit ${commit.sha.slice(0, 8)}`,
         )
-      const offending = diff.stdout
-        .split('\n')
-        .map((path) => path.trim())
-        .find((path) => path !== '' && !isDocsOnlyPath(path))
+      // NUL-separated and unquoted; only the empty tail after the last NUL is dropped, so names with spaces stay exact.
+      const paths = diff.stdout.split('\0')
+      if (paths.at(-1) === '') paths.pop()
+      const offending = paths.find((path) => !isDocsOnlyPath(path))
       if (offending !== undefined)
         throw refuse(
           `commit ${commit.sha.slice(0, 8)} after the gated ancestor ${ancestor.slice(0, 8)} changes ${offending}, which is not a documentation path`,

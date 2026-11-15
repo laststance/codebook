@@ -21,7 +21,8 @@ const DOCS_TWO = 'd2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2'
 const SIDE_PARENT = 'e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5'
 const KEY_MERGE_BASE = `git merge-base origin/main ${HEAD}`
 const KEY_WALK = `git rev-list --first-parent --parents ${MAIN_SHA}..${HEAD}`
-const KEY_PATHS = (sha) => `git diff-tree --no-commit-id --name-only -r ${sha}`
+const KEY_PATHS = (sha) =>
+  `git diff-tree -z --no-commit-id --name-only -r --no-renames ${sha}`
 
 const API = 'repos/laststance/codebook'
 const KEY_VIEW_PR =
@@ -161,6 +162,7 @@ async function runCommand({
   environment = {},
   workflows = { 'test.yml': UNFILTERED_WORKFLOW },
   ancestorSummaries = {},
+  unreadableSummaries = [],
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'merge-pr-test-'))
   try {
@@ -188,6 +190,14 @@ async function runCommand({
         summaryText,
       )
     }
+    // A directory in place of summary.txt exists but fails to read (EISDIR).
+    for (const sha of unreadableSummaries)
+      await mkdir(
+        join(root, 'artifacts', 'gate', sha.slice(0, 8), 'summary.txt'),
+        {
+          recursive: true,
+        },
+      )
     const table = answers(responses)
     const calls = []
     const run = async (command, args) => {
@@ -228,7 +238,10 @@ function ancestorChain(chain) {
     ),
   }
   for (const commit of chain)
-    table[KEY_PATHS(commit.sha)] = ok(`${(commit.paths ?? []).join('\n')}\n`)
+    // `git diff-tree -z` ends every path with a NUL.
+    table[KEY_PATHS(commit.sha)] = ok(
+      (commit.paths ?? []).map((path) => `${path}\0`).join(''),
+    )
   return table
 }
 
@@ -344,7 +357,7 @@ test('refuses with E_GATE_MISSING and the gate command when the head has no summ
   assert.equal(exit, 1)
   assert.match(
     err[0],
-    /^E_GATE_MISSING: no gate summary at .*12345678.summary\.txt$/,
+    /^E_GATE_MISSING: no gate summary at .*12345678.summary\.txt; the docs-only ancestor fallback found no gated first-parent ancestor$/,
   )
   assert.equal(err.at(-1), 'Fix: pnpm --dir extension gate')
   assert.deepEqual(mergeCalls(calls), [])
@@ -1340,4 +1353,148 @@ test('refuses with E_GATE_MISSING when a merge commit lies between the gated anc
     /^E_GATE_MISSING: no gate summary at .*; commit d1d1d1d1 after the gated ancestor a1a1a1a1 is a merge commit$/,
   )
   assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=a head summary that exists but cannot be read is never treated as missing, so no ancestor gate stands in for it; fails_when=any read error other than a missing file lets the docs-only fallback walk to an ancestor; no_claim=permission bits (a directory in place of the file stands in for EACCES)
+test('refuses with E_GATE_UNREADABLE and walks no ancestor when the head summary exists but cannot be read', async () => {
+  // Arrange
+  const responses = ancestorChain([
+    { sha: HEAD, parents: [ANCESTOR], paths: ['CHANGELOG.md'] },
+    { sha: ANCESTOR, parents: [MAIN_SHA] },
+  ])
+  const ancestorSummaries = {
+    [ANCESTOR]: await buildSummary({ head: ANCESTOR }),
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({
+    summary: null,
+    unreadableSummaries: [HEAD],
+    responses,
+    ancestorSummaries,
+  })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.match(
+    err[0],
+    /^E_GATE_UNREADABLE: gate summary at .*12345678.summary\.txt exists but cannot be read \(EISDIR\)$/,
+  )
+  assert.ok(!calls.includes(KEY_WALK))
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=an ancestor summary that exists but cannot be read stops the walk instead of being skipped for an older gate; fails_when=the walk skips an unreadable ancestor summary and merges on an older gated ancestor; no_claim=permission bits
+test('refuses with E_GATE_UNREADABLE when an ancestor summary met during the walk cannot be read', async () => {
+  // Arrange
+  const responses = ancestorChain([
+    { sha: HEAD, parents: [DOCS_ONE], paths: ['CHANGELOG.md'] },
+    { sha: DOCS_ONE, parents: [ANCESTOR], paths: ['README.md'] },
+    { sha: ANCESTOR, parents: [MAIN_SHA] },
+  ])
+  const ancestorSummaries = {
+    [ANCESTOR]: await buildSummary({ head: ANCESTOR }),
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({
+    summary: null,
+    unreadableSummaries: [DOCS_ONE],
+    responses,
+    ancestorSummaries,
+  })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.match(err[0], /^E_GATE_UNREADABLE: gate summary at .*d1d1d1d1/)
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=docs paths match exactly, so a file named with a trailing space is not README.md; fails_when=the path is trimmed before matching; no_claim=real git output
+test('refuses when a commit after the gated ancestor changes a file named README.md with a trailing space', async () => {
+  // Arrange
+  const responses = ancestorChain([
+    { sha: HEAD, parents: [ANCESTOR], paths: ['README.md '] },
+    { sha: ANCESTOR, parents: [MAIN_SHA] },
+  ])
+  const ancestorSummaries = {
+    [ANCESTOR]: await buildSummary({ head: ANCESTOR }),
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({
+    summary: null,
+    responses,
+    ancestorSummaries,
+  })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.match(
+    err[0],
+    /^E_GATE_MISSING: no gate summary at .*; commit 12345678 after the gated ancestor a1a1a1a1 changes README\.md , which is not a documentation path$/,
+  )
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=a rename from code to a docs path is listed as delete plus add and refused; fails_when=rename detection hides the code path so only README.md is seen; no_claim=real git (the fake runner returns what --no-renames prints)
+test('refuses when a commit after the gated ancestor renames a source file to README.md', async () => {
+  // Arrange
+  const responses = ancestorChain([
+    {
+      sha: HEAD,
+      parents: [ANCESTOR],
+      paths: ['README.md', 'extension/src/x.ts'],
+    },
+    { sha: ANCESTOR, parents: [MAIN_SHA] },
+  ])
+  const ancestorSummaries = {
+    [ANCESTOR]: await buildSummary({ head: ANCESTOR }),
+  }
+
+  // Act
+  const { exit, err, calls } = await runCommand({
+    summary: null,
+    responses,
+    ancestorSummaries,
+  })
+
+  // Assert
+  assert.equal(exit, 1)
+  assert.match(
+    err[0],
+    /changes extension\/src\/x\.ts, which is not a documentation path$/,
+  )
+  assert.ok(calls.includes(KEY_PATHS(HEAD)))
+  assert.deepEqual(mergeCalls(calls), [])
+})
+
+// protects=a walk that does not start at the head, or fails, never yields an ancestor; fails_when=a chain whose first entry is another commit is accepted; no_claim=real git history
+test('refuses with the original missing-summary error when the walk does not start at the head or fails', async () => {
+  // Arrange
+  const wrongStart = ancestorChain([
+    { sha: DOCS_ONE, parents: [ANCESTOR], paths: ['CHANGELOG.md'] },
+    { sha: ANCESTOR, parents: [MAIN_SHA] },
+  ])
+  const failedWalk = { [KEY_WALK]: failed('fatal: bad revision') }
+  const ancestorSummaries = {
+    [ANCESTOR]: await buildSummary({ head: ANCESTOR }),
+  }
+
+  for (const responses of [wrongStart, failedWalk]) {
+    // Act
+    const { exit, err, calls } = await runCommand({
+      summary: null,
+      responses,
+      ancestorSummaries,
+    })
+
+    // Assert
+    assert.equal(exit, 1)
+    assert.match(
+      err[0],
+      /^E_GATE_MISSING: no gate summary at .*12345678.summary\.txt$/,
+    )
+    assert.deepEqual(mergeCalls(calls), [])
+  }
 })
