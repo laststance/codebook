@@ -5,7 +5,11 @@ import type * as vscode from 'vscode'
 import {
   NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+  REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
+  REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS,
+  REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS,
+  REPLAY_LOADING_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
   REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
   REPLAY_DEBUG_TYPE,
@@ -47,6 +51,8 @@ export class ReplayDebugger {
   private session?: vscode.DebugSession
   private adapter?: ReplayDebugAdapter
   private starting?: Promise<void>
+  /** True once {@link launchSession} resolved for the current session; cleared when that session ends. The editor creates the adapter before its launch resolves, so {@link session} alone does not tell a settled startup from a pending one, and a settled {@link starting} stays set. */
+  private startupSettled = false
   private retiring?: Promise<void>
   private retiringSessionId?: string
   /** The session {@link stopSessionStartedAfterExpiry} already asked the editor to stop, so expiry and a late startup stop it only once. */
@@ -72,6 +78,10 @@ export class ReplayDebugger {
   /** Positive discovery of {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, kept for this owner by {@link nativeInspectionCommands}, so later stops need no catalog roundtrip; a host that did not register it is asked again at its next new selection. */
   private registeredNativeFocusCommand = false
   private hasPresented = false
+  /** The editor left the last in-session placeholder unread ({@link retire} fell back to ending the session), so later stop changes skip the in-session wait until a presented stop's stack is read again ({@link noteStackReadAfterPresentation}). */
+  private placeholderLeftUnread = false
+  /** The selection ({@link selected}) whose {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} the host ran without error: the editor focused its stack frame explicitly, so a visible Variables view asks for scopes at once ({@link scopesRequestBoundMs}). Unlike {@link modelSelectionSettledFor}, a host without the command never sets it. */
+  private explicitlyFocusedFor?: ReplayDebugger['selected']
   private lastPresentedSnapshot?: ReplayDebugSnapshot
   /** The last committed moment's values were not loaded and native Run and Debug has requested none since. */
   private valuesUnrequested = false
@@ -223,6 +233,7 @@ export class ReplayDebugger {
     this.session = undefined
     this.detached = true
     this.startupExpired = false
+    this.startupSettled = false
     this.selected = undefined
     // A wait on the ended adapter fails now instead of at its deadline.
     this.wakeInspection()
@@ -281,6 +292,17 @@ export class ReplayDebugger {
     )
   }
 
+  /**
+   * Cancels every notice of {@link notifyValuesLoaded} that still waits for its paint allowance.
+   *
+   * Called when the shown stop is retired or replaced ({@link invalidate}, {@link present}) and when the owner releases its adapter, so a notice never reports a stop that is no longer shown.
+   * @example this.clearValuesLoadedTimers()
+   */
+  private clearValuesLoadedTimers(): void {
+    for (const timer of this.valuesLoadedTimers) clearTimeout(timer)
+    this.valuesLoadedTimers.clear()
+  }
+
   /** Reports whether playback may still present history; false after the learner stops the owned session or a startup or presentation bound expired, so the next explicit replay open, or an explicit selection or Inspect of a test replay's stop, replaces this owner ({@link ReplayDebuggerSlot.replaceUnavailable}); a seek or Play never does. @example if (!debuggerView.available) await debuggerView.dispose() */
   get available(): boolean {
     return !this.closed && !this.detached
@@ -295,13 +317,17 @@ export class ReplayDebugger {
     this.revision++
     this.wakeInspection()
     this.selected = undefined
+    // A stop change inside the running session keeps this adapter, so the shown stop's pending notice would otherwise tell the reader during the next stop's own paint allowance.
+    this.clearValuesLoadedTimers()
     this.adapter?.select(undefined, label)
   }
 
   /**
-   * Retires the owned session before {@link StudyWorkspace.presentPlayback} shows a different historical stop; video frames within one stop keep their native context.
+   * Retires the shown stop before {@link StudyWorkspace.presentPlayback} shows a different historical stop; video frames within one stop keep their native context.
    *
-   * The retirement is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}, counted once any
+   * A running session retires it in place ({@link retireInSession}): the placeholder replaces the stop and native Run and Debug reads it before the next stop shows (Cycle 0137, D8). Only an owner without a running session, or one whose editor did not read the placeholder within {@link REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS}, ends the owned session, as every stop change did before.
+   *
+   * That session end is shared by every presentation and bounded by {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}, counted once any
    * pending startup has settled: an editor that never answers makes this owner unavailable, so only an explicit replay
    * reopen restarts it. An aborted caller leaves at once.
    *
@@ -318,11 +344,60 @@ export class ReplayDebugger {
     if (this.closed || this.detached)
       throw new Error(HISTORICAL_DEBUGGER_CLOSED)
     if (this.hasPresented && this.lastPresentedSnapshot === snapshot) return
+    // A running session retires the shown stop in place: ending the session cost about half a second at every stop change (Cycle 0137, D8).
+    // Only after the startup settled: while it is pending (the adapter already exists) the retirement counts from the settled startup instead.
+    if (
+      this.startupSettled &&
+      this.session &&
+      this.adapter &&
+      !this.retiring &&
+      !this.placeholderLeftUnread &&
+      (await this.retireInSession(snapshot, signal))
+    )
+      return
     this.retiring ??= this.retireAfterStartup().finally(() => {
       this.retiring = undefined
     })
     await untilAborted(this.retiring, signal)
     signal.throwIfAborted()
+  }
+
+  /**
+   * Retires the shown stop inside the running recorded session: the placeholder replaces it, and the next stop shows only once native Run and Debug has read the placeholder's empty stack (Cycle 0137, D8).
+   * Why it exists: ending and starting the session at every stop change cost about half a second each time in both editors (C1-E), while the adapter's own selection already retires the previous stop's frames and thread identity, so the editor drops its Variables tree.
+   * Called by {@link retire} while the owner holds a running session and no session end is under way.
+   * @param snapshot - The recorded stop about to be shown; a recorded one makes the placeholder read {@link REPLAY_LOADING_LABEL}.
+   * @param signal - The presentation's cancellation.
+   * @returns `true` once the editor read the placeholder; `false` when it did not within {@link REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS} or the session ended meanwhile, so {@link retire} ends the session as before.
+   * @throws The signal's reason once it aborts.
+   * @example if (await this.retireInSession(nextSnapshot, signal)) return
+   */
+  private async retireInSession(
+    snapshot: ReplayDebugSnapshot | undefined,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    // The playback's own invalidate usually showed the placeholder already; a stop still selected is replaced now.
+    if (this.selected)
+      this.invalidate(snapshot ? REPLAY_LOADING_LABEL : undefined)
+    const isRead = await untilAborted(
+      this.awaitRetrieval('stack', REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS),
+      signal,
+    )
+    signal.throwIfAborted()
+    // The editor's Call Stack may show another session: waiting again at every stop change would only add the bound to each one.
+    if (isRead === false) this.placeholderLeftUnread = true
+    return isRead === true
+  }
+
+  /**
+   * Re-enables {@link retireInSession} once native Run and Debug read the stack of a stop this owner presented.
+   * Why it exists: after an unread placeholder ({@link placeholderLeftUnread}) every stop change ends the session at once; a read stack shows the editor follows this owner's session again, so the in-session path pays off again.
+   * Called by {@link present} after the native model selection waited for the stop's stack.
+   * @param adapter - Adapter that received the presented stop.
+   * @example this.noteStackReadAfterPresentation(adapter)
+   */
+  private noteStackReadAfterPresentation(adapter: ReplayDebugAdapter): void {
+    if (adapter.stackRetrieved) this.placeholderLeftUnread = false
   }
 
   /**
@@ -480,6 +555,8 @@ export class ReplayDebugger {
     ) {
       // A select that throws must not leave this stop recorded as shown, so presenting it again selects it again.
       this.selected = undefined
+      // The replaced stop's pending notice must not outlive it (same reason as in invalidate); cancelling beats binding the timer to a selection, which is only assigned after select and so unknown when the adapter serves values during select.
+      this.clearValuesLoadedTimers()
       adapter.select(snapshot, label, sourceDocument, inspections)
       this.selected = {
         snapshot,
@@ -496,6 +573,7 @@ export class ReplayDebugger {
     // Gaps and scope-less stops have nothing for Variables to load: commit at once and leave the session-level state alone.
     if (!adapter.hasLoadableValues) return 'no-values'
     await this.selectNativeInspectionModel(adapter, revision, signal)
+    this.noteStackReadAfterPresentation(adapter)
     // While Run and Debug requests no values, waiting on every stop would stall playback without ever loading them.
     // A paused frame of another session keeps the Run and Debug focus, so this stop's values are not requested either: the grace would only delay the frame.
     const inspection = adapter.inspectionReady
@@ -507,6 +585,23 @@ export class ReplayDebugger {
     // Only a loaded Variables page (the adapter's report) clears this; a gap or scope-less stop proves nothing about Variables.
     if (inspection === 'uninspected') this.valuesUnrequested = true
     return inspection
+  }
+
+  /**
+   * Reads when the current selection was made, announced to native Run and Debug and loaded there, for the playback timing journal that {@link presentPlayback} feeds (Cycle 0137, C1-E).
+   * @returns `Date.now()` of the latest select, of its `stopped` event and of the first moment Variables held its values; `undefined` before the session has an adapter.
+   * @example replayDebugger.selectionTimes() // => { selectedAt: 1_790_805_319_000, stoppedAt: 1_790_805_319_040, inspectionReadyAt: 1_790_805_319_310 }
+   */
+  selectionTimes():
+    | { selectedAt: number; stoppedAt?: number; inspectionReadyAt?: number }
+    | undefined {
+    const adapter = this.adapter
+    if (!adapter) return undefined
+    return {
+      selectedAt: adapter.selectedAt,
+      stoppedAt: adapter.stoppedAt,
+      inspectionReadyAt: adapter.inspectionReadyAt,
+    }
   }
 
   /**
@@ -658,8 +753,10 @@ export class ReplayDebugger {
     )
       .then((selected) => {
         // A later moment may have been selected meanwhile; only the still current selection is settled.
-        if (selected && this.selected === selection)
+        if (selected && this.selected === selection) {
           this.modelSelectionSettledFor = selection
+          this.explicitlyFocusedFor = selection
+        }
         return selected
       })
       .finally(() => {
@@ -821,6 +918,7 @@ export class ReplayDebugger {
       throw new Error('The editor did not start its historical debug session.')
     if (this.closed)
       throw new Error('Historical debugger closed during startup.')
+    this.startupSettled = true
   }
 
   /**
@@ -839,6 +937,7 @@ export class ReplayDebugger {
     this.startupExpired = false
     if (!this.isLateSessionUsable(started)) return false
     this.detached = false
+    this.startupSettled = true
     this.starting = Promise.resolve()
     return true
   }
@@ -927,9 +1026,11 @@ export class ReplayDebugger {
   ): Promise<ReplayInspection> {
     return new Promise((resolve, reject) => {
       let graceTimer: ReturnType<typeof setTimeout> | undefined,
+        scopesTimer: ReturnType<typeof setTimeout> | undefined,
         expired = false
       const finish = (outcome: InspectionOutcome): void => {
         clearTimeout(graceTimer)
+        clearTimeout(scopesTimer)
         clearTimeout(stoppedTimer)
         signal.removeEventListener('abort', check)
         this.inspectionWaiters.delete(check)
@@ -944,6 +1045,7 @@ export class ReplayDebugger {
           expired,
         )
         if (outcome) return finish(outcome)
+        scopesTimer = this.trackScopesRequestBound(adapter, expire, scopesTimer)
         if (graceTimer !== undefined) return
         graceTimer = this.startInspectionGrace(adapter, expire)
         // Native Run and Debug now knows about this stop; the grace from that moment replaces the stopped-event deadline.
@@ -1038,6 +1140,44 @@ export class ReplayDebugger {
     )
   }
 
+  /**
+   * Ends an {@link awaitInspection} wait early when native Run and Debug read the stop's stack but asks for no scopes within {@link REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS}.
+   * Why it exists: with Run and Debug's Variables view hidden (VS Code), Call Stack still reads the stack, and the first stop of a replay would wait the whole {@link REPLAY_DEBUG_INSPECTION_GRACE_MS} for values nobody asks for (Cycle 0137, D8).
+   * Called by {@link awaitInspection}'s check on every wake; the timer starts once, at the first check that sees the stack read and no scopes read yet, and a scopes request cancels it for good.
+   * @param adapter - Adapter that received the waited selection.
+   * @param expire - Ends the wait without loaded values, as the grace's expiry does.
+   * @param timer - The timer this wait started before, or `undefined` before the stack was read.
+   * @returns The timer to keep for the next call; `undefined` while the stack is unread.
+   * @example scopesTimer = this.trackScopesRequestBound(adapter, expire, scopesTimer)
+   */
+  private trackScopesRequestBound(
+    adapter: ReplayDebugAdapter,
+    expire: () => void,
+    timer: ReturnType<typeof setTimeout> | undefined,
+  ): ReturnType<typeof setTimeout> | undefined {
+    // Already started: a scopes request within the bound keeps the wait for the values.
+    if (timer !== undefined) {
+      if (adapter.scopesRetrieved) clearTimeout(timer)
+      return timer
+    }
+    // Scopes read already: the values are loading, so no bound may end the wait before them.
+    if (!adapter.stackRetrieved || adapter.scopesRetrieved) return undefined
+    return setTimeout(expire, this.scopesRequestBoundMs())
+  }
+
+  /**
+   * Picks how long {@link trackScopesRequestBound} waits for a scopes request of the current selection.
+   * Why it exists: VS Code refreshes a visible Variables view at once after an explicit stack-frame focus, which {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} performs, but 400 ms after the automatic focus that follows a `stopped` event.
+   * Called by {@link trackScopesRequestBound} when its timer starts.
+   * @returns {@link REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS} once the host ran the focus command for the current selection; otherwise {@link REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS}.
+   * @example this.scopesRequestBoundMs() // => 450 on a host without the command
+   */
+  private scopesRequestBoundMs(): number {
+    return this.explicitlyFocusedFor === this.selected
+      ? REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS
+      : REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS
+  }
+
   /** Re-runs every pending {@link awaitInspection} and {@link awaitRetrieval} check after a native request was served, values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */
   private wakeInspection(): void {
     for (const check of [...this.inspectionWaiters]) check()
@@ -1081,7 +1221,6 @@ export class ReplayDebugger {
     this.adapter?.dispose()
     for (const disposable of this.disposables) disposable.dispose()
     // A disposed owner tells its reader nothing more, so no timer of it keeps the event loop alive.
-    for (const timer of this.valuesLoadedTimers) clearTimeout(timer)
-    this.valuesLoadedTimers.clear()
+    this.clearValuesLoadedTimers()
   }
 }

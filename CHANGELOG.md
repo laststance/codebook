@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.134.0] - 2026-11-15 (development candidate)
+
+Cycle 0137 ([Issue #344](https://github.com/laststance/codebook/issues/344)), a feature cycle. **In a saved learning replay, moving to another recorded stop, by playing through it or by stepping or seeking to it, now keeps the same "Codebook · Recorded learning" debug session. Before, Codebook ended and restarted that session, which took about half a second at every stop change. A recorded moment that is still loading now reads `Loading recorded values…` instead of "Not recorded at this moment".** On nextjs-dashboard's saved replays of the invoice list's second page, playing through every recorded stop and then stepping and seeking between them presented each stop change in a median of 140 ms in VS Code and 205 ms in Cursor (at most 457 and 428 ms), where the same replays took a median of about 650 ms before. These were measured on the QA build of commit 904da28a (clean) in VS Code 1.146.0 and Cursor 3.30.14 on macOS, by the presentation timing journal and cross-checked against screen recordings; the run logs are in [Issue #344](https://github.com/laststance/codebook/issues/344).
+
+### Changed
+- **A stop change keeps the recorded debug session.** The previous stop leaves Run and Debug, and the next one shows in place. Only when the editor has not read the change within 250 ms does Codebook end the session and start another, as before.
+- **While a moment with recorded debugger history loads, the session's thread and stop read `Loading recorded values…`**, also after a seek or a step. `Not recorded at this moment` stays for intervals without history.
+- **The first recorded stop of a replay no longer waits a full second when Variables is hidden.** Once Call Stack has read the stop, the moment appears without its values when Variables asks for none of its scopes within 150 ms. The wait is 450 ms when Codebook could not select the stop in Run and Debug itself.
+
+### Added
+- **Each presentation that changes the shown stop or answers a playback control writes one line to Output › Codebook:** `playback.presentation-timing`, followed by the time each presentation step took. The line holds no recorded value.
+
+**Compatibility.** No MCP API, study format or skill change.
+
 ## [0.2.133.0] - 2026-11-15 (development candidate)
 
 Cycle 0136 ([Issue #342](https://github.com/laststance/codebook/issues/342)), a bug-fix cycle for the two defects that Cycle 0135 carried and the five that its own checks and reviews found. **A live explanation of Next.js server code now pauses at the server stops the chat declares in Server Components and server functions, in both editors, instead of ending the run when the debugger moves a breakpoint within its line, when the page pauses in React's copies of a server component, or when the page renders again by itself while Codebook arms the page load's stops.** On nextjs-dashboard, a VS Code run that declared a stop at the start of an `await` statement, runs with four server stops on the second page of the invoices list in both editors, and new chat questions about the dashboard's latest invoices (VS Code) and its four summary cards (Cursor) paused at every stop, completed and saved their replays.

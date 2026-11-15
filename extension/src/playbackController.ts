@@ -36,7 +36,12 @@ export interface PlaybackDependencies {
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
   /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, when Play leaves a stop for no stop with a recorded frame on both sides (the end of the stop's pause), or when Pause finds no frame in flight: the frame on screen stays until the next moment paints, instead of a blank pane. */
-  invalidate(keepPixels?: boolean, next?: PlaybackFramePreview): void
+  invalidate(
+    keepPixels?: boolean,
+    next?: PlaybackFramePreview,
+    /** Whether the moment that replaces the shown one has recorded debugger history, so the native session can say it is loading rather than unrecorded (Cycle 0137, C1-L); false when no moment follows. */
+    loadsHistory?: boolean,
+  ): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
@@ -47,6 +52,22 @@ export interface PlaybackDependencies {
   manualTicks?: boolean
   /** How long a read of the next frame may keep the shown pixels before the pane blanks; defaults to {@link PLAYBACK_FRAME_READ_BOUND_MS}. */
   frameReadBoundMs?: number
+  /** Receives the timing of every committed presentation, for the playback timing journal (Cycle 0137, C1-E); nothing receives it by default. */
+  presented?(timing: PlaybackPresentationTiming): void
+}
+
+/** What the controller reports about one committed presentation ({@link PlaybackDependencies.presented}): why it was asked for, where, whether the shown stop changed, and how its time was spent. */
+export interface PlaybackPresentationTiming {
+  /** `tick` when playback reached the position by itself; `command` for a seek, a step, an open or a restore. */
+  trigger: 'tick' | 'command'
+  positionMs: number
+  stopChanged: boolean
+  /** From the request being queued to the playhead's commit, on the controller's clock. */
+  totalMs: number
+  /** Reading the frame's bytes; 0 when its pixels were already shown or the moment has no frame. */
+  frameMs: number
+  /** The {@link PlaybackDependencies.present} call; 0 when the moment was already presented as it is. */
+  presentMs: number
 }
 /** The next moment's frame, handed to {@link PlaybackDependencies.invalidate} when it is already read, so the pane shows it at once and never blanks. */
 export interface PlaybackFramePreview {
@@ -59,6 +80,10 @@ interface PresentationRequest {
   positionMs?: number
   restore?: PlaybackBundle
   save: boolean
+  /** Why the request was queued ({@link PlaybackPresentationTiming.trigger}). */
+  trigger: PlaybackPresentationTiming['trigger']
+  /** The controller's clock when the request was queued, where its presentation time starts. */
+  queuedAtMs: number
 }
 
 /** Serializes requested→loaded→painted bundles without runtime authority; newer controls synchronously retire older asynchronous work. @example controller.command({studyId,action:'seek',expectedRevision:2,positionMs:500}) */
@@ -426,7 +451,7 @@ export class PlaybackController {
 
   /** Reserves new presentation ownership before reading; changed bundles remain hidden until matching ACK. @example this.queue({studyId,positionMs:500,save:true}) */
   private queue(
-    input: Omit<PresentationRequest, 'revision'>,
+    input: Omit<PresentationRequest, 'revision' | 'trigger' | 'queuedAtMs'>,
     clear = true,
     keepPixels = false,
   ): void {
@@ -443,7 +468,13 @@ export class PlaybackController {
       this.presentationRevision++
       this.abort?.abort(new Error('New playback frame'))
     }
-    this.request = { ...input, revision: this.presentationRevision }
+    this.request = {
+      ...input,
+      revision: this.presentationRevision,
+      // Only a playback tick queues without clearing the shown moment; every command clears it.
+      trigger: clear ? 'command' : 'tick',
+      queuedAtMs: this.clock(),
+    }
     this.requestedMs = input.positionMs
     this.readiness = 'loading'
     this.reason = undefined
@@ -503,15 +534,19 @@ export class PlaybackController {
             projectRecording(data.index, data.context, positionMs)
           const frameHash = projection.frame?.hash
           // A moment with no frame leaves at once: the pane shows its gap, not the old pixels.
-          if (!frameHash && this.leaveOwed) this.leaveShownMoment()
+          if (!frameHash && this.leaveOwed)
+            this.leaveShownMoment(undefined, Boolean(projection.debugger))
           let image =
             request.restore?.image ??
             (frameHash && this.presented?.projection.frame?.hash === frameHash
               ? this.presented.image
               : undefined)
+          let frameMs = 0,
+            presentMs = 0
           if (frameHash && !image) {
             // The shown pixels stay while the bytes are read; only a read that passes its bound blanks the pane.
-            this.armLeaveBound()
+            this.armLeaveBound(Boolean(projection.debugger))
+            const frameStartedMs = this.clock()
             try {
               image = await untilAborted(
                 this.dependencies.frame(
@@ -524,11 +559,15 @@ export class PlaybackController {
             } finally {
               clearTimeout(this.leaveTimer)
             }
+            frameMs = this.clock() - frameStartedMs
             if (!current()) continue
           }
           // The frame is read: the shown moment leaves in one step, and the pane swaps to the next frame without a blank.
           if (this.leaveOwed)
-            this.leaveShownMoment(image && { image, positionMs })
+            this.leaveShownMoment(
+              image && { image, positionMs },
+              Boolean(projection.debugger),
+            )
           const bundle: PlaybackBundle = request.restore ?? {
             studyId: request.studyId,
             contextHash: data.contextHash,
@@ -553,14 +592,17 @@ export class PlaybackController {
             this.dependencies.invalidate(
               leavesStopForNoStop(this.presented?.projection, projection),
               image && { image, positionMs },
+              Boolean(projection.debugger),
             )
             this.dependencies.changed()
           }
           if (changed) {
+            const presentStartedMs = this.clock()
             await untilAborted(
               this.dependencies.present(bundle, abort.signal),
               abort.signal,
             )
+            presentMs = this.clock() - presentStartedMs
             if (!current()) continue
           }
           if (!current()) continue
@@ -581,6 +623,14 @@ export class PlaybackController {
             }
           }
           if (request.save) this.remember()
+          this.reportPresented({
+            trigger: request.trigger,
+            positionMs,
+            stopChanged,
+            totalMs: this.clock() - request.queuedAtMs,
+            frameMs,
+            presentMs,
+          })
           this.dependencies.changed()
         } catch (error) {
           if (!current()) continue
@@ -598,6 +648,20 @@ export class PlaybackController {
       if (this.request) this.pump()
     })
     this.running = pending
+  }
+
+  /**
+   * Hands one committed presentation's timing to {@link PlaybackDependencies.presented}, for the playback timing journal (Cycle 0137, C1-E).
+   * Called by {@link pump} right after the playhead commits, never for a superseded or failed request. A throwing journal is ignored: a diagnostic must never fail a presentation that already committed.
+   * @param timing - Why the presentation was asked for, where, whether the stop changed, and its durations.
+   * @example this.reportPresented({ trigger: 'tick', positionMs: 100, stopChanged: true, totalMs: 540, frameMs: 12, presentMs: 520 })
+   */
+  private reportPresented(timing: PlaybackPresentationTiming): void {
+    try {
+      this.dependencies.presented?.(timing)
+    } catch {
+      // The timing journal is diagnostic only; its failure must not mark playback failed.
+    }
   }
 
   /**
@@ -639,17 +703,24 @@ export class PlaybackController {
   /**
    * Retires the shown moment's pixels and native state after an explicit move read its frame; called by {@link pump} with the frame, or without one when the moment has none or the read passed its bound.
    * @param next - The next moment's frame, shown at once in place of a blank pane.
-   * @example this.leaveShownMoment(image && { image, positionMs })
+   * @param loadsHistory - Whether the moment that replaces the shown one has recorded debugger history, so the native session says it is loading rather than unrecorded.
+   * @example this.leaveShownMoment(image && { image, positionMs }, true)
    */
-  private leaveShownMoment(next?: PlaybackFramePreview): void {
+  private leaveShownMoment(
+    next?: PlaybackFramePreview,
+    loadsHistory = false,
+  ): void {
     this.leaveOwed = false
     clearTimeout(this.leaveTimer)
-    this.dependencies.invalidate(false, next)
+    this.dependencies.invalidate(false, next, loadsHistory)
     this.dependencies.changed()
   }
 
-  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave, for the time that remains since the leave became owed. @example this.armLeaveBound() */
-  private armLeaveBound(): void {
+  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave, for the time that remains since the leave became owed.
+   * @param loadsHistory - Whether the moment being read has recorded debugger history; handed to the blanking leave.
+   * @example this.armLeaveBound(true)
+   */
+  private armLeaveBound(loadsHistory: boolean): void {
     if (!this.leaveOwed) return
     clearTimeout(this.leaveTimer)
     const boundMs =
@@ -659,7 +730,7 @@ export class PlaybackController {
       boundMs - (this.clock() - this.leaveOwedSinceMs),
     )
     this.leaveTimer = setTimeout(() => {
-      if (this.leaveOwed) this.leaveShownMoment()
+      if (this.leaveOwed) this.leaveShownMoment(undefined, loadsHistory)
     }, remainingMs)
     this.leaveTimer.unref()
   }

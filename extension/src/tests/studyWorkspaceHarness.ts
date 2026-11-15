@@ -1067,6 +1067,10 @@ export async function workspaceHarness(
       }
       return historicalDebugInspection
     }
+    /** As the real owner reports for a session without its own adapter (`ReplayDebugger.selectionTimes`): the stand-in keeps no native debug adapter, so the playback timing journal gets no debugger split from it. @example historicalDebugger.selectionTimes() // => undefined */
+    selectionTimes(): undefined {
+      return undefined
+    }
     /**
      * Selects the native debugger model of a presented stop as the real owner does (`ReplayDebugger.selectNativeInspectionModel`): where the host registers {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, it runs that command with `null`, which the fake editor answers by revealing the stop's source (`revealHistoricalStopSource`). The real owner runs it only once native Call Stack fetched the stop and while no other debug session is active, which the fake reads as no live stop the editor reports (Cycle 0046 row 721), and once per selection, asking the host for its commands until it found the command (F6).
      * As for the real owner, the question whether the selection is settled is asked again after the command discovery's await (Q1), and a later frame of a selection the host still answers waits for that answer instead of asking again (AD25, Q10).

@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.133'
+export const EXTENSION_VERSION = '0.2.134'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2955,6 +2955,14 @@ export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 /** What the recorded session's thread and stop description read in Run and Debug while another tab is in front of the recorded application: the moment is recorded and only hidden, so "Not recorded at this moment" would be wrong. The Study pane says the same with the remedy. */
 export const REPLAY_COVERED_LABEL =
   'Recorded application is covered by another tab'
+/** What the recorded session's thread and stop description read in Run and Debug while a moment with recorded debugger history loads (Cycle 0137, C1-L, D4): the moment is recorded and only loading, so "Not recorded at this moment" would be wrong. */
+export const REPLAY_LOADING_LABEL = 'Loading recorded values…'
+/** How long a stop change waits for native Run and Debug to read the placeholder that replaces the shown stop inside the running recorded session, before the next stop shows (Cycle 0137, D8). The editor reads it within tens of milliseconds of the `stopped` event (C1-E: Cursor loaded a stop's values 13–51 ms after it); past the bound the session ends as before, so no earlier stop's values can stay on screen. */
+export const REPLAY_DEBUG_IN_SESSION_RETIREMENT_MS = 250
+/** How long after native Run and Debug read a recorded stop's stack a replay moment still waits for its scopes request before committing without values (Cycle 0137, D8), once Codebook focused the stop explicitly. Call Stack reads the stack at once while a hidden Variables view asks for nothing, so without this bound the first stop of a replay waits the whole {@link REPLAY_DEBUG_INSPECTION_GRACE_MS}. VS Code's Variables view refreshes with no delay after an explicit stack-frame focus (its focus handler passes a zero delay when the focus is explicit), and `workbench.action.debug.focusProcess` focuses explicitly; a visible view therefore asks within tens of milliseconds (C1-E: Cursor loaded values 13–51 ms after `stopped`). */
+export const REPLAY_DEBUG_SCOPES_REQUEST_BOUND_MS = 150
+/** The scopes bound for a stop whose focus command did not run for the selection (host without the command, stack unread within the grace, another session beside the owned one, or a refused command): the editor only focuses automatically after `stopped`, and VS Code postpones a visible Variables view's refresh by 400 ms after such a non-explicit focus, so a shorter bound would mistake a late visible view for a hidden one (Cycle 0137 review). Stays below {@link REPLAY_DEBUG_INSPECTION_GRACE_MS}. */
+export const REPLAY_DEBUG_DEFERRED_SCOPES_REQUEST_BOUND_MS = 450
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
 /** How long after the historical adapter served a stop's values the reader is told that Run and Debug loaded them. The adapter knows when it answered, not when native Variables drew the rows; a reader that drops its hint in the same instant repaints within a few milliseconds of that view, and the Linux editors under WSLg do not put a frame on the screen that follows another that closely until the window is repainted again (measured 2026-10-04: a change 4 ms after another stayed off the screen, one 30 ms after it was shown), which left the first scope open and empty and the hint in place. 100 ms is not enough: the Variables pane hides its scrollbar 500 ms after it is shown and loads a missed stop 400 ms after, so in Cursor 3.23 a reader told 100 ms later repainted on top of that scrollbar repaint and kept its hint on the screen. */
