@@ -1301,6 +1301,15 @@ export async function nativeParticipantsHarness(
     emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
     },
+    /** Sends the adapter's DAP `continued` alone, as js-debug announces every resume of its thread, also of a pause it resumed by itself, on the channel of its `stopped` events; the runtime's own resume is {@link emitResume}. @example harness.emitContinued('browser') */
+    emitContinued(name: Participant): void {
+      run.onEvent(sessions[name], {
+        type: 'event',
+        seq: ++sequence,
+        event: 'continued',
+        body: { threadId: 1 },
+      })
+    },
     /** Tells whether the run has ever entered a bounded wait with this description; it stays true after that wait ended, so a test that acts while the run is inside a wait reads {@link waitInProgress} instead. @example harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) */
     waitEntered(description: string): boolean {
       return enteredWaits.includes(description)

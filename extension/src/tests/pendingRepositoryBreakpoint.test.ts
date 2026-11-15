@@ -1111,6 +1111,64 @@ test('a breakpoint knows every id a session answered for it, also refused and re
   )
 })
 
+// protects=Cycle 0136 review (hosted CodeRabbit, PR 343): the editor sends every change of a file's breakpoints as a new request, and the page's adapter can answer an earlier request only after a later one was sent; the breakpoint still knows the id that late answer gives it, read at its index in that earlier request, while the later registration keeps awaiting its own answer; fails_when=the late answer is ignored (a page pause under its id then ends the run as an unowned page stop once no answer is awaited), it is read at the later request's index, or it acknowledges, refuses or ends the wait of the later registration; no_claim=js-debug's own order of answers; the later request lists the breakpoint at another index, as when a breakpoint was added above it
+test('a breakpoint knows the id an answer to an earlier registration gives it when that answer arrives after a later registration, which still awaits its own answer', async () => {
+  // Arrange: request 1 lists the owned breakpoint second; request 2, sent before request 1 is answered, lists it third, after a breakpoint added above it.
+  const { breakpoint, session, request, response } = await breakpointHarness()
+  breakpoint.onRequest(session, request(1))
+  breakpoint.onRequest(
+    session,
+    request(2, [
+      { line: 2 },
+      { line: 10 },
+      sourceBreakpointRequest({ line: 19, character: 4 }),
+    ]),
+  )
+  // Act: the answer to request 1 arrives.
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  // Assert
+  assert.equal(breakpoint.wasAnsweredWith(session, 8), true)
+  assert.equal(breakpoint.wasAnsweredWith(session, 7), false)
+  assert.equal(breakpoint.acknowledgedId(session), undefined)
+  assert.equal(breakpoint.awaitsAnswer(session), true)
+})
+
+// protects=D19 under the late-answer rule: an answer to an earlier registration that arrives after the breakpoint was removed gives it no id, since an id of a removed breakpoint may hit another owner's stop at the same place; fails_when=the late answer's id is kept after the removal; no_claim=js-debug's own order of answers
+test('an answer to an earlier registration that arrives after the breakpoint was removed gives it no id', async () => {
+  // Arrange
+  const { breakpoint, session, request, response } = await breakpointHarness()
+  breakpoint.onRequest(session, request(1))
+  breakpoint.onRequest(session, request(2))
+  breakpoint.remove()
+  // Act
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  // Assert
+  assert.equal(breakpoint.wasAnsweredWith(session, 8), false)
+})
+
+// protects=an answer to an earlier request that named the owned position with a condition is not this breakpoint's: that request's breakpoint pauses on its own terms (a learner's conditional breakpoint at the same place); fails_when=the late answer's id is kept, so a page pause at that conditional breakpoint would be resumed as the stop's copy; no_claim=js-debug's own order of answers
+test('an answer to an earlier registration that named the owned position with a condition gives the breakpoint no id', async () => {
+  // Arrange: request 1 names the owned position with a condition; request 2, sent before request 1 is answered, names it plainly.
+  const { breakpoint, session, request, response } = await breakpointHarness()
+  const conditional = request(1)
+  conditional.arguments.breakpoints[1].condition = 'mode === "dark"'
+  breakpoint.onRequest(session, conditional)
+  breakpoint.onRequest(session, request(2))
+  // Act
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  // Assert
+  assert.equal(breakpoint.wasAnsweredWith(session, 8), false)
+})
+
 // protects=E-F2's diagnosis: a retirement whose removal the adapter never answers fails naming that step, so a native failure says whether the adapter, the editor's list or the editor's report of the adapter breakpoint held it; fails_when=the timeout says only that it timed out; no_claim=the bound is shortened to 300 ms for the test (the product waits 20 s)
 test('a retirement whose removal the adapter never answers fails naming the step it waited at', async () => {
   // Arrange
