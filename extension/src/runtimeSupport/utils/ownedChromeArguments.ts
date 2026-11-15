@@ -1,3 +1,5 @@
+import { CHROME_BASIC_PASSWORD_STORE_ARGUMENT } from '../../constants'
+
 /** What {@link ownedChromeArguments} needs to name one Codebook-spawned Chrome. */
 export type OwnedChromeArgumentOptions = {
   /** The user-data-dir the browser opens; never the learner's own profile. */
@@ -21,7 +23,7 @@ export type OwnedChromeArgumentOptions = {
  * @returns The arguments after the executable.
  * @example
  * ownedChromeArguments({ profile: '/p', debugging: 'port', headless: true, startUrl: 'about:blank' })
- * // => ['--remote-debugging-port=0', '--headless=new', '--no-first-run', '--no-default-browser-check', '--user-data-dir=/p', 'about:blank']
+ * // => ['--remote-debugging-port=0', '--headless=new', '--no-first-run', '--no-default-browser-check', '--password-store=basic', '--user-data-dir=/p', 'about:blank']
  */
 export function ownedChromeArguments(
   options: OwnedChromeArgumentOptions,
@@ -33,6 +35,8 @@ export function ownedChromeArguments(
     ...(options.headless ? ['--headless=new'] : []),
     '--no-first-run',
     '--no-default-browser-check',
+    // Chrome never waits on a locked Linux keyring for its cookie key (Cycle 0139).
+    CHROME_BASIC_PASSWORD_STORE_ARGUMENT,
     `--user-data-dir=${options.profile}`,
     ...(options.diskCacheBytes === undefined
       ? []

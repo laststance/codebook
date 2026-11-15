@@ -2169,6 +2169,12 @@ export const SIGN_IN_RECORD_VERSION = 1
 export const SIGN_IN_RECORD_LIMIT_BYTES = 4_096
 /** The `--disk-cache-size` of a saved-session Chrome (50 MiB), so the folder keeps cookies and storage but little cache. */
 export const SIGN_IN_PROFILE_DISK_CACHE_BYTES = 52_428_800
+/**
+ * The switch that keeps the key Chrome encrypts cookies with out of the OS keyring, given to every Chrome Codebook spawns (the run's managed browser, the extension run's browser, the saved-session setup and the address probe).
+ * Why: on a Linux desktop whose Secret Service keyring is present but locked (auto-login, a desktop without a login keyring), Chrome waits for that key before it sends any request, so a run's first page load never reaches the app and fails with `CDP Page.navigate timed out` (Cycle 0139, Ubuntu 24.04).
+ * Chrome reads the switch on Linux only; macOS (Keychain) and Windows (DPAPI) ignore it. Browser automation tools pass it for the same reason.
+ */
+export const CHROME_BASIC_PASSWORD_STORE_ARGUMENT = '--password-store=basic'
 /** How long a setup may stay open before it closes without Done (10 minutes). */
 export const SIGN_IN_SETUP_TIMEOUT_MS = 600_000
 /** When an open setup warns that it closes soon (minute 8, two minutes before {@link SIGN_IN_SETUP_TIMEOUT_MS}). */

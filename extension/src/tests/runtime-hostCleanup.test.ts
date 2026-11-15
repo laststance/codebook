@@ -1767,6 +1767,7 @@ test('the managed Chrome launch leaves localhost resolution to the system', asyn
   assert.deepEqual(Array.from(runtimeArgs ?? []), [
     '--headless=new',
     '--remote-debugging-pipe',
+    '--password-store=basic',
   ])
 })
 
@@ -1795,6 +1796,7 @@ test('the managed Chrome launch carries the host pin only after pinHost and only
   assert.deepEqual(Array.from(runtimeArgs ?? []), [
     '--headless=new',
     '--remote-debugging-pipe',
+    '--password-store=basic',
     '--host-resolver-rules=MAP app.example.test 127.0.0.1',
   ])
 })
@@ -1922,6 +1924,7 @@ test('a saved-session launch opens the learner folder over the pipe, keeps it on
   assert.deepEqual(Array.from(configuration.runtimeArgs ?? []), [
     '--headless=new',
     '--remote-debugging-pipe',
+    '--password-store=basic',
     '--disk-cache-size=52428800',
   ])
   assert.equal(await readFile(saved.cookies, 'utf8'), 'kept')
