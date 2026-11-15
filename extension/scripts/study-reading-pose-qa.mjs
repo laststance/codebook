@@ -21,7 +21,8 @@ const [mode = 'verify', outputPath = 'artifacts/reading-pose-dom'] =
 assert.ok(['red', 'verify'].includes(mode))
 const output = resolve(outputPath),
   session = readerDomSessionName('reading-pose', mode, output),
-  html = studyHtml('context')
+  html = studyHtml('context'),
+  momentsHtml = studyHtml('moments')
 await mkdir(output, { recursive: true })
 const study = createConfiguredStudy(),
   baseline = {
@@ -108,7 +109,7 @@ async function check(page, options, collected) {
         window.dispatchEvent(new MessageEvent('message', { data: message })),
       message,
     )
-  const render = async (message) => {
+  const render = async (message, pageHtml = options.html) => {
     await page.goto(options.url)
     await page.evaluate(() => {
       window.sent = []
@@ -118,7 +119,7 @@ async function check(page, options, collected) {
         postMessage: (message) => window.sent.push(message),
       })
     })
-    await page.setContent(options.html)
+    await page.setContent(pageHtml)
     await publish(message)
     try {
       await page.waitForFunction(
@@ -1408,6 +1409,69 @@ async function check(page, options, collected) {
       returnedAnnouncement ===
         'Selected stop: Page load · Server render · app/lib/data.ts:23',
   })
+
+  // Cycle 0138 T1: the timeline's width follows the position label's width, so it must not change when the presented time gains a digit.
+  // protects=a learner's click aimed at a stop's tick on the timeline lands on that tick while a replay plays past 10 s and 100 s, because the timeline keeps its width; fails_when=the slider is narrower or wider at 10.00 s than at 9.99 s, or at 100.00 s than at 99.99 s, by more than 0.5 px, in either pane at either width, or the label's text changes; no_claim=native webview fonts and zoom (stand-ins: Chromium with the product's own styles and a simulated host message)
+  const longReplay = (step, presentedMs) =>
+    operationReplay(step, {
+      presentedMs,
+      range: { startMs: 0, endMs: 155820, endKnown: true },
+      historyTimeline: {
+        status: 'mapped',
+        gaps: [{ startMs: 155450, endMs: 155820 }],
+        recordedPoints: [2000, 60000],
+      },
+    })
+  const timelineWidths = [],
+    timelineTexts = []
+  for (const [pane, pageHtml] of [
+    ['context', options.html],
+    ['moments', options.momentsHtml],
+  ]) {
+    for (const width of [420, 960]) {
+      await page.setViewportSize({ width, height: 640 })
+      await render(longReplay(0, 9990), pageHtml)
+      let step = 0
+      for (const presentedMs of [9990, 10000, 99990, 100000]) {
+        await publish(longReplay(step + 1, presentedMs))
+        await waitUntilRendered(revisionAt(step + 1))
+        step += 1
+        const read = await page.evaluate(() => ({
+          width: document.getElementById('playhead').getBoundingClientRect()
+            .width,
+          text: document.getElementById('playback-position').textContent,
+        }))
+        timelineWidths.push({ pane, width, presentedMs, track: read.width })
+        timelineTexts.push(read.text)
+      }
+    }
+  }
+  const trackAt = (pane, width, presentedMs) =>
+    timelineWidths.find(
+      (entry) =>
+        entry.pane === pane &&
+        entry.width === width &&
+        entry.presentedMs === presentedMs,
+    )?.track
+  const steady = ['context', 'moments'].every((pane) =>
+    [420, 960].every(
+      (width) =>
+        Math.abs(trackAt(pane, width, 9990) - trackAt(pane, width, 10000)) <=
+          0.5 &&
+        Math.abs(trackAt(pane, width, 99990) - trackAt(pane, width, 100000)) <=
+          0.5,
+    ),
+  )
+  cases.push({
+    name: 'the timeline keeps its width when the presented time gains a digit at 10 s and 100 s, in both panes at 420 and 960 px',
+    actual: { timelineWidths, timelineTexts },
+    passed:
+      steady &&
+      timelineTexts.length === 16 &&
+      timelineTexts.includes('Presented 99.99 s / 155.82 s') &&
+      timelineTexts.includes('Presented 100.00 s / 155.82 s') &&
+      timelineTexts.includes('Presented 9.99 s / 155.82 s'),
+  })
 }
 
 const report = {
@@ -1433,7 +1497,7 @@ let recording = false
 try {
   await writeFile(
     flowPath,
-    readerDomFlowText(check, { html, message, output, url }),
+    readerDomFlowText(check, { html, momentsHtml, message, output, url }),
   )
   await command(['open', 'about:blank'], 'open')
   await command(

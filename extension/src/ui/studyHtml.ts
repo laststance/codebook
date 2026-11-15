@@ -387,6 +387,37 @@ function studyClient(
   }
   const seconds = (elapsed: number) =>
     `${(elapsed / options.secondMs).toFixed(2)} s`
+  /**
+   * Writes the browser replay's position label ("Presented 96.39 s / 155.82 s") with the presented time in a span as wide as the end time, so the label, and the timeline beside it, keep their width while the time gains a digit at 10 s and 100 s (a click aimed at a stop's tick then lands on it).
+   *
+   * Called by the browser replay's render on every Study message; the label's text is the same as one written by {@link text}.
+   * @param presented - The presented time as {@link seconds} words it, or undefined before any position is presented (no span then: that state ends once per opening).
+   * @param end - The end time's words with any suffix, or undefined without a range.
+   * @param reservedChars - The character count of the end time alone, the width the presented time keeps.
+   */
+  const positionReadout = (
+    presented: string | undefined,
+    end: string | undefined,
+    reservedChars: number,
+  ): void => {
+    const target = element('playback-position')
+    const key = JSON.stringify([presented, end, reservedChars])
+    const rest = end === undefined ? '' : ` / ${end}`
+    const expected = `${presented === undefined ? 'No position presented' : `Presented ${presented}`}${rest}`
+    // An unchanged label keeps its nodes; a label another renderer wrote as plain text is written again.
+    if (target.dataset.readout === key && target.textContent === expected)
+      return
+    target.dataset.readout = key
+    if (presented === undefined) {
+      target.textContent = expected
+      return
+    }
+    const time = document.createElement('span')
+    time.className = 'playback-presented'
+    time.style.minWidth = `${reservedChars}ch`
+    time.textContent = presented
+    target.replaceChildren('Presented ', time, rest)
+  }
   /** The range a transport's coverage strip draws: its gaps where source and debugger were not recorded and its recorded stops. */
   type CoverageMarks = {
     startMs: number
@@ -4790,9 +4821,14 @@ function studyClient(
           coveredAnnouncement(recording, message.loading),
         )
       }
-      text(
-        'playback-position',
-        `${recording.presentedMs === undefined ? 'No position presented' : `Presented ${seconds(recording.presentedMs)}`}${range ? ` / ${seconds(range.endMs)}${range.endKnown ? '' : ' — last verified time; end unknown'}` : ''}`,
+      positionReadout(
+        recording.presentedMs === undefined
+          ? undefined
+          : seconds(recording.presentedMs),
+        range
+          ? `${seconds(range.endMs)}${range.endKnown ? '' : ' — last verified time; end unknown'}`
+          : undefined,
+        range ? seconds(range.endMs).length : 0,
       )
       text(
         'playback-pending',
