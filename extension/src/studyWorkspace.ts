@@ -10728,7 +10728,9 @@ export class StudyWorkspace {
    */
   private journalPresentation(timing: PlaybackPresentationTiming): void {
     // Each record belongs to the commit right after its presentation, journaled or not.
-    const steps = this.replayOpening.takePresentationTiming()
+    const steps = this.replayOpening.takePresentationTiming(
+      this.playback?.bundle(),
+    )
     // A film frame within one stop is neither a boundary nor a seek.
     if (timing.trigger === 'tick' && !timing.stopChanged) return
     this.diagnostics?.info?.(formatPresentationTiming(timing, steps))

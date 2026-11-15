@@ -102,7 +102,10 @@ export class ReplayOpening {
   private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 }
 
   /** The steps of the latest presentation that ran to its end ({@link presentPlayback}), for the playback timing journal (Cycle 0137, C1-E); cleared when the next presentation starts and when {@link takePresentationTiming} hands it out, so a commit without a presentation never reads an older one. */
-  private lastPresentationTiming?: PresentationStepTiming
+  private lastPresentationTiming?: {
+    bundle: PlaybackBundle
+    timing: PresentationStepTiming
+  }
 
   /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; the last superseded entry to end leaves the empty summary composition an earlier one built only when none is under way to fill it (Cycle 0052 task 12). */
   private nodeHistoryEntriesUnderWay = 0
@@ -1634,7 +1637,7 @@ export class ReplayOpening {
       )
       signal.throwIfAborted()
       watch.lap('studyRender')
-      this.recordPresentationTiming(watch, inspection)
+      this.recordPresentationTiming(bundle, watch, inspection)
     } finally {
       signal.removeEventListener('abort', endSupersededPaint)
       this.endReplayPaint(paint)
@@ -1644,32 +1647,47 @@ export class ReplayOpening {
   /**
    * Keeps the steps of a presentation that ran to its end in {@link lastPresentationTiming}, with the native debugger's own times for the stop, for the playback timing journal (Cycle 0137, C1-E).
    * Called by {@link presentPlayback} once the Study pane rendered the moment, never for a superseded or failed presentation.
+   * @param bundle - The moment the presentation presented; the journal uses the steps only for a commit of this same bundle.
    * @param watch - The presentation's stopwatch, its last step lapped.
    * @param inspection - How the native debugger step ended; `undefined` when the moment had no debugger history to present.
-   * @example this.recordPresentationTiming(watch, 'inspected') // lastPresentationTiming.steps.debugger is that step's whole milliseconds
+   * @example this.recordPresentationTiming(bundle, watch, 'inspected') // lastPresentationTiming.timing.steps.debugger is that step's whole milliseconds
    */
   private recordPresentationTiming(
+    bundle: PlaybackBundle,
     watch: PresentationStopwatch,
     inspection: ReplayInspection | undefined,
   ): void {
+    let selection: PresentationStepTiming['debugger']
+    try {
+      selection = this.host.replayDebuggers.current?.selectionTimes()
+    } catch {
+      // The journal is best-effort: a debugger that cannot report its times costs the split, never a painted presentation.
+      selection = undefined
+    }
     this.lastPresentationTiming = {
-      steps: watch.laps,
-      totalMs: watch.totalMs(),
-      inspection,
-      debugger: this.host.replayDebuggers.current?.selectionTimes(),
+      bundle,
+      timing: {
+        steps: watch.laps,
+        totalMs: watch.totalMs(),
+        inspection,
+        debugger: selection,
+      },
     }
   }
 
   /**
    * Hands the latest finished presentation's steps to the playback timing journal and forgets them, so each record serves only the commit that follows it (Cycle 0137, C1-E).
    * Called by {@link StudyWorkspace} for every committed presentation, journaled or not.
-   * @returns The steps of the latest presentation that ran to its end since the previous call; `undefined` when none did.
-   * @example replayOpening.takePresentationTiming() // => { steps: { retire: 3, viewport: 0, source: 58, debugger: 301, paint: 41, studyRender: 96 }, totalMs: 499, inspection: 'inspected', debugger: { … } }
+   * @param committed - The bundle the controller committed; steps recorded for any other bundle (a presentation superseded before its commit) are dropped.
+   * @returns The steps of the latest presentation that ran to its end for `committed` since the previous call; `undefined` when none did.
+   * @example replayOpening.takePresentationTiming(controller.bundle()) // => { steps: { retire: 3, viewport: 0, source: 58, debugger: 301, paint: 41, studyRender: 96 }, totalMs: 499, inspection: 'inspected', debugger: { … } }
    */
-  takePresentationTiming(): PresentationStepTiming | undefined {
-    const timing = this.lastPresentationTiming
+  takePresentationTiming(
+    committed: PlaybackBundle | undefined,
+  ): PresentationStepTiming | undefined {
+    const last = this.lastPresentationTiming
     this.lastPresentationTiming = undefined
-    return timing
+    return last && last.bundle === committed ? last.timing : undefined
   }
 
   /**
