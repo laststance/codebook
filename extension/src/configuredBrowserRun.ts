@@ -1482,8 +1482,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private judgingRouteHandler = false
   /** The page's latest pause as the runtime reported it, kept only so the journal can name the place of a pause the run judges later ({@link openBrowserPausePlace}); it holds nothing and decides nothing. */
   private lastBrowserPause?: Protocol.Debugger.PausedEvent
-  /** How many times the page's runtime resumed during the run, so a page pause held for a registration answer is dropped when its pause ended meanwhile ({@link releaseHeldBrowserStop}). */
-  private browserRuntimeResumes = 0
+  /** How many times the page's runtime resumed a pause the debug adapter can report as a stop, so a page pause held for a registration answer is dropped when its pause ended meanwhile ({@link releaseHeldBrowserStop}); the resume of the debugger's own pause ({@link isDebuggerOwnPagePause}) is not counted. */
+  private reportablePageResumes = 0
   private transientBrowserPause?: {
     timer: ReturnType<typeof setTimeout>
     event: Protocol.Debugger.PausedEvent
@@ -16020,7 +16020,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         session,
         event,
         awaiting,
-        this.browserRuntimeResumes,
+        this.reportablePageResumes,
       ),
     )
     return true
@@ -16031,8 +16031,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param session - The browser session that sent the event.
    * @param event - The held `stopped` event.
    * @param awaiting - The declared server stops whose registration in this session awaited its answer.
-   * @param resumesAtHold - {@link browserRuntimeResumes} when the event was held: a resume since then ended the pause the event announced, so it is journaled and dropped, never judged.
-   * @example this.track(this.releaseHeldBrowserStop(session, event, awaiting, this.browserRuntimeResumes))
+   * @param resumesAtHold - {@link reportablePageResumes} when the event was held: a resume counted since then ended the pause the event announced, so it is journaled and dropped, never judged; the resume of the debugger's own pause before it is not counted, since the adapter's `stopped` is read before the page's own events.
+   * @example this.track(this.releaseHeldBrowserStop(session, event, awaiting, this.reportablePageResumes))
    */
   private async releaseHeldBrowserStop(
     session: vscode.DebugSession,
@@ -16057,7 +16057,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     if (this.cleaning) return
     const body: DebugProtocol.StoppedEvent['body'] = event.body
-    const isResumedMeanwhile = this.browserRuntimeResumes !== resumesAtHold
+    const isResumedMeanwhile = this.reportablePageResumes !== resumesAtHold
     this.evidence.record('breakpoint.browser-stop-held', {
       sessionId: session.id,
       hitBreakpointIds: body.hitBreakpointIds,
@@ -16563,14 +16563,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
   }
   /**
-   * Forgets the page's last pause and counts the page's resume, for {@link onCdpResumed}: a resumed page pause is no place a later `stopped` event may be journaled at ({@link openBrowserPausePlace}), and it ends any `stopped` event held for a registration answer ({@link releaseHeldBrowserStop}).
+   * Forgets the page's last pause and counts the page's resume, for {@link onCdpResumed}: a resumed page pause is no place a later `stopped` event may be journaled at ({@link openBrowserPausePlace}), and the resume of a pause the adapter can report as a stop ends any `stopped` event held for a registration answer ({@link releaseHeldBrowserStop}).
+   * The resume of the debugger's own pause ({@link isDebuggerOwnPagePause}) is not counted: no `stopped` event announces that pause, and natively the adapter's `stopped` of the breakpoint pause after it is read before the page's own events (Cycle 0046), so that resume can arrive while the `stopped` is held and must not drop it (Cycle 0136 review).
    * @param name - The participant whose runtime resumed; only the browser's resume counts.
-   * @example this.notePageResume('browser') // lastBrowserPause cleared, browserRuntimeResumes + 1
+   * @example this.notePageResume('browser') // lastBrowserPause cleared; reportablePageResumes + 1 unless the resumed pause was the debugger's own
    */
   private notePageResume(name: Participant): void {
     if (name !== 'browser') return
+    const resumedPause = this.lastBrowserPause
     this.lastBrowserPause = undefined
-    this.browserRuntimeResumes++
+    // The debugger's own pause ends no pause a held `stopped` announced.
+    if (resumedPause && this.isDebuggerOwnPagePause(resumedPause)) return
+    this.reportablePageResumes++
+  }
+
+  /**
+   * Tells whether a page pause is one the debugger makes and resumes by itself, which no `stopped` event announces: the runtime's instrumentation pause, or js-debug's pause at the first position of a module named like a declared stop's file ({@link isPageEntryPause}).
+   * Called by {@link notePageResume}, so that the resume of such a pause never ends a page `stopped` event held for a registration answer.
+   * @param event - The page's pause as the runtime reported it.
+   * @returns `true` for an instrumentation pause and for the adapter's pause at a module's first position; `false` for every other pause.
+   * @example this.isDebuggerOwnPagePause(pause) // true for { reason: 'instrumentation', … }
+   */
+  private isDebuggerOwnPagePause(
+    event: Protocol.Debugger.PausedEvent,
+  ): boolean {
+    return (
+      event.reason === 'instrumentation' ||
+      this.isPageEntryPause('browser', event)
+    )
   }
 
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */

@@ -184,6 +184,7 @@ test('a page pause in React’s copy that names a server stop’s breakpoint bef
   await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
   // Act
   harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+  // gstack-timing-ok: real time must pass the 250 ms bound of a page pause nobody owns while the answer is held; a timer that fires late under load only delays a failure the assertions below still read
   await setTimeout(LATE_ANSWER_MS)
   const failuresBeforeAnswer = harness.run.view().failures.join('; ')
   answers.answer()
@@ -367,6 +368,98 @@ test('a page pause held for the page’s registration answer is dropped when the
     journaled(harness, 'dap.server-breakpoint-browser-stop-resumed'),
     [],
   )
+})
+
+// protects=Cycle 0136 review (Codex, pass 1): natively the adapter's `stopped` of a page pause at a server stop's breakpoint is read before the page's own events (Cycle 0046), so the resume of the runtime's instrumentation pause before the breakpoint pause can arrive while that `stopped` is held for the page's registration answer; that resume does not end the held pause: the run resumes the page once the answer arrives and the server stop commits; fails_when=the instrumentation pause's resume drops the held `stopped` (journaled resumedMeanwhile: true), the page stays paused at the breakpoint and the run ends "Unowned browser stop remained paused"; no_claim=the harness sends the runtime's events and the adapter's `stopped` in the order of Cycle 0046's native journals and holds the page's reply to stand in for js-debug's late answer; its instrumentation pause stands in for js-debug's source-map pause, and this order with a held answer is not observed natively
+test('a page pause held for the page’s registration answer is resumed when only the runtime’s instrumentation pause before it resumed meanwhile', async (context) => {
+  // Arrange: the page's answers are held, the operation's input is sent, and the page is in the runtime's instrumentation pause.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  const answers = harness.holdBrowserAnswers()
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  harness.announceScript(
+    'browser',
+    'chunk',
+    'webpack-internal:///(app-pages-browser)/./app/ui/chunk.ts',
+  )
+  harness.emitUnannouncedPause('browser', {
+    scriptId: 'chunk',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: [],
+    reason: 'instrumentation',
+  })
+  // Act: the adapter's `stopped` at the server breakpoint is read first, then the instrumentation pause's resume, the page's pause at the breakpoint and the page's answer.
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  harness.emitResume('browser')
+  stub.paused()
+  answers.answer()
+  await resumedOrFailed(harness)
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the server stop was captured')
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
+    {
+      sessionId: 'browser-session',
+      hitBreakpointIds: [12],
+      awaitedStops: [0],
+      answered: true,
+      resumedMeanwhile: false,
+    },
+  ])
+})
+
+// protects=the same for js-debug's own pause at the first position of the declared stop's module, in the order Cycle 0046's native journals show (the adapter's `stopped`, then the debugger's pause at the module's first position, which it resumes itself, then the pause at the breakpoint): that resume does not end the held `stopped` either, and the server stop commits; fails_when=the module-entry pause's resume drops the held `stopped` (journaled resumedMeanwhile: true) and the run ends "Unowned browser stop remained paused"; no_claim=the harness stands in for js-debug with the entry breakpoint id of Cycle 0046's journals (br:2:0:0: and the file's base name) and holds the page's reply; this order with a held answer is not observed natively
+test('a page pause held for the page’s registration answer is resumed when only the debugger’s own pause at the module’s first position resumed meanwhile', async (context) => {
+  // Arrange: the page's answers are held and the operation's input is sent.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  const answers = harness.holdBrowserAnswers()
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => harness.run.view().operation?.inputDispatched, 'input')
+  // Act: the adapter's `stopped` at the server breakpoint is read first; then the debugger's own pause at the stub's first position and its resume, the page's pause at the breakpoint and the page's answer.
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  harness.emitUnannouncedPause('browser', {
+    scriptId: 'server-module-stub',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:mode'],
+  })
+  harness.emitResume('browser')
+  stub.pausedAtBreakpoint(10, 115)
+  answers.answer()
+  await resumedOrFailed(harness)
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the server stop was captured')
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.deepEqual(journaled(harness, 'breakpoint.browser-stop-held'), [
+    {
+      sessionId: 'browser-session',
+      hitBreakpointIds: [12],
+      awaitedStops: [0],
+      answered: true,
+      resumedMeanwhile: false,
+    },
+  ])
 })
 
 // Value: protects=F2's journal cap: a page that keeps pausing in React's copies is still resumed every time but journals breakpoint.react-copy only up to the shared cap; fails_when=the journal grows past the cap or a copy past it is no longer resumed; why_new=the cap of the page-side entry is separate from the server-side copy-hit cap test; seam=none; no_claim=js-debug's real pause rate
