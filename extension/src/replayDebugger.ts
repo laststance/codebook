@@ -51,6 +51,8 @@ export class ReplayDebugger {
   private session?: vscode.DebugSession
   private adapter?: ReplayDebugAdapter
   private starting?: Promise<void>
+  /** True once {@link launchSession} resolved for the current session; cleared when that session ends. The editor creates the adapter before its launch resolves, so {@link session} alone does not tell a settled startup from a pending one, and a settled {@link starting} stays set. */
+  private startupSettled = false
   private retiring?: Promise<void>
   private retiringSessionId?: string
   /** The session {@link stopSessionStartedAfterExpiry} already asked the editor to stop, so expiry and a late startup stop it only once. */
@@ -231,6 +233,7 @@ export class ReplayDebugger {
     this.session = undefined
     this.detached = true
     this.startupExpired = false
+    this.startupSettled = false
     this.selected = undefined
     // A wait on the ended adapter fails now instead of at its deadline.
     this.wakeInspection()
@@ -342,7 +345,9 @@ export class ReplayDebugger {
       throw new Error(HISTORICAL_DEBUGGER_CLOSED)
     if (this.hasPresented && this.lastPresentedSnapshot === snapshot) return
     // A running session retires the shown stop in place: ending the session cost about half a second at every stop change (Cycle 0137, D8).
+    // Only after the startup settled: while it is pending (the adapter already exists) the retirement counts from the settled startup instead.
     if (
+      this.startupSettled &&
       this.session &&
       this.adapter &&
       !this.retiring &&
@@ -913,6 +918,7 @@ export class ReplayDebugger {
       throw new Error('The editor did not start its historical debug session.')
     if (this.closed)
       throw new Error('Historical debugger closed during startup.')
+    this.startupSettled = true
   }
 
   /**
@@ -931,6 +937,7 @@ export class ReplayDebugger {
     this.startupExpired = false
     if (!this.isLateSessionUsable(started)) return false
     this.detached = false
+    this.startupSettled = true
     this.starting = Promise.resolve()
     return true
   }

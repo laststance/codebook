@@ -1675,6 +1675,54 @@ test('once the editor reads a presented stop again after an unread placeholder, 
   }
 })
 
+// protects=a stop change requested during a pending startup waiting for the startup before it counts as retired; fails_when=the editor's early adapter lets the in-session path complete the retirement while startDebugging has not resolved, so the startup bound no longer counts from the settled startup; no_claim=the editor's real startup timing; the fake editor creates the adapter and holds startDebugging's answer with a gate
+test('a stop change requested while the session startup is still pending does not complete before the startup settles', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseStartup = (): void => {}
+  const startupGate = new Promise<void>((resolve) => {
+    releaseStartup = resolve
+  })
+  const fixture = harness(startupGate)
+  const signal = new AbortController().signal
+  const starting = fixture.owner
+    .present(firstSnapshot, 'First recorded stop', signal)
+    .catch((error: unknown) => String(error))
+  let outcome = 'pending'
+  try {
+    await fixture.started
+    await flushNative()
+    // The playback's invalidate shows the placeholder before it asks for the retirement.
+    fixture.owner.invalidate()
+    const retiring = fixture.owner.retire(inspectedSnapshot, signal).then(
+      () => {
+        outcome = 'retired'
+      },
+      (error: unknown) => {
+        outcome = String(error)
+      },
+    )
+    await flushNative()
+    // The editor reads the placeholder's stack, which is all the in-session path waits for.
+    fixture.inspect()
+
+    // Act
+    await flushNative()
+    const outcomeBeforeStartupSettled = outcome
+    releaseStartup()
+    await starting
+    await retiring
+
+    // Assert
+    assert.equal(outcomeBeforeStartupSettled, 'pending')
+    assert.equal(outcome, 'retired')
+  } finally {
+    context.mock.timers.reset()
+    releaseStartup()
+    await fixture.owner.dispose()
+  }
+})
+
 // protects=the thread description reading that recorded values load while a recorded stop follows, and "Not recorded at this moment" while a gap follows; fails_when=a recorded moment that only loads reads as not recorded, or a gap reads as loading; no_claim=what the editor draws from the description
 test('an in-session retirement toward a recorded stop reads Loading recorded values and toward a gap reads Not recorded at this moment', async () => {
   // Arrange
@@ -2641,11 +2689,14 @@ test('when Run and Debug read the stack and the scopes before the wait starts, v
             .stackFrames[0]
         : undefined
     }
+    // Polled against a real-time budget (performance.now is not faked here); setImmediate lets the stop's queued continuations run between reads.
+    const frameDeadline = performance.now() + 5_000
     let frame = readFrame()
-    for (let turn = 0; turn < 200 && !frame; turn++) {
-      await Promise.resolve()
+    while (!frame && performance.now() < frameDeadline) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
       frame = readFrame()
     }
+    assert.ok(frame, 'the stop must show a frame within the real-time budget')
     const scopes = fixture.request('scopes', { frameId: frame.id }).body.scopes
     await flushNative()
 
