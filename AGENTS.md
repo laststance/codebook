@@ -94,7 +94,8 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Parallel fixers: pick fixer count and item split finishing soonest, cost no object. Independent items needing no knowledge of each other → one subagent each (100 items → 100 subagents, each own worktree from branch head); only items sharing file region or depending on another's result share subagent or run in order. Integrate by cherry-pick, then one full suite.
 - Large cycle may use up to three PRs (`cycle100-pt1`, `cycle100-pt2`, …), each passing reviews, CI, gate alone, merged in order; Issue closes after last.
 - Codex automatic review off (no Codex cloud step).
-- Hosted CodeRabbit off from Cycle 0057: `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads PR branch's file); never post `@coderabbitai review`, no `@coderabbitai ignore` in PR bodies. Merge waits for no hosted review or approval; hosted review still appearing → report in PR, findings follow cycle rule like local review's; run local CodeRabbit CLI on PR's final range before merge.
+- Hosted CodeRabbit off from Cycle 0057: `.coderabbit.yaml` keeps `reviews.auto_review.enabled: false` (CodeRabbit reads PR branch's file); never post `@coderabbitai review`, no `@coderabbitai ignore` in PR bodies. Merge waits for no hosted review or approval; hosted review still appearing → report in PR, findings follow cycle rule like local review's.
+- Final-range CLI pass: once last fixing cycle's fixes integrated, before release commit, one local CodeRabbit CLI pass on PR's final range (covers commits added after review round); its findings fixed in that open fixing cycle. Each later head a merge may use (hosted-review fix) gets own pass (own worktree, beside CI) before its exact-HEAD gate starts; gate only once it reports no Critical/Major.
 - Outside review early: `/ship` Step 9 pass 1 also runs Step 11's Codex structured review (`codex review --base main`) on whole diff, findings part of pass 1; plan changing process signalling, process identity or stop/kill path also gets Codex review before implementation. Fix-range pass (pass 2 on) under 300 changed lines dispatches red team and specialists whose area range changes.
 - Step 11 FIXABLE promotion only for findings marked `Blocks: yes` or High and above. FIXABLE Low/Medium with `Blocks: no` follow defect rule (fixed when cheap in same fixing cycle, else named once in PR); never reopen loop after pass 1.
 - Before first push, fix every cheap Low/Medium finding (note included) touching file reads, paths or secrets: hosted review escalates them, and a post-push repair loop costs another exact-HEAD gate and CI run.
@@ -107,7 +108,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 
 **Delivery parameters.**
 
-- Merge: `node extension/scripts/merge-pr.mjs <n>` after exact-HEAD gate in this checkout at PR head (`--help` lists enforced checks): squash with `--match-head-commit <head>`, then fast-forward local `main`; `CodeRabbit` never gates. Hand fallback, only for defect of script itself (named in PR): `gh pr merge <n> --squash --match-head-commit <sha>`.
+- Merge: `node extension/scripts/merge-pr.mjs <n>` after exact-HEAD gate in this checkout at PR head (`--help` lists enforced checks), or at its newest first-parent ancestor with a passed gate when head has no gate summary and every later commit (no merge commit) changes only CHANGELOG.md, README.md, `extension/README.md` or `extension/src/tests/*Docs.test.ts`, required CI green on head: squash with `--match-head-commit <head>`, then fast-forward local `main`; `CodeRabbit` never gates. Hand fallback, only for defect of script itself (named in PR): `gh pr merge <n> --squash --match-head-commit <sha>`.
 - Cycle time report: right after each merge, comment on merged PR with cycle's start (Issue creation) and completion (this merge) times and time per work phase and step (spec, each /autoplan phase, implementation, each review and fix round, `/ship` with native checks, CI, gate, merge). Times from recorded timestamps (Issue, commits, logs, `timing.json`); keep running timeline while cycle works; multi-PR cycle reports cycle so far on each.
 - Artifact rotation (owner-authorized permanent deletion): after time report, before closing cycle Issue by hand: `node extension/scripts/rotate-artifacts.mjs --current <N> --apply` (`N` = merged cycle's number) keeps that cycle + 2 before it in `artifacts/`, moves older cycle folders and loose entries older than 30 days to private Releases of `ryota-murakami/codebook-artifacts`, deletes local copy only after download and per-file hash check. Exceptions: `artifacts/gate/` folders other than current HEAD's deleted unarchived; QA builds beyond newest 10 go to release `qa-builds` (then `qa-builds-2`, … as each nears GitHub's 1,000-asset limit), each file an asset whose SHA-256 `index.json` records (no `files.json`), never restored by `--restore`. Exit 3 = some entry failed and stays; rerun resumes; a FAILED line naming a copy under `artifacts/.rotate-tmp/` = move that copy back to `artifacts/<name>` by hand first. Its `ROTATE:` line goes into closing comment. Archived evidence stays reachable by location and hash: archive's `index.json` + each folder's `files.json` (per-file SHA-256), `artifacts/ARCHIVED.json` names tag; `--restore <folder>` brings it back.
 - `/ship` documentation candidate (`gstack-docs-candidate snapshot`) `--docs` roots: AGENTS.md, CHANGELOG.md, PRODUCT_GOAL.md, README.md, `extension/README.md`, `extension/skills/codebook/SKILL.md`, v9 PNG.
@@ -115,11 +116,13 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Release commit: besides version files and CHANGELOG.md, one test line (expected version in `extension/scripts/tests/package.test.mjs`); `/ship` Step 16 counts it as release metadata, not reviewed-tree change. Order: `/ship` Step 12 writes `VERSION` and CHANGELOG heading → `node extension/scripts/bump-version.mjs <VERSION>` writes three three-part places → Step 13 writes entry → `bump-version.mjs --check` exits 0 (`test:package` fails any commit whose five places disagree).
 - Release commit route: `gstack-ship-release finish` reads `extension/package.json`'s version, `EXTENSION_VERSION` and package test's expected version as behavior (ship policy's stamp rules count only stamps of `VERSION`'s four-part width) → Step 16 by hand (Discussion 243):
   - `git diff <reviewed head> <release commit>` = those three-part strings, `VERSION`, CHANGELOG.md only;
-  - `gstack-pregate --stage preflight --allow-repo-commands` on release head;
+  - `gstack-ship-preflight --tests-only --base main --lane tests='pnpm --dir extension test'` on release head (writes full record receipt needs; Stage-1-only record refused `PREGATE_INCOMPLETE`);
   - exact-HEAD gate on release head (its suite and measured health = Step 16 lanes and release-head health run);
-  - then Step 17.
+  - then Step 17;
+  - remote `package.yml/package` obligation: PR opens first; its own `pull_request` run of `package.yml` at head clears it (`gstack-pregate clear --remote package.yml/package --run-url <run>`), never manual dispatch; then `receipt write --pr <n>`, `gstack-post pr-body`.
 
 **Pre-gate:** `/ship` pre-gate = Stage 1 only: `gstack-pregate --stage preflight --allow-repo-commands`, secrets scan every time. Test lanes (Stage 2) = `pnpm --dir extension test` on final tree + required CI.
+- Stage 1 also after every fix commit of review round and `/ship` fixing cycles, before next reader or native check (~2 s; fixer briefs say so): secrets finding renamed inside fixing cycle that introduced it, never at release step.
 
 **Background work.**
 
@@ -179,6 +182,7 @@ Driving agent owns state, cycle selection, completion claims; GStack supplies wo
 - Review against implementation base; record completion, source cut, covered files, findings.
 - Missing/private provider context = coverage limit.
 - Every user-visible behavior a CHANGELOG entry names needs sentence in packaged README (`extension/README.md`), as `.coderabbit.yaml`'s `CHANGELOG.md` instruction checks; fix changing user-visible behavior changes that README in same commit; fixers' briefs say so.
+  - Before release commit: every sentence of new CHANGELOG entry, carried-over ones included, has its README sentence, or is dropped when it states no change of this version; `/ship` Step 14.5 docs-audit brief cites README line per behavior the entry names, else blocks.
 - Claude Code CLI review: skipped; no native chat acceptance.
 
 **States** (independent):
@@ -372,6 +376,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 - Build and evidence: build VSIX with `qa-build.mjs` from clean commit `/ship` reviews, install in each host; build gets no own review. Critical/Major finding of check fixed in that `/ship` pass (new commit, new build, check repeated). Post each run's log with `post-trial-evidence.mjs --manifest`, quoting exit line.
 - After every VSIX install: reload each host window, then confirm loaded build (run's `header.json` `sourceBuild.revision` or that window's Output header; installed `dist/build.json` proves installation only) before counting a run.
 - Host updated before native check → run live step once on baseline build first; judge candidate against that same-day baseline, never earlier cycles' runs. Failure of unknown origin → scan Space's run journals for its signature's first build and date before blaming candidate.
+- Guidance text a native check exercises (`SKILL.md`, renderer's refusal sentences): cycle's review round reads it before its QA build, also for trials before `/ship`; notes fixed, then one build.
 - Native candidate frozen once cycle's defects fixed; `/ship` reviews that tree. Fix after freeze reruns only native steps whose path it changed (frozen expectations name them).
 - Candidate or `/ship` review P2/Low/Medium finding on path native check already verified: Skip by default, named once in PR, unless it blocks that check's frozen expectation.
 - Cycle Issue's timeline records, per candidate review, count of P2/Low/Medium findings per natively verified file; two consecutive reviews each ≥ 3 on same file → structural task for that file on later-candidate list (not current cycle).
@@ -380,6 +385,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 - All work on WSL desktop or in macOS Space (setup, repair, native check, recording, moving evidence to Mac) follows rules below.
 
 **Host event traces** (Discussion 183; `extension/src/tests/fixtures/host-traces/`):
+- Plan touching editor-group bookkeeping (creation, retirement, identity) → before implementation, record takes of commands its native checks use, each host, Agent chat open and closed; replay them in window tests.
 - Record with `tools/host-event-recorder` (private VSIX, QA profiles in Space only, never in Codebook's VSIX): Start, `Codebook Dev: Mark Host Event Recording` before each step (label = step), Stop; takes land in workspace's `.codebook-host-traces/` (recorder writes a `.gitignore` of `*` there; other repositories do not ignore it).
 - Commit only `node extension/scripts/sanitizeHostTrace.mjs <take> <out> --repository <root>` output (exit 0); raw takes stay in private `artifacts/`.
 - Window replay tests (`studyWorkspaceHostTrace*.test.ts`) build start state with harness helpers, assert role-normalized equality at start mark, replay one window; counts hard-coded.
@@ -439,6 +445,7 @@ sips -s format jpeg -s formatOptions 70 -Z 1000 /tmp/shot.png --out /tmp/shot.jp
 
 OBS steps:
 
+0. Replay takes click-only: while OBS captures an editor window, driver refuses that process's background keys; palette commands and layout resets before OBS starts or after it quits.
 1. Install [official OBS](https://obsproject.com/download) in Space (version and architecture checked), never in extension, build graph or VSIX.
    - Keep existing profiles and scenes; use named QA profile and scene collection; record actual active name.
    - Renderer Metal (`global.ini`, `[Video] Renderer=Metal`): OpenGL renders in software at ~6 fps, recording doesn't start.
@@ -500,6 +507,7 @@ ffmpeg -hide_banner -loglevel error -i "$QA_ORIGINAL_VIDEO" -map 0:v:0 -c copy -
 - Before TypeScript work read `/Users/ryotamurakami/.claude/rules/ts-rules.md`; for React also `/Users/ryotamurakami/.claude/rules/react-rules.md`.
 - Check for existing utilities, hooks, components, types before adding one. Reusable functions and classes: short purpose, trigger and caller docs with example; workspace symbols as JSDoc links; brief notes on non-obvious branches and loops.
 - DAMP behavior tests, hard-coded expectations, Arrange/Act/Assert, `test`; `toBeVisible` for displayed UI.
+- Harness test of change to Application preparation or live run's layout starts run through service (its live entry follows on reader refresh), lease and live entry interleaved deterministically (held command); shared start helper comes with first test needing it.
 - Test waits poll against a time budget and fail when condition never holds (shared `waitUntil`); no loop bounded by event-loop turns that returns silently.
 - New fixtures: no secret-named field (`key`, `token`, `secret`, `password`, `auth`) with high-entropy literal value; unavoidable saved-format `key` field uses fixed low-entropy product name already allowlisted in `.gstack/pregate.json` (e.g. `entry-load`).
 
