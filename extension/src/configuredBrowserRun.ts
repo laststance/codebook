@@ -5379,7 +5379,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The setup budget ends here; the 20 s bound of the first entry-render pause starts (task 2). A run with only browser stops at the entry load keeps the setup budget as the bound of the page load: its stop runs after the page's own code loads, and its 20 s wait starts once the page finished loading ({@link waitForEntryBrowserStop}).
     if (this.entryRenderStops().every((stop) => this.isEntryBrowserStop(stop)))
       this.holdEntryBrowserLoadDeadline()
-    else
+    // A render the warmed page started by itself can reach a stop while the stops are armed: that stop is paused and held already, and the bound of a stop not yet reached would end the run while the learner reads it (Cycle 0136 native check).
+    else if (!this.isEntryPauseAcceptedOrHeld())
       this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
         this.entryRenderNotReachedText('not-hit'),
       )
@@ -5465,7 +5466,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Tells whether a stop was accepted or its pause hold runs, for {@link pollEntryLoad}: the run's status stays `preparing` or `acting` until {@link inspect} commits the observation, and Chrome answers a `document.readyState` read while the page is paused, so a poll in that window must neither act nor replace the hold deadline.
+   * Tells whether a stop was accepted or its pause hold runs, for {@link pollEntryLoad} and {@link loadEntryWithRenderStops}: the run's status stays `preparing` or `acting` until {@link inspect} commits the observation, and Chrome answers a `document.readyState` read while the page is paused, so a poll in that window must neither act nor replace the hold deadline; a stop that paused while the entry-render stops were armed keeps its hold the same way.
    * @returns `true` between the acceptance of a stop and its continue or automatic resume.
    * @example this.isEntryPauseAcceptedOrHeld() // true while the learner reads an entry-load pause
    */
