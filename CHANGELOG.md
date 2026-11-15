@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.135.0] - 2026-11-15 (development candidate)
+
+Cycle 0138 ([Issue #346](https://github.com/laststance/codebook/issues/346)), a feature cycle. **In a saved learning replay, playing to the end now shows the same status as moving straight to the end: when the replay ends inside an interval without recorded source or debugger history, the status line says `Not recorded at this moment`. The time slider of a browser replay also keeps its width while the presented time gains a digit at 10 s and 100 s, so a click lands where a stop is drawn.** The QA build of commit 98f7ab95 (clean) was checked on saved nextjs-dashboard replays on macOS: a 155.82 s replay in VS Code 1.146.0 and a 115.03 s replay in Cursor 3.30.14. In both, the slider's track kept the same pixel ends across both digit changes, and every timeline click aimed at a stop, placed from one measurement at 0 s, landed inside that stop. The run logs are in [Issue #346](https://github.com/laststance/codebook/issues/346).
+
+### Fixed
+- **Playing a browser replay to its end reports an unrecorded end.** When Play reaches the end of a replay that ends inside an unrecorded interval, the status line now names it (`Not recorded at this moment`), as a move straight to the end already did.
+- **The time slider keeps its width as the time grows.** When the replay's end is known, the presented time keeps the end time's width, so the slider no longer narrows or widens by about 8 px when the time reaches 10 s and 100 s.
+
 ## [0.2.134.0] - 2026-11-15 (development candidate)
 
 Cycle 0137 ([Issue #344](https://github.com/laststance/codebook/issues/344)), a feature cycle. **In a saved learning replay, moving to another recorded stop, by playing through it or by stepping or seeking to it, now keeps the same "Codebook · Recorded learning" debug session. Before, Codebook ended and restarted that session, which took about half a second at every stop change. A recorded moment that is still loading now reads `Loading recorded values…` instead of "Not recorded at this moment".** On nextjs-dashboard's saved replays of the invoice list's second page, playing through every recorded stop and then stepping and seeking between them presented each stop change in a median of 140 ms in VS Code and 205 ms in Cursor (at most 457 and 428 ms), where the same replays took a median of about 650 ms before. These were measured on the QA build of commit 904da28a (clean) in VS Code 1.146.0 and Cursor 3.30.14 on macOS, by the presentation timing journal and cross-checked against screen recordings; the run logs are in [Issue #344](https://github.com/laststance/codebook/issues/344).

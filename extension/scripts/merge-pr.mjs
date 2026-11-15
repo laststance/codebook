@@ -57,6 +57,10 @@ Merges pull request <pr> with "gh pr merge <pr> --squash --match-head-commit <he
   - this checkout is at the PR head (its workflow files and gate summary are read here);
   - artifacts/gate/<first 8 of head>/summary.txt (this checkout) holds "Checkout: clean",
     "GATE: pass on <head>" and one "<name> exit=0" line per gate check;
+  - only when that head summary file is missing (one that exists but did not pass always refuses): the nearest commit on
+    "git rev-list --first-parent <head>" above the merge base with origin/main whose own summary passes the same test
+    is the gated ancestor, and every commit after it is a non-merge commit changing only CHANGELOG.md, README.md,
+    extension/README.md or extension/src/tests/*Docs.test.ts; the command prints the ancestor and those commits;
   - every workflow run, check run and commit status of that head passed (a check named CodeRabbit is listed, never gating);
   - every workflow of this checkout's .github/workflows that triggers on pull_request without a paths or paths-ignore filter has a successful run on that head (a run skipped as a whole does not count).
 Then it fast-forwards the local main to origin/main.
@@ -80,7 +84,7 @@ Exit codes:
   64  usage error
 
 Error codes:
-  E_USAGE E_GH E_PR_STATE E_GATE_MISSING E_GATE_SUMMARY_OLD E_GATE_NOT_PASSED
+  E_USAGE E_GH E_PR_STATE E_GATE_MISSING E_GATE_UNREADABLE E_GATE_SUMMARY_OLD E_GATE_NOT_PASSED
   E_CHECKOUT_HEAD E_CHECKS_PENDING E_CHECKS_FAILED E_CHECKS_NONE E_CHECKS_MISSING E_WORKFLOWS_UNREADABLE
   E_MERGE_FAILED E_MERGE_UNKNOWN E_MERGED_OTHER_HEAD E_LOCAL_MAIN E_INTERNAL`
 
@@ -245,7 +249,7 @@ export async function readPr(run, pr, environment) {
  * @param {string} repositoryRoot - Repository root holding `artifacts/gate/`.
  * @param {(path: string) => Promise<string>} readText - Reads a UTF-8 file (injected).
  * @returns {Promise<void>} Resolves when the summary qualifies.
- * @throws {CommandRefusal} `E_GATE_MISSING`, `E_GATE_SUMMARY_OLD` (no `Checkout:` line) or `E_GATE_NOT_PASSED`; each ends with the gate command as its fix.
+ * @throws {CommandRefusal} `E_GATE_MISSING` (the file does not exist), `E_GATE_UNREADABLE` (it exists but cannot be read), `E_GATE_SUMMARY_OLD` (no `Checkout:` line) or `E_GATE_NOT_PASSED`; each ends with the gate command as its fix.
  * @example await checkGateSummary('9f2c…', '/work/codebook', readText)
  */
 export async function checkGateSummary(head, repositoryRoot, readText) {
@@ -259,7 +263,14 @@ export async function checkGateSummary(head, repositoryRoot, readText) {
   let text
   try {
     text = await readText(summaryPath)
-  } catch {
+  } catch (error) {
+    // Only a file that does not exist counts as missing; any other read failure must never let the fallback skip an existing summary.
+    if (error?.code !== 'ENOENT')
+      throw new CommandRefusal(
+        'E_GATE_UNREADABLE',
+        `gate summary at ${summaryPath} exists but cannot be read (${error?.code ?? String(error?.message ?? error)})`,
+        { fix: GATE_COMMAND },
+      )
     throw new CommandRefusal(
       'E_GATE_MISSING',
       `no gate summary at ${summaryPath}`,
@@ -299,6 +310,128 @@ export async function checkGateSummary(head, repositoryRoot, readText) {
         details: [...problems, ...foundLines.map((line) => `found: ${line}`)],
       },
     )
+}
+
+/** Paths a commit after a gated ancestor may change, besides the docs tests matched by {@link isDocsOnlyPath}. */
+const DOCS_ONLY_PATHS = ['CHANGELOG.md', 'README.md', 'extension/README.md']
+
+/**
+ * Whether a changed path is one a docs-only commit may touch.
+ * @param {string} path - Repository-relative path from `git diff-tree -z`, compared exactly (no trimming: `README.md ` is another file).
+ * @returns {boolean} `true` for the three documentation files and `extension/src/tests/<name>Docs.test.ts`.
+ * @example isDocsOnlyPath('extension/src/tests/readmeDocs.test.ts') // => true
+ */
+function isDocsOnlyPath(path) {
+  return (
+    DOCS_ONLY_PATHS.includes(path) ||
+    /^extension\/src\/tests\/[^/]*Docs\.test\.ts$/.test(path)
+  )
+}
+
+/**
+ * Requires a passing gate for the head, or, when the head has no summary file at all, for a gated ancestor followed only by docs commits.
+ *
+ * Why: a documentation-only commit after the exact-HEAD gate changes nothing the gate checks, so re-running the whole gate for it wastes time; a summary that exists but failed never falls back.
+ * Called by {@link runMergePr} instead of calling {@link checkGateSummary} directly.
+ *
+ * @param {CommandRunner} run - The command runner (`git` calls for the walk).
+ * @param {string} head - The full PR head.
+ * @param {string} repositoryRoot - Repository root holding `artifacts/gate/`.
+ * @param {(path: string) => Promise<string>} readText - Reads a UTF-8 file (injected).
+ * @returns {Promise<{ ancestor: string, docsCommits: string[] } | undefined>} `undefined` when the head's own summary qualifies; otherwise the gated ancestor and the docs-only commits after it (oldest first, the head last).
+ * @throws {CommandRefusal} Whatever {@link checkGateSummary} throws for an existing summary, including `E_GATE_UNREADABLE` for the head or an ancestor met during the walk; `E_GATE_MISSING` when the walk fails, does not start at the head, no gated ancestor exists or a commit after it is a merge or changes another path (the message names the first one).
+ * @example await checkGateOrDocsAncestor(run, '9f2c…', '/work/codebook', readText) // => { ancestor: '4b1c…', docsCommits: ['7d0e…'] }
+ */
+export async function checkGateOrDocsAncestor(
+  run,
+  head,
+  repositoryRoot,
+  readText,
+) {
+  try {
+    await checkGateSummary(head, repositoryRoot, readText)
+    return undefined
+  } catch (error) {
+    // Only a missing summary file may fall back; a present summary that failed refuses as before.
+    if (!(error instanceof CommandRefusal) || error.code !== 'E_GATE_MISSING')
+      throw error
+    const refuse = (reason) =>
+      new CommandRefusal('E_GATE_MISSING', `${error.reason}; ${reason}`, {
+        fix: GATE_COMMAND,
+      })
+    const base = await run('git', ['merge-base', `origin/${BASE_BRANCH}`, head])
+    if (base.status !== 0 || base.stdout.trim() === '') throw error
+    const walk = await run('git', [
+      'rev-list',
+      '--first-parent',
+      '--parents',
+      `${base.stdout.trim()}..${head}`,
+    ])
+    // A failed walk cannot show what lies between the head and an ancestor.
+    if (walk.status !== 0) throw error
+    // Newest first, the head included; each line is `<sha> <parent>…`.
+    const chain = walk.stdout
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => {
+        const [sha, ...parents] = line.trim().split(/\s+/)
+        return { sha, parents }
+      })
+    // The walk must start at the head itself, else its commits are not the head's history.
+    if (chain[0]?.sha !== head) throw error
+    let ancestorIndex = -1
+    // The head itself has no summary, so the search starts below it.
+    for (let index = 1; index < chain.length; index += 1) {
+      try {
+        await checkGateSummary(chain[index].sha, repositoryRoot, readText)
+        ancestorIndex = index
+        break
+      } catch (summaryError) {
+        // A summary that exists but cannot be read stops the walk; skipping it could hide a gate result.
+        if (
+          !(summaryError instanceof CommandRefusal) ||
+          summaryError.code === 'E_GATE_UNREADABLE'
+        )
+          throw summaryError
+        // A commit whose summary is missing or did not pass is never the ancestor; keep walking down.
+      }
+    }
+    if (ancestorIndex === -1)
+      throw refuse(
+        'the docs-only ancestor fallback found no gated first-parent ancestor',
+      )
+    const ancestor = chain[ancestorIndex].sha
+    // Commits after the ancestor, oldest first.
+    const after = chain.slice(0, ancestorIndex).reverse()
+    for (const commit of after) {
+      if (commit.parents.length !== 1)
+        throw refuse(
+          `commit ${commit.sha.slice(0, 8)} after the gated ancestor ${ancestor.slice(0, 8)} is a merge commit`,
+        )
+      const diff = await run('git', [
+        'diff-tree',
+        '-z',
+        '--no-commit-id',
+        '--name-only',
+        '-r',
+        '--no-renames',
+        commit.sha,
+      ])
+      if (diff.status !== 0)
+        throw refuse(
+          `cannot list the paths of commit ${commit.sha.slice(0, 8)}`,
+        )
+      // NUL-separated and unquoted; only the empty tail after the last NUL is dropped, so names with spaces stay exact.
+      const paths = diff.stdout.split('\0')
+      if (paths.at(-1) === '') paths.pop()
+      const offending = paths.find((path) => !isDocsOnlyPath(path))
+      if (offending !== undefined)
+        throw refuse(
+          `commit ${commit.sha.slice(0, 8)} after the gated ancestor ${ancestor.slice(0, 8)} changes ${offending}, which is not a documentation path`,
+        )
+    }
+    return { ancestor, docsCommits: after.map((commit) => commit.sha) }
+  }
 }
 
 /**
@@ -759,7 +892,16 @@ export async function runMergePr({ pr, dryRun }, dependencies) {
   progress.enter('read the PR')
   const prState = await readPr(run, pr, environment)
   progress.enter('check the gate summary')
-  await checkGateSummary(prState.head, repositoryRoot, readText)
+  const docsFallback = await checkGateOrDocsAncestor(
+    run,
+    prState.head,
+    repositoryRoot,
+    readText,
+  )
+  if (docsFallback !== undefined)
+    print(
+      `no gate summary for ${prState.head.slice(0, 8)}; gated ancestor ${docsFallback.ancestor.slice(0, 8)} plus docs-only commits ${docsFallback.docsCommits.map((sha) => sha.slice(0, 8)).join(', ')}`,
+    )
   let mergeCommit = prState.mergeCommit
   if (prState.merged) {
     // A rerun after exit 3 or 4: the merge is done, resume at the local sync.
