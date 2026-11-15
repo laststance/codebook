@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { ACTIVE_TIMEOUT_MS } from './constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { completeBindingPlace } from './utils/completeBindingPlace'
@@ -151,6 +152,39 @@ function wholeVerifiedPosition(binding: {
   return { line: binding.line, column: binding.column }
 }
 
+/**
+ * Words what a retirement that timed out last found, for the failure {@link OwnedRepositoryBreakpoint.retire} throws: whether the adapter of the stop's session got the removal and answered it, whether the editor still lists the breakpoint, and whether it still reports the adapter's breakpoint (Cycle 0136, E-F2: a run in Cursor timed out here while the page's debugger was busy with React's copies of a server component).
+ * @param retirement - The retirement's state: the removal request's sequence once the adapter got it, and whether its reply confirmed the removal.
+ * @param isStillListed - Whether the editor's breakpoint list still held the breakpoint at the last look.
+ * @param isStillReported - Whether the editor still reported the adapter's breakpoint for the session at the last look; `undefined` when the wait never got that far.
+ * @returns The state in words, for the failure's parentheses.
+ * @example
+ * retirementWaitState({ requestSequence: 12, confirmed: false }, false, undefined) // => 'the adapter had not answered the removal request; the editor no longer listed the breakpoint; its adapter breakpoint was not read'
+ */
+function retirementWaitState(
+  retirement: { requestSequence?: number; confirmed: boolean },
+  isStillListed: boolean,
+  isStillReported: boolean | undefined,
+): string {
+  const reply =
+    retirement.requestSequence === undefined
+      ? 'the removal request had not reached the adapter'
+      : retirement.confirmed
+        ? 'the adapter confirmed the removal'
+        : 'the adapter had not answered the removal request'
+  const listed = isStillListed
+    ? 'the editor still listed the breakpoint'
+    : 'the editor no longer listed the breakpoint'
+  // The adapter's breakpoint is read only once the reply confirmed the removal and the editor dropped it.
+  const reported =
+    isStillReported === undefined
+      ? 'its adapter breakpoint was not read'
+      : isStillReported
+        ? 'the editor still reported its adapter breakpoint'
+        : 'its adapter breakpoint was gone'
+  return `${reply}; ${listed}; ${reported}`
+}
+
 /** Removes only one installed breakpoint and requires its selected adapter's replacement ACK before continuation. @example await owned.retire(selected, signal) */
 export class OwnedRepositoryBreakpoint {
   readonly breakpoint: vscode.SourceBreakpoint
@@ -165,6 +199,13 @@ export class OwnedRepositoryBreakpoint {
       /** Where the adapter's latest `breakpoint` event put the acknowledged breakpoint when the owner refuses that place; while it is set the receipt does not stand. Also where a refused registration reply verified the breakpoint, beside `failure`. */
       refusedAt?: VerifiedPlace
     } & VerifiedRegistration
+  >()
+  /** Every id each session's adapter gave this breakpoint in a registration reply that identified it, whether its owner accepted the place or refused it, kept across later registrations until the breakpoint is removed or retired; read by {@link wasAnsweredWith} and {@link answeredIds}. An adapter that numbers its breakpoints upward (js-debug) never gives another breakpoint an id kept here. */
+  private readonly answeredIdsBySession = new Map<string, Set<number>>()
+  /** Where this breakpoint stands in each registration request a session's adapter has not answered yet, by session id and request sequence ({@link keepRequestedPosition}): the answer to an earlier request can arrive after the editor sent a later one for the same file, and it is read at the index and count of its own request ({@link rememberEarlierAnswer}). Forgotten with the answer, and by the removal or retirement. */
+  private readonly requestedPositions = new Map<
+    string,
+    Map<number, { index: number; count: number }>
   >()
   /** `ownedBreakpointId` is the adapter id acknowledged for this breakpoint; with it, a learner breakpoint left on the same line is told apart from the owned one. */
   private retirement?: {
@@ -238,7 +279,7 @@ export class OwnedRepositoryBreakpoint {
       )
       const position = parsed.data.breakpoints[matches[0] ?? -1]
       // A later replacement immediately revokes a prior ACK, including when it removes this position.
-      this.registrations.set(session.id, {
+      const registration = {
         requestSequence: request.seq,
         index: matches[0] ?? -1,
         count: parsed.data.breakpoints.length,
@@ -251,7 +292,9 @@ export class OwnedRepositoryBreakpoint {
                 position?.logMessage !== undefined
               ? 'Selected breakpoint registration changed source or pause behavior'
               : undefined,
-      })
+      }
+      this.registrations.set(session.id, registration)
+      this.keepRequestedPosition(session.id, registration)
       return
     }
     if (session.id !== retirement.sessionId) return
@@ -349,6 +392,12 @@ export class OwnedRepositoryBreakpoint {
   ): void {
     if (response.command !== 'setBreakpoints') return
     const registration = this.registrations.get(session.id)
+    // The answer to an earlier request of this file, read after the editor sent a later one, still names the adapter's id of this breakpoint (Cycle 0136 review).
+    this.rememberEarlierAnswer(
+      session.id,
+      response,
+      registration?.requestSequence,
+    )
     if (
       !this.retirement &&
       registration?.requestSequence === response.request_seq &&
@@ -359,12 +408,14 @@ export class OwnedRepositoryBreakpoint {
         ? parsed.data.breakpoints[registration.index]
         : undefined
       // DAP preserves request order; never select an arbitrary matching line from a truncated/reordered response.
-      const isOwnAnswer =
+      const isIdentifiedAnswer =
         response.success &&
         parsed.success &&
         parsed.data.breakpoints.length === registration.count &&
-        this.isIdentifiedBinding(binding, parsed.data.breakpoints) &&
-        this.isInOwnedSource(binding)
+        this.isIdentifiedBinding(binding, parsed.data.breakpoints)
+      // The entry names the adapter's id of this breakpoint wherever the adapter bound it: a pause that names that id hit this breakpoint, also where its owner refuses the place (F2).
+      if (isIdentifiedAnswer) this.rememberAnsweredId(session.id, binding.id)
+      const isOwnAnswer = isIdentifiedAnswer && this.isInOwnedSource(binding)
       if (!isOwnAnswer || !this.acknowledgesPosition(binding)) {
         // The readable positions come first; the JSON keeps every field of the reply for diagnosis.
         registration.failure = `Selected adapter did not acknowledge the breakpoint registration (requested ${this.line}:${this.column}, ${
@@ -488,31 +539,163 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Reads the id a session's adapter gave the owned breakpoint, also where its owner refuses the place, so a `stopped` event that names that id is told to belong to this breakpoint; {@link ConfiguredBrowserRun} asks it for the browser session, to which the editor sends a server stop's breakpoint too.
+   * Reads the id a session's adapter gave the owned breakpoint in the registration it acknowledged at a place the owner accepts, for {@link ConfiguredBrowserRun}'s judgement of a pause in the session the stop runs in.
+   * A pause in another session (the page, to which the editor sends a server stop's breakpoint too) is placed by {@link wasAnsweredWith}, which also knows the ids of answers whose place the owner refused.
    * Like {@link movedTo} it never throws.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
    * @returns The adapter's id of the owned breakpoint, or `undefined` while that session's latest registration is unanswered or was refused.
    * @example
-   * owned.acknowledgedId(browserSession) // => 12
+   * owned.acknowledgedId(serverSession) // => 12
    */
   acknowledgedId(session: vscode.DebugSession): number | undefined {
     return this.registrations.get(session.id)?.receipt?.breakpointId
   }
 
   /**
-   * Lists the id each session's adapter acknowledged for this breakpoint, for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring clears every registration, while a page that keeps hitting the breakpoint in its copies of server components still names the old id (Cycle 0095, C95-N1).
+   * Says whether a session's adapter named this breakpoint by an id in a registration reply that identified it, whether its owner accepted the place or refused it, also before a later registration and in the answer to an earlier request read after a later one ({@link rememberEarlierAnswer}); the removal or retirement forgets the ids, as it forgets the registrations (a page pause at the same place may then be another owner's stop, D19).
+   * Why it exists: the page binds a server stop's breakpoint in React's copy of the module at a place the server stop's owner refuses, and still pauses there under that id; a `stopped` that names it hit this breakpoint, so {@link ConfiguredBrowserRun} resumes it as the stop's copy instead of ending the run as an unowned page stop (Cycle 0136, F2: the page answered `app/ui/invoices/table.tsx:17` with id 9, refused, and paused there under 9).
    * Like {@link movedTo} it never throws.
-   * @returns The session id and acknowledged breakpoint id of every session whose latest registration has a receipt; empty when none has.
+   * @param session - The session whose adapter sent the pause.
+   * @param id - An id the pause names.
+   * @returns `true` when that session's adapter answered a registration of this breakpoint with this id; `false` otherwise, also for a reply that did not identify the breakpoint.
    * @example
-   * owned.acknowledgedIds() // => Map { 'server-session' => 7, 'page-session' => 101 }
+   * owned.wasAnsweredWith(pageSession, 9) // => true after the page answered the registration with id 9 at a place the owner refused
    */
-  acknowledgedIds(): ReadonlyMap<string, number> {
-    const ids = new Map<string, number>()
-    // Only an acknowledged registration names an id; a pending or refused one names none.
-    for (const [sessionId, registration] of this.registrations)
-      if (registration.receipt)
-        ids.set(sessionId, registration.receipt.breakpointId)
-    return ids
+  wasAnsweredWith(session: vscode.DebugSession, id: number): boolean {
+    return this.answeredIdsBySession.get(session.id)?.has(id) ?? false
+  }
+
+  /**
+   * Lists every id each session's adapter gave this breakpoint ({@link wasAnsweredWith}), for {@link ConfiguredBrowserRun} just before it retires a provisional breakpoint: retiring forgets the breakpoint's registrations and ids, while a page that keeps hitting it in its copies of server components still names an old id (Cycle 0095, C95-N1).
+   * Like {@link movedTo} it never throws.
+   * @returns A copy of the ids per session id; empty when no session answered a registration that identified the breakpoint.
+   * @example
+   * owned.answeredIds() // => Map { 'server-session' => Set { 7 }, 'page-session' => Set { 101, 104 } }
+   */
+  answeredIds(): ReadonlyMap<string, ReadonlySet<number>> {
+    // A copy: the caller keeps it past the retirement that empties the breakpoint's own sets.
+    return new Map(
+      [...this.answeredIdsBySession].map(([sessionId, ids]) => [
+        sessionId,
+        new Set(ids),
+      ]),
+    )
+  }
+
+  /** Keeps an id a session's adapter gave this breakpoint, for {@link onResponse}. @example this.rememberAnsweredId('page-session', 9) */
+  private rememberAnsweredId(sessionId: string, id: number): void {
+    const ids = this.answeredIdsBySession.get(sessionId) ?? new Set<number>()
+    ids.add(id)
+    this.answeredIdsBySession.set(sessionId, ids)
+  }
+
+  /**
+   * Keeps where this breakpoint stands in a registration request until the session's adapter answers it, so that an answer read after the editor sent a later request for the same file still gives the adapter's id of this breakpoint ({@link rememberEarlierAnswer}).
+   * Called by {@link onRequest} for every registration request it reads; a request that does not name this breakpoint exactly once, or changes its source or pause behavior, is not kept, since its answer cannot name this breakpoint.
+   * @param sessionId - The session the request was sent to.
+   * @param registration - The registration the request starts: its sequence, this breakpoint's index in it, its breakpoint count, and why it cannot be acknowledged, if it cannot.
+   * @example this.keepRequestedPosition('page-session', { requestSequence: 41, index: 1, count: 2, failure: undefined })
+   */
+  private keepRequestedPosition(
+    sessionId: string,
+    registration: {
+      requestSequence: number
+      index: number
+      count: number
+      failure?: string
+    },
+  ): void {
+    if (registration.failure !== undefined) return
+    const positions =
+      this.requestedPositions.get(sessionId) ??
+      new Map<number, { index: number; count: number }>()
+    positions.set(registration.requestSequence, {
+      index: registration.index,
+      count: registration.count,
+    })
+    this.requestedPositions.set(sessionId, positions)
+  }
+
+  /**
+   * Keeps the adapter's id of this breakpoint from the answer to an earlier registration request that arrives after the editor sent a later one for the same file, reading it at this breakpoint's index and the count of that earlier request ({@link keepRequestedPosition}); the latest registration's receipt, failure and wait stay as they are.
+   * Why it exists: the editor sends every change of a file's breakpoints as a new request, and the page's adapter can answer the earlier one only after the later one was sent; the page then pauses under the id of that earlier answer, which names this breakpoint, and without it a page pause at a server stop's breakpoint ends the run as an unowned page stop (Cycle 0136 review of F2's id rule).
+   * Called by {@link onResponse} for every `setBreakpoints` answer; it forgets the kept position of each answered request.
+   * @param sessionId - The session that answered.
+   * @param response - The adapter's answer.
+   * @param latestSequence - The sequence of the session's latest registration request, whose answer {@link onResponse} reads itself; `undefined` when the session has none.
+   * @example this.rememberEarlierAnswer('page-session', answerToRequest41, 43) // its breakpoint at this breakpoint's index in request 41 has id 8: 8 is kept
+   */
+  private rememberEarlierAnswer(
+    sessionId: string,
+    response: DebugProtocol.Response,
+    latestSequence: number | undefined,
+  ): void {
+    const positions = this.requestedPositions.get(sessionId)
+    const requested = positions?.get(response.request_seq)
+    positions?.delete(response.request_seq)
+    // The latest request's answer is read by onResponse itself; the removal and the retirement forget every kept position, so a removed breakpoint gains no id (D19).
+    if (!requested || response.request_seq === latestSequence) return
+    const parsed = registrationResponseSchema.safeParse(response.body)
+    // As for the latest answer, a reply identifies this breakpoint only when it answers every requested breakpoint in order.
+    if (
+      !response.success ||
+      !parsed.success ||
+      parsed.data.breakpoints.length !== requested.count
+    )
+      return
+    const binding = parsed.data.breakpoints[requested.index]
+    if (this.isIdentifiedBinding(binding, parsed.data.breakpoints))
+      this.rememberAnsweredId(sessionId, binding.id)
+  }
+
+  /**
+   * Describes this breakpoint's latest registration in every session the editor sent it to, for the journal of a page pause no rule owns ({@link ConfiguredBrowserRun}): which session acknowledged it under which id, which still awaits its answer and which was refused, with every id each session answered ({@link wasAnsweredWith}) (Cycle 0136, E-F2).
+   * Like {@link movedTo} it never throws.
+   * @returns One entry per session, in the order the sessions first received a registration; empty when no session has.
+   * @example
+   * owned.registrationStates() // => [{ sessionId: 'server', state: 'acknowledged', breakpointId: 9, answeredIds: [9] }, { sessionId: 'page', state: 'refused', answeredIds: [9] }]
+   */
+  registrationStates(): {
+    sessionId: string
+    state: 'acknowledged' | 'awaiting' | 'refused'
+    breakpointId?: number
+    answeredIds: number[]
+  }[] {
+    return [...this.registrations].map(([sessionId, registration]) => {
+      const answeredIds = [...(this.answeredIdsBySession.get(sessionId) ?? [])]
+      return registration.receipt
+        ? {
+            sessionId,
+            state: 'acknowledged',
+            breakpointId: registration.receipt.breakpointId,
+            answeredIds,
+          }
+        : {
+            sessionId,
+            state: registration.failure ? 'refused' : 'awaiting',
+            answeredIds,
+          }
+    })
+  }
+
+  /**
+   * Says whether a session's adapter has yet to answer this breakpoint's latest registration, for {@link ConfiguredBrowserRun}: the editor sends a server stop's breakpoint to the browser session too, and the page can pause at it (in React's copy of the module) before the adapter's reply names its id there, so the run holds the judgment of such a pause until that reply arrives (Cycle 0136, F2).
+   * Like {@link movedTo} it never throws.
+   * @param session - The debug session the editor sent the registration to.
+   * @returns `true` while the session's latest registration request has neither a receipt nor a refusal and the breakpoint is neither retired nor being retired; `false` otherwise, also for a session that never received one.
+   * @example
+   * owned.awaitsAnswer(browserSession) // => true between the editor's setBreakpoints and the adapter's reply
+   */
+  awaitsAnswer(session: vscode.DebugSession): boolean {
+    const registration = this.registrations.get(session.id)
+    // A retired breakpoint is not registered again, so its last request is answered by nobody the run waits for.
+    return (
+      registration !== undefined &&
+      registration.receipt === undefined &&
+      registration.failure === undefined &&
+      this.retirement === undefined &&
+      !this.retired
+    )
   }
 
   /**
@@ -931,6 +1114,8 @@ export class OwnedRepositoryBreakpoint {
       )
       signal.throwIfAborted()
       this.registrations.clear()
+      this.answeredIdsBySession.clear()
+      this.requestedPositions.clear()
       this.retired = true
       return
     }
@@ -943,27 +1128,35 @@ export class OwnedRepositoryBreakpoint {
       confirmed: false,
     })
     this.remove()
-    await waitUntil(
-      async () => {
-        if (this.retirement?.failure) throw new Error(this.retirement.failure)
-        if (
-          !retirement.confirmed ||
-          vscode.debug.breakpoints.some(
+    // What the last look found, so a retirement that never completes names the step it waited at (Cycle 0136, E-F2).
+    let isStillListed = true,
+      isStillReported: boolean | undefined
+    try {
+      await waitUntil(
+        async () => {
+          if (this.retirement?.failure) throw new Error(this.retirement.failure)
+          isStillListed = vscode.debug.breakpoints.some(
             (breakpoint) => breakpoint.id === this.breakpoint.id,
           )
-        )
-          return false
-        const remaining = await awaitResponse(
-          session.getDebugProtocolBreakpoint(this.breakpoint),
-          'owned breakpoint retirement',
-          signal,
-        )
-        return remaining === undefined
-      },
-      'confirmed owned breakpoint retirement',
-      ACTIVE_TIMEOUT_MS,
-      signal,
-    )
+          if (!retirement.confirmed || isStillListed) return false
+          const remaining = await awaitResponse(
+            session.getDebugProtocolBreakpoint(this.breakpoint),
+            'owned breakpoint retirement',
+            signal,
+          )
+          isStillReported = remaining !== undefined
+          return !isStillReported
+        },
+        'confirmed owned breakpoint retirement',
+        ACTIVE_TIMEOUT_MS,
+        signal,
+      )
+    } catch (error) {
+      if (!(error instanceof WaitTimeoutError)) throw error
+      throw new Error(
+        `${error.message} (${retirementWaitState(retirement, isStillListed, isStillReported)})`,
+      )
+    }
     signal.throwIfAborted()
     this.retired = true
   }
@@ -971,6 +1164,9 @@ export class OwnedRepositoryBreakpoint {
   /** Releases only the acquired editor breakpoint during cancellation; it never clears a whole source or another owner's breakpoints. @example owned.remove() */
   remove(): void {
     this.registrations.clear()
+    // A removed breakpoint names no later pause: an id it had may hit another owner's stop at the same place (D19), and a late answer to an earlier request gives it none.
+    this.answeredIdsBySession.clear()
+    this.requestedPositions.clear()
     vscode.debug.removeBreakpoints([this.breakpoint])
   }
 }

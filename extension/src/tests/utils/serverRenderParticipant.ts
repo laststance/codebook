@@ -1049,6 +1049,16 @@ export function createServerParticipant(parts: ServerParticipantParts) {
   /** The requested source lines whose registration the adapter verifies in its answer; every other registration stays pending. */
   let verifiedRegistrationLines: number[] = []
 
+  /** A hit the adapter sends right after it answers a registration while an earlier declared stop is registered already ({@link api.hitWhileStopsArm}); none until a test sets one. */
+  let hitWhileArming: ServerHit | undefined
+
+  /** Counts the run's `breakpoint.registered` entries, which only a declared stop's registration journals (the preparation window's provisional answers journal none). @example registeredStops() // 1 once the first declared stop was registered */
+  const registeredStops = (): number =>
+    parts
+      .run()
+      .view()
+      .events.filter((event) => event.type === 'breakpoint.registered').length
+
   /** Sends the breakpoint registrations the editor holds for the sealed source to the server session, as the adapter acknowledges them (pending until the pause). */
   const acknowledgeBreakpoints = (removedPath?: string): void => {
     const run = parts.run()
@@ -1069,6 +1079,8 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       },
     })
     breakpointsAcknowledged++
+    // Only an answer that arms a later stop, after an earlier declared stop was registered, carries the test's hit; the preparation window's provisional answers come before any.
+    const isArmingLaterStop = Boolean(hitWhileArming) && registeredStops() > 0
     run.onResponse(session, {
       type: 'response',
       seq: ++sequence,
@@ -1090,6 +1102,13 @@ export function createServerParticipant(parts: ServerParticipantParts) {
         }),
       },
     })
+    // A render already under way reaches the first stop while the run still arms the others: the test's hit follows this answer, before the run takes its next step.
+    const pendingHit = hitWhileArming
+    if (pendingHit && isArmingLaterStop) {
+      hitWhileArming = undefined
+      pauseCdp(pendingHit)
+      stopDap()
+    }
   }
 
   const api = {
@@ -1193,6 +1212,14 @@ export function createServerParticipant(parts: ServerParticipantParts) {
       const number = pauseCdp(hit)
       if (order === 'cdp-first') stopDap()
       return number
+    },
+    /**
+     * Sends this hit right after the adapter answers the registration of a later declared stop, once an earlier one is registered: a render already under way reaches the first stop while the run still arms the others, before the entry navigation (Cycle 0136 native check: the warmed dashboard page re-rendered while three entry-render stops were armed). The preparation window's provisional answers come before any declared stop is registered and do not send it.
+     * @param hit - The hit to send, as for {@link hit} in its default order (the CDP pause, then the DAP `stopped`).
+     * @example harness.server!.hitWhileStopsArm({ route: '/dashboard' })
+     */
+    hitWhileStopsArm(hit: ServerHit = {}): void {
+      hitWhileArming = hit
     },
     /** Sends only the CDP pause of a hit (its DAP `stopped` comes later through {@link stopDap}). */
     pauseCdp,

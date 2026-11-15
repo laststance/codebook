@@ -5,7 +5,7 @@ import * as runtimeConstants from '../../runtimeSupport/constants'
 
 import { loadModule } from './loadModule'
 
-/** The runtime bounds a test may replace: the active-progress bound and the capture bound. */
+/** The runtime bounds a test may replace: the active-progress bound and the capture bound, and two bounds of the loaded module's own constants. */
 export type RuntimeConstantOverrides = Partial<
   Record<
     keyof Pick<
@@ -17,6 +17,8 @@ export type RuntimeConstantOverrides = Partial<
 > & {
   /** Replaces the Next library run's wait for the preload's `wrapped` lines in the loaded module's `./constants` only. */
   NEXT_LIBRARY_WRAPPED_WAIT_MS?: number
+  /** Replaces how long the run holds a page pause for the browser adapter's answer to a server stop's registration, in the loaded module's `./constants` only. */
+  BROWSER_STOP_REGISTRATION_ANSWER_MS?: number
 }
 
 /**
@@ -31,18 +33,30 @@ export type RuntimeConstantOverrides = Partial<
 export async function loadConstantsWith(
   overrides: RuntimeConstantOverrides,
 ): Promise<Record<string, unknown>> {
-  const { NEXT_LIBRARY_WRAPPED_WAIT_MS, ...runtimeOverrides } = overrides
+  const {
+    NEXT_LIBRARY_WRAPPED_WAIT_MS,
+    BROWSER_STOP_REGISTRATION_ANSWER_MS,
+    ...runtimeOverrides
+  } = overrides
   const replacedRuntimeConstants = { ...runtimeConstants, ...runtimeOverrides }
   const constants = await loadModule<typeof Constants>(
     resolve(__dirname, '../../constants.js'),
     { './runtimeSupport/constants': replacedRuntimeConstants },
   )
+  const copiedOverrides = {
+    ...(NEXT_LIBRARY_WRAPPED_WAIT_MS === undefined
+      ? {}
+      : { NEXT_LIBRARY_WRAPPED_WAIT_MS }),
+    ...(BROWSER_STOP_REGISTRATION_ANSWER_MS === undefined
+      ? {}
+      : { BROWSER_STOP_REGISTRATION_ANSWER_MS }),
+  }
   return {
-    // A replaced wrapped-line bound is set on a copy of the evaluated exports.
+    // A replaced wrapped-line or registration-answer bound is set on a copy of the evaluated exports; without one the module is handed on as evaluated.
     './constants':
-      NEXT_LIBRARY_WRAPPED_WAIT_MS === undefined
+      Object.keys(copiedOverrides).length === 0
         ? constants
-        : { ...constants, NEXT_LIBRARY_WRAPPED_WAIT_MS },
+        : { ...constants, ...copiedOverrides },
     './runtimeSupport/constants': replacedRuntimeConstants,
   }
 }

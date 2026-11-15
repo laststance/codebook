@@ -46,6 +46,7 @@ import {
   ACTIVE_TIMEOUT_MS,
   API_PROCESS_PROBE_MS,
   NEXT_LIBRARY_WRAPPED_WAIT_MS,
+  NEXT_BROWSER_SOURCE_MAP_LOCATIONS,
   NEXT_ROUTER_POLL_INTERVAL_MS,
   RECORDED_STOP_REFRESH_POLL_MS,
   NEXT_SETUP_STEPS,
@@ -79,6 +80,7 @@ import {
   NEXT_PAGES_RENDERER_SCRIPT_PATH,
   SERVER_RENDER_CLASSIFICATION_MS,
   SERVER_RENDER_PAUSE_POLL_MS,
+  BROWSER_STOP_REGISTRATION_ANSWER_MS,
   SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT,
   SERVER_RENDER_ROUTE_EXPRESSION,
   OWNED_API_SERVER_LOSS_ARBITER_MS,
@@ -322,7 +324,7 @@ import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { declaredOperationsOf } from './utils/declaredOperationsOf'
 import { declaresEdgeApiRuntime } from './utils/declaresEdgeApiRuntime'
 import { declaresEntryBrowserStop } from './utils/declaresEntryBrowserStop'
-import { describeCdpPause } from './utils/describeCdpPause'
+import { describeCdpPause, type CdpPausePlace } from './utils/describeCdpPause'
 import type { NextEntryResponse } from './utils/describeNextEntryResponse'
 import { describeNextLaunchFailure } from './utils/describeNextLaunchFailure'
 import { describePressRefusal } from './utils/describePressRefusal'
@@ -349,6 +351,7 @@ import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isBrowserOnEntryRoute } from './utils/isBrowserOnEntryRoute'
 import { isDebugTargetSession } from './utils/isDebugTargetSession'
 import { isEntryAnswerFailure } from './utils/isEntryAnswerFailure'
+import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isHotUpdateScriptUrl } from './utils/isHotUpdateScriptUrl'
 import { isInsideFolder } from './utils/isInsideFolder'
@@ -426,6 +429,7 @@ import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { preparedInputsOf } from './utils/preparedInputsOf'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { publishedStopFiles } from './utils/publishedStopFiles'
+import { reactServerCopyModulePath } from './utils/reactServerCopyModulePath'
 import { readApiProcessState } from './utils/readApiProcessState'
 import type { ApiProcessState } from './utils/readApiProcessState'
 import { readCappedBody } from './utils/readCappedBody'
@@ -734,6 +738,8 @@ const NEXT_DEV_WEBPACK_ADAPTER: DevelopmentServerAdapter = {
       'webpack://_N_E/./*': `${workspace}/*`,
       ...libraryOverrides,
     },
+    // React's copies of Server Components stay unmapped in the page: their maps come from the server a server stop holds (F2).
+    resolveSourceMapLocations: [...NEXT_BROWSER_SOURCE_MAP_LOCATIONS],
   }),
   // The page's debugger announces a library module with its dot segments resolved, which drops the layer and the climb out of the app.
   isScriptOfModule: (sealedUrl, announcedUrl) =>
@@ -1446,6 +1452,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly retiredServerCopyIds = new Map<string, Set<number>>()
   /** The `stopped` events whose pause kind the run already settled, so a deferred event is handled once ({@link settleServerStop}). */
   private readonly settledStops = new WeakSet<object>()
+  /** Each page `stopped` held for registration answers, with the declared server stops whose page answer it awaits and its judgment ({@link holdsBrowserStopForRegistration}); a retirement of one of those stops' breakpoints waits for that judgment ({@link judgeHeldBrowserStopsOf}). */
+  private readonly heldBrowserStops = new Set<{
+    awaiting: readonly PreparedStop[]
+    judged: Promise<void>
+  }>()
   /** The active bound as it was last set for a stop, so a resumed hit gives back the time the held pause took ({@link restoreActiveBound}). */
   private activeBound?: {
     endsAtMs: number
@@ -1474,6 +1485,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /** Set while a route-handler or API-route hit is judged and sealed: another participant's stop that arrives meanwhile is queued behind it, like a stop that arrives during a continuation ({@link settleRouteHandlerHit}). */
   private judgingRouteHandler = false
+  /** The page's latest pause as the runtime reported it, kept only so the journal can name the place of a pause the run judges later ({@link openBrowserPausePlace}); it holds nothing and decides nothing. */
+  private lastBrowserPause?: Protocol.Debugger.PausedEvent
+  /** How many `continued` events each debug session's adapter sent, by session id ({@link continuedCount}): js-debug sends one for every resume of its thread, also of a pause it resumed by itself, on the channel of its `stopped` events and after the `stopped` of the pause it ends, so a page `stopped` held for a registration answer is over once one more arrives ({@link releaseHeldBrowserStop}). */
+  private readonly continuedEventsBySession = new Map<string, number>()
   private transientBrowserPause?: {
     timer: ReturnType<typeof setTimeout>
     event: Protocol.Debugger.PausedEvent
@@ -5160,15 +5175,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     hitIds: readonly number[] | undefined,
   ): boolean {
     if (!hitIds || hitIds.length === 0) return false
-    const own = (this.preparationWindow?.provisional ?? []).map((entry) =>
-      entry.breakpoint.acknowledgedId(session),
-    )
+    const provisional = this.preparationWindow?.provisional ?? []
     const retired = this.retiredProvisionalIds.get(session.id)
-    return hitIds.every((id) => own.includes(id) || Boolean(retired?.has(id)))
+    return hitIds.every(
+      (id) =>
+        provisional.some((entry) =>
+          entry.breakpoint.wasAnsweredWith(session, id),
+        ) || Boolean(retired?.has(id)),
+    )
   }
 
   /**
-   * Keeps the id every session's adapter gave a provisional breakpoint, just before the window retires it, in {@link retiredProvisionalIds}.
+   * Keeps every id each session's adapter gave a provisional breakpoint ({@link OwnedRepositoryBreakpoint.answeredIds}, also in an answer whose place the owner refused), just before the window retires it, in {@link retiredProvisionalIds}.
    * Why it exists: retiring clears the breakpoint's registrations and with them the ids, while the page keeps pausing at the breakpoint in React's browser copies of server components (Next maps them to the server file) and names the old id; without the id that pause ends the run as an unexpected browser stop (C95-N1). Called by {@link closePreparationWindow} before its first retirement.
    * @param breakpoint - The provisional breakpoint about to be retired.
    * @example this.rememberRetiredProvisionalIds(entry.breakpoint) // keeps 101 for the page session that acknowledged it as 101
@@ -5176,9 +5194,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private rememberRetiredProvisionalIds(
     breakpoint: OwnedRepositoryBreakpoint,
   ): void {
-    for (const [sessionId, id] of breakpoint.acknowledgedIds()) {
+    for (const [sessionId, answered] of breakpoint.answeredIds()) {
       const ids = this.retiredProvisionalIds.get(sessionId) ?? new Set<number>()
-      ids.add(id)
+      for (const id of answered) ids.add(id)
       this.retiredProvisionalIds.set(sessionId, ids)
     }
   }
@@ -5366,7 +5384,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The setup budget ends here; the 20 s bound of the first entry-render pause starts (task 2). A run with only browser stops at the entry load keeps the setup budget as the bound of the page load: its stop runs after the page's own code loads, and its 20 s wait starts once the page finished loading ({@link waitForEntryBrowserStop}).
     if (this.entryRenderStops().every((stop) => this.isEntryBrowserStop(stop)))
       this.holdEntryBrowserLoadDeadline()
-    else
+    // A render the warmed page started by itself can reach a stop while the stops are armed: that stop is paused and held already, and the bound of a stop not yet reached would end the run while the learner reads it (Cycle 0136 native check).
+    else if (!this.isEntryPauseAcceptedOrHeld())
       this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
         this.entryRenderNotReachedText('not-hit'),
       )
@@ -5452,7 +5471,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Tells whether a stop was accepted or its pause hold runs, for {@link pollEntryLoad}: the run's status stays `preparing` or `acting` until {@link inspect} commits the observation, and Chrome answers a `document.readyState` read while the page is paused, so a poll in that window must neither act nor replace the hold deadline.
+   * Tells whether a stop was accepted or its pause hold runs, for {@link pollEntryLoad} and {@link loadEntryWithRenderStops}: the run's status stays `preparing` or `acting` until {@link inspect} commits the observation, and Chrome answers a `document.readyState` read while the page is paused, so a poll in that window must neither act nor replace the hold deadline; a stop that paused while the entry-render stops were armed keeps its hold the same way.
    * @returns `true` between the acceptance of a stop and its continue or automatic resume.
    * @example this.isEntryPauseAcceptedOrHeld() // true while the learner reads an entry-load pause
    */
@@ -9384,6 +9403,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     Awaited<ReturnType<ConfiguredBrowserRun['serverAcknowledgement']>>
   > {
     try {
+      // A page pause held for this stop's page answer is judged before the retirement forgets the breakpoint's ids.
+      await this.judgeHeldBrowserStopsOf(stop)
       this.rememberServerCopyId(stop)
       await stop.breakpoint!.retire(
         this.participants[stop.participant].selected!,
@@ -9709,6 +9730,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       firstRequest.column,
     )
     try {
+      // A page pause held for this stop's page answer is judged before the retirement forgets the breakpoint's ids.
+      await this.judgeHeldBrowserStopsOf(stop)
       this.rememberServerCopyId(stop)
       await stop.breakpoint!.retire(
         this.participants[stop.participant].selected!,
@@ -13324,6 +13347,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
     participant.runtimePaused = true
+    if (name === 'browser') this.lastBrowserPause = event
     const isInstrumentation = event.reason === 'instrumentation'
     this.stampApiPauseReceipt(name, isInstrumentation)
     // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
@@ -13390,11 +13414,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Chooses how long a page pause may last in a run that declares no browser stop, for the timer {@link onCdpPaused} starts for it.
    * The debugger also sets a server stop's breakpoint in the page, and the page pauses there in its stub of the server module. The debug adapter reports that pause as a stop that names the server breakpoint, which the run then resumes itself ({@link resumeServerBreakpointInBrowser}); it may first resolve which breakpoints were hit, so that report can come later than the short bound of a pause nobody owns. Such a pause is known by its place before the report arrives, and has the bound of a pause of the adapter's own until then.
    * The adapter's own breakpoint at a module's first position is set by the bare base name of the declared stop's file, so the page also pauses for a moment at the first position of every other script whose address contains that name, until the adapter has read that script's source map; such a pause is known by its one breakpoint ({@link isModuleEntryPause}) and has the adapter's bound too.
+   * A page that gets source maps for server code also holds React's copies of server modules (`about://React/Server/…`) and pauses at a server stop's breakpoint there; the run may hold the judgment of that pause until the browser's adapter has answered the breakpoint's registration ({@link holdsBrowserStopForRegistration}), so a pause in React's copy of a declared stop's module has the adapter's bound as well (Cycle 0136, F2).
    * @param event - The page's pause.
-   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageCopyOfStopModule}) and for the adapter's own pause at the first position of a module named like a declared stop's file; {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
+   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageCopyOfStopModule}) or in React's copy of a declared stop's module ({@link reactServerCopyModulePath}), and for the adapter's own pause at the first position of a module named like a declared stop's file; {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
    * @example
    * ```ts
    * this.unownedPagePauseLimitMs(event) // 3000 for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts, otherwise 250
+   * this.unownedPagePauseLimitMs(event) // 3000 for a pause in about://React/Server/webpack-internal:///(rsc)/./app/ui/invoices/table.tsx?107 while a stop is declared in app/ui/invoices/table.tsx
    * ```
    */
   private unownedPagePauseLimitMs(
@@ -13402,8 +13428,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): number {
     const scriptUrl = this.pageScriptUrlOf(event),
       sourcePaths = this.stops.map((stop) => this.nextModulePathOf(stop))
+    const copiedModulePath = reactServerCopyModulePath(scriptUrl)
+    // React's copy of a declared stop's module holds that stop's breakpoint as the page's stub does, and the run resumes a pause there once the browser's adapter has named the breakpoint's id (F2).
     const isAdaptersOwn =
       this.stops.some((stop) => this.isPageCopyOfStopModule(scriptUrl, stop)) ||
+      sourcePaths.some((path) => path === copiedModulePath) ||
       isModuleEntryPause(event, scriptUrl, sourcePaths)
     return isAdaptersOwn
       ? REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
@@ -15715,9 +15744,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const name = this.participantName(session)
     if (this.cleaning || !name) return
     const participant = this.participants[name]
-    // The adapter's later news about an owned breakpoint (a pending one verified when its module loads) gives that stop its place.
-    if (event.event === 'breakpoint')
-      this.deliverBreakpointNews(session, event, name)
+    this.noteAdapterNews(session, event, name)
     if (
       event.event === 'stopped' &&
       name === 'server' &&
@@ -15731,6 +15758,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (event.event === 'stopped') {
       const body: DebugProtocol.StoppedEvent['body'] = event.body
       if (this.resumesBrowserPreparationHit(session, name, body)) return
+      // A page pause can name a server stop's breakpoint before the browser's adapter has answered its registration there: it is judged once that answer arrives (F2).
+      if (this.holdsBrowserStopForRegistration(session, name, event)) return
       // The editor sends a server stop's breakpoint to the browser session too, and the page's stub of a "use server" module maps the same line: that browser pause belongs to the server stop's breakpoint, not to a stop of the page, so it is resumed.
       const libraryCopyOf =
         name === 'browser'
@@ -15749,12 +15778,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         })
       this.recordStopVerdict(session, participant, serverStop !== undefined)
       if (serverStop) {
+        this.journalReactCopyResume(session, body)
         this.track(
           this.resumeServerBreakpointInBrowser(session, body, serverStop),
         )
         return
       }
       if (name === 'browser' && this.transientBrowserPause) {
+        this.journalUnownedBrowserStop(session, body)
         this.fail('Unowned browser DAP stop invalidated the declared operation')
         return
       }
@@ -15805,7 +15836,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.pendingDapStop ||
           !Number.isInteger(body.threadId)
         ) {
-          this.fail(this.rejectedStopText(name))
+          this.rejectStop(session, name, body)
           return
         }
         this.pendingDapStop = { participant: name, event }
@@ -15824,7 +15855,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           inputDispatched: this.operation?.inputDispatched ?? false,
           acceptedStop: this.acceptedStop,
         })
-        this.fail(this.rejectedStopText(name))
+        this.rejectStop(session, name, body)
         return
       }
       this.acceptedStop = true
@@ -15952,6 +15983,170 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Ends the run for a stop that paused out of turn, for {@link onEvent}: a page pause first journals what paused ({@link journalUnownedBrowserStop}), so the failure names the paused script, its place and the breakpoint ids even when the page's stop was judged by its turn alone (Cycle 0136, E-F2).
+   * @param session - The session that sent the `stopped` event.
+   * @param name - The participant that paused.
+   * @param body - The event's body; a page pause's breakpoint ids are journaled.
+   * @example this.rejectStop(session, 'browser', body) // journals browser.unowned-stop, then fails with this.rejectedStopText('browser')
+   */
+  private rejectStop(
+    session: vscode.DebugSession,
+    name: Participant,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): void {
+    if (name === 'browser') this.journalUnownedBrowserStop(session, body)
+    this.fail(this.rejectedStopText(name))
+  }
+
+  /**
+   * Takes the news of a participant's adapter that is no stop: a `breakpoint` event gives an owned breakpoint its place ({@link deliverBreakpointNews}), and a `continued` event is counted for its session ({@link continuedCount}).
+   * Called by {@link onEvent} for every event of a participant's session, before any stop is judged, so a held page `stopped` sees each `continued` that came after it ({@link releaseHeldBrowserStop}).
+   * @param session - The session that sent the event.
+   * @param event - The adapter's event.
+   * @param name - The participant of that session.
+   * @example this.noteAdapterNews(session, continuedEvent, 'browser') // the page session's count of `continued` events goes up by one
+   */
+  private noteAdapterNews(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    name: Participant,
+  ): void {
+    // The adapter's later news about an owned breakpoint (a pending one verified when its module loads) gives that stop its place.
+    if (event.event === 'breakpoint')
+      this.deliverBreakpointNews(session, event, name)
+    else if (event.event === 'continued')
+      this.continuedEventsBySession.set(
+        session.id,
+        this.continuedCount(session) + 1,
+      )
+  }
+
+  /**
+   * Reads how many `continued` events a session's adapter has sent so far ({@link continuedEventsBySession}), for {@link holdsBrowserStopForRegistration} when it holds a page `stopped` and for {@link releaseHeldBrowserStop} when it judges whether that pause ended meanwhile.
+   * @param session - The debug session whose events were counted.
+   * @returns The count; 0 before the session's first `continued` event.
+   * @example this.continuedCount(pageSession) // 3 after the page's adapter announced three resumes
+   */
+  private continuedCount(session: vscode.DebugSession): number {
+    return this.continuedEventsBySession.get(session.id) ?? 0
+  }
+
+  /**
+   * Holds a page pause that names a breakpoint the run cannot place yet while the browser's adapter has still to answer the registration of a declared server stop's breakpoint; {@link releaseHeldBrowserStop} judges it once that answer arrives or {@link BROWSER_STOP_REGISTRATION_ANSWER_MS} passes.
+   * Why it exists: the editor sends each server stop's breakpoint to the browser session as well, and a page that gets source maps for server code pauses at it in React's copy of the module (`about://React/Server/…`) as soon as the adapter has set it, while the adapter's reply that names its id there can come later. Judged at once, that pause names an id no stop owns yet and ends the run as an unowned browser stop (Cycle 0135 run 22ed260d and Cycle 0136 E-F2: the last of four server stops' breakpoints, registered while the entry load ran). Called by {@link onEvent} for a `stopped` event, before every rule that places a page pause by its ids.
+   * @param session - The session that sent the `stopped` event.
+   * @param name - The participant that paused.
+   * @param event - The `stopped` event; once released it is marked settled, so it is judged and never held again.
+   * @returns `true` when the event is held; `false` for a server pause, an event held once already, a pause that names no breakpoint, a pause whose every id a declared stop's breakpoint already has in this session, and while no declared server stop's registration in this session awaits its answer.
+   * @example if (this.holdsBrowserStopForRegistration(session, name, event)) return
+   */
+  private holdsBrowserStopForRegistration(
+    session: vscode.DebugSession,
+    name: Participant,
+    event: DebugProtocol.Event,
+  ): boolean {
+    if (name !== 'browser' || this.settledStops.has(event)) return false
+    const body: DebugProtocol.StoppedEvent['body'] = event.body
+    const hitIds = body.hitBreakpointIds ?? []
+    const isPlaced = (id: number): boolean =>
+      this.stops.some(
+        (stop) => stop.breakpoint?.wasAnsweredWith(session, id) === true,
+      )
+    // Only a pause at a breakpoint the run cannot place yet may be waiting for an answer; a pause that names none never is.
+    if (body.reason !== 'breakpoint' || hitIds.every(isPlaced)) return false
+    const awaiting = this.awaitingBrowserRegistrations(session)
+    if (awaiting.length === 0) return false
+    const held = {
+      awaiting,
+      judged: this.releaseHeldBrowserStop(
+        session,
+        event,
+        awaiting,
+        this.continuedCount(session),
+      ),
+    }
+    this.heldBrowserStops.add(held)
+    this.track(held.judged.finally(() => this.heldBrowserStops.delete(held)))
+    return true
+  }
+
+  /**
+   * Waits for the browser adapter's answers to the registrations {@link holdsBrowserStopForRegistration} found unanswered, journals `breakpoint.browser-stop-held` (the pause's ids, the declared stops it waited for, whether every answer came and whether the page resumed meanwhile) and hands the `stopped` event back to {@link onEvent}, which judges it by the ordinary rules: a pause whose ids now all name server stops' breakpoints is resumed as their copy, any other still ends the run. An event whose pause the page resumed meanwhile is dropped.
+   * @param session - The browser session that sent the event.
+   * @param event - The held `stopped` event.
+   * @param awaiting - The declared server stops whose registration in this session awaited its answer.
+   * @param continuedAtHold - The session's count of `continued` events when the event was held ({@link continuedCount}). js-debug sends a `continued` for every resume of its thread, on the channel and in the order of its `stopped` events, so one counted since then ended the pause the event announced (or announced a refresh of it, whose new `stopped` is judged on its own), and the event is journaled and dropped, never judged. The resume of a pause before the held one, the debugger's own pauses included, was announced before the held `stopped` and is not counted, however late the page's own events arrive (natively they come after the adapter's, Cycle 0046; Cycle 0136 review).
+   * @example this.track(this.releaseHeldBrowserStop(session, event, awaiting, this.continuedCount(session)))
+   */
+  private async releaseHeldBrowserStop(
+    session: vscode.DebugSession,
+    event: DebugProtocol.Event,
+    awaiting: readonly PreparedStop[],
+    continuedAtHold: number,
+  ): Promise<void> {
+    let isEveryAnswerIn = true
+    try {
+      await waitUntil(
+        () => awaiting.every((stop) => !stop.breakpoint?.awaitsAnswer(session)),
+        'the browser adapter’s answer to a server stop’s breakpoint registration',
+        BROWSER_STOP_REGISTRATION_ANSWER_MS,
+        this.abort.signal,
+        SERVER_RENDER_PAUSE_POLL_MS,
+      )
+    } catch (error) {
+      if (this.abort.signal.aborted) return
+      if (!(error instanceof WaitTimeoutError)) throw error
+      // Past the bound the pause is judged as it is: an id still unplaced keeps the failure.
+      isEveryAnswerIn = false
+    }
+    if (this.cleaning) return
+    const body: DebugProtocol.StoppedEvent['body'] = event.body
+    const isResumedMeanwhile = this.continuedCount(session) !== continuedAtHold
+    this.evidence.record('breakpoint.browser-stop-held', {
+      sessionId: session.id,
+      hitBreakpointIds: body.hitBreakpointIds,
+      awaitedStops: awaiting.map((stop) => stop.declaredIndex),
+      answered: isEveryAnswerIn,
+      resumedMeanwhile: isResumedMeanwhile,
+    })
+    // The page ran on while the event was held: its pause is over, and judging it now would resume or fail on a pause that no longer exists.
+    if (isResumedMeanwhile) return
+    this.settledStops.add(event)
+    this.onEvent(session, event)
+  }
+
+  /**
+   * Waits until every page `stopped` held for the page's answer to a declared stop's registration is judged ({@link heldBrowserStops}), before the run retires that stop's breakpoint.
+   * Why it exists: retiring forgets the breakpoint's registrations and every id its answers gave (D19), and a retired registration awaits no answer, so a page pause that paused at this stop's breakpoint before the page answered, and is still held when the stop commits or is requested again, would be judged at once without its id and end the run as an unowned page stop (Cycle 0136 review, local CodeRabbit CLI on PR 343's final range). The hold has its own bound ({@link BROWSER_STOP_REGISTRATION_ANSWER_MS}), so this wait is bounded too.
+   * Called by {@link inspect}, {@link requestAgainUnderBreakLocations} and {@link rearmOnRequestedLine} just before they retire a declared stop's breakpoint.
+   * @param stop - The declared stop whose breakpoint is about to be retired.
+   * @example await this.judgeHeldBrowserStopsOf(stop) // returns once a page pause held for this stop's page answer was resumed as its copy, judged unowned or dropped
+   */
+  private async judgeHeldBrowserStopsOf(stop: PreparedStop): Promise<void> {
+    const judgments = [...this.heldBrowserStops]
+      .filter((held) => held.awaiting.includes(stop))
+      .map((held) => held.judged)
+    // A judgment that fails ends the run through track; the retirement only waits for it.
+    await Promise.allSettled(judgments)
+  }
+
+  /**
+   * Lists the declared server stops whose breakpoint registration a session's adapter has yet to answer, for {@link holdsBrowserStopForRegistration} and the journal of an unowned page pause ({@link journalUnownedBrowserStop}).
+   * @param session - The session the editor sent the registrations to.
+   * @returns The server stops whose owned breakpoint awaits that session's answer, in the run's stop order; empty when none does.
+   * @example this.awaitingBrowserRegistrations(browserSession).map((stop) => stop.declaredIndex) // [3]
+   */
+  private awaitingBrowserRegistrations(
+    session: vscode.DebugSession,
+  ): PreparedStop[] {
+    return this.stops.filter(
+      (stop) =>
+        stop.participant === 'server' &&
+        stop.breakpoint?.awaitsAnswer(session) === true,
+    )
+  }
+
+  /**
    * Finds the declared server stop whose owned breakpoint a browser `stopped` event names, for {@link onEvent} before it judges that event as a stop of the page.
    * The editor sends every breakpoint to every debug session, so a server stop's breakpoint is set in the browser session as well. The page holds a stub of a `"use server"` module (the client's reference to each exported action), and when the stub's source map maps the stop's line, the debugger pauses the page there when the stub is evaluated and reports a `stopped` whose breakpoint ids name that breakpoint. A pause that names no id, or also a breakpoint that is not a server stop's, is left to the run's own rules.
    * @param session - The browser session that sent the event.
@@ -15973,6 +16168,86 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       session,
       body.hitBreakpointIds ?? [],
     )
+  }
+
+  /**
+   * Journals `breakpoint.react-copy` when the browser pause the run resumes for a server stop is in one of React's server copies (`about://React/Server/…`), so a journal tells that copy apart from the page's stub of a `"use server"` module; up to {@link SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT} entries, shared with the server's copy hits, then only counted.
+   * Called by {@link onEvent} just before {@link resumeServerBreakpointInBrowser}; the place is the page's open pause as the runtime reported it, so nothing is journaled while the runtime has not reported that pause yet.
+   * @param session - The browser session that sent the `stopped` event.
+   * @param body - The event's body; its hit breakpoint ids are journaled.
+   * @example this.journalReactCopyResume(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [12] }) // journals the copy's URL and place
+   */
+  private journalReactCopyResume(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): void {
+    const place = this.openBrowserPausePlace()
+    if (!place || !isReactServerCopyUrl(place.url)) return
+    // The cap of the server's React copy hits ({@link journalResumedHit}) holds here too: a page that keeps pausing in its copies cannot use up the journal.
+    const count = (this.resumedHitCounts.get('breakpoint.react-copy') ?? 0) + 1
+    this.resumedHitCounts.set('breakpoint.react-copy', count)
+    if (count > SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT) {
+      this.unjournaledAdapterEvents++
+      return
+    }
+    this.evidence.record('breakpoint.react-copy', {
+      sessionId: session.id,
+      ...place,
+      hitBreakpointIds: body.hitBreakpointIds,
+    })
+  }
+
+  /**
+   * Journals `browser.unowned-stop` for a browser `stopped` no rule owns, so the failure that follows names what paused: the emitting session, whether the run owns it, the paused script's address, the place, the adapter's hit breakpoint ids and the declared server stops whose registration in that session still awaited the adapter's answer; then `browser.unowned-stop-registrations`, every owned breakpoint's registration in every session (state and id) and the retired provisional ids, so the journal says whose id the pause named.
+   * Called by {@link onEvent} right before it ends the run with the unowned browser DAP stop failure, and by {@link rejectStop} for a page pause that paused out of turn.
+   * @param session - The browser session that sent the `stopped` event.
+   * @param body - The event's body; its hit breakpoint ids are journaled.
+   * @example this.journalUnownedBrowserStop(session, { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [7] }) // journals url, line, column, ids and awaitedStops
+   */
+  private journalUnownedBrowserStop(
+    session: vscode.DebugSession,
+    body: DebugProtocol.StoppedEvent['body'],
+  ): void {
+    this.evidence.record('browser.unowned-stop', {
+      sessionId: session.id,
+      ownsSession: this.participantName(session) === 'browser',
+      ...this.openBrowserPausePlace(),
+      hitBreakpointIds: body.hitBreakpointIds,
+      awaitedStops: this.awaitingBrowserRegistrations(session).map(
+        (stop) => stop.declaredIndex,
+      ),
+    })
+    // Which breakpoint each session knows under which id at this moment, so a journal tells a late answer from an id of another session or of a retired breakpoint (E-F2).
+    this.evidence.record('browser.unowned-stop-registrations', {
+      stops: this.stops.flatMap((stop) =>
+        stop.breakpoint
+          ? [
+              {
+                declaredIndex: stop.declaredIndex,
+                sessions: stop.breakpoint.registrationStates(),
+              },
+            ]
+          : [],
+      ),
+      provisional: (this.preparationWindow?.provisional ?? []).map((entry) => ({
+        declaredIndex: entry.index,
+        sessions: entry.breakpoint.registrationStates(),
+      })),
+      retiredProvisionalIds: Object.fromEntries(
+        [...this.retiredProvisionalIds].map(([sessionId, ids]) => [
+          sessionId,
+          [...ids],
+        ]),
+      ),
+    })
+  }
+
+  /** Gives the journal's description of the page's open pause (bounded URL, 1-based generated line and column, hit breakpoints): the pause the run holds, else the latest page pause until its runtime resumed; `undefined` while the runtime has reported none since its last resume. Called by {@link journalReactCopyResume} and {@link journalUnownedBrowserStop}. @example this.openBrowserPausePlace()?.url // 'about://React/Server/webpack-internal:///(rsc)/./app/ui/invoices/table.tsx?107' */
+  private openBrowserPausePlace(): CdpPausePlace | undefined {
+    const event = this.openPagePause()?.event ?? this.lastBrowserPause
+    return event
+      ? describeCdpPause(event, this.participants.browser.scriptUrls)
+      : undefined
   }
 
   /**
@@ -16008,7 +16283,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const isServerId = (id: number): boolean =>
       Boolean(this.retiredServerCopyIds.get(session.id)?.has(id)) ||
       serverStops.some(
-        (stop) => stop.breakpoint?.acknowledgedId(session) === id,
+        (stop) => stop.breakpoint?.wasAnsweredWith(session, id) === true,
       )
     if (serverStops.length === 0 || !hitIds.every(isServerId)) return undefined
     // The pause's event: one the intake already admitted as the browser's stop or queued behind a continuation counts too, because the DAP `stopped` can arrive after the CDP pause was judged.
@@ -16090,7 +16365,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Finds the server stop a browser pause names with every breakpoint it hit, for {@link serverStopOfBrowserPause} once the pause is known to be none of the browser's own.
    * @param session - The browser session that sent the `stopped` event.
    * @param hitIds - The adapter's ids of the breakpoints the pause hit; empty when the event named none.
-   * @returns The server stop whose owned breakpoint the first id names, when every id names a server stop's breakpoint in this session; `undefined` when one of them does not, and for a pause that names no breakpoint.
+   * @returns The server stop whose owned breakpoint the first id names, when every id is one this session's adapter gave a server stop's breakpoint ({@link OwnedRepositoryBreakpoint.wasAnsweredWith}, also where the page bound it at a place the stop refuses); `undefined` when one of them is not, and for a pause that names no breakpoint.
    * @example
    * ```ts
    * this.serverStopOfEveryBreakpoint(session, [12]) // the server stop whose breakpoint the browser adapter calls 12
@@ -16100,11 +16375,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     session: vscode.DebugSession,
     hitIds: readonly number[],
   ): PreparedStop | undefined {
+    // An id the page's adapter gave a server stop's breakpoint names it also where the page bound it at a place the stop refuses (F2).
     const serverStopOf = (id: number): PreparedStop | undefined =>
       this.stops.find(
         (stop) =>
           stop.participant === 'server' &&
-          stop.breakpoint?.acknowledgedId(session) === id,
+          stop.breakpoint?.wasAnsweredWith(session, id) === true,
       )
     // Every breakpoint the pause hit must be a server stop's, so a breakpoint of the page's own is never resumed past.
     return hitIds.length > 0 && hitIds.every((id) => serverStopOf(id))
@@ -16345,6 +16621,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       column: frame.column,
     })
   }
+  /**
+   * Forgets the page's last pause when the page's runtime resumes, for {@link onCdpResumed}: a resumed page pause is no place a later `stopped` event may be journaled at ({@link openBrowserPausePlace}). Whether a page `stopped` held for a registration answer ended is read from the adapter's `continued` events instead ({@link releaseHeldBrowserStop}): the page's own events can arrive after the adapter's `stopped` of a later pause.
+   * @param name - The participant whose runtime resumed; only the browser's pause is forgotten.
+   * @example this.notePageResume('browser') // lastBrowserPause cleared
+   */
+  private notePageResume(name: Participant): void {
+    if (name === 'browser') this.lastBrowserPause = undefined
+  }
+
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
@@ -16365,6 +16650,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     participant.pauseObservedAtMs = undefined
     participant.pauseJournaled = undefined
     participant.runtimePaused = undefined
+    this.notePageResume(name)
     // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
     if (participant.instrumentationPaused) {
       participant.instrumentationPaused = false
@@ -17165,6 +17451,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Takes the paused frame's column as a server stop's bound column when the debugger paused the stop's own breakpoint at another column of the bound line, for {@link inspect} before {@link assertFrameAtBoundPosition} judges the frame.
+   * Why it exists: VS Code's debugger can answer a breakpoint at one column of a line (the call's `(`) while the paused frame maps to another (the callee) for the same generated location; the pause is still the stop's own when the `stopped` event names its acknowledged breakpoint. Without that attribution the stop keeps its bound place and the frame check refuses the pause.
+   * @param stop - The paused stop, already bound.
+   * @param frame - The debugger's top stack frame, if it reported one.
+   * @throws The binding failure of {@link bindBoundPlace} when an earlier stop declared on another line of the file is bound at the frame's place.
+   * @example this.attributeFrameColumn(stop, frame) // stop.bound 25:46 becomes 25:28 for a frame at 25:28 when hitBreakpointIds names the stop's breakpoint
+   */
+  private attributeFrameColumn(
+    stop: PreparedStop,
+    frame: DebugProtocol.StackFrame | undefined,
+  ): void {
+    const bound = stop.bound
+    // Only a server stop in its own file qualifies; a library stop already compares by line.
+    if (stop.participant !== 'server' || stop.library || !bound) return
+    // Kept apart: a failed predicate narrows `frame` to never.
+    const reported = frame && { line: frame.line, column: frame.column }
+    if (isFrameAtPosition(frame, stop.bundle.sourcePath, bound)) return
+    // The frame must stay on the bound line of the bound file; another line is never attributed.
+    if (
+      !reported ||
+      !isFrameAtPosition(frame, stop.bundle.sourcePath, bound, {
+        lineOnly: true,
+      })
+    )
+      return
+    const participant = this.participants.server
+    const ownedId =
+      participant.selected &&
+      stop.breakpoint?.acknowledgedId(participant.selected)
+    // Missing attribution, or ids that name another breakpoint, keep the refusal.
+    if (
+      ownedId === undefined ||
+      !participant.hitBreakpointIds?.includes(ownedId)
+    )
+      return
+    this.evidence.record('breakpoint.frame-column-attributed', {
+      participant: stop.participant,
+      path: stop.bundle.sourcePath,
+      frame: reported,
+      bound,
+      hitBreakpointIds: [...participant.hitBreakpointIds],
+      ownedBreakpointId: ownedId,
+    })
+    // The frame's place is recorded like any binding: an earlier stop declared on another line of the file must not hold it already.
+    this.bindBoundPlace(stop, reported)
+  }
+
+  /**
    * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
    * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
    * @param pause - The identity the pause gate gave the accepted stop.
@@ -17229,6 +17563,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       callFrame = stopped.event.callFrames[0]!,
       position = stop.source
     // The paused frame must be the position the debugger bound, which may differ from the requested column and, by the stop's rule, from the declared line.
+    // A server stop the debugger paused at another column of its bound line, naming the stop's own breakpoint, is recorded at the frame's column first.
+    this.attributeFrameColumn(stop, frame)
     // A library stop pauses in a built file whose eval map is line-granular, so only file and line are compared; the generated-position checks below stay exact.
     assertFrameAtBoundPosition(
       frame,
@@ -17345,6 +17681,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await this.capture(phase, current, pause)
       current()
       // Retire this position before authorizing continuation; the next declared position is armed separately.
+      // A page pause held for this stop's page answer is judged before the retirement forgets the breakpoint's ids.
+      await this.judgeHeldBrowserStopsOf(stop)
       this.rememberServerCopyId(stop)
       await stop.breakpoint!.retire(participant.selected!, this.abort.signal)
       current()

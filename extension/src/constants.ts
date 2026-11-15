@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.132'
+export const EXTENSION_VERSION = '0.2.133'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2801,6 +2801,8 @@ export const API_PROCESS_PROBE_MS = 5_000
 export const SERVER_RENDER_ROUTE_MAX_CHARS = 2_048
 /** How often the run looks for the pause behind a server `stopped` while the pause has not arrived yet; the two channels of one pause arrive within milliseconds of each other. */
 export const SERVER_RENDER_PAUSE_POLL_MS = 5
+/** The longest the run holds the judgment of a page pause that names a breakpoint it cannot place while the browser's adapter has yet to answer the registration of a declared server stop's breakpoint (the editor sends it to the page too, and React's copy of the module can pause at it first); past it the pause is judged as it is (Cycle 0136, F2). Shorter than {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS}, the bound such a pause in React's copy of a declared stop's module runs against, so the judgment comes before that bound ends the run. */
+export const BROWSER_STOP_REGISTRATION_ANSWER_MS = 2_000
 /** How often the entry-load phase reads whether the main frame's committed document finished loading while no server-render pause is held. */
 export const ENTRY_LOAD_POLL_MS = 100
 /** The key of the aggregate operation record a run that declares no operation keeps (entry render only): no input is dispatched for it. */
@@ -2810,6 +2812,14 @@ export const SERVER_RENDER_ROUTE_EXPRESSION =
   "require('next/dist/server/app-render/work-async-storage.external.js').workAsyncStorage.getStore()?.route"
 /** The address prefix of the fabricated copies React's development server parses of server modules; a hit in one at an armed stop's position is never a stop's pause. */
 export const REACT_SERVER_COPY_URL_PREFIX = 'about://React/Server/'
+/**
+ * The source map locations the page's debugger of a Next run may resolve (js-debug's `resolveSourceMapLocations`, matched against each map's URL): every map except the development server's `/__nextjs_source-map`, where React's copies of Server Components in the page (`about://React/Server/…`) take theirs.
+ * That route is served by the server process a server stop holds, so js-debug waited about 1 s on each new copy and bound server stops' breakpoints in them; the page then paused in those copies and its debugger fell so far behind that a stop's breakpoint retirement never reached the server (Cycle 0136, F2). The page's own modules keep their maps: js-debug resolves `webpack-internal:` modules and inline maps whatever the patterns say.
+ */
+export const NEXT_BROWSER_SOURCE_MAP_LOCATIONS: readonly string[] = [
+  '**',
+  '!**/__nextjs_source-map**',
+]
 /** How many resumed hits (`breakpoint.other-route`, `breakpoint.unattributed-resumed`, `breakpoint.repeat-hit`, `breakpoint.react-copy`) one run journals, each event type up to it; past it only their count is kept. */
 export const SERVER_RENDER_RESUMED_HIT_JOURNAL_LIMIT = 100
 /** The path tail of Next 16's compiled Pages renderer under `next dev --webpack` (chosen in `next/dist/server/route-modules/pages/module.compiled.js`); a frame whose script address ends with it is a renderer frame of a Pages hit. */

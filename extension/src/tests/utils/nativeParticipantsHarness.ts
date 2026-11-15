@@ -196,6 +196,10 @@ export async function nativeParticipantsHarness(
   let editorForgetsBinding: 'kept' | 'removed' | undefined
   // The one-based column of a requested breakpoint whose registration request the adapter leaves unanswered.
   let unansweredColumn: number | undefined
+  // Where the page's adapter alone verifies every registration, as js-debug binds a server stop's breakpoint in React's copy of the module somewhere else than the server does.
+  let browserAnsweredAt: { line: number; column: number } | undefined
+  // The page's registration replies a test keeps back, sent in order when it releases them; `undefined` while the page answers at once.
+  let heldBrowserAnswers: (() => void)[] | undefined
   // The generated places each participant's adapter lists as break locations of its module; without them it cannot answer.
   const possibleBreakLocations: Partial<Record<Participant, GeneratedPlace[]>> =
     {}
@@ -550,12 +554,20 @@ export async function nativeParticipantsHarness(
       }),
     )
   }
+  /** The adapter ids the next `stopped` events name as hit breakpoints; none until a test sets them ({@link reportHitBreakpoints}). */
+  let stoppedHitBreakpointIds: number[] | undefined
   const emitStopped = (name: Participant): void => {
     run.onEvent(sessions[name], {
       type: 'event',
       seq: ++sequence,
       event: 'stopped',
-      body: { reason: 'breakpoint', threadId: 1 },
+      body: {
+        reason: 'breakpoint',
+        threadId: 1,
+        ...(stoppedHitBreakpointIds
+          ? { hitBreakpointIds: stoppedHitBreakpointIds }
+          : {}),
+      },
     })
   }
   const emitPause = (name: Participant): void => {
@@ -834,32 +846,44 @@ export async function nativeParticipantsHarness(
           )
         )
           continue
-        run.onResponse(target, {
-          type: 'response',
-          seq: ++sequence,
-          command: 'setBreakpoints',
-          request_seq: requestSequence,
-          success: !failedRegistration,
-          body: {
-            breakpoints: selected.map((breakpoint) => ({
-              id: adapterId(breakpoint),
-              // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
-              ...(acknowledgedAt &&
-              !(options.serverWorkerThread && target === serverChild)
-                ? {
-                    verified: true,
-                    ...acknowledgedAt({
-                      line: breakpoint.location.range.start.line + 1,
-                      column: breakpoint.location.range.start.character + 1,
-                    }),
-                  }
-                : { verified: false }),
-            })),
-          },
-        })
+        const respond = (): void =>
+          run.onResponse(target, {
+            type: 'response',
+            seq: ++sequence,
+            command: 'setBreakpoints',
+            request_seq: requestSequence,
+            success: !failedRegistration,
+            body: {
+              breakpoints: selected.map((breakpoint) => ({
+                id: adapterId(breakpoint),
+                // The page's adapter answers at its own place when a test set one; a module that is already loaded is acknowledged as verified, at the position the adapter chose.
+                ...(name === 'browser' && browserAnsweredAt
+                  ? { verified: true, ...browserAnsweredAt }
+                  : acknowledgedAt &&
+                      !(options.serverWorkerThread && target === serverChild)
+                    ? {
+                        verified: true,
+                        ...acknowledgedAt({
+                          line: breakpoint.location.range.start.line + 1,
+                          column: breakpoint.location.range.start.character + 1,
+                        }),
+                      }
+                    : { verified: false }),
+              })),
+            },
+          })
         // The adapter resolved the breakpoints after it answered: it verifies them by news.
-        const news = verifiedByNewsAt[name]
-        if (news) announceVerified(name, news.line, news.column)
+        const answer = (): void => {
+          respond()
+          const news = verifiedByNewsAt[name]
+          if (news) announceVerified(name, news.line, news.column)
+        }
+        // The page's reply and its news wait while a test holds the page's answers; every other reply is sent at once.
+        if (name === 'browser' && heldBrowserAnswers) {
+          heldBrowserAnswers.push(answer)
+          continue
+        }
+        answer()
       }
     }
   }
@@ -1162,10 +1186,16 @@ export async function nativeParticipantsHarness(
     revealSource: async () => {},
   })
   // The browser events of a page pause in its stub of the server module, shared by the three helpers that report one, so their payloads stay alike.
-  const emitStubScriptParsed = (): void => {
+  const emitStubScriptParsed = (reactCopy = false): void => {
+    const modulePath =
+      options.nextPackage?.toPackageRelative(server.source.path) ??
+      server.source.path
     listeners.browser.get('Debugger.scriptParsed')?.({
       scriptId: SERVER_MODULE_STUB_ID,
-      url: `webpack-internal:///(app-pages-browser)/./${options.nextPackage?.toPackageRelative(server.source.path) ?? server.source.path}`,
+      // React's fabricated copy of a Server Component module, the form a page that gets source maps for server code shows in an owner stack.
+      url: reactCopy
+        ? `about://React/Server/webpack-internal:///(rsc)/./${modulePath}?107`
+        : `webpack-internal:///(app-pages-browser)/./${modulePath}`,
       executionContextId: 1,
     })
   }
@@ -1270,6 +1300,15 @@ export async function nativeParticipantsHarness(
     },
     emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
+    },
+    /** Sends the adapter's DAP `continued` alone, as js-debug announces every resume of its thread, also of a pause it resumed by itself, on the channel of its `stopped` events; the runtime's own resume is {@link emitResume}. @example harness.emitContinued('browser') */
+    emitContinued(name: Participant): void {
+      run.onEvent(sessions[name], {
+        type: 'event',
+        seq: ++sequence,
+        event: 'continued',
+        body: { threadId: 1 },
+      })
     },
     /** Tells whether the run has ever entered a bounded wait with this description; it stays true after that wait ended, so a test that acts while the run is inside a wait reads {@link waitInProgress} instead. @example harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) */
     waitEntered(description: string): boolean {
@@ -1469,6 +1508,21 @@ export async function nativeParticipantsHarness(
       emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
     },
     /**
+     * Pauses the page in React's copy of the server module (`about://React/Server/…`), as js-debug does when the editor sent a server stop's breakpoint to the browser session and the page holds a fake function for that Server Component: the runtime pause, then the `stopped` whose breakpoint ids name the server breakpoint's id in the browser session.
+     * @param serverBreakpoint - The server stop's editor breakpoint, whose adapter id the `stopped` names first.
+     * @param otherHitIds - Adapter ids of further breakpoints the same pause hit, named after the server breakpoint's; none by default.
+     * @example harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!, [999])
+     */
+    pauseBrowserInReactServerCopy(
+      serverBreakpoint: { id: string },
+      otherHitIds: readonly number[] = [],
+    ): void {
+      stubPausesAwaitingResume++
+      emitStubScriptParsed(true)
+      emitStubPaused(SERVER_MODULE_STUB_START)
+      emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
+    },
+    /**
      * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
      * @example const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!); harness.advance(300); stub.stopped()
      */
@@ -1539,6 +1593,10 @@ export async function nativeParticipantsHarness(
       pausedLine = line
       pausedColumn = column
     },
+    /** Makes every declared stop's DAP `stopped` event list these adapter breakpoint ids in `hitBreakpointIds`, as js-debug does for a pause at a breakpoint; the first registered breakpoint's id is 12. @example harness.reportHitBreakpoints([12]) */
+    reportHitBreakpoints(ids: number[]): void {
+      stoppedHitBreakpointIds = ids
+    },
     /** Reports the paused top frame in this file instead of the stop's own source. */
     movePausedFrameToFile(path: string): void {
       pausedPath = path
@@ -1603,6 +1661,30 @@ export async function nativeParticipantsHarness(
     ): void {
       acknowledgedAt = bind
     },
+    /**
+     * Keeps the page's adapter's replies to every later registration back until `answer` is called, as js-debug answers a registration only once it has set the breakpoint in every script of the page while the page can already pause at it (Cycle 0136, F2): until the reply the run knows no id of that breakpoint in the page.
+     * A held reply sends its verification news ({@link verifyRegistrationsByNews}) when it is released; replies a test never releases are dropped with the harness on purpose (the bounded-hold test needs an answer that never comes).
+     * @returns `answer`, which sends the held replies in order and lets later ones through at once.
+     * @example
+     * const answers = harness.holdBrowserAnswers()
+     * await harness.run.prepare()
+     * harness.pauseBrowserInReactServerCopy(harness.breakpoints[0]!)
+     * answers.answer()
+     */
+    holdBrowserAnswers(): { answer(): void } {
+      heldBrowserAnswers = []
+      return {
+        answer: (): void => {
+          const held = heldBrowserAnswers ?? []
+          heldBrowserAnswers = undefined
+          for (const respond of held) respond()
+        },
+      }
+    },
+    /** Makes the page's adapter alone answer every later registration as verified at this place, as js-debug binds a server stop's breakpoint in React's copy of the module on another line than the server does; the stop's owner refuses that place for the page session, and the server's answer is unchanged (Cycle 0136, F2). @example harness.answerBrowserRegistrationsAt(40, 1) */
+    answerBrowserRegistrationsAt(line: number, column: number): void {
+      browserAnsweredAt = { line, column }
+    },
     /** Leaves every registration request unanswered that holds a breakpoint requested at this one-based column, as an adapter that has not replied yet does. @example harness.leaveRegistrationUnansweredAtColumn(1) */
     leaveRegistrationUnansweredAtColumn(column: number): void {
       unansweredColumn = column
@@ -1634,6 +1716,36 @@ export async function nativeParticipantsHarness(
     },
     /** Moves a manual clock forward and fires every run timer that is due by then; it does nothing for a run on real timers. @example harness.advance(20_000) */
     advance: manualClock.advance,
+    /**
+     * Pauses the page in one of its own scripts that no declared stop owns, then reports the adapter's `stopped` naming a breakpoint of the page's own (adapter id 999), as a pause nobody declared arrives.
+     * @param scriptUrl - The address the page announces for the paused script.
+     * @param place - The zero-based generated line and column of the pause.
+     * @example harness.pauseBrowserInOwnScript('webpack-internal:///(app-pages-browser)/./app/ui/search.tsx', 4, 2)
+     */
+    pauseBrowserInOwnScript(
+      scriptUrl: string,
+      place: { lineNumber: number; columnNumber: number },
+    ): void {
+      listeners.browser.get('Debugger.scriptParsed')?.({
+        scriptId: 'page-own-script',
+        url: scriptUrl,
+        executionContextId: 1,
+      })
+      listeners.browser.get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: 'page-own-script',
+          scriptId: 'page-own-script',
+          ...place,
+          hitBreakpoints: ['page-own'],
+        }),
+      )
+      run.onEvent(sessions.browser, {
+        type: 'event',
+        seq: ++sequence,
+        event: 'stopped',
+        body: { reason: 'breakpoint', threadId: 1, hitBreakpointIds: [999] },
+      })
+    },
     emitBrowserAdapterPause(): void {
       listeners.browser.get('Debugger.paused')?.(
         debuggerPausedEvent({

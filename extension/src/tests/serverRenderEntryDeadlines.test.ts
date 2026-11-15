@@ -229,3 +229,49 @@ test('an entry pause held while the resume of another route is unanswered keeps 
     /^Repository pause hold deadline exceeded/,
   )
 })
+
+// Value: protects=Cycle 0136 native check (VS Code chat runs 034a0f52 and 45bc1d7c, window-bridge run e20a469e): a render the warmed entry page started by itself reaches the first entry-render stop while the run still arms the others, before the entry navigation; that pause is held and published, and the 20 s bound of a stop not yet reached never replaces its hold, so the learner reads it past 20 s; fails_when=the bound starts after the arming and ends the held run with SERVER_STOP_NOT_REACHED ("…within 20 s of the entry navigation") while the first stop is paused; why_new=every other deadline test hits the first stop after the entry navigation; seam=the harness sends the hit right after it answers the second stop's registration (hitWhileStopsArm) to stand in for the warmed page's re-render; no_claim=what makes the warmed page render again natively; the run's manual clock moves, not real time
+test('an entry-render stop that pauses while the later stops are armed keeps its hold past 20 s', async (context) => {
+  // Arrange: a render already under way hits the first stop while the run arms the second, before the entry navigation.
+  const harness = await twoStopHarness(context)
+  harness.server!.hitWhileStopsArm({ route: '/dashboard' })
+  void harness.run.prepare().catch(() => undefined)
+  await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published entry-render pause',
+  )
+  // Act: the learner reads the pause for 25 s.
+  harness.advance(25_000)
+  // Assert
+  assert.deepEqual([...harness.run.view().failures], [])
+  assert.equal(harness.run.view().status, 'paused-server')
+})
+
+// Value: protects=the same arm-time pause, once continued, lets the run arm nothing twice: it reaches the second entry-render stop and completes when the page loads; fails_when=the continue is refused, the second stop is taken as an additional or unowned stop, or the page load never completes the run; why_new=the deadline test above stops at the held pause; seam=hitWhileStopsArm stands in for the warmed page's re-render; no_claim=the 20 s bound (the clock does not move here)
+test('after a pause taken while the later stops were armed, the run reaches the next entry-render stop and completes', async (context) => {
+  // Arrange: the first stop paused while the second was armed.
+  const harness = await twoStopHarness(context)
+  harness.server!.hitWhileStopsArm({ route: '/dashboard' })
+  const prepared = harness.run.prepare()
+  const first = await waitUntil(
+    () => harness.run.view().participants.server?.snapshot,
+    'the published entry-render pause',
+  )
+  // Act: the first stop is continued, the second is hit and continued, and the page loads.
+  await harness.run.continue('server', first.pause)
+  harness.server!.hit(SECOND_STOP_HIT)
+  const second = await waitUntil(
+    () => harness.run.view().snapshots[1],
+    'the second entry pause',
+  )
+  await harness.run.continue('server', second.pause)
+  harness.setDocumentReadyState('complete')
+  await prepared
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'the run completed',
+  )
+  // Assert
+  assert.deepEqual([...harness.run.view().failures], [])
+  assert.equal(harness.run.view().snapshots.length, 2)
+})

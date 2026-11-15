@@ -302,9 +302,9 @@ test('a pause at another column of the declared line is not recorded as the entr
   // Assert
   const view = harness.run.view()
   assert.equal(view.snapshots.length, 0)
-  assert.equal(
-    view.failures[0],
-    'Error: DAP frame differs from the bound configured source position',
+  assert.match(
+    view.failures[0]!,
+    /^Error: DAP frame differs from the bound configured source position \(frame .+[\\/]theme\.ts:1:5, bound .+[\\/]theme\.ts:unknown\)$/,
   )
 })
 

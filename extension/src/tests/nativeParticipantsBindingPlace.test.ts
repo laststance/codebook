@@ -2327,3 +2327,60 @@ test('the debugger’s own pause at the first position of a browser stop’s own
   assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 1)
   assert.equal(harness.run.view().snapshots.length, 2)
 })
+
+// protects=a server stop whose breakpoint the editor places at one column of its line (the call's paren) pauses and is recorded at the paused frame's column when the debugger's stopped event names the stop's own breakpoint; fails_when=the exact column comparison refuses the pause and the run fails with "DAP frame differs from the bound configured source position"; no_claim=a real js-debug or VS Code (the editor answer and the DAP frame columns are scripted from run f425433e's journal shape)
+test('a server stop whose breakpoint the editor places at another column of its line than the paused frame is recorded at the frame’s column when the pause hits the stop’s own breakpoint', async (context) => {
+  // Arrange: the editor answers the breakpoint at 1:1, the runtime pauses at generated 0:6 (source 1:7), the DAP frame says 1:7 and the stopped event names breakpoint 12.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  harness.pauseAt('server', 0, 6)
+  harness.bindAt('server', 1, 1)
+  harness.movePausedFrame(1, 7)
+  harness.reportHitBreakpoints([12])
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [1, 7])
+  assert.deepEqual(
+    journaled(harness, 'breakpoint.frame-column-attributed').map(
+      (entry) => (entry as { hitBreakpointIds: number[] }).hitBreakpointIds,
+    ),
+    [[12]],
+  )
+})
+
+// protects=a pause on the bound line at another column whose stopped event names a different breakpoint is never taken for the stop, and the failure names the frame's and the bound place; fails_when=the column difference is accepted without the stop's own breakpoint in the hit ids, or the failure text names no place; no_claim=a real adapter's hit ids (scripted as [999])
+test('a server stop paused at another column of its bound line whose stopped event names another breakpoint is refused, naming the frame’s and the bound place', async (context) => {
+  // Arrange: same places as the accepted case, but the stopped event names breakpoint 999.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    declaredColumn: { server: 7 },
+    mappings: { server: 'AAAA,MAAM' },
+  })
+  await harness.run.prepare()
+  harness.pauseAt('server', 0, 6)
+  harness.bindAt('server', 1, 1)
+  harness.movePausedFrame(1, 7)
+  harness.reportHitBreakpoints([999])
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the pause naming another breakpoint was refused',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.match(
+    harness.run.view().failures[0]!,
+    /^Error: DAP frame differs from the bound configured source position \(frame .+:1:7, bound .+:1:1\)$/,
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+  assert.equal(
+    journaled(harness, 'breakpoint.frame-column-attributed').length,
+    0,
+  )
+})
