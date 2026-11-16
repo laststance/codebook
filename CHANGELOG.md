@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.137.0] - 2026-11-16 (development candidate)
+
+Cycle 0140 ([Issue #350](https://github.com/laststance/codebook/issues/350)), a feature cycle. **The packaged README now says what was checked on Ubuntu from the standard chats.** On Ubuntu 24.04, a `/codebook` request in Copilot Chat in VS Code and in Agent in Cursor each ran a Next app's browser run with stops, saved it and replayed it in the native debugger. Each editor's AI generated an LLM Wiki whose citations opened the cited line in that editor. No Linux defect was found, and Codebook's own code is unchanged in this version.
+
+### Changed
+- **The README's Ubuntu paragraph names the chat-driven checks and their limits.** It lists what ran in each editor and says that the Wiki reader's questions in Cursor need the Cursor Agent CLI installed and signed in, which was not checked. It also corrects an earlier sentence, which said the Vitest run on Ubuntu was checked with a replay; it was checked with its saved learning.
+- **The README names the first-use questions a learner meets on Linux.** On the first citation click, the browser asks whether to open `vscode://` or `cursor://` links and the editor asks whether Codebook may open the link. On the reader's first question, VS Code asks whether Codebook may use its language models. On Ubuntu the editor's question can stay behind the browser until you bring the editor forward.
+
 ## [0.2.136.0] - 2026-11-16 (development candidate)
 
 Cycle 0139 ([Issue #348](https://github.com/laststance/codebook/issues/348)), a feature cycle. **On a Linux desktop whose keyring is locked, a browser run's first page load now reaches the app.** Before, every Chrome that Codebook starts waited for its cookie key from the locked keyring, and the run failed with `CDP Page.navigate timed out`. The fix was found in this cycle's first native run on Ubuntu 24.04. The README now names what was checked on Ubuntu and what was not.
