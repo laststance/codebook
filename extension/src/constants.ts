@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.135'
+export const EXTENSION_VERSION = '0.2.136'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -2169,6 +2169,12 @@ export const SIGN_IN_RECORD_VERSION = 1
 export const SIGN_IN_RECORD_LIMIT_BYTES = 4_096
 /** The `--disk-cache-size` of a saved-session Chrome (50 MiB), so the folder keeps cookies and storage but little cache. */
 export const SIGN_IN_PROFILE_DISK_CACHE_BYTES = 52_428_800
+/**
+ * The switch that keeps the key Chrome encrypts cookies with out of the OS keyring, given to every Chrome Codebook spawns (the run's managed browser, the extension run's browser, the saved-session setup and the address probe).
+ * Why: on a Linux desktop whose Secret Service keyring is present but locked (auto-login, a desktop without a login keyring), Chrome waits for that key before it sends any request, so a run's first page load never reaches the app and fails with `CDP Page.navigate timed out` (Cycle 0139, Ubuntu 24.04).
+ * Chrome reads the switch on Linux only; macOS (Keychain) and Windows (DPAPI) ignore it. Browser automation tools pass it for the same reason.
+ */
+export const CHROME_BASIC_PASSWORD_STORE_ARGUMENT = '--password-store=basic'
 /** How long a setup may stay open before it closes without Done (10 minutes). */
 export const SIGN_IN_SETUP_TIMEOUT_MS = 600_000
 /** When an open setup warns that it closes soon (minute 8, two minutes before {@link SIGN_IN_SETUP_TIMEOUT_MS}). */

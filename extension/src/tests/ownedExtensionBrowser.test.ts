@@ -147,6 +147,7 @@ test('launch starts Chrome with its own profile and a random port, and never wit
     '--headless=new',
     '--no-first-run',
     '--no-default-browser-check',
+    '--password-store=basic',
     `--user-data-dir=${browser.profile}`,
     'about:blank',
   ])

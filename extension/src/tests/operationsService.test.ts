@@ -364,7 +364,7 @@ test('while the learner is asked, the same key joins the question and another ke
   assert.equal(other.describe().details?.reason, 'awaiting-confirmation')
 })
 
-// protects=DX-2: a continuation that ends in OPERATION_AFTER_NOT_MET reaches the MCP boundary as isError true with ok false, the coded error carrying the operation's fields and the partial run state; fails_when=the result is ok true, the code is RUNTIME_FAILED, or the fields or the run state are missing; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so
+// protects=DX-2: a continuation that ends in OPERATION_AFTER_NOT_MET reaches the MCP boundary as isError true with ok false, the coded error carrying the operation's fields and the partial run state; fails_when=the result is ok true, the code is RUNTIME_FAILED, or the fields or the run state are missing; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so; which of failed, stopping or stopped the state reads (the service releases a failed run within one maintenance interval, and CI's coverage run of Cycle 0139 answered after the release)
 test('a version 3 run that fails after a continuation answers isError with OPERATION_AFTER_NOT_MET, its fields and the run state', async (context) => {
   // Arrange
   const { service, receipt, runtime } = await startOperationsRun(
@@ -407,7 +407,11 @@ test('a version 3 run that fails after a continuation answers isError with OPERA
   const structured = result.structuredContent as {
     ok: boolean
     error: { code: string; recovery: string; details: Record<string, unknown> }
-    state: { state: string; operations: { state: string }[] }
+    state: {
+      state: string
+      error: { code: string }
+      operations: { state: string }[]
+    }
   }
   assert.equal(structured.ok, false)
   assert.equal(structured.error.code, 'OPERATION_AFTER_NOT_MET')
@@ -424,11 +428,16 @@ test('a version 3 run that fails after a continuation answers isError with OPERA
     retry: 'Never retry automatically; ask the learner.',
     logId: `${receipt.runId}#1`,
   })
-  assert.equal(structured.state.state, 'failed')
+  // The service releases a failed run within one maintenance interval, so a loaded runner can answer after the release: the run then reads stopping or stopped and keeps its failure in state.error.
+  assert.ok(
+    ['failed', 'stopping', 'stopped'].includes(structured.state.state),
+    `the failed run reads ${structured.state.state}`,
+  )
+  assert.equal(structured.state.error.code, 'OPERATION_AFTER_NOT_MET')
   assert.equal(structured.state.operations[0]?.state, 'failed')
 })
 
-// protects=DX-2 as a defect fix for version 1 and 2: a repository-browser run of the single action that fails after a continuation also answers isError true with the run state; fails_when=the failure is answered as ok true; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so
+// protects=DX-2 as a defect fix for version 1 and 2: a repository-browser run of the single action that fails after a continuation also answers isError true with the run state; fails_when=the failure is answered as ok true, or the run state lacks the failure; no_claim=the real run's failure (run tests); the synthetic runtime fails when the test says so; which of failed, stopping or stopped the state reads (the service releases a failed run within one maintenance interval)
 test('a single-action run that fails after a continuation answers isError with the run state', async (context) => {
   // Arrange
   const { service, configuration, runtimes } =
@@ -462,11 +471,16 @@ test('a single-action run that fails after a continuation answers isError with t
   const structured = result.structuredContent as {
     ok: boolean
     error: { code: string }
-    state: { state: string }
+    state: { state: string; error: { code: string } }
   }
   assert.equal(structured.ok, false)
   assert.equal(structured.error.code, 'RUNTIME_FAILED')
-  assert.equal(structured.state.state, 'failed')
+  // The service releases a failed run within one maintenance interval, so a loaded runner can answer after the release: the run then reads stopping or stopped and keeps its failure in state.error.
+  assert.ok(
+    ['failed', 'stopping', 'stopped'].includes(structured.state.state),
+    `the failed run reads ${structured.state.state}`,
+  )
+  assert.equal(structured.state.error.code, 'RUNTIME_FAILED')
 })
 
 // protects=DX-2 for codebook_action: an action sent to a repository-browser run that already failed, and that the service has released since (it does so within a maintenance interval, before an agent's next action as a rule), answers isError true with the error and the run state; fails_when=the result carries no run state; no_claim=none beyond protects (Cycle 0111: the action used to race the release, and CI's coverage run lost the state)

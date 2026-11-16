@@ -15,6 +15,7 @@ import * as vscode from 'vscode'
 
 import {
   ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS,
+  CHROME_BASIC_PASSWORD_STORE_ARGUMENT,
   MANAGED_PROFILE_OWNER_FILE,
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_REMOVAL_RETRIES,
@@ -997,12 +998,14 @@ export class HostBrowser {
    * Names the switches of the managed Chrome launch: a headless browser on the debugging pipe, plus the disk-cache cap for the saved session's folder and the declared host's pin.
    * Called by {@link launch}.
    * @returns The `runtimeArgs` of the debugger configuration.
-   * @example this.managedRuntimeArgs() // => ['--headless=new', '--remote-debugging-pipe']
+   * @example this.managedRuntimeArgs() // => ['--headless=new', '--remote-debugging-pipe', '--password-store=basic']
    */
   private managedRuntimeArgs(): string[] {
     return [
       '--headless=new',
       '--remote-debugging-pipe',
+      // Chrome never waits on a locked Linux keyring for its cookie key, so the first page load reaches the app (Cycle 0139).
+      CHROME_BASIC_PASSWORD_STORE_ARGUMENT,
       // The saved folder keeps the learner's session; its cache is capped so it does not grow with every run.
       ...(this.savedLease
         ? [`--disk-cache-size=${SIGN_IN_PROFILE_DISK_CACHE_BYTES}`]
