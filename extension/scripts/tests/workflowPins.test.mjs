@@ -488,7 +488,7 @@ test('the reader DOM workflow installs playwright-cli from its lockfile, no job 
       'echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"',
     ],
   )
-  assert.deepEqual(toolManifest.dependencies, { '@playwright/cli': '0.1.22' })
+  assert.deepEqual(toolManifest.dependencies, { '@playwright/cli': '0.1.24' })
   assert.deepEqual(Object.keys(toolLockfile.packages), [
     '',
     'node_modules/@playwright/cli',
@@ -497,7 +497,7 @@ test('the reader DOM workflow installs playwright-cli from its lockfile, no job 
   ])
   assert.equal(
     toolLockfile.packages['node_modules/@playwright/cli'].version,
-    '0.1.22',
+    '0.1.24',
   )
   assert.deepEqual(packagesWithoutIntegrity, [])
   assert.deepEqual(builds, ['node scripts/build-fast.mjs'])
@@ -774,9 +774,9 @@ test('the Reader DOM job keeps the video encoder between runs under a key that n
   assert.deepEqual(restoreInputs, [
     'with:',
     'path: ~/.cache/ms-playwright/ffmpeg-*',
-    "key: playwright-cli-0.1.22-ffmpeg-${{ runner.os }}-${{ hashFiles('.github/reader-dom/package-lock.json') }}",
+    "key: playwright-cli-0.1.24-ffmpeg-${{ runner.os }}-${{ hashFiles('.github/reader-dom/package-lock.json') }}",
   ])
-  assert.deepEqual(toolManifest.dependencies, { '@playwright/cli': '0.1.22' })
+  assert.deepEqual(toolManifest.dependencies, { '@playwright/cli': '0.1.24' })
   assert.deepEqual(download, [
     '- name: Install the video encoder',
     'run: playwright-cli install-browser ffmpeg',
@@ -1022,7 +1022,7 @@ test('the install pin knows a package or a download named on a command line for 
   const commands = [
     'npm ci --ignore-scripts',
     'pnpm --dir extension install --frozen-lockfile',
-    'npm install @playwright/cli@0.1.22',
+    'npm install @playwright/cli@0.1.24',
     'npx playwright install',
     'pnpm dlx fallow',
     'yarn add left-pad',
@@ -1042,7 +1042,7 @@ test('the install pin knows a package or a download named on a command line for 
 
   // Assert: the two lockfile installs and the build pass; every command that names what it installs is listed.
   assert.deepEqual(installsByName, [
-    'npm install @playwright/cli@0.1.22',
+    'npm install @playwright/cli@0.1.24',
     'npx playwright install',
     'pnpm dlx fallow',
     'yarn add left-pad',

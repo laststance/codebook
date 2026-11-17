@@ -345,7 +345,7 @@ Formatting: `pnpm --dir extension format` / `format:check` and lint-staged hook 
 **Reader DOM** (`reader-dom.yml`).
 
 - Five checks: `study-bootstrap-qa.mjs`, `wiki-reader-dom-qa.mjs` (Wiki reader rail with end sentences, 640–1200 px; at 960 × 600 they fit rail ≤ 45vh), `study-reading-pose-qa.mjs`, `understanding-focus-qa.mjs`, `repository-return-qa.mjs`. Each `extension/scripts/*-qa.mjs` runs in workflow or listed retired in `workflowPins.test.mjs`.
-- Setup once per checkout or worktree, before gate (its five Reader DOM checks) or Reader DOM check runs there (`npm ci` again after lockfile changes): `(cd .github/reader-dom && npm ci --ignore-scripts)` (pins `playwright-cli` 0.1.22); `export PATH="$PWD/.github/reader-dom/node_modules/.bin:$PATH"`; `playwright-cli install-browser ffmpeg`; installed Chrome (or `PLAYWRIGHT_MCP_EXECUTABLE_PATH`).
+- Setup once per checkout or worktree, before gate (its five Reader DOM checks) or Reader DOM check runs there (`npm ci` again after lockfile changes): `(cd .github/reader-dom && npm ci --ignore-scripts)` (pins `playwright-cli` 0.1.24); `export PATH="$PWD/.github/reader-dom/node_modules/.bin:$PATH"`; `playwright-cli install-browser ffmpeg`; installed Chrome (or `PLAYWRIGHT_MCP_EXECUTABLE_PATH`).
 - Run `node extension/scripts/<check>-qa.mjs verify <folder>` after build, one folder per concurrent run. Check passes flow to browser CLI as file (arguments > 131,072 bytes fail with `spawn E2BIG`).
 - New case: uses only `page`, `options` and own definitions (no import; `page.evaluate` takes values as arguments); writes revisions as `revisionAt(n)` (Saved studies: `savedRevision`); fails first under `red <folder>` (all five checks take it).
 
