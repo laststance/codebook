@@ -1,9 +1,9 @@
 # Product goal
 
-Goal version: 11\
+Goal version: 12\
 Owner: Raphtalia\
 Initial design approved: 2026-09-18\
-Product direction: D030–D036 (2026-09-26: synchronized replay, skill-driven DeepWiki, desktop and shortcut contracts, adopted v9 visual target); target operating systems (2026-10-05); approved PNG moved out of the retired docs folder (2026-11-03; outcomes unchanged)
+Product direction: D030–D036 (2026-09-26: synchronized replay, skill-driven DeepWiki, desktop and shortcut contracts, adopted v9 visual target); target operating systems (2026-10-05); approved PNG moved out of the retired docs folder (2026-11-03; outcomes unchanged); Devin Desktop as a third supported editor and nine more final-acceptance projects, P10–P18 (owner, 2026-11-22)
 
 This file owns Codebook's outcomes, feature contracts, design target and acceptance. It specifies outcomes, not implementation. Every section is normative. Read `## Final acceptance protocol` and the archived [skill][skill-plan] and [Wiki-generation][gen-skill] plans when their work is selected. The active cycle Issue holds implementation state and evidence ([AGENTS.md](AGENTS.md#where-things-live)). Historical evidence and external references are reference material. These requirements live here; an Issue may repeat one but is never its only place.
 
@@ -16,11 +16,11 @@ This file owns Codebook's outcomes, feature contracts, design target and accepta
 
 ## Product purpose and feature relationships
 
-Codebook helps the learner understand AI-written code, unfamiliar work codebases and OSS in **both Visual Studio Code and Cursor**:
+Codebook helps the learner understand AI-written code, unfamiliar work codebases and OSS in **Visual Studio Code, Cursor and Devin Desktop**:
 
 | Feature | The learner | Result and relationship |
 | --- | --- | --- |
-| Live code explanation | asks the editor's standard AI chat to explain a real code path; the AI operates the real app and debugger, pauses in actual source, explains and continues. | In Copilot Chat or Cursor Agent, with the application/browser, native source editor and native debugger as execution context. No Wiki needed. |
+| Live code explanation | asks the editor's standard AI chat to explain a real code path; the AI operates the real app and debugger, pauses in actual source, explains and continues. | In Copilot Chat, Cursor Agent or Devin Local, with the application/browser, native source editor and native debugger as execution context. No Wiki needed. |
 | Learning replay / time-travel debugging | saves an explained session, then repeatedly plays, seeks backward/forward and revisits its recorded execution. | Application video, executing source and native-debugger history stay synchronized; a learning summary replaces the chat area; a library opens replays ([contract](#contract-learning-replay)). |
 | LLM Wiki / DeepWiki | has the editor AI create/update the codebase's DeepWiki with a carefully authored skill; reads it, asks repository questions, follows source links into the local editor. | DeepWiki's full experience with local/configurable output, independent of live explanation, debug MCP, application browser and replay; the skill-driven agent owns generation quality ([contract](#contract-llm-wiki)). |
 
@@ -48,7 +48,7 @@ In a real project with a purchase flow, the learner might ask:
 
 The chat AI inspects the repository, operates its actual application, pauses the debugger at meaningful source locations and explains, for example, how the purchase button relates to a backend POST request. It must tell a stop before sending from an observed sent request: a source line alone does not prove a completed network operation. The learner inspects variables, watches and call stacks in the **editor's native debugger**, then can save the session as a **learning replay with time-travel debugging**.
 
-Purchase is only an example. Required targets use their own real behavior, including server, Chrome Extension, library test and supplied Example execution, in real opened repositories. The extension bundles no cart/sample target; a fabricated application never replaces a required target. Until final acceptance, development validation uses the owner-designated `nextjs-dashboard` checkout at `/Users/ryotamurakami/repository/nextjs-dashboard` (D031, [AGENTS.md](AGENTS.md#development-target)): development evidence only, not a tenth target, replacing none of the nine and filling or passing no final row. Final acceptance uses the unchanged nine-project matrix.
+Purchase is only an example. Required targets use their own real behavior, including server, Chrome Extension, library test and supplied Example execution, in real opened repositories. The extension bundles no cart/sample target; a fabricated application never replaces a required target. Until final acceptance, development validation uses the owner-designated `nextjs-dashboard` checkout at `/Users/ryotamurakami/repository/nextjs-dashboard` (D031, [AGENTS.md](AGENTS.md#development-target)): development evidence only, not an additional target, replacing none of the eighteen and filling or passing no final row. Final acceptance uses the eighteen-project matrix.
 
 ## Required final capabilities
 
@@ -64,13 +64,13 @@ IDs stay stable for historical evidence. Active: **G01–G07 and G10–G12**. G0
 | G06 | The extension-owned MCP/native-debugger services support live explanation and synchronized learning replay; independent DeepWiki uses the editor agent's source/file capabilities and generation skill. | Actual external-chat runtime/replay use in each host, with target/source identity, lifecycle/error handling and recovery. Wiki transport: [skill-first generation](#skill-first-generation-architecture). |
 | G07 | One coherent UI design supports live explanation, learning library/replay and independent Wiki entry points. | AC-ENTRY, AC-DESKTOP, AC-SHORTCUTS. |
 | G08, G09 | **Retired:** the mandatory Living book (G08) and Guided walkthrough (G09) display variants. | D030 removes the selectable-theme requirement and defines learning replay and the independent LLM Wiki; reading/Wiki and live explanation/replay stay required above. |
-| G10 | The packaged extension is useful on all nine required real projects, without a bundled target application. | The two-stage [protocol](#final-acceptance-protocol) in both hosts, on TypeScript and JavaScript targets: every applicable Web UI, Node server, Chrome Extension, library test and Example form; every library needs both tests and Examples; browser-only evidence shows no server or Chrome Extension support. |
-| G11 | The complete active product experience works in both VS Code and Cursor. | Separate normally installed evidence per editor for standard chat execution, native debugger inspection, learning replay, independent Wiki/update/source links and feature navigation; one host's evidence verifies no other. |
-| G12 | One bundled thin skill supports explicit `/codebook` use in standard Copilot Chat and Cursor Agent with ordinary skill/MCP setup. | [Skill section](#bundled-thin-skill-and-explicit-chat-entry); Final acceptance step 8. |
+| G10 | The packaged extension is useful on all eighteen required real projects, without a bundled target application. | The two-stage [protocol](#final-acceptance-protocol) in both hosts, on TypeScript and JavaScript targets: every applicable Web UI, Node server, Chrome Extension, library test and Example form; every library needs both tests and Examples; browser-only evidence shows no server or Chrome Extension support. |
+| G11 | The complete active product experience works in VS Code, Cursor and Devin Desktop. | Separate normally installed evidence per editor for standard chat execution, native debugger inspection, learning replay, independent Wiki/update/source links and feature navigation; one host's evidence verifies no other. |
+| G12 | One bundled thin skill supports explicit `/codebook` use in standard Copilot Chat, Cursor Agent and Devin Local with ordinary skill/MCP setup. | [Skill section](#bundled-thin-skill-and-explicit-chat-entry); Final acceptance step 8. |
 
 ## Bundled thin skill and explicit chat entry
 
-G12 is mandatory for every active capability. The standard chat surfaces are **Copilot Chat in VS Code** and **Agent in Cursor**. Users invoke the common skill explicitly with a natural request, not relying on automatic skill selection:
+G12 is mandatory for every active capability. The standard chat surfaces are **Copilot Chat in VS Code**, **Agent in Cursor** and **Devin Local in Devin Desktop**. Users invoke the common skill explicitly with a natural request, not relying on automatic skill selection:
 
 > /codebook ログイン処理を解説して
 >
@@ -78,7 +78,7 @@ G12 is mandatory for every active capability. The standard chat surfaces are **C
 
 Invocation puts Codebook's usage guidance in the chat AI's context so the AI itself performs the workflow. Discovering or loading the skill and performing the workflow are separate acceptance checks.
 
-**One versioned artifact.** One common `SKILL.md` (frontmatter `name: codebook`) ships in the extension's VSIX, its version and content tracked and distributed with the extension; both editors share one procedure body. VS Code registers it through the official `contributes.chatSkills` contribution. In Cursor, the primary route is a Codebook setup operation in ordinary onboarding that installs it into the officially supported user skill directory (`~/.cursor/skills/codebook/SKILL.md`, to verify in the declared target version). Users never have to find, author or manually copy the skill body. A Cursor plugin-registration API is an alternative only once its normally installed target version shows skill discovery, `/codebook` visibility and actual invocation; an API name in documentation is no compatibility proof.
+**One versioned artifact.** One common `SKILL.md` (frontmatter `name: codebook`) ships in the extension's VSIX, its version and content tracked and distributed with the extension; every editor shares one procedure body. VS Code registers it through the official `contributes.chatSkills` contribution. In Cursor, the primary route is a Codebook setup operation in ordinary onboarding that installs it into the officially supported user skill directory (`~/.cursor/skills/codebook/SKILL.md`, to verify in the declared target version). Users never have to find, author or manually copy the skill body. A Cursor plugin-registration API is an alternative only once its normally installed target version shows skill discovery, `/codebook` visibility and actual invocation; an API name in documentation is no compatibility proof. In Devin Desktop, the same setup operation installs it into Devin's documented user skill directory (`~/.config/devin/skills/codebook/SKILL.md`, to verify in the declared target version); Devin Desktop turns its built-in VS Code chat off by default, so Devin Local, not that chat, is its standard chat.
 
 Track installed-file ownership, originating extension/skill version and content identity; document update, removal and restoration. Never overwrite or delete a pre-existing same-name user skill or later manual edits without the user's informed choice; a conflict keeps those bytes and offers an actionable resolution. User-level skill files are shared across windows, so dedicated windows do not isolate them: check ownership and current bytes before every update, removal or restoration.
 
@@ -86,7 +86,7 @@ Track installed-file ownership, originating extension/skill version and content 
 
 - Route by feature. Live/replay uses Codebook's MCP capabilities and starts with `codebook_status` (workspace, instance, current capabilities), disclosing an unavailable connection. A Wiki request is routed before requiring `codebook_status`, to the shared generation guidance and the agent's normal workspace read/write capabilities, with no live run, debugger or debug-MCP connection; unavailable runtime MCP never blocks it.
 - Follow the feature's public usage instructions and current state; for live/replay tools, refer to the MCP descriptions and public help instead of copying their contracts.
-- Live: source inspection, application operation, actual pauses/values in the native debugger, chat explanation, continuation, synchronized learning replay. Wiki: the [generation skill][gen-skill] inspects the repository, generates/updates full documentation, diagrams/citations and Q&A context, then validates quality. The thin entry may delegate detail within the same versioned distribution; both hosts use one procedure.
+- Live: source inspection, application operation, actual pauses/values in the native debugger, chat explanation, continuation, synchronized learning replay. Wiki: the [generation skill][gen-skill] inspects the repository, generates/updates full documentation, diagrams/citations and Q&A context, then validates quality. The thin entry may delegate detail within the same versioned distribution; every host uses one procedure.
 - Distinguish observed facts, source reasoning and unverified boundaries. Take continuation arguments from the current execution state; never guess or reuse stale ones.
 - Leave understanding checks to the learner; the AI never completes them for the learner.
 - State missing connections, unavailable capabilities and unmet prerequisites accurately; general source commentary is no successful Codebook execution or observation.
@@ -107,7 +107,8 @@ Specification, upstream documentation and registration metadata are not implemen
 - Chat, summaries, diagrams and Wiki pages distinguish observations, source-based reasoning and unknown boundaries; source-derived documentation is no evidence of executed behavior.
 - Preserve source/version context; disclose missing, truncated, redacted, partial or stale evidence. Learning and saved replay stay available without the original chat.
 - **Layout (D034):** an ordinary desktop display, editor/browser window expanded to the available space, normal/default zoom. OS full-screen is optional; extremely small windows and extreme zoom such as 200% are outside mandatory design and acceptance. At this layout, keep keyboard access, meaningful labels, focus/reading return, native themes (the four supported editor themes), readable contrast and reduced-motion behavior.
-- **Target operating systems** (owner, 2026-10-05; version 10 adds this constraint and no feature, and the v9 image stays the visual target): macOS, Windows and Linux, with Ubuntu as the supported distribution. Evidence names its system and stays separate per system, as per editor; a result on one verifies no other. Native use in a Windows editor comes in its own feature cycle, which also proposes how final acceptance, the nine-project rows included, covers the three systems; this version does not decide that.
+- **Target operating systems** (owner, 2026-10-05; version 10 adds this constraint and no feature, and the v9 image stays the visual target): macOS, Windows and Linux, with Ubuntu as the supported distribution. Evidence names its system and stays separate per system, as per editor; a result on one verifies no other. Native use in a Windows editor comes in its own feature cycle, which also proposes how final acceptance, the project rows included, covers the three systems; this version does not decide that.
+- **Supported editors** (owner, 2026-11-22; version 12 adds Devin Desktop and no feature, and the v9 image stays the visual target): Visual Studio Code, Cursor and Devin Desktop, Cognition's VS Code-based editor (formerly Windsurf), whose standard chat is **Devin Local**. G11 and G12 hold in each, with evidence kept apart per editor, as per system. Devin Desktop support comes in its own feature cycles, which also propose how final acceptance, the project rows included, covers the third editor; this version does not decide that, and the final acceptance protocol below still names VS Code and Cursor.
 - **Shortcuts (D035):** every assigned shortcut shows in its UI tooltip; **?** opens the list in eligible non-editing contexts ([contract](#contract-keyboard-shortcuts)).
 - **Visual target (D036):** implement the corrected v9 hierarchy and accepted interactions with each host's native surfaces ([Design target](#design-target)). The three old images are historical references only.
 
@@ -118,8 +119,8 @@ Specification, upstream documentation and registration metadata are not implemen
 3. Saved as replays, those explanations pass the [replay acceptance](#replay-acceptance).
 4. The repository's independently generated DeepWiki passes the [Wiki verification](#wiki-verification).
 5. Feature screens and entry point match the [Design target](#design-target) at D034, including focus, keyboard/theme/reduced-motion behavior and preservation of unrelated work; the [shortcut acceptance](#shortcut-acceptance) (D035) passes. Switching among the retired theme variants is no acceptance step.
-6. [Stage 1](#stage-1-main-agent-practical-validation) completes every project/host/use-case row of the [nine projects](#required-projects) through normal installed use.
-7. [Stage 2](#stage-2-nine-independent-junior-developer-reviewers) passes every required assessment ([verdicts](#verdicts-and-evidence)).
+6. [Stage 1](#stage-1-main-agent-practical-validation) completes every project/host/use-case row of the [eighteen projects](#required-projects) through normal installed use.
+7. [Stage 2](#stage-2-independent-junior-developer-reviewers-one-per-project) passes every required assessment ([verdicts](#verdicts-and-evidence)).
 8. G12 is verified separately in both stages, as four distinct findings per host: skill discovery and invocation, actual context loading (bundled vs loaded guidance identity), the correct current live/replay MCP connection, and AI-owned results for each feature, with missing-connection guidance, restart/reconnection, unavailable states and protection of existing skills/settings/work. Wiki generation quality and runtime-MCP independence are reported separately, with runtime MCP unavailable.
 9. [Retesting](#retesting-and-final-artifact-validity) keeps every final PASS valid for the final fixed distributed VSIX.
 10. Closure: all valid Stage 1 and Stage 2 rows; current evidence for all active IDs and integrated feature behavior, linked in the active cycle Issue; a verified distribution artifact; Raphtalia's separately recorded acceptance, which no subagent can give. Goal Issue #1 stays open until then.
@@ -134,7 +135,7 @@ The [Design target](#design-target) is the visual authority. Open and visually i
 
 ### Purpose and screen hierarchy
 
-Learning replay lets a learner repeatedly inspect how application behavior matches the code that executed and the runtime state at that moment. It is saved from a real code-path explanation in standard Copilot Chat or Cursor Agent while the AI operates the actual project and debugger. Its center is synchronized playback and time-travel debugging; the summary supports it.
+Learning replay lets a learner repeatedly inspect how application behavior matches the code that executed and the runtime state at that moment. It is saved from a real code-path explanation in standard Copilot Chat, Cursor Agent or Devin Local while the AI operates the actual project and debugger. Its center is synchronized playback and time-travel debugging; the summary supports it.
 
 The screen keeps the live composition: the recorded application, the historical executed source in a native source editor and historical values/call stacks in the standard debugger. The chat area becomes a **learning summary** (processing summary, saved explanation, sequence diagram): a Codebook-owned replay surface, not a replacement chat client or a change to native chat internals. The Activity Bar entry opens the learning library and the selected replay. A document-like reader with a small video thumbnail and source links never replaces synchronized source/debugger history. The native debugger is the inspection surface, live and in replay.
 
@@ -206,7 +207,7 @@ Reference: the real [DeepWiki repository reader](https://deepwiki.com/microsoft/
 - A complete, coherent repository-wide chapter hierarchy from the actual source: overview, architecture, major subsystems and modules/responsibilities, important code paths and processing relationships, supporting concepts, with source-cited explanations and diagrams where they clarify the code. A single chat answer, a page about one recorded session or disconnected source excerpts is insufficient.
 - DeepWiki's reading/navigation hierarchy, content density, relevant-source disclosure, inline file/location citations, page outline and diagrams. The specification image visibly names **DeepWiki reproduction** as its target.
 - Working repository Q&A in the reader, with source-grounded answers and usable citations; a drawn question box is no functional proof. Model/agent prerequisites stay visible; reading continues without them.
-- The accepted Codebook additions stay: local/configurable output, explicit chat/browser-button updates, an independent lifecycle and citations into the user's matching local VS Code/Cursor checkout. Source and output stay local under the configured agent's normal setup; indexing in the hosted DeepWiki service is not required.
+- The accepted Codebook additions stay: local/configurable output, explicit chat/browser-button updates, an independent lifecycle and citations into the user's matching local VS Code, Cursor or Devin Desktop checkout. Source and output stay local under the configured agent's normal setup; indexing in the hosted DeepWiki service is not required.
 
 Codebook's source links and local generation are deliberate adaptations. The reference observation is no evidence that Codebook implements any of them.
 
@@ -239,9 +240,9 @@ Updates come only from explicit chat or button requests; automatic background re
 
 ### Deep links to source
 
-Citations open the cited file and location in the editor in use: VS Code for a VS Code project, Cursor for a Cursor project. Bind the correct project root, so that a similarly named file or another checkout never receives the link. Moved projects, unavailable files and source drift get understandable guidance. Cited version context stays visible; current navigation stays distinct from historical cited text. Delivered reference, no further requirement: besides the inline citations, every page's right rail has **Open in VS Code** (**Open in Cursor** when Cursor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label.
+Citations open the cited file and location in the editor in use: VS Code for a VS Code project, Cursor for a Cursor project, Devin Desktop for a Devin Desktop project. Bind the correct project root, so that a similarly named file or another checkout never receives the link. Moved projects, unavailable files and source drift get understandable guidance. Cited version context stays visible; current navigation stays distinct from historical cited text. Delivered reference, no further requirement: besides the inline citations, every page's right rail has **Open in VS Code** (**Open in Cursor** or **Open in Devin Desktop** when that editor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label.
 
-One generated site may be opened from either editor. Its durable static pages keep a VS Code protocol fallback; the Codebook reader serves source and update links with the active host's registered scheme without changing the published files. A Cursor update keeps the VS Code fallback and both-host reader behavior. Direct offline file browsing stays readable, but its source/update links open only the editor named by the static fallback. Browser/OS protocol permission and editor installation belong in ordinary onboarding; generated pages never embed credentials or private connection tokens.
+One generated site may be opened from any supported editor. Its durable static pages keep a VS Code protocol fallback; the Codebook reader serves source and update links with the active host's registered scheme without changing the published files. A Cursor or Devin Desktop update keeps the VS Code fallback and every editor's reader behavior. Direct offline file browsing stays readable, but its source/update links open only the editor named by the static fallback. Browser/OS protocol permission and editor installation belong in ordinary onboarding; generated pages never embed credentials or private connection tokens.
 
 ### Wiki verification
 
@@ -267,7 +268,7 @@ Unmodified **?** acts only while a Codebook UI context is active and the user is
 
 ### Shortcut acceptance
 
-At D034, in VS Code, Cursor and the generated browser Wiki, verify every rule above against actual bindings and available contexts, plus platform notation, supported binding changes/conflicts, disabled states and a no-match search; replay time, source/debugger identity and reading context stay unchanged. A key label drawn in a mockup proves no working shortcut. Keep the ordinary keyboard, focus, theme, contrast and reduced-motion checks. Record actual interaction and inspect video frames where motion/focus transitions matter.
+At D034, in VS Code, Cursor, Devin Desktop and the generated browser Wiki, verify every rule above against actual bindings and available contexts, plus platform notation, supported binding changes/conflicts, disabled states and a no-match search; replay time, source/debugger identity and reading context stay unchanged. A key label drawn in a mockup proves no working shortcut. Keep the ordinary keyboard, focus, theme, contrast and reduced-motion checks. Record actual interaction and inspect video frames where motion/focus transitions matter.
 
 ## Design target
 
@@ -279,13 +280,13 @@ Status: owner approved on 2026-09-26 (D036); the corrected iteration 8 is adopte
 
 **This is the product's visual target. Open the actual PNG and inspect it with an image-viewing tool.** Read the required contracts in full and record entry and verification receipts, this inspection included, in the active cycle Issue ([Mandatory entry](AGENTS.md#mandatory-entry), [Working loop](AGENTS.md#working-loop)). The image header's "Review candidate" predates adoption; the approval and D036 set its status, and its bytes are unchanged since. GStack design discovery uses this section. Read the [behavioral design][design] before runtime/capture/replay changes and the [state/interaction review][review] before UI implementation.
 
-The sheet is a specification board of one design family with separate feature screens, not one screen with every feature. Host-owned VS Code/Cursor chrome uses each editor's native UI. Sample values, filenames, line numbers and timestamps are illustrative: neither pixel-exact native requirements nor execution evidence.
+The sheet is a specification board of one design family with separate feature screens, not one screen with every feature. Host-owned VS Code, Cursor and Devin Desktop chrome uses each editor's native UI. Sample values, filenames, line numbers and timestamps are illustrative: neither pixel-exact native requirements nor execution evidence.
 
 ### Required visible outcomes
 
 | Image region | Outcome | Acceptance |
 | --- | --- | --- |
-| 1 — Live explanation | Explanation in standard Copilot Chat/Cursor Agent beside the actual app, stopped source and native debugger, with native source/value inspection; bottom status with capture and **Save learning replay** (2A). | G01/G03/G06/G11/G12; AC-LIVE/AC-SAVE |
+| 1 — Live explanation | Explanation in standard Copilot Chat/Cursor Agent/Devin Local beside the actual app, stopped source and native debugger, with native source/value inspection; bottom status with capture and **Save learning replay** (2A). | G01/G03/G06/G11/G12; AC-LIVE/AC-SAVE |
 | 2 — Learning replay | The [replay](#contract-learning-replay): live composition with **Learning summary** in place of chat; one recorded playhead for video, executed source and historical native-debugger values/scopes/stack. | G03/G04/G05/G07; D032 |
 | 2 — Summary and gaps | Summary/sequence for time travel, explicit understanding, 5A collapse/reopen, 4A gaps. | AC-REPLAY/AC-GAPS/AC-LEARNING; D032/D034 |
 | 3 — Independent DeepWiki | [DeepWiki reproduction](#contract-llm-wiki) by the editor agent's generation skill, independent of live/replay and runtime/debug MCP. | G02/G06/G12; D033 |
@@ -296,7 +297,7 @@ The Activity Bar entry and learning library are required, although the board emp
 
 ### Layout and accessibility baseline
 
-D034 is set in [Product constraints](#product-constraints). Verify actual UI and motion in both hosts: visual comparison and motion evidence come from real UI, and this raster, the target, proves none of those behaviors.
+D034 is set in [Product constraints](#product-constraints). Verify actual UI and motion in every supported editor: visual comparison and motion evidence come from real UI, and this raster, the target, proves none of those behaviors.
 
 ### Example causality and evidence boundary
 
@@ -340,7 +341,7 @@ This map covers G01–G07 and G10–G12 (G08/G09 retired) and defines outcomes; 
 
 | Check | Goals | Outcome and required failure/preservation checks | Image region |
 | --- | --- | --- | --- |
-| AC-LIVE | G01, G03, G06, G11, G12 | G01 from a natural `/codebook` request in ordinary Copilot Chat and Cursor Agent, with native source/debugger usable beside the application. Wrong/background target, stale pause or reference, manual resume, source drift, an unavailable connection and missing/unresolved causal links stay explicit. [Defining experience](#defining-live-to-learning-experience); [runtime ownership][design-arch]. | 1 |
+| AC-LIVE | G01, G03, G06, G11, G12 | G01 from a natural `/codebook` request in ordinary Copilot Chat, Cursor Agent and Devin Local, with native source/debugger usable beside the application. Wrong/background target, stale pause or reference, manual resume, source drift, an unavailable connection and missing/unresolved causal links stay explicit. [Defining experience](#defining-live-to-learning-experience); [runtime ownership][design-arch]. | 1 |
 | AC-SAVE | G04, G05, G07, G11 | The [saved artifact](#capture-and-saved-learning-artifact) via bottom capture status and **Save learning replay**; saved items open through the learning library. Empty/loading/finalizing/failure/partial states are truthful; a failed save claims no durable completion; existing saved material and manual edits survive. [Review state table][review-states]. | 1 bottom, 2 |
 | AC-REPLAY | G03, G04, G06, G07, G11 | [Shared historical moment](#shared-historical-moment) and [replay acceptance](#replay-acceptance) (D032, 5A). | 2 |
 | AC-GAPS | G03, G04 | [Partial history](#partial-history-approved-choice-4a), also under direct seeking and repeated traversal. Required positive-flow history gaps still fail acceptance; the negative-control pass only proves truthful handling. | 2 timeline/caption |
@@ -349,18 +350,18 @@ This map covers G01–G07 and G10–G12 (G08/G09 retired) and defines outcomes; 
 | AC-WIKI-UPDATE | G02, G11 | [Output, generation and update](#output-generation-and-update), including 3A. | 3 update/output |
 | AC-SOURCE-LINKS | G02, G03, G11 | [Deep links to source](#deep-links-to-source). Replay citations keep their recorded-source context; reading return restores the originating location; reading stays usable if opening the editor fails. [Behavioral design][design]. | 2/3 source references |
 | AC-ENTRY | G07, G11 | The left Activity Bar icon leads to the learning library/replay and the independent Wiki, distinct screens of one coherent design. Unrelated editor groups, focus and reading state survive; old theme-selection/product flows are removed. [Behavioral design][design], [review][review]. | 1–3 |
-| AC-DESKTOP | G07, G11 | The D034 layout rules in both hosts and the Wiki browser, with usable controls/text and summary collapse/open keeping the learning context. Record the actual host/display/window/theme/zoom. | all |
+| AC-DESKTOP | G07, G11 | The D034 layout rules in every supported editor and the Wiki browser, with usable controls/text and summary collapse/open keeping the learning context. Record the actual host/display/window/theme/zoom. | all |
 | AC-SHORTCUTS | G07, G11 | [Shortcut contract](#contract-keyboard-shortcuts) (D035). | shortcut strip |
-| AC-SKILL | G06, G11, G12 | [Bundled thin skill](#bundled-thin-skill-and-explicit-chat-entry) in both standard chats through ordinary setup, verified as in Final acceptance step 8. Packaging, registration, discovery or loaded guidance alone is not workflow success. [Skill plan][skill-plan]. | — |
-| AC-REAL-PROJECTS | G10, G11 | Cart removal ([Product constraints](#product-constraints)), the dashboard for development ([Defining experience](#defining-live-to-learning-experience)) and the [nine projects](#required-projects) in both hosts at final acceptance. Inspect the final VSIX contents; preserve unrelated projects. | — |
+| AC-SKILL | G06, G11, G12 | [Bundled thin skill](#bundled-thin-skill-and-explicit-chat-entry) in every standard chat through ordinary setup, verified as in Final acceptance step 8. Packaging, registration, discovery or loaded guidance alone is not workflow success. [Skill plan][skill-plan]. | — |
+| AC-REAL-PROJECTS | G10, G11 | Cart removal ([Product constraints](#product-constraints)), the dashboard for development ([Defining experience](#defining-live-to-learning-experience)) and the [eighteen projects](#required-projects) in both hosts at final acceptance. Inspect the final VSIX contents; preserve unrelated projects. | — |
 
 ## Final acceptance protocol
 
-D029 fixes nine projects, each mandatory in both VS Code and Cursor, in two ordered stages; D030/D032/D033 define the evaluated behavior. The set is fixed, not a candidate pool: no deletion, easier substitution, demo or fixture replacement; historical fixture, demo and development preflight results fill no cell. Version 5's ten consecutive fresh reviewers, random selection, ten-repository recommendation, reuse and reset-to-zero (reviewer 1) policies are replaced; no consecutive-pass counter applies.
+D029 fixed nine projects (P01–P09), and the owner added nine more on 2026-11-22 (P10–P18, version 12); each of the eighteen is mandatory in both VS Code and Cursor, in two ordered stages; D030/D032/D033 define the evaluated behavior. The set is fixed, not a candidate pool: no deletion, easier substitution, demo or fixture replacement; historical fixture, demo and development preflight results fill no cell. Version 5's ten consecutive fresh reviewers, random selection, ten-repository recommendation, reuse and reset-to-zero (reviewer 1) policies are replaced; no consecutive-pass counter applies.
 
 ### Required projects
 
-| ID | Required project (P02–P09 on `https://github.com/`) | Execution mapping |
+| ID | Required project (P02–P10 and P12–P18 on `https://github.com/`) | Execution mapping |
 | --- | --- | --- |
 | P01 | Designated private work application (`zumen-fe`) | Next/React Pages Router |
 | P02 | `TanStack/query` | Library tests + browser/Node SSR Examples |
@@ -371,16 +372,27 @@ D029 fixes nine projects, each mandatory in both VS Code and Cursor, in two orde
 | P07 | `laststance/nsx` | Vite Web UI + Express Node server + Chrome MV3 popup/content/service worker |
 | P08 | `laststance/switch-time` | Web app + Hono Node API |
 | P09 | `laststance/gitbox` | Next Web UI + server-side actions/authentication |
+| P10 | `elysiajs/elysia` | Bun library: library tests (`test/`) + Examples (`example/`) |
+| P11 | A project created by `bun create elysia app` | Elysia web server on Bun |
+| P12 | `remix-run/remix` | Library tests (`packages/`) + Examples (`demos/`, `template/`) |
+| P13 | `voidzero-dev/void` | Every applicable form of all code under `packages/`, `platform/`, `playground/`, `scripts/` and `test/` |
+| P14 | `middleapi/orpc` | Every applicable form of all code under `apps/content/`, `benches/`, `packages/`, `playgrounds/` and `tests/` |
+| P15 | `solidjs/solid` | Library tests (`packages/`) + Examples (`examples/`) |
+| P16 | `drizzle-team/drizzle-orm` | Library tests (package folders and `integration-tests/`) + Examples |
+| P17 | `sveltejs/svelte` | Library tests (`packages/`) + Examples (`playgrounds/`) |
+| P18 | `vercel/eve` | Library tests (unit, integration, `e2e/`) + Examples (`examples/`, `apps/`) |
 
 The library labels encode the owner's mandatory test-plus-Example requirement, not inspection results. The D034 layout changes no project or runtime row.
 
 ### Mapping and evidence rules
 
-TypeScript and JavaScript are required. Before trials, inspect each repository's code/configuration at a pinned revision and expand it into rows for every applicable form: Web UI interaction, Node.js server processing, Chrome Extension contexts, library tests, library Examples. Record the mapping's source/configuration paths, entry points, real commands, dependencies, normal setup burden and required use cases. Never infer forms from repository names or assume a browser/Next.js-only scope; browser-only evidence establishes no server or Chrome Extension support. Per host, as separate rows, every library needs real test-executed code explained step by step and an executed Example's code/behavior explained; static source summaries cannot pass. Necessary unsupported forms are development gaps; support never narrows after finding them. NOT APPLICABLE needs code-based grounds and never removes a required target or its applicable runtime. Missing prerequisites or external dependencies are NOT RUN or BLOCKED with reasons, never PASS.
+TypeScript and JavaScript are required. Before trials, inspect each repository's code/configuration at a pinned revision and expand it into rows for every applicable form: Web UI interaction, Node.js or Bun server processing, Chrome Extension contexts, library tests (on Bun's test runner too), library Examples. For P13 and P14 the owner names the folders in scope: every applicable form found in all code under them (packages, platform code, playgrounds, scripts, benches, tests and the documentation app) is a row. Record the mapping's source/configuration paths, entry points, real commands, dependencies, normal setup burden and required use cases. Never infer forms from repository names or assume a browser/Next.js-only scope; browser-only evidence establishes no server or Chrome Extension support. Per host, as separate rows, every library needs real test-executed code explained step by step and an executed Example's code/behavior explained; static source summaries cannot pass. Necessary unsupported forms are development gaps; support never narrows after finding them. NOT APPLICABLE needs code-based grounds and never removes a required target or its applicable runtime. Missing prerequisites or external dependencies are NOT RUN or BLOCKED with reasons, never PASS.
 
 An Example that loads a library from a remote or unpinned source does not count as the checked-out library: establish a pinned correspondence first, and where an Example depends on a published version, verify that it matches the checked-out source before the trial. Chrome Extension rows need real extension contexts and isolated test data, not an HTTP-only reproduction. An internal test bypass never rescues an acceptance flow: establish the normal local service, dependency, auth and database prerequisites, without production data.
 
-Each stage has at least 18 project-host assessments, more with expanded use cases. Per host, the three feature areas are verified independently (Final acceptance 2–4); retired display themes are no rows; a new specification, an old fixture run or a coupled Wiki reader earns no PASS.
+Each stage has at least 36 project-host assessments, more with expanded use cases. Per host, the three feature areas are verified independently (Final acceptance 2–4); retired display themes are no rows; a new specification, an old fixture run or a coupled Wiki reader earns no PASS.
+
+**P11** is created with `bun create elysia app` when the candidate is frozen (Final acceptance 1): record the Bun version, the template's source and revision and the generated files' hashes. The same generated project serves both hosts and both stages and is regenerated only as a recorded retest.
 
 **P01** is exactly the owner's existing private work checkout named in the request, not an interchangeable application; its absolute local locator lives only in ignored private campaign metadata. Inspect it without changing the working tree, inventory existing changes, use authorized isolation when needed. Publish only the P01 alias and sanitized outcomes, never private source, business data, credentials or recordings; private evidence needs stable restricted locations and hashes, not copied contents.
 
@@ -388,11 +400,11 @@ Each stage has at least 18 project-host assessments, more with expanded use case
 
 When the complete candidate reaches the campaign, freeze it (Final acceptance 1; unknown identities recorded honestly) and run the actual rows with the packaged, normally installed extension and published setup/operations, as a paying customer would, in ordinary Copilot Chat and Cursor Agent with explicit `/codebook`. A development extension host is no acceptance evidence. The main agent personally completes every project/host/use-case row first, through ordinary onboarding and the stages below, stepping and resuming as needed, and verifies the features' ownership and independence. Record setup effort and whether ordinary users understand errors and can follow documented recovery. When development repairs are needed, preserve the failures, then install a newly identified package and retest normally.
 
-**Stage 2 starts only after all nine projects, both hosts and every required use case pass Stage 1, and the complete candidate has every active capability and integrated feature evidence under version 10.** Development successes never become Stage 1 passes later.
+**Stage 2 starts only after all eighteen projects, both hosts and every required use case pass Stage 1, and the complete candidate has every active capability and integrated feature evidence under version 10.** Development successes never become Stage 1 passes later.
 
-### Stage 2: nine independent junior-developer reviewers
+### Stage 2: independent junior-developer reviewers, one per project
 
-One fresh independent SubAgent per project (nine, owner-authorized), a junior developer new to the project's internals, personally operates and evaluates it in both hosts, results separate, across all required use cases. It gets only the frozen candidate, normal product documents, available target documentation, neutral natural understanding tasks and this protocol; never forked development history, main-agent model answers, internal workarounds, right stops/value lists, previous evaluations or prior verdicts. Reviewers may inspect actual source and runtime for their own understanding; the main agent never performs missing operations or finishes their interpretation. Serialize native operations against contention when needed. Passes need not be consecutive; one failure never blocks independent evaluation of another ready target.
+One fresh independent SubAgent per project (eighteen, owner-authorized), a junior developer new to the project's internals, personally operates and evaluates it in both hosts, results separate, across all required use cases. It gets only the frozen candidate, normal product documents, available target documentation, neutral natural understanding tasks and this protocol; never forked development history, main-agent model answers, internal workarounds, right stops/value lists, previous evaluations or prior verdicts. Reviewers may inspect actual source and runtime for their own understanding; the main agent never performs missing operations or finishes their interpretation. Serialize native operations against contention when needed. Passes need not be consecutive; one failure never blocks independent evaluation of another ready target.
 
 The central question: does normal use make this project's code easier to understand, without a material obstacle for a paying user, and can the reviewer justify that with confidence of at least 9/10? Confidence is subjective assurance about the evaluation, never a statistical success probability, unset until an actual evaluation.
 
@@ -437,7 +449,7 @@ An unattempted row is NOT RUN; an attempt issues PASS, FAIL or BLOCKED (not a PA
 
 A Stage 2 report adds the junior's own-word explanation of what was learned, evidence that it is correct against source and execution, the confidence score with specific reasons, the project verdict and an independence attestation.
 
-A score alone never passes: an unexecuted mandatory use case, a material source/behavior mismatch, prohibited or indispensable developer-only assistance, or an important unknown prevents PASS at any confidence. Every required Stage 2 assessment (all nine projects, both hosts, all required use cases) must PASS with concrete evidence and evidence-grounded confidence >=9/10. The main agent checks completeness but never rewrites a reviewer's adverse verdict. Implementation, development checks, Stage 1, independent Stage 2, package/distribution verification and owner acceptance stay distinct.
+A score alone never passes: an unexecuted mandatory use case, a material source/behavior mismatch, prohibited or indispensable developer-only assistance, or an important unknown prevents PASS at any confidence. Every required Stage 2 assessment (all eighteen projects, both hosts, all required use cases) must PASS with concrete evidence and evidence-grounded confidence >=9/10. The main agent checks completeness but never rewrites a reviewer's adverse verdict. Implementation, development checks, Stage 1, independent Stage 2, package/distribution verification and owner acceptance stay distinct.
 
 ### Retesting and final artifact validity
 
