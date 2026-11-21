@@ -6,10 +6,10 @@ Cycle 0141 ([Issue #353](https://github.com/laststance/codebook/issues/353)), a 
 
 ### Fixed
 - **Every Wiki page's header shows the date it was indexed.** The header reads `Indexed <date> · <revision>` from `generated.at` in the Wiki's manifest. The publisher refuses a manifest that leaves `generated.at` out or holds no ISO 8601 date on a real calendar day there. The refusal names the key and says what the manifest holds instead. For a wrong value it gives the kind and length, never the text.
-- **An updated Wiki never keeps the previous date.** An update must write a time later than the published Wiki's, so updated pages never show the date of the Wiki they replace. Publishing the prepared copy unchanged keeps its time.
+- **An updated Wiki never keeps the previous generation time.** An update must write a time later than the published Wiki's, so its manifest never keeps the time of the Wiki it replaces. The header shows only that time's date, so an update on the same day still shows the same date. Publishing the prepared copy unchanged keeps its time.
 
 ### Changed
-- **The README's Ubuntu paragraph says the reader answered a question in Cursor.** In Cursor the reader answers through the Cursor Agent CLI, which must be installed and signed in. The paragraph also names what a learner meets on Ubuntu when the editor's link question waits more than about 10 seconds: the message `Another instance of Cursor is running but not responding`. The link still opens once the question is answered, and the two remember options stop both questions.
+- **The README's Ubuntu paragraph says the reader answered a question in Cursor.** In Cursor the reader answers through the Cursor Agent CLI, which must be installed and signed in. The answer was correct but left out two facts the check expected, so that check counts as partial. The paragraph also names what a learner meets on Ubuntu when the editor's link question waits more than about 10 seconds: the message `Another instance of Cursor is running but not responding`. The link still opens once the question is answered, and the two remember options stop both questions.
 - **The README names goal version 12.** It adds Devin Desktop as a third supported editor, not yet checked in this candidate, and final acceptance now covers eighteen projects.
 
 ## [0.2.137.0] - 2026-11-16 (development candidate)
