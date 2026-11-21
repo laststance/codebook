@@ -51,6 +51,89 @@ const withRenamedContentIds = (page, renamesByPage) => {
 /** Keeps generated files and source references within relative repository paths. @example safePath('../outside') // false */
 const safePath = value => typeof value === 'string' && value !== '' && !isAbsolute(value) && !/[\\\x00-\x1f?#:]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..');
 
+/** An ISO 8601 date, or a date and time with `Z` or a ±hh:mm offset, with the hour, minute and second in range and a period or a comma before fractional seconds (GNU `date --iso-8601=ns` writes a comma); the reader header's "Indexed" date is its first ten characters. Groups 1–3 are the written year, month and day. */
+const GENERATED_AT = /^(\d{4})-(\d{2})-(\d{2})(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:[.,]\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d))?$/;
+/**
+ * Tells whether a manifest's `generated.at` is one of the accepted ISO 8601 forms ({@link GENERATED_AT}) and its written year, month and day name a real calendar day.
+ * Called by {@link requireGeneratedTime}. `Date.parse` cannot judge the day: V8 rolls an impossible one over (`2026-02-30` becomes March 2) instead of refusing it, and the header would show the written text. The day is built with `setUTCFullYear`, because `Date.UTC` reads a year below 100 as 19xx.
+ * @param at - The `generated.at` value as the agent wrote it, of any type.
+ * @returns `true` for a date the header can show as written.
+ * @example isGeneratedTime('2028-02-29T05:00:00Z') // => true
+ * @example isGeneratedTime('2026-02-29') // => false (2026 is no leap year)
+ */
+function isGeneratedTime(at) {
+  const match = typeof at === 'string' ? GENERATED_AT.exec(at) : null;
+  if (!match) return false;
+  const [year, month, day] = match.slice(1, 4).map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+/** Key names an agent may give the generation time instead of `at`; a refusal names one of them, so no other text of the record reaches the agent's output. */
+const GENERATED_AT_ALIASES = ['generatedAt', 'generated_at', 'generatedTime', 'time', 'timestamp', 'date', 'createdAt', 'created_at', 'updatedAt', 'updated_at', 'indexedAt', 'indexed_at'];
+/**
+ * Says what the manifest's `generated` record holds instead of a usable time, for the refusal of {@link requireGeneratedTime}, without repeating any text of it: a wrong value may hold something private an agent wrote by mistake, and the refusal reaches the agent's tool output.
+ * @param generated - The manifest's `generated` value, of any type.
+ * @returns A clause: no record; the kind of a wrong `at` (a text with its length, a number, a list …); the alias the time stands under ({@link GENERATED_AT_ALIASES}); or how many keys the record holds.
+ * @example generatedRecordClause({ generatedAt: 'x' }) // => 'its generated record names the time generatedAt instead of at'
+ * @example generatedRecordClause({ at: 'yesterday' }) // => 'its generated.at is a text of 9 characters that is no such date'
+ */
+function generatedRecordClause(generated) {
+  if (!generated || typeof generated !== 'object' || Array.isArray(generated)) return 'it has no generated record';
+  if (Object.hasOwn(generated, 'at')) return `its generated.at is ${valueKindOf(generated.at)}`;
+  const alias = GENERATED_AT_ALIASES.find(name => Object.hasOwn(generated, name));
+  if (alias) return `its generated record names the time ${alias} instead of at`;
+  const count = Object.keys(generated).length;
+  return `its generated record holds ${count === 1 ? '1 key' : `${count} keys`} and no at`;
+}
+/**
+ * Names the kind of a wrong `generated.at` value without its content. Called by {@link generatedRecordClause}.
+ * @param value - The value as parsed from the manifest.
+ * @returns For example `a text of 9 characters that is no such date`, `a number`, `null`.
+ * @example valueKindOf(20261122) // => 'a number'
+ */
+function valueKindOf(value) {
+  if (typeof value === 'string') return `a text of ${value.length === 1 ? '1 character' : `${value.length} characters`} that is no such date`;
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'a list';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+/**
+ * Refuses a manifest whose `generated.at` is missing or is no real ISO 8601 date ({@link isGeneratedTime}), because every page's header shows that date as "Indexed": a manifest that named the time under another key published each page as "Indexed Unknown" (Cycle 0140, Cursor's Wiki wrote `generatedAt`).
+ * Called by {@link renderWikiPages} after {@link validatePages}, so `--render-only` and publication both refuse before any page is written.
+ * @param manifest - The agent-authored `codebook-wiki.json`.
+ * @throws A sentence that names the key the publisher reads, an example value, and what the record holds instead ({@link generatedRecordClause}).
+ * @example requireGeneratedTime({ generated: { revision: 'abc', at: '2026-11-22T05:00:00Z' } }) // => undefined
+ * @example requireGeneratedTime({ generated: { generatedAt: '2026-11-22T05:00:00Z' } }) // throws, naming generatedAt
+ */
+function requireGeneratedTime(manifest) {
+  if (isGeneratedTime(manifest.generated?.at)) return;
+  throw new Error(`The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; ${generatedRecordClause(manifest.generated)}.`);
+}
+
+/**
+ * Refuses an update whose `generated.at` is not later than the published Wiki's: `prepareWikiStage` copies the published manifest into the candidate, so a candidate whose agent kept that time would publish its new pages under the previous Indexed date (Cycle 0141 /ship review).
+ * Called by {@link renderWikiPages} after {@link requireGeneratedTime}, so `--render-only` and publication refuse before any page is written. A published manifest that is missing, unreadable or holds no valid time (a first generation, or a Wiki an older skill wrote with another key) asks nothing, and so does a candidate whose manifest equals the published one (an unchanged republish).
+ * @param manifest - The candidate's `codebook-wiki.json`, whose `generated.at` {@link requireGeneratedTime} has accepted.
+ * @param outputDirectory - The published Wiki's folder.
+ * @throws A sentence naming the published Wiki's time, which a valid ISO date makes safe to show.
+ * @example await requireLaterThanPublished({ generated: { at: '2026-11-22T05:00:00Z' } }, '/repo/.codebook/wiki') // => undefined when the published Wiki was generated earlier
+ */
+async function requireLaterThanPublished(manifest, outputDirectory) {
+  let publishedManifest;
+  try {
+    publishedManifest = JSON.parse(await readFile(join(outputDirectory, 'codebook-wiki.json'), 'utf8'));
+  } catch {
+    return;
+  }
+  const published = publishedManifest?.generated?.at;
+  // An unchanged republish (the prepared copy published again as it is) shows the time its pages were generated, which is still true.
+  if (!isGeneratedTime(published) || JSON.stringify(publishedManifest) === JSON.stringify(manifest)) return;
+  // A comma before fractional seconds is ISO 8601 but no form Date.parse reads.
+  const timeOf = at => Date.parse(at.replace(',', '.'));
+  if (timeOf(manifest.generated.at) > timeOf(published)) return;
+  throw new Error(`The Wiki manifest's generated.at must be the date and time of this generation, later than the published Wiki's ${published}; write the current time there.`);
+}
 /** Checks agent-authored reader data before {@link renderWikiPages} creates any page. @example validatePages({ readerVersion: 2, pages }) */
 function validatePages(manifest) {
   if (manifest.readerVersion !== READER_VERSION) throw new Error('This Wiki stage needs readerVersion: 2 and semantic diagram records. Read the installed Codebook skill before publishing.');
@@ -848,9 +931,11 @@ function requireExactQuote(source, reference, endLine, lines) {
 }
 /** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
 const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the manifest names no ISO 8601 `generated.at` ({@link requireGeneratedTime}) or no time later than the published Wiki's ({@link requireLaterThanPublished}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
+  requireGeneratedTime(manifest);
+  await requireLaterThanPublished(manifest, outputDirectory);
   if (!Array.isArray(manifest.includedSources)) throw new Error('The Wiki needs an included-source index.');
   const indexedSources = new Map();
   for (const source of manifest.includedSources) {

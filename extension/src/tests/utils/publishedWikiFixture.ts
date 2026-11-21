@@ -116,6 +116,12 @@ export async function publishedWikiFixture(
         ...(stageDirectory === undefined ? {} : { stageDirectory }),
       })
     ).stage
+  // Each candidate is generated one minute after the last, so an update is newer than the Wiki it replaces, as the publisher requires (Cycle 0141).
+  let generationMinute = 0
+  const nextGenerationTime = (): string => {
+    generationMinute += 1
+    return new Date(Date.UTC(2026, 9, 1, 9, generationMinute)).toISOString()
+  }
   const writeCandidate = async (
     stage: string,
     content: WikiCandidateContent,
@@ -127,7 +133,10 @@ export async function publishedWikiFixture(
         schemaVersion: 1,
         readerVersion: 2,
         repositoryRoot: projectRoot,
-        generated: { revision: 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0' },
+        generated: {
+          revision: 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0',
+          at: nextGenerationTime(),
+        },
         pages: [
           {
             path: 'index.html',

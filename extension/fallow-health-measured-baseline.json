@@ -527,8 +527,8 @@
     "src/studyWorkspace.ts:complexity",
     "src/ownedNodeTestRun.ts:complexity",
     "src/recordingSchemas.ts:dead code",
-    "skills/codebook/render-wiki.mjs:high impact",
     "src/playbackController.ts:complexity",
+    "skills/codebook/render-wiki.mjs:high impact",
     "src/utils/projectRecording.ts:high impact",
     "src/utils/configuredDomExpression.ts:complexity",
     "src/configuredBrowserRun.ts:complexity",
@@ -548,5 +548,6 @@
     "src/studyWorkspace/presentationGuards.ts:complexity",
     "src/replayDebugAdapter.ts:complexity",
     "src/studyWorkspace/replayOpening.ts:complexity"
-  ]
+  ],
+  "file_lines_categories": true
 }

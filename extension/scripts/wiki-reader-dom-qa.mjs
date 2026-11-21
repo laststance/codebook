@@ -658,6 +658,10 @@ async function publishWikiFromCrlfShell() {
         schemaVersion: 1,
         readerVersion: 2,
         repositoryRoot: projectRoot,
+        generated: {
+          revision: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+          at: '2026-10-05T12:00:00.000Z',
+        },
         pages: [
           {
             path: 'index.html',
