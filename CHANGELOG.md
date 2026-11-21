@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.138.0] - 2026-11-22 (development candidate)
+
+Cycle 0141 ([Issue #353](https://github.com/laststance/codebook/issues/353)), a feature cycle. **Every page of a generated LLM Wiki now says when it was indexed.** A Wiki that Cursor's agent wrote showed "Indexed Unknown" in every page's header, because the agent named the generation time under another key. The bundled skill now names the key, and the publisher refuses a Wiki without a real date there. On Ubuntu, the Wiki reader in Cursor answered a repository question through the Cursor Agent CLI, and the README says so. The product goal now names Devin Desktop as a third supported editor, which this candidate has not been checked in yet.
+
+### Fixed
+- **Every Wiki page's header shows the date it was indexed.** The header reads `Indexed <date> · <revision>` from `generated.at` in the Wiki's manifest. The publisher refuses a manifest that leaves `generated.at` out or holds no ISO 8601 date on a real calendar day there. The refusal names the key and says what the manifest holds instead. For a wrong value it gives the kind and length, never the text.
+- **An updated Wiki never keeps the previous date.** An update must write a time later than the published Wiki's, so updated pages never show the date of the Wiki they replace. Publishing the prepared copy unchanged keeps its time.
+
+### Changed
+- **The README's Ubuntu paragraph says the reader answered a question in Cursor.** In Cursor the reader answers through the Cursor Agent CLI, which must be installed and signed in. The paragraph also names what a learner meets on Ubuntu when the editor's link question waits more than about 10 seconds: the message `Another instance of Cursor is running but not responding`. The link still opens once the question is answered, and the two remember options stop both questions.
+- **The README names goal version 12.** It adds Devin Desktop as a third supported editor, not yet checked in this candidate, and final acceptance now covers eighteen projects.
+
 ## [0.2.137.0] - 2026-11-16 (development candidate)
 
 Cycle 0140 ([Issue #350](https://github.com/laststance/codebook/issues/350)), a feature cycle. **The packaged README now says what was checked on Ubuntu from the standard chats.** On Ubuntu 24.04, a `/codebook` request in Copilot Chat in VS Code and in Agent in Cursor each ran a Next app's browser run with stops, saved it and replayed it in the native debugger. Each editor's AI generated an LLM Wiki whose citations opened the cited line in that editor. No Linux defect was found, and Codebook's own code is unchanged in this version.
