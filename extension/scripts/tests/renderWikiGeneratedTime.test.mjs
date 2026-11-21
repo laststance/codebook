@@ -140,7 +140,7 @@ for (const [at, shown] of [
     await inProject(async (root) => {
       // Arrange
       const manifest = await manifestWithGenerated(root, {
-        revision: '1234567890',
+        revision: 'abcdef1234',
         at,
       })
 
@@ -153,7 +153,7 @@ for (const [at, shown] of [
       // Assert
       assert.match(
         pages.get('index.html') ?? '',
-        new RegExp(`<span class="indexed-date">${shown} · 12345678</span>`),
+        new RegExp(`<span class="indexed-date">${shown} · abcdef12</span>`),
       )
     })
   })
