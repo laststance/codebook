@@ -52,6 +52,25 @@ const withRenamedContentIds = (page, renamesByPage) => {
 const safePath = value => typeof value === 'string' && value !== '' && !isAbsolute(value) && !/[\\\x00-\x1f?#:]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..');
 
 /** Checks agent-authored reader data before {@link renderWikiPages} creates any page. @example validatePages({ readerVersion: 2, pages }) */
+/** An ISO 8601 date, or date and time with an offset, as the reader header's "Indexed" date reads it: its first ten characters are the date. */
+const GENERATED_AT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+/**
+ * Refuses a manifest whose `generated.at` is missing or is no ISO 8601 date, because every page's header shows that date as "Indexed": a manifest that named the time under another key published each page as "Indexed Unknown" (Cycle 0140, Cursor's Wiki wrote `generatedAt`).
+ * Called by {@link renderWikiPages} after {@link validatePages}, so `--render-only` and publication both refuse before any page is written.
+ * @param manifest - The agent-authored `codebook-wiki.json`.
+ * @throws A sentence that names the key the publisher reads, an example value and the keys the manifest's `generated` record holds instead.
+ * @example requireGeneratedTime({ generated: { revision: 'abc', at: '2026-11-22T05:00:00Z' } }) // => undefined
+ * @example requireGeneratedTime({ generated: { generatedAt: '2026-11-22T05:00:00Z' } }) // throws, naming generatedAt
+ */
+function requireGeneratedTime(manifest) {
+  const generated = manifest.generated;
+  const at = generated?.at;
+  if (typeof at === 'string' && GENERATED_AT.test(at) && !Number.isNaN(Date.parse(at))) return;
+  // Name what the record holds instead, so the agent can move a time it wrote under another key.
+  const holds = generated && typeof generated === 'object' && !Array.isArray(generated) ? `its generated record holds ${Object.keys(generated).join(', ') || 'no key'}` : 'it has no generated record';
+  throw new Error(`The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; ${holds}.`);
+}
+
 function validatePages(manifest) {
   if (manifest.readerVersion !== READER_VERSION) throw new Error('This Wiki stage needs readerVersion: 2 and semantic diagram records. Read the installed Codebook skill before publishing.');
   if (!Array.isArray(manifest.pages) || !manifest.pages.length || manifest.pages.length > MAX_PAGES) throw new Error('The Wiki needs 1–256 semantic pages.');
@@ -848,9 +867,10 @@ function requireExactQuote(source, reference, endLine, lines) {
 }
 /** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
 const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the manifest names no ISO 8601 `generated.at` ({@link requireGeneratedTime}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
+  requireGeneratedTime(manifest);
   if (!Array.isArray(manifest.includedSources)) throw new Error('The Wiki needs an included-source index.');
   const indexedSources = new Map();
   for (const source of manifest.includedSources) {

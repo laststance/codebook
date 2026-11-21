@@ -1322,6 +1322,7 @@ async function writeStage(
       schemaVersion: 1,
       readerVersion: 2,
       repositoryRoot: root,
+      generated: { revision: '1234567890', at: '2026-09-29' },
       pages,
       assets: [],
       includedSources: [

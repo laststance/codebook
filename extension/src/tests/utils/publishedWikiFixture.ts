@@ -127,7 +127,10 @@ export async function publishedWikiFixture(
         schemaVersion: 1,
         readerVersion: 2,
         repositoryRoot: projectRoot,
-        generated: { revision: 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0' },
+        generated: {
+          revision: 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0',
+          at: '2026-10-01T09:00:00Z',
+        },
         pages: [
           {
             path: 'index.html',
