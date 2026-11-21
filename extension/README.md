@@ -873,7 +873,7 @@ pnpm --dir extension test
 pnpm --dir extension test:package
 ```
 
-Unit doubles cover transport, ownership, source integrity and persistence without claiming native execution. Package tests reject application fixtures and verify an isolated installation. Real editor development uses the designated dashboard, with VS Code and Cursor results recorded separately. Final acceptance still requires the complete product and all nine fixed projects.
+Unit doubles cover transport, ownership, source integrity and persistence without claiming native execution. Package tests reject application fixtures and verify an isolated installation. Real editor development uses the designated dashboard, with VS Code and Cursor results recorded separately. Final acceptance still requires the complete product and all eighteen fixed projects.
 
 ### Saved learning capacity
 

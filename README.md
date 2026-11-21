@@ -20,7 +20,7 @@ This is a preview, not a Marketplace or Open VSX release. The delivered version 
 
 The specification is [goal version 11](PRODUCT_GOAL.md), and the implementation targets external repositories. Historical fixture or coupled-Wiki success is not proof of that destination.
 
-Until final acceptance begins, actual-editor development verification uses the owner-designated [nextjs-dashboard checkout](AGENTS.md#development-target). Final acceptance requires [all nine designated projects in two stages](PRODUCT_GOAL.md#final-acceptance-protocol), both editors and every applicable runtime use case. No Stage 1 or Stage 2 PASS is claimed under goal version 11 or any earlier version.
+Until final acceptance begins, actual-editor development verification uses the owner-designated [nextjs-dashboard checkout](AGENTS.md#development-target). Final acceptance requires [all eighteen designated projects in two stages](PRODUCT_GOAL.md#final-acceptance-protocol), both editors and every applicable runtime use case. No Stage 1 or Stage 2 PASS is claimed under goal version 12 or any earlier version.
 
 ## Start here
 

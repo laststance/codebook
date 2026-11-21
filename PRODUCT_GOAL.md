@@ -125,7 +125,7 @@ Specification, upstream documentation and registration metadata are not implemen
 9. [Retesting](#retesting-and-final-artifact-validity) keeps every final PASS valid for the final fixed distributed VSIX.
 10. Closure: all valid Stage 1 and Stage 2 rows; current evidence for all active IDs and integrated feature behavior, linked in the active cycle Issue; a verified distribution artifact; Raphtalia's separately recorded acceptance, which no subagent can give. Goal Issue #1 stays open until then.
 
-Historical protocols and cycles keep the criteria of their time and never override version 10. Claude Code CLI review stays owner-skipped and is not native editor-chat acceptance.
+Historical protocols and cycles keep the criteria of their time and never override the current goal version. Claude Code CLI review stays owner-skipped and is not native editor-chat acceptance.
 
 ## Design authority
 
@@ -240,7 +240,7 @@ Updates come only from explicit chat or button requests; automatic background re
 
 ### Deep links to source
 
-Citations open the cited file and location in the editor in use: VS Code for a VS Code project, Cursor for a Cursor project, Devin Desktop for a Devin Desktop project. Bind the correct project root, so that a similarly named file or another checkout never receives the link. Moved projects, unavailable files and source drift get understandable guidance. Cited version context stays visible; current navigation stays distinct from historical cited text. Delivered reference, no further requirement: besides the inline citations, every page's right rail has **Open in VS Code** (**Open in Cursor** or **Open in Devin Desktop** when that editor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label.
+Citations open the cited file and location in the editor in use: VS Code for a VS Code project, Cursor for a Cursor project, Devin Desktop for a Devin Desktop project. Bind the correct project root, so that a similarly named file or another checkout never receives the link. Moved projects, unavailable files and source drift get understandable guidance. Cited version context stays visible; current navigation stays distinct from historical cited text. Delivered reference, no further requirement: besides the inline citations, every page's right rail has **Open in VS Code** (**Open in Cursor** when Cursor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label. Required and not yet delivered: Devin Desktop's reader names Devin Desktop there (**Open in Devin Desktop**) and opens the source in Devin Desktop.
 
 One generated site may be opened from any supported editor. Its durable static pages keep a VS Code protocol fallback; the Codebook reader serves source and update links with the active host's registered scheme without changing the published files. A Cursor or Devin Desktop update keeps the VS Code fallback and every editor's reader behavior. Direct offline file browsing stays readable, but its source/update links open only the editor named by the static fallback. Browser/OS protocol permission and editor installation belong in ordinary onboarding; generated pages never embed credentials or private connection tokens.
 
@@ -400,7 +400,7 @@ Each stage has at least 36 project-host assessments, more with expanded use case
 
 When the complete candidate reaches the campaign, freeze it (Final acceptance 1; unknown identities recorded honestly) and run the actual rows with the packaged, normally installed extension and published setup/operations, as a paying customer would, in ordinary Copilot Chat and Cursor Agent with explicit `/codebook`. A development extension host is no acceptance evidence. The main agent personally completes every project/host/use-case row first, through ordinary onboarding and the stages below, stepping and resuming as needed, and verifies the features' ownership and independence. Record setup effort and whether ordinary users understand errors and can follow documented recovery. When development repairs are needed, preserve the failures, then install a newly identified package and retest normally.
 
-**Stage 2 starts only after all eighteen projects, both hosts and every required use case pass Stage 1, and the complete candidate has every active capability and integrated feature evidence under version 10.** Development successes never become Stage 1 passes later.
+**Stage 2 starts only after all eighteen projects, both hosts and every required use case pass Stage 1, and the complete candidate has every active capability and integrated feature evidence under the current goal version.** Development successes never become Stage 1 passes later.
 
 ### Stage 2: independent junior-developer reviewers, one per project
 

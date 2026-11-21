@@ -62,7 +62,7 @@ async function inProject(body) {
 }
 
 // Value: protects=the Indexed date in every page's header of a Wiki whose agent named the generation time under another key; fails_when=the renderer publishes a manifest whose generated record holds generatedAt instead of at, so each page reads "Indexed Unknown" (Cycle 0140, Cursor on Ubuntu); why_new=Cycle 0140 later candidate 1 (Cycle 0141 task 5); seam=none (the real renderer); no_claim=that an editor agent follows SKILL.md and writes at (Cycle 0141 task 6 native check)
-test('a manifest that names the generation time generatedAt is refused before any page, with a sentence that names generated.at and the keys it holds instead', async () => {
+test('a manifest that names the generation time generatedAt is refused before any page, with a sentence that names generated.at and the alias the time stands under', async () => {
   await inProject(async (root) => {
     // Arrange: the generated record Grok 4.6 High wrote in Cursor's Wiki on Ubuntu.
     const manifest = await manifestWithGenerated(root, {
@@ -80,7 +80,7 @@ test('a manifest that names the generation time generatedAt is refused before an
     // Assert
     await assert.rejects(rendering, {
       message:
-        "The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; its generated record holds revision, generatedAt, workingTree.",
+        "The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; its generated record names the time generatedAt instead of at.",
     })
   })
 })
@@ -105,50 +105,60 @@ test('a manifest without a generated record is refused, and the sentence says it
   })
 })
 
-// Value: protects=the header's date, which the reader cuts from the first ten characters of generated.at, and the agent's way to correct a wrong record; fails_when=a record that is no object, an empty record, a time in words, a non-date, an impossible calendar day that V8's Date.parse rolls over (2026-02-30, 2026-02-29), an hour 24, a time without Z or an offset, or a number passes, so the header shows a fragment or a day that never existed; or the refusal hides the wrong value; why_new=Cycle 0141 task 5 (review round: calendar overflow, record shapes); seam=none; no_claim=none beyond protects
+// Value: protects=the header's date, which the reader cuts from the first ten characters of generated.at, and the agent's way to correct a wrong record; fails_when=a record that is no object, an empty record, a time in words, a non-date, an impossible calendar day that V8's Date.parse rolls over (2026-02-30, 2026-02-29), an hour 24, a time without Z or an offset, or a number passes, so the header shows a fragment or a day that never existed; or the refusal does not say what the record holds instead; why_new=Cycle 0141 task 5 (review round: calendar overflow, record shapes; /ship pass 1: kind and length instead of the value); seam=none; no_claim=none beyond protects
 for (const [label, generated, clause] of [
   ['a null record', null, 'it has no generated record'],
   ['a list for a record', [], 'it has no generated record'],
-  ['an empty record', {}, 'its generated record holds no key'],
+  ['an empty record', {}, 'its generated record holds 0 keys and no at'],
+  [
+    'a record whose time stands under a key the publisher does not know',
+    { revision: 'abc1234', stamp: '2026-11-22T05:00:00Z' },
+    'its generated record holds 2 keys and no at',
+  ],
   [
     'a time in words',
     { revision: 'abc1234', at: 'yesterday' },
-    'its generated.at reads "yesterday"',
+    'its generated.at is a text of 9 characters that is no such date',
   ],
   [
     'month 13',
     { revision: 'abc1234', at: '2026-13-40T00:00:00Z' },
-    'its generated.at reads "2026-13-40T00:00:00Z"',
+    'its generated.at is a text of 20 characters that is no such date',
   ],
   [
     'a day-first date',
     { revision: 'abc1234', at: '22/11/2026' },
-    'its generated.at reads "22/11/2026"',
+    'its generated.at is a text of 10 characters that is no such date',
   ],
   [
     'February 30',
     { revision: 'abc1234', at: '2026-02-30' },
-    'its generated.at reads "2026-02-30"',
+    'its generated.at is a text of 10 characters that is no such date',
   ],
   [
     'February 29 of a year that is no leap year',
     { revision: 'abc1234', at: '2026-02-29T05:00:00Z' },
-    'its generated.at reads "2026-02-29T05:00:00Z"',
+    'its generated.at is a text of 20 characters that is no such date',
   ],
   [
     'hour 24',
     { revision: 'abc1234', at: '2026-11-22T24:00:00Z' },
-    'its generated.at reads "2026-11-22T24:00:00Z"',
+    'its generated.at is a text of 20 characters that is no such date',
   ],
   [
     'a time without Z or an offset',
     { revision: 'abc1234', at: '2026-11-22T05:00:00' },
-    'its generated.at reads "2026-11-22T05:00:00"',
+    'its generated.at is a text of 19 characters that is no such date',
   ],
   [
     'a number',
     { revision: 'abc1234', at: 20261122 },
-    'its generated.at reads 20261122',
+    'its generated.at is a number',
+  ],
+  [
+    'a text of 100 characters, named only by its length',
+    { revision: 'abc1234', at: 'x'.repeat(100) },
+    'its generated.at is a text of 100 characters that is no such date',
   ],
 ]) {
   test(`a manifest whose generated record is ${label} is refused, and the sentence shows what the record holds`, async () => {
@@ -170,13 +180,44 @@ for (const [label, generated, clause] of [
   })
 }
 
-// Value: protects=the header of a correctly written Wiki: a time with Z, with an offset (with or without seconds), a date alone, and February 29 of a leap year; the header shows the date as written, not converted to UTC; fails_when=the check refuses an ISO date an agent may write, or the header shows another day (2026-11-22T01:00:00+09:00 is 2026-11-21 in UTC); why_new=Cycle 0141 task 5 (review round: boundary forms); seam=none; no_claim=none beyond protects
+// Value: protects=whatever an agent wrote by mistake into generated.at or a key beside it, which the refusal must not repeat into the agent's tool output; fails_when=the refusal quotes the wrong value or the record's other text; why_new=Cycle 0141 /ship pass 1 (outside voice: a credential in generated.at would reach stderr); seam=none; no_claim=that nothing else in the manifest reaches an error
+test('a refused generated.at is described by its kind and length, and its text never appears in the refusal', async () => {
+  await inProject(async (root) => {
+    // Arrange: a wrong value that stands for private text written by mistake.
+    const manifest = await manifestWithGenerated(root, {
+      revision: 'abc1234',
+      at: 'private value 12345',
+    })
+
+    // Act
+    let refusal = ''
+    try {
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    } catch (error) {
+      refusal = error.message
+    }
+
+    // Assert
+    assert.equal(
+      refusal,
+      "The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; its generated.at is a text of 19 characters that is no such date.",
+    )
+    assert.equal(refusal.includes('private value'), false)
+  })
+})
+
+// Value: protects=the header of a correctly written Wiki: a time with Z, with an offset (with or without seconds), a comma before fractional seconds as GNU date --iso-8601=ns writes it, a date alone, February 29 of a leap year and a year below 100; the header shows the date as written, not converted to UTC; fails_when=the check refuses an ISO date an agent may write, or the header shows another day (2026-11-22T01:00:00+09:00 is 2026-11-21 in UTC); why_new=Cycle 0141 task 5 (review round: boundary forms); seam=none; no_claim=none beyond protects
 for (const [at, shown] of [
   ['2026-11-22T05:00:00Z', 'Indexed 2026-11-22'],
   ['2026-11-22T14:30:00.250+09:00', 'Indexed 2026-11-22'],
   ['2026-11-22T01:00:00+09:00', 'Indexed 2026-11-22'],
   ['2026-11-22T05:00-05:00', 'Indexed 2026-11-22'],
   ['2028-02-29', 'Indexed 2028-02-29'],
+  ['2026-11-22T05:00:00,125000000+00:00', 'Indexed 2026-11-22'],
+  ['0099-01-01', 'Indexed 0099-01-01'],
   ['2026-11-10', 'Indexed 2026-11-10'],
 ]) {
   test(`a generated.at of ${at} renders every page with "${shown}" in its header`, async () => {
