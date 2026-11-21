@@ -110,6 +110,30 @@ function requireGeneratedTime(manifest) {
   if (isGeneratedTime(manifest.generated?.at)) return;
   throw new Error(`The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; ${generatedRecordClause(manifest.generated)}.`);
 }
+
+/**
+ * Refuses an update whose `generated.at` is not later than the published Wiki's: `prepareWikiStage` copies the published manifest into the candidate, so a candidate whose agent kept that time would publish its new pages under the previous Indexed date (Cycle 0141 /ship review).
+ * Called by {@link renderWikiPages} after {@link requireGeneratedTime}, so `--render-only` and publication refuse before any page is written. A published manifest that is missing, unreadable or holds no valid time (a first generation, or a Wiki an older skill wrote with another key) asks nothing, and so does a candidate whose manifest equals the published one (an unchanged republish).
+ * @param manifest - The candidate's `codebook-wiki.json`, whose `generated.at` {@link requireGeneratedTime} has accepted.
+ * @param outputDirectory - The published Wiki's folder.
+ * @throws A sentence naming the published Wiki's time, which a valid ISO date makes safe to show.
+ * @example await requireLaterThanPublished({ generated: { at: '2026-11-22T05:00:00Z' } }, '/repo/.codebook/wiki') // => undefined when the published Wiki was generated earlier
+ */
+async function requireLaterThanPublished(manifest, outputDirectory) {
+  let publishedManifest;
+  try {
+    publishedManifest = JSON.parse(await readFile(join(outputDirectory, 'codebook-wiki.json'), 'utf8'));
+  } catch {
+    return;
+  }
+  const published = publishedManifest?.generated?.at;
+  // An unchanged republish (the prepared copy published again as it is) shows the time its pages were generated, which is still true.
+  if (!isGeneratedTime(published) || JSON.stringify(publishedManifest) === JSON.stringify(manifest)) return;
+  // A comma before fractional seconds is ISO 8601 but no form Date.parse reads.
+  const timeOf = at => Date.parse(at.replace(',', '.'));
+  if (timeOf(manifest.generated.at) > timeOf(published)) return;
+  throw new Error(`The Wiki manifest's generated.at must be the date and time of this generation, later than the published Wiki's ${published}; write the current time there.`);
+}
 /** Checks agent-authored reader data before {@link renderWikiPages} creates any page. @example validatePages({ readerVersion: 2, pages }) */
 function validatePages(manifest) {
   if (manifest.readerVersion !== READER_VERSION) throw new Error('This Wiki stage needs readerVersion: 2 and semantic diagram records. Read the installed Codebook skill before publishing.');
@@ -907,10 +931,11 @@ function requireExactQuote(source, reference, endLine, lines) {
 }
 /** The shown location of a citation: the file and its line, or its line range for a quote of several lines. Called by the citation resolver of {@link renderWikiPages}. @example citedLocationOf({ path: 'a.ts' }, { line: 2 }, 4) // => 'a.ts:2–4' */
 const citedLocationOf = (source, reference, endLine) => `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the manifest names no ISO 8601 `generated.at` ({@link requireGeneratedTime}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+/** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), the manifest names no ISO 8601 `generated.at` ({@link requireGeneratedTime}) or no time later than the published Wiki's ({@link requireLaterThanPublished}), the source index holds a file that can hold credentials or a page links to one ({@link requireNoCredentialSources}, {@link requireNoCredentialLinks}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
   requireGeneratedTime(manifest);
+  await requireLaterThanPublished(manifest, outputDirectory);
   if (!Array.isArray(manifest.includedSources)) throw new Error('The Wiki needs an included-source index.');
   const indexedSources = new Map();
   for (const source of manifest.includedSources) {

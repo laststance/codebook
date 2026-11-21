@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -243,3 +243,122 @@ for (const [at, shown] of [
     })
   })
 }
+
+/**
+ * Writes the manifest of a published Wiki into the project's Wiki folder, as an earlier publish left it, and answers that folder.
+ * Called by the tests of an update's generation time.
+ * @param root - The project folder.
+ * @param generated - The published manifest's `generated` record.
+ * @returns The Wiki folder, for `renderWikiPages`'s `outputDirectory`.
+ * @example await publishedManifestWith(root, { at: '2026-11-20T00:00:00Z' }) // => '<root>/.codebook/wiki'
+ */
+async function publishedManifestWith(root, generated) {
+  const output = join(root, '.codebook/wiki')
+  await mkdir(output, { recursive: true })
+  await writeFile(
+    join(output, 'codebook-wiki.json'),
+    JSON.stringify({ schemaVersion: 1, readerVersion: 2, generated }),
+  )
+  return output
+}
+
+// Value: protects=the Indexed date of an updated Wiki: prepareWikiStage copies the published manifest into the candidate, so an agent that keeps its time would publish new pages under the previous date; fails_when=an update whose generated.at equals or precedes the published Wiki's renders; why_new=Cycle 0141 /ship pass 1 (outside voice: the stale time passed the format check); seam=none (the real renderer reading the Wiki folder); no_claim=that the time is the true time of the generation
+for (const [label, candidateAt] of [
+  ['the same time as the published Wiki', '2026-11-20T00:00:00Z'],
+  ['a time before the published Wiki', '2026-11-19'],
+]) {
+  test(`an update whose generated.at is ${label} is refused, naming the published Wiki's time`, async () => {
+    await inProject(async (root) => {
+      // Arrange
+      const output = await publishedManifestWith(root, {
+        revision: 'abcdef1234',
+        at: '2026-11-20T00:00:00Z',
+      })
+      const manifest = await manifestWithGenerated(root, {
+        revision: 'abcdef1234',
+        at: candidateAt,
+      })
+
+      // Act
+      const rendering = renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: output,
+      })
+
+      // Assert
+      await assert.rejects(rendering, {
+        message:
+          "The Wiki manifest's generated.at must be the date and time of this generation, later than the published Wiki's 2026-11-20T00:00:00Z; write the current time there.",
+      })
+    })
+  })
+}
+
+// Value: protects=an update with a fresh time, and the update of a Wiki whose published manifest an older skill wrote with another key; fails_when=a later time is refused, or a published Wiki without a valid generated.at blocks every update; why_new=Cycle 0141 /ship pass 1; seam=none; no_claim=none beyond protects
+for (const [label, published] of [
+  [
+    'an earlier time, with a comma before its fraction',
+    { at: '2026-11-19T23:59:59,500+00:00' },
+  ],
+  [
+    'its time under generatedAt, as Cursor wrote it in Cycle 0140',
+    { generatedAt: '2026-11-16T12:00:21.115Z' },
+  ],
+]) {
+  test(`an update renders over a published Wiki whose manifest holds ${label}`, async () => {
+    await inProject(async (root) => {
+      // Arrange
+      const output = await publishedManifestWith(root, {
+        revision: 'abcdef1234',
+        ...published,
+      })
+      const manifest = await manifestWithGenerated(root, {
+        revision: 'abcdef1234',
+        at: '2026-11-20T00:00:00Z',
+      })
+
+      // Act
+      const pages = await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: output,
+      })
+
+      // Assert
+      assert.ok(
+        (pages.get('index.html') ?? '').includes(
+          '<span class="indexed-date">Indexed 2026-11-20 · abcdef12</span>',
+        ),
+      )
+    })
+  })
+}
+
+// Value: protects=an unchanged republish, the prepared copy of the published Wiki published again as it is, whose time is still the time its pages were generated; fails_when=the update-time check refuses a candidate whose manifest equals the published one; why_new=Cycle 0141 /ship pass 1 (the publisher's recovery tests republish an unchanged candidate); seam=none; no_claim=none beyond protects
+test('a candidate whose manifest equals the published Wiki’s renders with the same generated.at', async () => {
+  await inProject(async (root) => {
+    // Arrange: the published manifest is the candidate itself, as prepareWikiStage copies it.
+    const manifest = await manifestWithGenerated(root, {
+      revision: 'abcdef1234',
+      at: '2026-11-20T00:00:00Z',
+    })
+    const output = join(root, '.codebook/wiki')
+    await mkdir(output, { recursive: true })
+    await writeFile(
+      join(output, 'codebook-wiki.json'),
+      JSON.stringify(manifest),
+    )
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: output,
+    })
+
+    // Assert
+    assert.ok(
+      (pages.get('index.html') ?? '').includes(
+        '<span class="indexed-date">Indexed 2026-11-20 · abcdef12</span>',
+      ),
+    )
+  })
+})

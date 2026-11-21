@@ -838,6 +838,8 @@ test('a changed repository source can be documented without invalidating prior o
       .update(source)
       .digest('hex')
     manifest.pages[0].contentHtml = '<h2 id="intro">Updated source</h2>'
+    // An update writes the time of this generation; the publisher refuses the prior Wiki's (Cycle 0141).
+    manifest.generated.at = '2026-10-15T00:00:00Z'
     await writeFile(join(next, 'codebook-wiki.json'), JSON.stringify(manifest))
     // Act
     const result = await publishWiki({
@@ -1274,6 +1276,18 @@ test('a prepared legacy update can recover the original metadata after an accide
   }
 })
 
+/** Minutes after 2026-09-29T00:00Z of the last stage {@link writeStage} wrote. */
+let stageMinute = 0
+/**
+ * The generation time of the next stage {@link writeStage} writes: one minute after the previous one, so each update a test publishes is newer than the Wiki it replaces, as the publisher requires (Cycle 0141).
+ * @returns An ISO 8601 time with Z.
+ * @example nextStageTime() // => '2026-09-29T00:01:00.000Z' on the first call
+ */
+function nextStageTime() {
+  stageMinute += 1
+  return new Date(Date.UTC(2026, 8, 29, 0, stageMinute)).toISOString()
+}
+
 /** Writes isolated publication inputs; tests opt into the actual preparation workflow with an output path. @example await writeStage(stage, root, '<h1>Guide</h1>', undefined, output) */
 async function writeStage(
   directory,
@@ -1322,7 +1336,7 @@ async function writeStage(
       schemaVersion: 1,
       readerVersion: 2,
       repositoryRoot: root,
-      generated: { revision: 'abcdef1234', at: '2026-09-29' },
+      generated: { revision: 'abcdef1234', at: nextStageTime() },
       pages,
       assets: [],
       includedSources: [
