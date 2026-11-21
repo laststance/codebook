@@ -11,7 +11,7 @@ import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
  * Writes the one source of a test project and answers a one-page Wiki manifest whose `generated` record is the given value, as an editor agent writes `codebook-wiki.json` into a candidate.
  * Called by the tests of the Indexed date the reader header shows.
  * @param root - The project folder.
- * @param generated - The manifest's `generated` record, or `undefined` for a manifest without one.
+ * @param generated - The manifest's `generated` record, of any type (a record, `null`, a list), or `undefined` for a manifest without one.
  * @returns The manifest.
  * @example await manifestWithGenerated('/tmp/project', { revision: 'abc', at: '2026-11-22' }) // => { …, generated: { revision: 'abc', at: '2026-11-22' }, pages: [{ path: 'index.html', … }] }
  */
@@ -105,15 +105,56 @@ test('a manifest without a generated record is refused, and the sentence says it
   })
 })
 
-// Value: protects=the header's date, which the reader cuts from the first ten characters of generated.at; fails_when=a time written in words or a non-date passes, so the header shows a fragment such as "yesterday" or an impossible date; why_new=Cycle 0141 task 5; seam=none; no_claim=none beyond protects
-for (const at of ['yesterday', '2026-13-40T00:00:00Z', '22/11/2026']) {
-  test(`a generated.at of ${JSON.stringify(at)} is refused, because the header could show no date from it`, async () => {
+// Value: protects=the header's date, which the reader cuts from the first ten characters of generated.at, and the agent's way to correct a wrong record; fails_when=a record that is no object, an empty record, a time in words, a non-date, an impossible calendar day that V8's Date.parse rolls over (2026-02-30, 2026-02-29), an hour 24, a time without Z or an offset, or a number passes, so the header shows a fragment or a day that never existed; or the refusal hides the wrong value; why_new=Cycle 0141 task 5 (review round: calendar overflow, record shapes); seam=none; no_claim=none beyond protects
+for (const [label, generated, clause] of [
+  ['a null record', null, 'it has no generated record'],
+  ['a list for a record', [], 'it has no generated record'],
+  ['an empty record', {}, 'its generated record holds no key'],
+  [
+    'a time in words',
+    { revision: 'abc1234', at: 'yesterday' },
+    'its generated.at reads "yesterday"',
+  ],
+  [
+    'month 13',
+    { revision: 'abc1234', at: '2026-13-40T00:00:00Z' },
+    'its generated.at reads "2026-13-40T00:00:00Z"',
+  ],
+  [
+    'a day-first date',
+    { revision: 'abc1234', at: '22/11/2026' },
+    'its generated.at reads "22/11/2026"',
+  ],
+  [
+    'February 30',
+    { revision: 'abc1234', at: '2026-02-30' },
+    'its generated.at reads "2026-02-30"',
+  ],
+  [
+    'February 29 of a year that is no leap year',
+    { revision: 'abc1234', at: '2026-02-29T05:00:00Z' },
+    'its generated.at reads "2026-02-29T05:00:00Z"',
+  ],
+  [
+    'hour 24',
+    { revision: 'abc1234', at: '2026-11-22T24:00:00Z' },
+    'its generated.at reads "2026-11-22T24:00:00Z"',
+  ],
+  [
+    'a time without Z or an offset',
+    { revision: 'abc1234', at: '2026-11-22T05:00:00' },
+    'its generated.at reads "2026-11-22T05:00:00"',
+  ],
+  [
+    'a number',
+    { revision: 'abc1234', at: 20261122 },
+    'its generated.at reads 20261122',
+  ],
+]) {
+  test(`a manifest whose generated record is ${label} is refused, and the sentence shows what the record holds`, async () => {
     await inProject(async (root) => {
       // Arrange
-      const manifest = await manifestWithGenerated(root, {
-        revision: 'abc1234',
-        at,
-      })
+      const manifest = await manifestWithGenerated(root, generated)
 
       // Act
       const rendering = renderWikiPages(manifest, {
@@ -123,17 +164,19 @@ for (const at of ['yesterday', '2026-13-40T00:00:00Z', '22/11/2026']) {
 
       // Assert
       await assert.rejects(rendering, {
-        message:
-          "The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; its generated record holds revision, at.",
+        message: `The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; ${clause}.`,
       })
     })
   })
 }
 
-// Value: protects=the header of a correctly written Wiki, with a time of day or a date alone; fails_when=the new check refuses an ISO date the renderer always accepted, or the header loses the date; why_new=Cycle 0141 task 5; seam=none; no_claim=none beyond protects
+// Value: protects=the header of a correctly written Wiki: a time with Z, with an offset (with or without seconds), a date alone, and February 29 of a leap year; the header shows the date as written, not converted to UTC; fails_when=the check refuses an ISO date an agent may write, or the header shows another day (2026-11-22T01:00:00+09:00 is 2026-11-21 in UTC); why_new=Cycle 0141 task 5 (review round: boundary forms); seam=none; no_claim=none beyond protects
 for (const [at, shown] of [
   ['2026-11-22T05:00:00Z', 'Indexed 2026-11-22'],
   ['2026-11-22T14:30:00.250+09:00', 'Indexed 2026-11-22'],
+  ['2026-11-22T01:00:00+09:00', 'Indexed 2026-11-22'],
+  ['2026-11-22T05:00-05:00', 'Indexed 2026-11-22'],
+  ['2028-02-29', 'Indexed 2028-02-29'],
   ['2026-11-10', 'Indexed 2026-11-10'],
 ]) {
   test(`a generated.at of ${at} renders every page with "${shown}" in its header`, async () => {
@@ -151,9 +194,10 @@ for (const [at, shown] of [
       })
 
       // Assert
-      assert.match(
-        pages.get('index.html') ?? '',
-        new RegExp(`<span class="indexed-date">${shown} · abcdef12</span>`),
+      assert.ok(
+        (pages.get('index.html') ?? '').includes(
+          `<span class="indexed-date">${shown} · abcdef12</span>`,
+        ),
       )
     })
   })

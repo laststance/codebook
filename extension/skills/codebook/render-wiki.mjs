@@ -51,26 +51,48 @@ const withRenamedContentIds = (page, renamesByPage) => {
 /** Keeps generated files and source references within relative repository paths. @example safePath('../outside') // false */
 const safePath = value => typeof value === 'string' && value !== '' && !isAbsolute(value) && !/[\\\x00-\x1f?#:]/.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..');
 
-/** Checks agent-authored reader data before {@link renderWikiPages} creates any page. @example validatePages({ readerVersion: 2, pages }) */
-/** An ISO 8601 date, or date and time with an offset, as the reader header's "Indexed" date reads it: its first ten characters are the date. */
-const GENERATED_AT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+/** An ISO 8601 date, or a date and time with `Z` or a ±hh:mm offset, with the hour, minute and second in range; the reader header's "Indexed" date is its first ten characters. Groups 1–3 are the written year, month and day. */
+const GENERATED_AT = /^(\d{4})-(\d{2})-(\d{2})(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d))?$/;
 /**
- * Refuses a manifest whose `generated.at` is missing or is no ISO 8601 date, because every page's header shows that date as "Indexed": a manifest that named the time under another key published each page as "Indexed Unknown" (Cycle 0140, Cursor's Wiki wrote `generatedAt`).
+ * Tells whether a manifest's `generated.at` is one of the accepted ISO 8601 forms ({@link GENERATED_AT}) and its written year, month and day name a real calendar day.
+ * Called by {@link requireGeneratedTime}. `Date.parse` cannot judge the day: V8 rolls an impossible one over (`2026-02-30` becomes March 2) instead of refusing it, and the header would show the written text.
+ * @param at - The `generated.at` value as the agent wrote it, of any type.
+ * @returns `true` for a date the header can show as written.
+ * @example isGeneratedTime('2028-02-29T05:00:00Z') // => true
+ * @example isGeneratedTime('2026-02-29') // => false (2026 is no leap year)
+ */
+function isGeneratedTime(at) {
+  const match = typeof at === 'string' ? GENERATED_AT.exec(at) : null;
+  if (!match) return false;
+  const [year, month, day] = match.slice(1, 4).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+/**
+ * Says what the manifest's `generated` record holds instead of a usable time, for the refusal of {@link requireGeneratedTime}.
+ * @param generated - The manifest's `generated` value, of any type.
+ * @returns A clause: no record, the wrong `at` value itself (cut to 80 characters), or the keys the record holds, so the agent can move a time it wrote under another key.
+ * @example generatedRecordClause({ generatedAt: 'x' }) // => 'its generated record holds generatedAt'
+ * @example generatedRecordClause({ at: 'yesterday' }) // => 'its generated.at reads "yesterday"'
+ */
+function generatedRecordClause(generated) {
+  if (!generated || typeof generated !== 'object' || Array.isArray(generated)) return 'it has no generated record';
+  if (Object.hasOwn(generated, 'at')) return `its generated.at reads ${(JSON.stringify(generated.at) ?? String(generated.at)).slice(0, 80)}`;
+  return `its generated record holds ${Object.keys(generated).join(', ') || 'no key'}`;
+}
+/**
+ * Refuses a manifest whose `generated.at` is missing or is no real ISO 8601 date ({@link isGeneratedTime}), because every page's header shows that date as "Indexed": a manifest that named the time under another key published each page as "Indexed Unknown" (Cycle 0140, Cursor's Wiki wrote `generatedAt`).
  * Called by {@link renderWikiPages} after {@link validatePages}, so `--render-only` and publication both refuse before any page is written.
  * @param manifest - The agent-authored `codebook-wiki.json`.
- * @throws A sentence that names the key the publisher reads, an example value and the keys the manifest's `generated` record holds instead.
+ * @throws A sentence that names the key the publisher reads, an example value, and what the record holds instead ({@link generatedRecordClause}).
  * @example requireGeneratedTime({ generated: { revision: 'abc', at: '2026-11-22T05:00:00Z' } }) // => undefined
  * @example requireGeneratedTime({ generated: { generatedAt: '2026-11-22T05:00:00Z' } }) // throws, naming generatedAt
  */
 function requireGeneratedTime(manifest) {
-  const generated = manifest.generated;
-  const at = generated?.at;
-  if (typeof at === 'string' && GENERATED_AT.test(at) && !Number.isNaN(Date.parse(at))) return;
-  // Name what the record holds instead, so the agent can move a time it wrote under another key.
-  const holds = generated && typeof generated === 'object' && !Array.isArray(generated) ? `its generated record holds ${Object.keys(generated).join(', ') || 'no key'}` : 'it has no generated record';
-  throw new Error(`The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; ${holds}.`);
+  if (isGeneratedTime(manifest.generated?.at)) return;
+  throw new Error(`The Wiki manifest needs generated.at, the date and time of this generation in ISO 8601 (for example 2026-11-22T05:00:00Z), which every page's header shows as its Indexed date; ${generatedRecordClause(manifest.generated)}.`);
 }
-
+/** Checks agent-authored reader data before {@link renderWikiPages} creates any page. @example validatePages({ readerVersion: 2, pages }) */
 function validatePages(manifest) {
   if (manifest.readerVersion !== READER_VERSION) throw new Error('This Wiki stage needs readerVersion: 2 and semantic diagram records. Read the installed Codebook skill before publishing.');
   if (!Array.isArray(manifest.pages) || !manifest.pages.length || manifest.pages.length > MAX_PAGES) throw new Error('The Wiki needs 1–256 semantic pages.');
