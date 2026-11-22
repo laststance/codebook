@@ -166,6 +166,8 @@ async function devinWindow(
     onSetupCommit?: () => Promise<void>
     failSetupRestore?: boolean
     skillReceiptMode?: number
+    /** How many of the first reads of the setup receipts get no answer (descriptor exhaustion), as `null`. */
+    receiptReadsWithoutAnswer?: number
   } = {},
 ) {
   const directory =
@@ -546,6 +548,12 @@ async function devinWindow(
       // Reads the real records; an armed hold makes the next read wait after it read, as a removal that lands in between would find it.
       './utils/readStandingDevinInstallationId': {
         readStandingDevinInstallationId: async (storageRoot: string) => {
+          // A read that gets no answer, as under descriptor exhaustion.
+          if ((options.receiptReadsWithoutAnswer ?? 0) > 0) {
+            options.receiptReadsWithoutAnswer =
+              (options.receiptReadsWithoutAnswer ?? 0) - 1
+            return null
+          }
           const stands = await readStandingDevinInstallationId(storageRoot)
           if (isReceiptsHoldArmed) {
             isReceiptsHoldArmed = false
@@ -1534,6 +1542,30 @@ test('a Devin Desktop window that opens on a set-up workspace writes a marked co
     )
     // Assert
     assert.equal(await window.readDescriptorField(), true)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a moment of descriptor exhaustion at server start does not leave the descriptor of a set-up window unmarked for the whole run; fails_when=the first read gets no answer and the descriptor is published without the mark, so the bridge exits as not set up; no_claim=a receipt that is observed removed, which stays unmarked
+test('a Devin Desktop window whose first receipt read at server start gets no answer ends with a marked descriptor', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadsWithoutAnswer: 1,
+  })
+  try {
+    // Act
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+    )
+    const isMarked = async (): Promise<boolean> =>
+      (await window.readDescriptorField()) === true
+    await waitUntil(isMarked, 'the mark after the receipts read answered')
+    // Assert
+    assert.equal(await window.readDescriptorField(), true)
+    assert.equal(await window.readDescriptorInstallation(), 'installation-test')
   } finally {
     await window.loaded.deactivate()
   }

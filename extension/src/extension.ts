@@ -62,6 +62,8 @@ import {
   REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
   NODE_SERVER_SHUTDOWN_GRACE_MS,
+  DEVIN_MARK_READ_RETRY_BUDGET_MS,
+  DEVIN_MARK_READ_RETRY_DELAY_MS,
   DEVIN_REMOVAL_ACTION,
   DEVIN_REMOVAL_QUESTION,
   DEVIN_SETUP_REMOVED_LINE,
@@ -264,6 +266,11 @@ import { withDevinSetupLock } from './utils/withDevinSetupLock'
 let stopExtension: (() => Promise<void>) | undefined
 
 /** One change of this window's own Wiki update marker (its removal, or its turn into a stopped watch's reservation): the change, the timer of its next attempt while it waits, and the attempt while it runs. */
+/** The fields of a Devin Desktop window's connection descriptor that carry its AI chat mark; empty when the window is unmarked. */
+type DevinChatFields = {
+  devinChat?: true
+  devinSetupInstallation?: string
+}
 type WikiMarkerChangeEntry = {
   change: () => Promise<boolean>
   timer?: NodeJS.Timeout
@@ -421,18 +428,31 @@ export function activate(
   /** Whether this window's connection descriptor carries the Devin AI chat mark right now: set once the mark is written, cleared before an unmark rewrites the descriptor. The server refuses a request of the Devin bridge while it is `false` ({@link startServer}), so a bridge that connected before a failed setup's rollback stops being served. */
   let isDevinChatMarked = false
   /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
-  const devinChatField = async (): Promise<{
-    devinChat?: true
-    devinSetupInstallation?: string
-  }> => {
+  const devinChatField = async (): Promise<DevinChatFields> =>
+    (await readDevinChatField()) ?? {}
+  /** Reads the mark fields once and tells a read that could not look from a setup that does not stand; used by {@link devinChatField} (no answer counts as unmarked) and by {@link devinChatFieldAtStart} (no answer is asked again). @returns The fields, `{}` when the setup does not stand, or `undefined` when the receipts could not be read at all. @example await readDevinChatField() // => undefined during a moment of descriptor exhaustion */
+  const readDevinChatField = async (): Promise<DevinChatFields | undefined> => {
     if (!isDevinHost || !setupMatchesCurrentWorkspace()) return {}
     // The bridge's receipt rules decide, in one read: both receipts installed and private, the id from the MCP one.
     const installationId = await readStandingDevinInstallationId(
       context.globalStorageUri.fsPath,
     )
+    // `null`: no answer; an unmarked descriptor published on it would stay unmarked for the whole run.
+    if (installationId === null) return undefined
     return installationId
       ? { devinChat: true, devinSetupInstallation: installationId }
       : {}
+  }
+  /** The mark fields for a server that starts now: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS} for at most {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; after the budget it is published unmarked, as a setup that does not stand. @example { ...(await devinChatFieldAtStart()) } */
+  const devinChatFieldAtStart = async (): Promise<DevinChatFields> => {
+    const deadline = Date.now() + DEVIN_MARK_READ_RETRY_BUDGET_MS
+    let field = await readDevinChatField()
+    // Only a read with no answer is asked again, and only within the budget.
+    while (field === undefined && Date.now() < deadline) {
+      await delay(DEVIN_MARK_READ_RETRY_DELAY_MS)
+      field = await readDevinChatField()
+    }
+    return field ?? {}
   }
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
@@ -774,7 +794,7 @@ export function activate(
         const startedService = service
         // The mark decision, the write and the publication of the running target share the queue of the removal's unmark: a removal that comes first leaves the decision unmarked, and one that comes later finds the target and unmarks it.
         return await inDescriptorQueue(async (): Promise<Running> => {
-          const devinFields = await devinChatField()
+          const devinFields = await devinChatFieldAtStart()
           // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
           await writeFile(
             descriptorPath,
