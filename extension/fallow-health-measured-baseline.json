@@ -89,7 +89,7 @@
         "count": 1
       },
       "crap_moderate": {
-        "count": 2
+        "count": 1
       }
     },
     "src/nativeRepositoryBootstrap.ts": {
@@ -520,32 +520,33 @@
     "src/ui/studyHtml.ts:complexity",
     "src/resources.ts:complexity",
     "src/utils/assertStudyCheckpoint.ts:high impact",
+    "src/studyWorkspace.ts:complexity",
     "src/utils/projectConfiguredStudy.ts:complexity",
     "src/recordingStore.ts:complexity",
     "src/utils/decodeConfiguredStudy.ts:high impact",
     "src/learningLibrary.ts:hidden coupling",
-    "src/studyWorkspace.ts:complexity",
+    "skills/codebook/render-wiki.mjs:high impact",
     "src/ownedNodeTestRun.ts:complexity",
     "src/recordingSchemas.ts:dead code",
-    "skills/codebook/render-wiki.mjs:high impact",
     "src/playbackController.ts:complexity",
     "src/utils/projectRecording.ts:high impact",
     "src/utils/configuredDomExpression.ts:complexity",
     "src/configuredBrowserRun.ts:complexity",
+    "src/server.ts:complexity",
     "src/extension.ts:complexity",
     "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
     "src/repositoryReader.ts:complexity",
     "src/utils/readRecordingResource.ts:complexity",
-    "src/cursorSkillDeployment.ts:complexity",
+    "src/ownedRepositoryBreakpoint.ts:complexity",
     "skills/codebook/publish-wiki.mjs:high impact",
+    "src/cursorSkillDeployment.ts:complexity",
+    "skills/codebook/render-wiki-diagrams.mjs:complexity",
     "src/utils/validateRepositoryBook.ts:complexity",
     "src/runtimeSupport/hostBrowser.ts:complexity",
-    "src/ownedRepositoryBreakpoint.ts:complexity",
-    "skills/codebook/render-wiki-diagrams.mjs:complexity",
     "src/studyWorkspace/presentationState.ts:complexity",
+    "src/studyWorkspace/presentationGuards.ts:complexity",
     "src/ui/repositoryHtml.ts:complexity",
     "src/replayDebugger.ts:hidden coupling",
-    "src/studyWorkspace/presentationGuards.ts:complexity",
     "src/replayDebugAdapter.ts:complexity",
     "src/studyWorkspace/replayOpening.ts:complexity"
   ],
