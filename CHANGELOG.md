@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.141.0] - 2026-11-23 (development candidate)
+
+Cycle 0145 ([Issue #362](https://github.com/laststance/codebook/issues/362)), a bug-fix cycle. **The Devin Desktop setup and its bridge now hold under reconnects, passing read failures, a stalled disk and failed take-backs.** It fixes the nine defects that Cycle 0144's review limit carried and the defects this cycle's reviews found in the same code, so that none of these cases deletes a copy of your config, turns a failed setup into an installed one, ends a working Devin Local connection, or reports a success that Devin Local then refuses.
+
+### Fixed
+- **A moved-aside copy of your other MCP servers is kept** when an editor saves the config again while Codebook checks it. A file at one of Codebook's private names that changed or could not be read after Codebook checked it is taken off the config path again and named; when either name changed once more first, the notice names both files and says that the config may hold a file Codebook did not verify.
+- **A first setup that failed never becomes an installed one later**, also when it stopped after it saved the entry and before it wrote its record (for example because the editor closed or the disk was full): the next run takes the entry out again.
+- **Setup reports success only when the bridge's own check of both of Codebook's records stands for the descriptor it marked**, and that check has 3 seconds to answer. A record that group or other can read (for example after a restore from a backup), or that you may not read, gets the mode-600 repair and its path. A record that was removed, changed, linked or grew too large meanwhile gets "The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.", and a descriptor that no longer names this window's server also asks you to run Codebook: Stop Agent Server first. A read that fails or does not answer in time gets "Codebook could not read its setup records just now; run Codebook: Set Up AI Chat again." None of these offers Reload Window.
+- **A setup whose workspace folder changed while it saved its final value says that it did not complete for this folder** and offers no Reload Window, instead of a success that cannot connect the folder now open.
+- **A connected Devin Local bridge keeps working when a read of Codebook's records fails for a moment or does not answer within 3 seconds**: only that request fails, and a later request reads again. A window whose server starts, or whose failed setup takes back what it saved, during such a failure reads again for up to 5 seconds instead of leaving Devin Local unconnected.
+- **A bridge reconnects only to the setup it connected for.** When the window was set up again for another installation after the bridge connected, it ends with `Codebook's AI chat setup for <folder> changed in this Devin Desktop window after this bridge connected. Reload the window.`
+- **A removal or a renewed access token ends a connected Devin Local bridge with the right answer**, also when the refusal arrives during a reconnect or a retried request, and also when Devin closes the bridge while that answer is pending.
+- **When the bridge cannot read Codebook's setup records before its 15 seconds end**, it says that Codebook could not check the AI chat setup and asks you to reload the window, instead of saying that Codebook is not running.
+- **A failed setup whose take-back finds its record of the entry gone while Codebook's entry stays says that the take-back is incomplete**: the Output names the config and asks you to remove that entry by hand before you run setup again.
+
 ## [0.2.140.0] - 2026-11-22 (development candidate)
 
 Cycle 0144 ([Issue #360](https://github.com/laststance/codebook/issues/360)), a bug-fix cycle. **The Devin Desktop setup now keeps its promises under crashes, races between windows and unreadable files.** It fixes the thirteen defects that Cycle 0143's review limit carried, so that none of these cases loses your config, connects Devin Local where the setup was removed, or brings back a server you stopped.
