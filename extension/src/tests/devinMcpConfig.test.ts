@@ -2451,7 +2451,11 @@ test('Recovery keeps an editor save that landed at the config name while the dis
 })
 
 test('Recovery says the config name could not be taken away when its unlink fails, names both paths and keeps the displaced file in a later run', async (context) => {
-  // protects=a failed unlink never reads as taken away, and the displaced name that shares the config's inode is handed over, not deleted by a later run; fails_when=the refusal says the name was taken away, omits a path, or a later recovery deletes the displaced file; no_claim=the learner's repair; seam=seam.afterLeftoverCheck makes the config directory read-only at the last look before the unlink
+  // Value: protects=a failed unlink never reads as taken away, and the displaced name that shares the config's inode is handed over, not deleted by a later run; fails_when=the refusal says the name was taken away, omits a path, or a later recovery deletes the displaced file; no_claim=the learner's repair, and root and Windows, where a read-only folder does not make the unlink fail (the test skips there, as its read-only-folder siblings do); seam=seam.afterLeftoverCheck makes the config directory read-only at the last look before the unlink
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('a read-only folder does not stop root or Windows')
+    return
+  }
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
