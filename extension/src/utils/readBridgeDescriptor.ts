@@ -87,29 +87,48 @@ async function within<T>(
   }
 }
 
+/** The one sentence for a descriptor that is no longer the one the selection validated, whichever field changed; it holds no descriptor content. */
+const DESCRIPTOR_CHANGED_MESSAGE =
+  'Codebook connection descriptor changed after it was selected.'
+
 /**
- * Tells whether the descriptor read for a connection is no longer the one a bridge's selection validated; called by {@link readBridgeDescriptor} on the one read the transport connects with, so a descriptor rewritten after the selection (another instance, extension host, setup state or port) never receives a request.
+ * The refusal for a descriptor that differs from the selection only in its mark (`devinChat`, `devinSetupInstallation`), as when setup marks it again while the bridge connects; thrown by {@link readBridgeDescriptor}, and told apart from any other change by the Devin bridge's connection, which selects the descriptor again instead of dropping it.
+ * @example
+ * // after a mark-only change: error instanceof DescriptorMarkChangedError // => true
+ */
+export class DescriptorMarkChangedError extends Error {
+  constructor() {
+    super(DESCRIPTOR_CHANGED_MESSAGE)
+    this.name = 'DescriptorMarkChangedError'
+  }
+}
+
+/**
+ * Tells how the descriptor read for a connection differs from the one a bridge's selection validated; called by {@link readBridgeDescriptor} on the one read the transport connects with, so a descriptor rewritten after the selection (another instance, extension host, setup state or port) never receives a request.
  * @param read - The descriptor as {@link parseDescriptorText} parsed it for this connection, with its owner pid and devinChat mark.
  * @param expected - What the selection validated.
- * @param resolveWorkspace - Resolves the descriptor's workspace to the real path the selection compared; called last, only when every other field still matches.
- * @returns `true` when any validated field differs; `false` when the read is still the validated descriptor.
+ * @param resolveWorkspace - Resolves the descriptor's workspace to the real path the selection compared; called only when the other identity fields still match.
+ * @returns `identity` when the instance, pid, endpoint url or workspace differs; `mark` when only `devinChat` or the installation mark differs; `none` when the read is still the validated descriptor.
  * @example
- * await changedSinceSelection({ descriptor, pid: 4242, devinChat: true }, expected, realOrSame) // => false
+ * await changedSinceSelection({ descriptor, pid: 4242, devinChat: true }, expected, realOrSame) // => 'none'
  */
 async function changedSinceSelection(
   read: ReturnType<typeof parseDescriptorText>,
   expected: DescriptorExpectation,
   resolveWorkspace: (path: string) => Promise<string>,
-): Promise<boolean> {
-  return (
+): Promise<'identity' | 'mark' | 'none'> {
+  if (
     read.descriptor.instanceId !== expected.instanceId ||
     read.pid !== expected.pid ||
-    read.devinChat !== expected.devinChat ||
-    (expected.devinSetupInstallation !== undefined &&
-      read.devinSetupInstallation !== expected.devinSetupInstallation) ||
     (expected.url !== undefined && read.descriptor.url !== expected.url) ||
     (await resolveWorkspace(read.descriptor.workspace)) !== expected.workspace
   )
+    return 'identity'
+  return read.devinChat !== expected.devinChat ||
+    (expected.devinSetupInstallation !== undefined &&
+      read.devinSetupInstallation !== expected.devinSetupInstallation)
+    ? 'mark'
+    : 'none'
 }
 
 /**
@@ -120,7 +139,7 @@ async function changedSinceSelection(
  * @param timeoutMs - The startup budget the read and the checks may use together, the workspace's real-path lookup included; unbounded when left out.
  * @param resolveWorkspace - Resolves the descriptor's workspace to its real path; {@link realOrSame} unless a test names its own.
  * @returns The connection fields of the descriptor read.
- * @throws When the file is not a private regular file within the size limit, is not a valid descriptor ({@link DESCRIPTOR_UNREADABLE_MESSAGE}), names a url that is not Codebook's loopback endpoint, differs from `expected` (its exact url included), or the budget ends first.
+ * @throws When the file is not a private regular file within the size limit, is not a valid descriptor ({@link DESCRIPTOR_UNREADABLE_MESSAGE}), names a url that is not Codebook's loopback endpoint, differs from `expected` (its exact url included), or the budget ends first; a {@link DescriptorMarkChangedError} when only the mark differs.
  * @example
  * await readBridgeDescriptor('/agent/x.connection.json', { instanceId, pid: 4242, workspace: '/repo', devinChat: true, url }, 3_000)
  */
@@ -140,13 +159,11 @@ export async function readBridgeDescriptor(
         'Codebook connection descriptor is not a loopback endpoint.',
       )
     // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
-    if (
-      expected &&
-      (await changedSinceSelection(parsed, expected, resolveWorkspace))
-    )
-      throw new Error(
-        'Codebook connection descriptor changed after it was selected.',
-      )
+    const change = expected
+      ? await changedSinceSelection(parsed, expected, resolveWorkspace)
+      : 'none'
+    if (change === 'mark') throw new DescriptorMarkChangedError()
+    if (change === 'identity') throw new Error(DESCRIPTOR_CHANGED_MESSAGE)
     return descriptor
   })
 }

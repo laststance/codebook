@@ -29,7 +29,10 @@ import { isDescriptorOwnerGone } from './utils/evidenceInUseElsewhere'
 import { isFileDescriptorExhaustion } from './utils/isFileDescriptorExhaustion'
 import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 import { isSameStorageMachine } from './utils/isSameStorageMachine'
-import type { DescriptorExpectation } from './utils/readBridgeDescriptor'
+import {
+  DescriptorMarkChangedError,
+  type DescriptorExpectation,
+} from './utils/readBridgeDescriptor'
 import { readMarkedInstallation } from './utils/readMarkedInstallation'
 import {
   recordedOwnerSchema,
@@ -916,33 +919,38 @@ function setupCheckBeforeReconnect(
   binding: DevinBridgeBinding,
   cwd: string,
 ): () => Promise<boolean> {
-  let inFlight: Promise<boolean> | undefined,
+  // The timed answer of the receipts read still running: every request that arrives before the read settles waits on this one result, so a stalled read is started once and costs one timer, however many requests time out on it.
+  let timedRead: Promise<DevinBridgeReceiptsAnswer | undefined> | undefined,
     ending: Promise<boolean> | undefined
-  async function checkOnce(): Promise<boolean> {
-    const receipts = await receiptsAnswerWithin(
-      descriptorPath,
-      binding,
-      DEVIN_BRIDGE_RECONNECT_CHECK_MS,
+  function startTimedRead(): Promise<DevinBridgeReceiptsAnswer | undefined> {
+    const read = checkDevinBridgeReceipts(descriptorPath, binding).catch(
+      (): DevinBridgeReceiptsAnswer => ({ answer: 'no-answer' }),
     )
+    // The read is shared until it settles; a request after that starts a new one.
+    void read.finally(() => {
+      timedRead = undefined
+    })
+    return answerWithin(read, DEVIN_BRIDGE_RECONNECT_CHECK_MS)
+  }
+  async function check(): Promise<boolean> {
+    // Once the bridge has ended, no later request checks again.
+    if (ending) return ending
+    timedRead ??= startTimedRead()
+    const receipts = await timedRead
+    // The refusal may have been claimed by a request that shared this read while this one waited.
+    if (ending) return ending
     // No answer in time, or a read that failed to look (a file shortage, EIO): nothing is known, so only this request fails and the bridge stays up.
     if (receipts === undefined || receipts.answer === 'no-answer')
       throw new Error('Codebook setup check did not answer.')
     if (receipts.answer === 'stands') return true
     process.exitCode = 1
-    // The ending is one shared promise: a caller arriving while the line is still being written waits for it, so no shutdown runs before the line is out.
+    // Claimed in one synchronous step after the read: every request that waited on it awaits this one write, so one line is written and no shutdown runs before it is out.
     ending = writeRefusalLine(
       `${receipts.answer === 'replaced' ? replacedLine(cwd) : notSetUpLine(cwd)}\n`,
     ).then(() => false)
     return ending
   }
-  // Requests that fail together share one check, so the refusal line is written once; once the bridge has ended, no later request checks again.
-  return () => {
-    if (ending) return ending
-    inFlight ??= checkOnce().finally(() => {
-      inFlight = undefined
-    })
-    return inFlight
-  }
+  return check
 }
 
 /**
@@ -955,7 +963,7 @@ function setupCheckBeforeReconnect(
  * @param onClosed - Called once the bridge's cleanup has completed after its stdio closed.
  * @param cwd - The bridge's working folder, named by the refusal a later reconnection ends with.
  * Before any request it requires the setup receipts of the descriptor's installation ({@link checkDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
- * @returns `connected` once the transport is up; `not-set-up` after a pause when the receipts check observed the setup removed; `busy` after a pause when the receipts check did not answer in time or answered `no-answer` or `replaced`, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
+ * @returns `connected` once the transport is up; `not-set-up` after a pause when the descriptor names no installation or the receipts check observed the setup removed; `unverified` after a pause when the receipts check did not answer in time or answered `no-answer`; `remarked` after a pause when the connection's descriptor read found only the mark changed; `busy` after a pause when the receipts check answered `replaced`, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included, and a descriptor whose endpoint, instance, pid or workspace changed) and when no time remains.
  * @example
  * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'
  */
@@ -965,8 +973,14 @@ async function connectOnce(
   expected: DescriptorExpectation,
   onClosed: (() => void) | undefined,
   cwd: string,
-): Promise<'connected' | 'busy' | 'dropped' | 'not-set-up'> {
-  // The last check before an MCP session: the setup the descriptor was marked for must still stand. It is bounded like every other wait: a check that does not answer in time is transient, never a missing setup; one that answered and failed counts like an unmarked descriptor, so the bridge keeps polling until its deadline, then names the missing setup.
+): Promise<ConnectOutcome> {
+  // A selection without an installation id has no setup to bind: no check can confirm one, so it waits for setup to mark the descriptor and is selected again then.
+  const installationId = selection.devinSetupInstallation
+  if (!installationId) {
+    await pauseBeforeRetry(deadline)
+    return 'not-set-up'
+  }
+  // The last check before an MCP session: the setup the descriptor was marked for must still stand. It is bounded like every other wait: a check that does not answer in time is transient, never a missing setup; one that answered and failed counts like an unmarked descriptor, so the bridge keeps polling until its deadline, then names the missing setup. A check that stands confirms `installationId`, which every later check and the connection's own descriptor read are bound to.
   const binding = bindingOfSelection(selection)
   const receipts = await receiptsAnswerWithin(
     selection.descriptorPath,
@@ -974,11 +988,8 @@ async function connectOnce(
     Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
   )
   if (receipts?.answer !== 'stands') {
-    const remaining = deadline - Date.now()
-    if (remaining > 0)
-      await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
-    // A descriptor that changed since the selection is scanned again, and no answer is transient; only an observed removal is a setup that does not stand.
-    return receipts?.answer === 'removed' ? 'not-set-up' : 'busy'
+    await pauseBeforeRetry(deadline)
+    return outcomeOfReceipts(receipts)
   }
   // One check for both hooks, so a refusal and an expired session that happen together share its answer and its line.
   const setupCheck = setupCheckBeforeReconnect(
@@ -990,7 +1001,8 @@ async function connectOnce(
     await runCursorMcpBridge(
       selection.descriptorPath,
       Math.max(DEVIN_CONNECT_FLOOR_MS, deadline - Date.now()),
-      expected,
+      // The connection's own read compares with the id the check confirmed.
+      { ...expected, devinSetupInstallation: installationId },
       { name: DEVIN_BRIDGE_HEADER_NAME, value: DEVIN_BRIDGE_HEADER_VALUE },
       onClosed,
       setupCheck,
@@ -1002,10 +1014,46 @@ async function connectOnce(
     return 'connected'
   } catch (error) {
     const remaining = deadline - Date.now()
+    // Setup marked the descriptor again after the check: only its mark changed, so the window is looked up and checked again.
+    if (error instanceof DescriptorMarkChangedError && remaining > 0) {
+      await pauseBeforeRetry(deadline)
+      return 'remarked'
+    }
     if (!isTransientFailure(error) || remaining <= 0) return 'dropped'
-    await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
+    await pauseBeforeRetry(deadline)
     return 'busy'
   }
+}
+
+/** What one {@link connectOnce} attempt came to; see its `@returns`. */
+type ConnectOutcome =
+  'connected' | 'busy' | 'dropped' | 'not-set-up' | 'unverified' | 'remarked'
+
+/**
+ * Waits {@link TRANSIENT_RETRY_PAUSE_MS}, or less when the startup deadline is nearer; called by {@link connectOnce} before every outcome that scans again.
+ * @param deadline - When the startup wait ends (epoch milliseconds).
+ * @example
+ * await pauseBeforeRetry(Date.now() + 15_000)
+ */
+async function pauseBeforeRetry(deadline: number): Promise<void> {
+  const remaining = deadline - Date.now()
+  if (remaining > 0) await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
+}
+
+/**
+ * Names what a receipts check that did not stand means for the attempt; called by {@link connectOnce}.
+ * @param receipts - The check's answer, `undefined` when it did not answer in time.
+ * @returns `not-set-up` for an observed removal, `unverified` when nothing was learned (no answer in time or `no-answer`), `busy` for a descriptor that changed since the selection (`replaced`).
+ * @example
+ * outcomeOfReceipts({ answer: 'no-answer' }) // => 'unverified'
+ */
+function outcomeOfReceipts(
+  receipts: DevinBridgeReceiptsAnswer | undefined,
+): 'not-set-up' | 'unverified' | 'busy' {
+  if (receipts?.answer === 'removed') return 'not-set-up'
+  return receipts === undefined || receipts.answer === 'no-answer'
+    ? 'unverified'
+    : 'busy'
 }
 
 /**
@@ -1081,7 +1129,9 @@ export async function runDevinMcpBridge(
     state = createDevinSelectState()
   const lateAttempt = { isSpent: false },
     // True while the last attempt found a selected descriptor's setup removed: the refusal at the end of the wait then names the missing setup, not a missing Codebook.
-    wait = { isSetupMissing: false }
+    wait = { isSetupMissing: false, isSetupUnverified: false },
+    // The endpoint and instance of each descriptor that was marked again during a connection: a later selection of that path must name the same ones, so a rewritten port is never accepted for this window.
+    pinned = new Map<string, PinnedIdentity>()
   for (;;) {
     // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.
     const selection = await selectDevinDescriptor(agentDir, cwd, pid, {
@@ -1094,6 +1144,11 @@ export async function runDevinMcpBridge(
     if (!selection) return endOfWaitLine(cwd, wait)
     // This window runs Codebook but its AI chat setup is for another folder or missing: nothing to wait for.
     if (!selection.devinChat) return notSetUpLine(cwd)
+    // A descriptor marked again during a connection that now names another endpoint or instance is not this window's selection any more.
+    if (hasPinnedIdentityChanged(pinned, selection)) {
+      excludedPaths.add(selection.descriptorPath)
+      continue
+    }
     // Once the deadline has passed only one more attempt may start in total, however many descriptors remain.
     if (!mayStartAttempt(deadline, lateAttempt)) return endOfWaitLine(cwd, wait)
     const outcome = await connectOnce(
@@ -1105,27 +1160,61 @@ export async function runDevinMcpBridge(
       cwd,
     )
     if (outcome === 'connected') return undefined
-    noteConnectOutcome(outcome, selection.descriptorPath, excludedPaths, wait)
+    noteConnectOutcome(outcome, selection, excludedPaths, wait, pinned)
   }
+}
+
+/** The endpoint and instance a descriptor had when a connection found it marked again. */
+interface PinnedIdentity {
+  instanceId: string
+  url: string
+}
+
+/**
+ * Says whether a selected descriptor that was marked again during an earlier connection now names another endpoint or instance; called by {@link runDevinMcpBridge} before each attempt.
+ * @param pinned - The identities pinned by {@link noteConnectOutcome}, by descriptor path.
+ * @param selection - The descriptor just selected.
+ * @returns `true` when the path was pinned and the selection's instance id or url differs; `false` otherwise.
+ * @example
+ * hasPinnedIdentityChanged(new Map(), selection) // => false
+ */
+function hasPinnedIdentityChanged(
+  pinned: ReadonlyMap<string, PinnedIdentity>,
+  selection: DevinDescriptorSelection,
+): boolean {
+  const identity = pinned.get(selection.descriptorPath)
+  return (
+    identity !== undefined &&
+    (identity.instanceId !== selection.instanceId ||
+      identity.url !== selection.url)
+  )
 }
 
 /**
  * Records what a failed connection attempt means for the rest of the wait; called by {@link runDevinMcpBridge} after each {@link connectOnce} that did not connect.
- * A dropped descriptor is not selected again. `wait.isSetupMissing` follows the last outcome: set by `not-set-up`, cleared by any other, so a wait that ends after a later attempt was dropped or busy says Codebook is not running.
+ * A dropped descriptor is not selected again; a `remarked` one is, but only with the endpoint and instance it had. `wait` follows the last outcome: `isSetupMissing` is set by `not-set-up` and `isSetupUnverified` by `unverified`, each cleared by any other, so a wait that ends after a later attempt was dropped or busy says Codebook is not running.
  * @param outcome - The attempt's outcome.
- * @param descriptorPath - The attempted descriptor.
+ * @param selection - The attempted descriptor.
  * @param excludedPaths - The descriptors the selection skips from now on.
- * @param wait - The wait's state; `isSetupMissing` is whether the last outcome was `not-set-up`.
- * @example noteConnectOutcome('dropped', '/storage/agent/a.connection.json', excludedPaths, wait) // excludedPaths now holds that path
+ * @param wait - The wait's state.
+ * @param pinned - The identities later selections of a marked-again descriptor must keep.
+ * @example noteConnectOutcome('dropped', selection, excludedPaths, wait, pinned) // excludedPaths now holds that path
  */
 function noteConnectOutcome(
-  outcome: 'busy' | 'dropped' | 'not-set-up',
-  descriptorPath: string,
+  outcome: Exclude<ConnectOutcome, 'connected'>,
+  selection: DevinDescriptorSelection,
   excludedPaths: Set<string>,
-  wait: { isSetupMissing: boolean },
+  wait: { isSetupMissing: boolean; isSetupUnverified: boolean },
+  pinned: Map<string, PinnedIdentity>,
 ): void {
-  if (outcome === 'dropped') excludedPaths.add(descriptorPath)
+  if (outcome === 'dropped') excludedPaths.add(selection.descriptorPath)
+  if (outcome === 'remarked')
+    pinned.set(selection.descriptorPath, {
+      instanceId: selection.instanceId,
+      url: selection.url,
+    })
   wait.isSetupMissing = outcome === 'not-set-up'
+  wait.isSetupUnverified = outcome === 'unverified'
 }
 
 /**
@@ -1141,13 +1230,27 @@ function notSetUpLine(cwd: string): string {
 /**
  * The refusal when the bridge's startup window ends without a connection; returned by {@link runDevinMcpBridge}.
  * @param cwd - The bridge's working folder.
- * @param wait - The wait's state: whether a selected descriptor's setup was found removed.
- * @returns {@link notSetUpLine} when a descriptor's setup was removed, else {@link notRunningLine}.
- * @example endOfWaitLine('/repo', { isSetupMissing: true }) // => notSetUpLine('/repo')
+ * @param wait - The wait's state: whether the last attempt found a descriptor's setup removed or could not verify it.
+ * @returns {@link notSetUpLine} when a descriptor's setup was removed, {@link unverifiedLine} when its receipts could not be read, else {@link notRunningLine}.
+ * @example endOfWaitLine('/repo', { isSetupMissing: true, isSetupUnverified: false }) // => notSetUpLine('/repo')
  */
 function endOfWaitLine(
   cwd: string,
-  wait: { readonly isSetupMissing: boolean },
+  wait: {
+    readonly isSetupMissing: boolean
+    readonly isSetupUnverified: boolean
+  },
 ): string {
-  return wait.isSetupMissing ? notSetUpLine(cwd) : notRunningLine(cwd)
+  if (wait.isSetupMissing) return notSetUpLine(cwd)
+  return wait.isSetupUnverified ? unverifiedLine(cwd) : notRunningLine(cwd)
+}
+
+/**
+ * The refusal for a wait that ended while the setup records of a running Codebook could not be read; returned by {@link endOfWaitLine}.
+ * @param cwd - The bridge's working folder.
+ * @returns One fixed recovery sentence without descriptor contents; it does not say that Codebook is not running.
+ * @example unverifiedLine('/repo') // => 'Codebook could not check the AI chat setup for /repo in this Devin Desktop window, because its setup records could not be read. Reload the window to try again.'
+ */
+function unverifiedLine(cwd: string): string {
+  return `Codebook could not check the AI chat setup for ${cwd} in this Devin Desktop window, because its setup records could not be read. Reload the window to try again.`
 }
