@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.139'
+export const EXTENSION_VERSION = '0.2.140'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -486,6 +486,28 @@ export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
 export const DEVIN_DESCRIPTOR_LIMIT_BYTES = 65_536
 /** The least time the Devin Desktop bridge gives one connection attempt, also when the 15 s selection window has nearly passed: a server that needs a moment to answer still connects, so the bridge's total time can exceed that window by this floor. */
 export const DEVIN_CONNECT_FLOOR_MS = 3_000
+/** The longest one lookup of the Devin Desktop bridge's own working folder is waited for in one poll, so a hanging lookup cannot spend the whole startup window; a lookup that timed out is asked again at a later poll. */
+export const DEVIN_BRIDGE_CWD_LOOKUP_MS = 1_000
+/** The longest one scan of the agent folder waits for descriptor reads and judgements before the next poll lists the folder again, so a stalled read or lookup never holds a healthy older match or a descriptor written meanwhile until the startup deadline. */
+export const DEVIN_BRIDGE_SCAN_WAIT_MS = 1_000
+/** How long the Devin Desktop bridge entry waits for its refusal line to be written before it ends the process anyway, so a full stderr pipe cannot keep a refused bridge alive. */
+export const DEVIN_BRIDGE_REFUSAL_EXIT_MS = 1_000
+/** Longest wait for the receipts check the Devin Desktop bridge runs before it opens a new upstream session after the first one expired. */
+export const DEVIN_BRIDGE_RECONNECT_CHECK_MS = 3_000
+/** Most descriptor files the Devin Desktop bridge reads at once, so a folder of many never exhausts the process's file descriptors. */
+export const DEVIN_BRIDGE_DESCRIPTOR_READS_MAX = 16
+/** How many times the bridge opens a descriptor again after the process ran out of file descriptors. */
+export const DEVIN_BRIDGE_DESCRIPTOR_READ_RETRIES_MAX = 20
+/** How long the bridge waits before it opens a descriptor again after the process ran out of file descriptors. */
+export const DEVIN_BRIDGE_DESCRIPTOR_READ_RETRY_MS = 50
+/** The most working-folder lookups of the Devin Desktop bridge that may be unanswered at once, so a hung mount holds at most two of libuv's four pool threads. */
+export const DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX = 2
+
+/** The request header the Devin Desktop bridge sends on every request, so the server can refuse its requests while this window's AI chat setup is taken back (Cycle 0144 task 4); Cursor's bridge sends none. */
+export const DEVIN_BRIDGE_HEADER_NAME = 'x-codebook-bridge'
+
+/** The value of {@link DEVIN_BRIDGE_HEADER_NAME} the Devin Desktop bridge sends. */
+export const DEVIN_BRIDGE_HEADER_VALUE = 'devin'
 /** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
 export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */

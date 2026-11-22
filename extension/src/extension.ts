@@ -96,6 +96,7 @@ import {
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
+  devinReceiptUnreadableSentence,
 } from './devinWindowSentences'
 import { createEnvironment, requireWorkspace } from './environment'
 import { learningItemSchema } from './identitySchemas'
@@ -193,6 +194,7 @@ import { listWikiCandidates } from './utils/listWikiCandidates'
 import { createLlmWikiView } from './utils/llmWikiView'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
+import { readDevinInstallationId } from './utils/readDevinInstallationId'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readLlmWikiViewFacts } from './utils/readLlmWikiViewFacts'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
@@ -413,9 +415,21 @@ export function activate(
     isDevinHost &&
     setupMatchesCurrentWorkspace() &&
     (await hasDevinSetupReceipts(context.globalStorageUri.fsPath))
-  /** The field a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands, so the Devin bridge connects only in windows where Set Up AI Chat ran; empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true } in a set-up Devin Desktop window */
-  const devinChatField = async (): Promise<{ devinChat?: true }> =>
-    (await devinSetupStands()) ? { devinChat: true } : {}
+  /** Whether this window's connection descriptor carries the Devin AI chat mark right now: set once the mark is written, cleared before an unmark rewrites the descriptor. The server refuses a request of the Devin bridge while it is `false` ({@link startServer}), so a bridge that connected before a failed setup's rollback stops being served. */
+  let isDevinChatMarked = false
+  /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
+  const devinChatField = async (): Promise<{
+    devinChat?: true
+    devinSetupInstallation?: string
+  }> => {
+    if (!(await devinSetupStands())) return {}
+    const installationId = await readDevinInstallationId(
+      context.globalStorageUri.fsPath,
+    )
+    return installationId
+      ? { devinChat: true, devinSetupInstallation: installationId }
+      : { devinChat: true }
+  }
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -743,7 +757,11 @@ export function activate(
           repository().openFromAgent(input, signal)
         service.repositoryPublished = (): Promise<void> =>
           repository().published()
-        const startedEndpoint = await startServer(service)
+        const startedEndpoint = await startServer(
+          service,
+          Date.now,
+          () => isDevinChatMarked,
+        )
         endpoint = startedEndpoint
         const descriptorPath = join(
           storageRoot,
@@ -767,6 +785,7 @@ export function activate(
               flag: 'wx',
             },
           )
+          isDevinChatMarked = devinFields.devinChat === true
           const server: Running = {
             endpoint: startedEndpoint,
             environment,
@@ -1202,23 +1221,65 @@ export function activate(
   /** Clears this window's saved Devin Desktop setup. @example await clearSavedDevinSetup() */
   const clearSavedDevinSetup = (): Promise<boolean> =>
     saveDevinSetupAs(undefined, 'clear')
-  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), and marks only while the setup stands ({@link devinSetupStands}). @example await markDevinChatDescriptor(true) */
-  const markDevinChatDescriptor = (enabled: boolean): Promise<void> =>
+  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), and marks only while the setup stands ({@link devinSetupStands}). @param checkedInstallationId - The installation id an explicit setup read just before queueing this mark; the mark carries it without reading the receipt again, so a receipt that became unreadable meanwhile cannot leave a mark without its id. Other callers leave it out. @example await markDevinChatDescriptor(true) */
+  const markDevinChatDescriptor = (
+    enabled: boolean,
+    checkedInstallationId?: string,
+  ): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
-      if (enabled && !(await devinSetupStands())) return
-      await setDescriptorDevinChat(target.descriptorPath, enabled)
-    })
-  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @example await syncDevinChatDescriptor() */
-  const syncDevinChatDescriptor = (): Promise<void> =>
-    inDescriptorQueue(async () => {
-      const target = running
-      if (!target) return
+      // One read decides the guard, the file's id and the in-memory mark: a removal between two reads cannot leave a mark without its id.
+      const field: Awaited<ReturnType<typeof devinChatField>> =
+        checkedInstallationId
+          ? { devinChat: true, devinSetupInstallation: checkedInstallationId }
+          : await devinChatField()
+      if (enabled && field.devinChat !== true) return
+      // An unmark clears the in-memory mark first, so the server refuses the bridge before the file is rewritten.
+      isDevinChatMarked &&= enabled
       await setDescriptorDevinChat(
         target.descriptorPath,
-        await devinSetupStands(),
+        enabled,
+        field.devinSetupInstallation,
       )
+      isDevinChatMarked ||= enabled
+    })
+  /** Rewrites the descriptor of `target` for the mark it earns; when `rotates`, the next token is only prepared, written with a removed mark, and the server switches to it (and the VS Code MCP client is told) once the file carries it, so a failed write leaves the server and the file on the old token. @example await writeSyncedDescriptor(running, false, undefined, true) */
+  const writeSyncedDescriptor = async (
+    target: NonNullable<typeof running>,
+    isMarked: boolean,
+    installationId: string | undefined,
+    rotates: boolean,
+  ): Promise<void> => {
+    const rotation = rotates
+      ? target.endpoint.prepareTokenRotation()
+      : undefined
+    const wroteToken = await setDescriptorDevinChat(
+      target.descriptorPath,
+      isMarked,
+      installationId,
+      rotation?.token,
+    )
+    if (!wroteToken) return
+    rotation?.commit()
+    notifyMcpDefinitions()
+  }
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
+  const syncDevinChatDescriptor = (rotateWhenUnmarked = false): Promise<void> =>
+    inDescriptorQueue(async () => {
+      const target = running
+      if (!target) return
+      const field = await devinChatField()
+      const isMarked = field.devinChat === true
+      // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
+      isDevinChatMarked &&= isMarked
+      await writeSyncedDescriptor(
+        target,
+        isMarked,
+        field.devinSetupInstallation,
+        rotateWhenUnmarked && !isMarked,
+      )
+      isDevinChatMarked ||= isMarked
     })
   /**
    * Takes back what a failed Devin Desktop setup saved: this window's setup goes back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load), the entry is removed only when this setup installed it (an updated or current entry is used by other windows, and a newer setup's generation stays), and the server running now, which may be one started during the setup, gets the mark its restored setup earns.
@@ -1250,8 +1311,9 @@ export function activate(
         )
       })
     // Any server running now may have read the half-saved setup, not only the one the setup checked.
-    // A descriptor that cannot be rewritten (for example an unreadable one) is not something the setup saved, so it does not make the rollback incomplete.
-    await syncDevinChatDescriptor().catch((error: unknown) => {
+    // A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the rollback is incomplete; the window's in-memory mark is already off, so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too.
+    await syncDevinChatDescriptor(true).catch((error: unknown) => {
+      isComplete = false
       diagnostics.info(
         `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
       )
@@ -1300,8 +1362,18 @@ export function activate(
         context.extensionPath,
         context.globalStorageUri.fsPath,
       )
+      // A window marked without a readable installation id would be refused by the bridge, and the offered reload could not connect.
+      const checkedInstallationId = await readDevinInstallationId(
+        context.globalStorageUri.fsPath,
+      )
+      if (!checkedInstallationId)
+        throw new Error(
+          devinReceiptUnreadableSentence(
+            join(context.globalStorageUri.fsPath, 'devin-mcp', 'receipt.json'),
+          ),
+        )
       // The descriptor of a server started before this setup carries no mark yet.
-      await markDevinChatDescriptor(true)
+      await markDevinChatDescriptor(true, checkedInstallationId)
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
     } catch (error) {
@@ -1508,6 +1580,11 @@ export function activate(
     vscode.Uri
   ) {
     const changes = new vscode.EventEmitter<void>()
+    /** The definition's version: it changes with the token generation, so the editor resolves the definition again, with the new bearer, after the token was switched. */
+    const mcpDefinitionVersion = (
+      current: NonNullable<typeof running>,
+    ): string =>
+      `${EXTENSION_VERSION}-${current.service.instanceId}-${current.endpoint.tokenGeneration}`
     notifyMcpDefinitions = (): void => changes.fire()
     context.subscriptions.push(
       changes,
@@ -1524,7 +1601,7 @@ export function activate(
                 'Codebook',
                 vscode.Uri.parse(descriptor.url),
                 {},
-                `${EXTENSION_VERSION}-${running.service.instanceId}`,
+                mcpDefinitionVersion(running),
               ),
             ]
           },
@@ -1540,7 +1617,7 @@ export function activate(
             const descriptor = running.endpoint.descriptor
             definition.uri = vscode.Uri.parse(descriptor.url)
             definition.headers = { Authorization: `Bearer ${descriptor.token}` }
-            definition.version = `${EXTENSION_VERSION}-${running.service.instanceId}`
+            definition.version = mcpDefinitionVersion(running)
             return definition
           },
         },
@@ -3862,10 +3939,12 @@ export function activate(
   // Register lazy readers before restored captured documents or contributed views request their providers.
   workspace()
   repository()
+  // Settles when the reconnect at activation ended (started the server or decided not to); tests wait on it.
+  let reconnectSettled: Promise<void> = Promise.resolve()
   if (
     context.workspaceState.get<{ workspace: string }>('codebook.aiChatSetup')
   ) {
-    void (async () => {
+    reconnectSettled = (async () => {
       if (!setupMatchesCurrentWorkspace())
         throw new Error('The selected workspace changed after setup')
       if (isCursorHost)
@@ -3873,10 +3952,17 @@ export function activate(
           context.extensionPath,
           context.globalStorageUri.fsPath,
         )
+      // A Stop Agent Server asked for while the refresh runs stops nothing (no server runs yet); it is counted, as {@link awaitReplacedReaders} does.
+      const stopsAskedBefore = stopsAskedFor
       // Devin Local starts the bridge its config names when the window loads; a removed setup reconnects nothing.
       if (isDevinHost && !(await refreshDevinSetup())) return
-      // A removal confirmed while the refresh ran clears the saved setup (or is clearing it): nothing is started for it.
-      if (isDevinHost && (devinRemoving || !setupMatchesCurrentWorkspace()))
+      // A removal confirmed while the refresh ran clears the saved setup (or is clearing it): nothing is started for it. A stop asked for meanwhile ends the reconnect too, so the learner's stop is not undone by the automatic start.
+      if (
+        isDevinHost &&
+        (devinRemoving ||
+          !setupMatchesCurrentWorkspace() ||
+          stopsAskedFor !== stopsAskedBefore)
+      )
         return
       await start()
       notifyMcpDefinitions()
@@ -3894,6 +3980,7 @@ export function activate(
   return {
     inspectStudy: () => reader?.inspect(),
     inspectRepository: () => repositoryReader?.inspect(),
+    whenReconnected: (): Promise<void> => reconnectSettled,
   }
 }
 

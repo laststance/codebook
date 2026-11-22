@@ -21,8 +21,10 @@ import {
   SESSION_IDLE_TIMEOUT_MS,
   TOKEN_BYTES,
 } from './constants'
+import { DEVIN_BRIDGE_NOT_SET_UP_SENTENCE } from './devinWindowSentences'
 import { createProtocol } from './protocol'
 import type { StudyService } from './service'
+import { isDevinBridgeRequestRefused } from './utils/isDevinBridgeRequestRefused'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -53,10 +55,17 @@ function rejectHttp(
   response.end(JSON.stringify({ error: reason }))
 }
 
-/** Enforces an absolute bounded body read; called only after authorization. @example await readBody(request, response) */
+/**
+ * Enforces an absolute bounded body read; called only after authorization.
+ * @param request - The authorized request.
+ * @param response - Receives the 4xx failure of a bad body.
+ * @param onChunk - Test seam: called with each received chunk, so a test can wait until the server has the start of a body.
+ * @example await readBody(request, response, onBodyChunk)
+ */
 async function readBody(
   request: IncomingMessage,
   response: ServerResponse,
+  onChunk?: () => void,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -76,6 +85,7 @@ async function readBody(
     const onError = (error: Error): void => finish(error)
     const onAbort = (): void => finish(new Error('Request aborted'))
     const onData = (chunk: Buffer): void => {
+      onChunk?.()
       size += chunk.length
       if (size > HTTP_BODY_LIMIT_BYTES) {
         rejectHttp(response, 413, 'Request body too large')
@@ -105,15 +115,82 @@ async function readBody(
   })
 }
 
-/** Hosts authenticated SDK sessions separately from application runs; editor commands own its lifetime. @example const endpoint = await startServer(service) */
-export async function startServer(service: StudyService, now = Date.now) {
-  const token = randomBytes(TOKEN_BYTES).toString('hex')
-  const expected = Buffer.from(`Bearer ${token}`)
+const SESSION_LIMIT_SENTENCE =
+  'MCP session limit exceeded; every session has a request in flight. Retry after one completes.'
+
+/**
+ * Tells whether any session has no request in flight, so an initialization at the session limit can replace one.
+ * @param sessions - The live sessions by id.
+ * @returns `true` when at least one session is idle.
+ * @example hasIdleSession(new Map()) // => false
+ */
+function hasIdleSession(sessions: ReadonlyMap<string, Session>): boolean {
+  return [...sessions.values()].some((candidate) => !candidate.active)
+}
+
+/**
+ * Takes room for one admitted initialization in a single synchronous step: at the session limit the least recently seen idle session leaves `sessions` at once, so a request for it answers Unknown MCP session and no two initializations pick the same one.
+ * @param sessions - The live sessions by id; the picked one is deleted from it.
+ * @param admittedCount - Reserved sessions that already took their slot and are not in `sessions` yet.
+ * @returns
+ * - `undefined` when there is room and nobody was replaced
+ * - The picked session, already removed from `sessions`, which the caller closes
+ * - `'full'` when every session has a request in flight
+ * @example takeSessionRoom(new Map(), 0) // => undefined
+ */
+function takeSessionRoom(
+  sessions: Map<string, Session>,
+  admittedCount: number,
+): Session | undefined | 'full' {
+  if (sessions.size + admittedCount < MAX_SESSIONS) return undefined
+  // Clients that end without DELETE leave idle sessions behind; only busy sessions refuse.
+  let oldest: [string, Session] | undefined
+  for (const entry of sessions) {
+    if (!entry[1].active && (!oldest || entry[1].lastSeen < oldest[1].lastSeen))
+      oldest = entry
+  }
+  if (!oldest) return 'full'
+  sessions.delete(oldest[0])
+  return oldest[1]
+}
+
+/**
+ * Hosts authenticated SDK sessions separately from application runs; editor commands own its lifetime.
+ * @param service - The study service the sessions talk to.
+ * @param now - The clock; tests replace it.
+ * @param isDevinChatEnabled - Tells whether this window's Devin AI chat mark is on; a request that carries the Devin bridge header is refused with 403 while it says `false`. Left out, no request is refused for its header (Cursor's window, tests).
+ * @param onBodyChunk - Test seam: called whenever a request body chunk arrives.
+ * @example const endpoint = await startServer(service)
+ */
+export async function startServer(
+  service: StudyService,
+  now = Date.now,
+  isDevinChatEnabled?: () => boolean,
+  onBodyChunk?: () => void,
+) {
+  let token = randomBytes(TOKEN_BYTES).toString('hex')
+  let expected = Buffer.from(`Bearer ${token}`)
+  let generation = 0
   const sessions = new Map<string, Session>()
   const pendingSessions = new Set<Session>()
+  // Reserved sessions whose initialization passed the dispatch-time gate and took its slot: with the live sessions they never exceed MAX_SESSIONS.
+  const admittedSessions = new Set<Session>()
   let origin = '',
     stopping = false,
     inFlight = 0
+  // Compares against the token current now: a rotation committed while a body was read changes the answer.
+  const hasCurrentToken = (authorization: string | undefined): boolean => {
+    const supplied = Buffer.from(authorization ?? '')
+    return (
+      supplied.length === expected.length && timingSafeEqual(supplied, expected)
+    )
+  }
+  const rejectUnauthorized = (response: ServerResponse): void =>
+    rejectHttp(
+      response,
+      401,
+      'Unauthorized. Copy the current connection from the editor after restart.',
+    )
   // HTTP session close -> release transport. Only service.shutdown() releases application runs.
   const server = createServer(
     {
@@ -124,16 +201,8 @@ export async function startServer(service: StudyService, now = Date.now) {
     },
     (request, response) => {
       void (async () => {
-        const supplied = Buffer.from(request.headers.authorization ?? '')
-        if (
-          supplied.length !== expected.length ||
-          !timingSafeEqual(supplied, expected)
-        ) {
-          rejectHttp(
-            response,
-            401,
-            'Unauthorized. Copy the current connection from the editor after restart.',
-          )
+        if (!hasCurrentToken(request.headers.authorization)) {
+          rejectUnauthorized(response)
           return
         }
         if (
@@ -166,10 +235,15 @@ export async function startServer(service: StudyService, now = Date.now) {
         try {
           const body =
             request.method === 'POST'
-              ? await readBody(request, response)
+              ? await readBody(request, response, onBodyChunk)
               : undefined
           if (stopping) {
             rejectHttp(response, 503, 'Server stopping')
+            return
+          }
+          // A token committed during the body read (a rolled-back setup) refuses this request before any session is reserved.
+          if (!hasCurrentToken(request.headers.authorization)) {
+            rejectUnauthorized(response)
             return
           }
           const sessionId = request.headers['mcp-session-id']
@@ -179,27 +253,20 @@ export async function startServer(service: StudyService, now = Date.now) {
             request.method === 'POST' &&
             isInitializeRequest(body)
           ) {
-            let replaced: [string, Session] | undefined
-            if (sessions.size + pendingSessions.size >= MAX_SESSIONS) {
-              // Clients that end without DELETE leave idle sessions behind; the least recently seen one makes room, and only busy sessions refuse.
-              const idle = [...sessions].filter(
-                ([, candidate]) => !candidate.active,
-              )
-              replaced = idle.reduce<(typeof idle)[number] | undefined>(
-                (oldest, entry) =>
-                  !oldest || entry[1].lastSeen < oldest[1].lastSeen
-                    ? entry
-                    : oldest,
-                undefined,
-              )
-              if (!replaced) {
-                rejectHttp(
-                  response,
-                  429,
-                  'MCP session limit exceeded; every session has a request in flight. Retry after one completes.',
-                )
-                return
-              }
+            // Before any session is reserved or evicted: a refused Devin initialization must not push another client's idle session out at MAX_SESSIONS.
+            if (
+              isDevinBridgeRequestRefused(request.headers, isDevinChatEnabled)
+            ) {
+              rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
+              return
+            }
+            // Early refusal only: the room is taken synchronously at dispatch, so a request that finds no idle session at MAX_SESSIONS does not build a transport.
+            if (
+              sessions.size + admittedSessions.size >= MAX_SESSIONS &&
+              !hasIdleSession(sessions)
+            ) {
+              rejectHttp(response, 429, SESSION_LIMIT_SENTENCE)
+              return
             }
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: randomUUID,
@@ -207,6 +274,7 @@ export async function startServer(service: StudyService, now = Date.now) {
               onsessioninitialized: (sessionId) => {
                 if (session) {
                   pendingSessions.delete(session)
+                  admittedSessions.delete(session)
                   sessions.set(sessionId, session)
                 }
               },
@@ -223,16 +291,13 @@ export async function startServer(service: StudyService, now = Date.now) {
               lastSeen: now(),
               active: 0,
             }
-            // The replaced session leaves and the new one takes its slot in one step, before anything is awaited: an initialize that arrives while the replaced session closes counts the new one and cannot pick the same session.
-            if (replaced) sessions.delete(replaced[0])
             pendingSessions.add(session)
             try {
-              // Best effort: no client can reach the replaced session any more, and its failed close must not refuse the new client.
-              await replaced?.[1].protocol.close().catch(() => undefined)
               await session.protocol.connect(transport)
             } catch (error) {
               // One scope from the reserved slot to the connected session: whatever fails in between gives the slot back.
               pendingSessions.delete(session)
+              admittedSessions.delete(session)
               await session.protocol.close()
               throw error
             }
@@ -241,6 +306,7 @@ export async function startServer(service: StudyService, now = Date.now) {
             transport.onclose = (): void => {
               priorClose?.()
               pendingSessions.delete(ownedSession)
+              admittedSessions.delete(ownedSession)
               if (transport.sessionId) sessions.delete(transport.sessionId)
             }
           }
@@ -257,6 +323,47 @@ export async function startServer(service: StudyService, now = Date.now) {
             rejectHttp(response, 503, 'Server stopping')
             return
           }
+          // Right before dispatch, after the body was read: a Devin bridge request is refused once this window's AI chat mark is off, also one whose body was held open across the unmark.
+          const isInitialization = pendingSessions.has(session)
+          // Re-checked with no await up to the dispatch: a rotation committed while the transport connected must not let the old token through.
+          if (!hasCurrentToken(request.headers.authorization)) {
+            if (isInitialization) {
+              pendingSessions.delete(session)
+              // Best effort: a failed close of the reserved session must not turn the refusal into a 500.
+              await session.protocol.close().catch(() => undefined)
+            }
+            rejectUnauthorized(response)
+            return
+          }
+          if (
+            isDevinBridgeRequestRefused(
+              request.headers,
+              isDevinChatEnabled,
+              request.method,
+            )
+          ) {
+            // An initialization of this request reserved the session (it has no id yet): give the slot back.
+            if (isInitialization) {
+              pendingSessions.delete(session)
+              await session.protocol.close().catch(() => undefined)
+            }
+            rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
+            return
+          }
+          if (isInitialization) {
+            // One synchronous step, no await between choosing and deleting: the least recently seen idle session leaves at once (a request for it now answers Unknown MCP session) and the new one takes its slot.
+            const room = takeSessionRoom(sessions, admittedSessions.size)
+            if (room === 'full') {
+              pendingSessions.delete(session)
+              await session.protocol.close().catch(() => undefined)
+              rejectHttp(response, 429, SESSION_LIMIT_SENTENCE)
+              return
+            }
+            const replaced = room
+            admittedSessions.add(session)
+            // Best effort close, not awaited: no client can reach it any more, its failed close must not refuse the new client, and an await here would let the final checks go stale before dispatch.
+            void replaced?.protocol.close().catch(() => undefined)
+          }
           session.lastSeen = now()
           session.active += 1
           try {
@@ -266,6 +373,7 @@ export async function startServer(service: StudyService, now = Date.now) {
             session.lastSeen = now()
             if (!session.transport.sessionId) {
               pendingSessions.delete(session)
+              admittedSessions.delete(session)
               await session.protocol.close()
             }
           }
@@ -318,6 +426,28 @@ export async function startServer(service: StudyService, now = Date.now) {
   return {
     descriptor,
     expire,
+    /**
+     * Prepares the next bearer token without switching to it, so the caller can write it into the connection descriptor first and switch only once that write carried it; called by the extension when a failed Devin Desktop setup is taken back, because a bridge of an earlier build sends no Devin header and only the token can stop it.
+     * `commit` makes the server refuse the old token with 401 and accept the new one, and counts one more {@link tokenGeneration}; a prepared token that is never committed changes nothing.
+     * @returns The next token and the `commit` that switches to it.
+     * @example const next = endpoint.prepareTokenRotation(); await writeIt(next.token); next.commit()
+     */
+    prepareTokenRotation(): { token: string; commit: () => void } {
+      const nextToken = randomBytes(TOKEN_BYTES).toString('hex')
+      return {
+        token: nextToken,
+        commit: (): void => {
+          token = nextToken
+          expected = Buffer.from(`Bearer ${token}`)
+          descriptor.token = token
+          generation += 1
+        },
+      }
+    },
+    /** How many times the bearer token was switched; the VS Code MCP definition's version includes it, so a client re-resolves the definition (and its bearer) after a switch. Never the token or a hash of it. */
+    get tokenGeneration(): number {
+      return generation
+    },
     get listening(): boolean {
       return server.listening && !stopping
     },

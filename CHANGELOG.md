@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.140.0] - 2026-11-22 (development candidate)
+
+Cycle 0144 ([Issue #360](https://github.com/laststance/codebook/issues/360)), a bug-fix cycle. **The Devin Desktop setup now keeps its promises under crashes, races between windows and unreadable files.** It fixes the thirteen defects that Cycle 0143's review limit carried, so that none of these cases loses your config, connects Devin Local where the setup was removed, or brings back a server you stopped.
+
+### Fixed
+- **Devin Local no longer connects where the setup was removed in another window.** Right before it connects, and again when a connected bridge reconnects after its session expired, the bridge checks that both of Codebook's records still stand for the same installation; otherwise it answers that AI chat is not set up in this window.
+- **A failed setup that takes its records back stops a connected Devin Local.** Codebook's server stops answering it, and the take-back renews the server's access token, so a bridge that an earlier Codebook version started stops as well.
+- **Setup refuses when it cannot read the installation id in its record of the entry**, for example after that record was restored with group or other read access. It takes back what it saved and asks you to make that file readable only by you (mode 600) before you run Codebook: Set Up AI Chat again.
+- **Recovering an interrupted change never publishes or deletes a file that another program put at, or wrote to, one of Codebook's private names after Codebook checked it**, and the notice names it. A moved-aside original stays, and is named, when another config was saved at the config path after Codebook stopped or when Codebook cannot tell which config it had published. A first setup whose take-back was cut short is finished at the next run before anything else is written. Your original config comes back, Codebook's entry is taken out again, and a refresh never turns that failed setup into an installed one.
+- **A config that is not valid UTF-8 is refused unchanged**, instead of being rewritten with replaced characters.
+- **A first setup that cannot read the config again to take its entry out** says that it left the file unchanged and asks you to check the `codebook` entry, without asking you to remove it by hand.
+- **A removal run again after it could not write its own record reports the entry as removed and offers Reload Window**, also when another Devin Desktop window refreshed the setup in between.
+- **The bridge stops looking for a window after its 15 seconds, then answers and ends within a few seconds**, also when a folder lookup or a descriptor read hangs, so Devin Local is not left waiting.
+- **Codebook: Stop Agent Server keeps the server stopped** when you run it while a reopened Devin Desktop window refreshes its setup.
+
 ## [0.2.139.0] - 2026-11-22 (development candidate)
 
 Cycle 0143 ([Issue #357](https://github.com/laststance/codebook/issues/357)), a feature cycle. **In Devin Desktop, Codebook: Set Up AI Chat now connects Devin Local, Devin Desktop's standard chat.** After the setup and one window reload, a new Devin Local session offers the bundled skill as `/devin:codebook`, and a natural question there reaches this window's Codebook instance: the agent's first Codebook call is `codebook_status` for this repository.
