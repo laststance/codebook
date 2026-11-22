@@ -141,8 +141,10 @@ test('Set Up AI Chat creates an absent Devin MCP config with exactly the Codeboo
     createdFile: true,
     installed: true,
     generation: result.generation,
+    installationId: receipt.installationId,
     config: { ino },
   })
+  assert.match(receipt.installationId, /^[0-9a-f-]{36}$/)
 })
 
 test('Set Up AI Chat keeps the learner’s other servers and top-level keys when it adds the Codebook entry', async (context) => {

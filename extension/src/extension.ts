@@ -193,6 +193,7 @@ import { listWikiCandidates } from './utils/listWikiCandidates'
 import { createLlmWikiView } from './utils/llmWikiView'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
+import { readDevinInstallationId } from './utils/readDevinInstallationId'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readLlmWikiViewFacts } from './utils/readLlmWikiViewFacts'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
@@ -413,9 +414,19 @@ export function activate(
     isDevinHost &&
     setupMatchesCurrentWorkspace() &&
     (await hasDevinSetupReceipts(context.globalStorageUri.fsPath))
-  /** The field a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands, so the Devin bridge connects only in windows where Set Up AI Chat ran; empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true } in a set-up Devin Desktop window */
-  const devinChatField = async (): Promise<{ devinChat?: true }> =>
-    (await devinSetupStands()) ? { devinChat: true } : {}
+  /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
+  const devinChatField = async (): Promise<{
+    devinChat?: true
+    devinSetupInstallation?: string
+  }> => {
+    if (!(await devinSetupStands())) return {}
+    const installationId = await readDevinInstallationId(
+      context.globalStorageUri.fsPath,
+    )
+    return installationId
+      ? { devinChat: true, devinSetupInstallation: installationId }
+      : { devinChat: true }
+  }
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -1208,16 +1219,22 @@ export function activate(
       const target = running
       if (!target) return
       if (enabled && !(await devinSetupStands())) return
-      await setDescriptorDevinChat(target.descriptorPath, enabled)
+      await setDescriptorDevinChat(
+        target.descriptorPath,
+        enabled,
+        (await devinChatField()).devinSetupInstallation,
+      )
     })
   /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @example await syncDevinChatDescriptor() */
   const syncDevinChatDescriptor = (): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
+      const field = await devinChatField()
       await setDescriptorDevinChat(
         target.descriptorPath,
-        await devinSetupStands(),
+        field.devinChat === true,
+        field.devinSetupInstallation,
       )
     })
   /**

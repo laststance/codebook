@@ -13,6 +13,7 @@ import { runCursorMcpBridge } from './cursorMcpBridge'
 import { connectionSchema } from './utils/connectionSchema'
 import { currentStorageOwner } from './utils/currentStorageOwner'
 import { isDescriptorOwnerGone } from './utils/evidenceInUseElsewhere'
+import { hasDevinBridgeReceipts } from './utils/hasDevinBridgeReceipts'
 import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 import { isSameStorageMachine } from './utils/isSameStorageMachine'
 import type { DescriptorExpectation } from './utils/readBridgeDescriptor'
@@ -486,6 +487,7 @@ export function devinDescriptorExpectation(
  * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
  * @param deadline - When the startup wait ends (epoch milliseconds).
  * @param expected - What the selection validated ({@link devinDescriptorExpectation}).
+ * Before any request it requires the setup receipts of the descriptor's installation ({@link hasDevinBridgeReceipts}); without them it answers `busy` after a pause, as for an unmarked descriptor.
  * @returns `connected` once the transport is up; `busy` after a pause when the server answered 429 or refused or reset the connection and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
  * @example
  * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'
@@ -495,6 +497,13 @@ async function connectOnce(
   deadline: number,
   expected: DescriptorExpectation,
 ): Promise<'connected' | 'busy' | 'dropped'> {
+  // The last check before an MCP session: the setup the descriptor was marked for must still stand. A failed check counts like an unmarked descriptor: the bridge keeps polling until its deadline.
+  if (!(await hasDevinBridgeReceipts(selection.descriptorPath))) {
+    const remaining = deadline - Date.now()
+    if (remaining > 0)
+      await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
+    return 'busy'
+  }
   try {
     await runCursorMcpBridge(
       selection.descriptorPath,

@@ -41,6 +41,12 @@ type DevinEntry = {
 }
 type EntryRefreshStatus = 'refreshed' | 'current' | 'not-managed' | 'changed'
 
+/** What the stand-in MCP receipt says: installed, with the installation id the descriptor mark must carry. */
+const MCP_RECEIPT_TEXT = JSON.stringify({
+  installed: true,
+  installationId: 'installation-test',
+})
+
 /**
  * Finds the connection descriptor a Devin Desktop window wrote in its storage.
  * @param directory - The window's global storage folder.
@@ -379,7 +385,11 @@ async function devinWindow(
           steps.push('write MCP entry')
           // The real write leaves its record in the storage.
           await mkdir(join(directory, 'devin-mcp'), { recursive: true })
-          await writeFile(join(directory, 'devin-mcp/receipt.json'), '{}')
+          await writeFile(
+            join(directory, 'devin-mcp/receipt.json'),
+            MCP_RECEIPT_TEXT,
+            { mode: 0o600 },
+          )
           // The entry comes from the loaded module's own realm; a copy of this realm compares by value.
           writtenEntries.push(structuredClone(entry))
           return {
@@ -483,7 +493,11 @@ async function devinWindow(
   // Codebook's record of the entry is left for a window that opens on a set-up workspace.
   if (options.savedSetup && options.entryReceipt !== false) {
     await mkdir(join(directory, 'devin-mcp'), { recursive: true })
-    await writeFile(join(directory, 'devin-mcp/receipt.json'), '{}')
+    await writeFile(
+      join(directory, 'devin-mcp/receipt.json'),
+      MCP_RECEIPT_TEXT,
+      { mode: 0o600 },
+    )
   }
   if (options.savedSetup && options.skillReceipt !== false) {
     await mkdir(join(directory, 'devin-skill'), { recursive: true })
@@ -560,6 +574,13 @@ async function devinWindow(
         await readFile(await descriptorPath(directory), 'utf8'),
       )
       return descriptor.devinChat
+    },
+    /** The `devinSetupInstallation` field of this window's connection descriptor, or `undefined` when it is absent. */
+    readDescriptorInstallation: async (): Promise<unknown> => {
+      const descriptor = JSON.parse(
+        await readFile(await descriptorPath(directory), 'utf8'),
+      )
+      return descriptor.devinSetupInstallation
     },
     /** The path of this window's connection descriptor. */
     descriptorPath: () => descriptorPath(directory),
@@ -1174,6 +1195,27 @@ test('Devin Desktop marks the connection descriptor after setup and unmarks it a
     assert.deepEqual(
       [beforeSetup, afterSetup, afterRemoval],
       [undefined, true, undefined],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=the descriptor mark names the installation of the MCP receipt, so a bridge can tell a removed setup from an updated one (Cycle 0144 task 1); fails_when=the mark carries no installation id or another one than the receipt's, so the bridge refuses every window or accepts a removed setup; why_new=Cycle 0144 task 1; seam=the real descriptor file in the temporary storage
+test('Devin Desktop writes the installation id of the MCP receipt beside devinChat and drops it with the mark', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { confirmRemoval: true })
+  try {
+    await window.commands.get('codebook.startAgentServer')!()
+    // Act
+    await window.commands.get('codebook.setupAiChat')!()
+    const afterSetup = await window.readDescriptorInstallation()
+    await window.commands.get('codebook.removeManagedDevinSetup')!()
+    const afterRemoval = await window.readDescriptorInstallation()
+    // Assert
+    assert.deepEqual(
+      [afterSetup, afterRemoval],
+      ['installation-test', undefined],
     )
   } finally {
     await window.loaded.deactivate()

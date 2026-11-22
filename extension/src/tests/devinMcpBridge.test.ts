@@ -22,7 +22,7 @@ import {
   type Server as NetServer,
 } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
@@ -47,6 +47,8 @@ import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 const FAST = { timeoutMs: 300, intervalMs: 20 }
+/** The installation id of the receipts {@link writeSetupReceipts} writes and of the default descriptor. */
+const INSTALLATION_ID = '99999999-9999-4999-8999-999999999999'
 const IDS = [
   '11111111-1111-4111-8111-111111111111',
   '22222222-2222-4222-8222-222222222222',
@@ -61,6 +63,45 @@ function instanceIdOf(index: number): string {
   )
 }
 
+/**
+ * Writes the two receipts a Devin Desktop setup leaves in the global storage folder (the parent of the agent folder): the skill's and the MCP entry's, which carries the installation id.
+ * @param storageRoot - The global storage folder.
+ * @param overrides - Fields that replace those of the MCP receipt; `installed: false` makes a removed one.
+ */
+async function writeSetupReceipts(
+  storageRoot: string,
+  overrides: Record<string, unknown> = {},
+  skillInstalled = true,
+): Promise<void> {
+  await mkdir(join(storageRoot, 'devin-skill'), { recursive: true })
+  await mkdir(join(storageRoot, 'devin-mcp'), { recursive: true })
+  await writeFile(
+    join(storageRoot, 'devin-skill', 'receipt.json'),
+    JSON.stringify({ installed: skillInstalled }),
+    { mode: 0o600 },
+  )
+  await writeFile(
+    join(storageRoot, 'devin-mcp', 'receipt.json'),
+    JSON.stringify({
+      installed: true,
+      installationId: INSTALLATION_ID,
+      ...overrides,
+    }),
+    { mode: 0o600 },
+  )
+}
+
+/** Makes an agent folder inside a storage folder that holds the setup receipts; the caller removes the storage folder, the parent of the agent folder. */
+async function makeLiveAgentFolder(): Promise<string> {
+  const storage = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+  )
+  const agentDir = join(storage, 'agent')
+  await mkdir(agentDir)
+  await writeSetupReceipts(storage)
+  return agentDir
+}
+
 /** Makes an agent folder and workspace folders that are removed when the test ends. */
 async function createFolders(context: {
   after: (callback: () => Promise<void>) => void
@@ -73,6 +114,7 @@ async function createFolders(context: {
     workspace = join(root, 'workspace'),
     otherWorkspace = join(root, 'other')
   await mkdir(agentDir)
+  await writeSetupReceipts(root)
   await mkdir(workspace)
   await mkdir(otherWorkspace)
   return { agentDir, workspace, otherWorkspace }
@@ -101,6 +143,7 @@ async function writeDescriptor(
       pid,
       ...(await currentStorageOwner()),
       devinChat: true,
+      devinSetupInstallation: INSTALLATION_ID,
       ...overrides,
     }),
     { mode: 0o600 },
@@ -776,13 +819,11 @@ test(
     // Arrange
     const harness = await createHarness(),
       endpoint = await startServer(harness.service),
-      root = await realpath(
-        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-      )
+      root = await makeLiveAgentFolder()
     context.after(async () => {
       await endpoint.close()
       await harness.close()
-      await removeTestFolder(root)
+      await removeTestFolder(dirname(root))
     })
     const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
     let answers = 0
@@ -814,13 +855,11 @@ test(
     // Arrange
     const harness = await createHarness(),
       endpoint = await startServer(harness.service),
-      root = await realpath(
-        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-      )
+      root = await makeLiveAgentFolder()
     context.after(async () => {
       await endpoint.close()
       await harness.close()
-      await removeTestFolder(root)
+      await removeTestFolder(dirname(root))
     })
     const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
     const server = createServer((incoming, outgoing) =>
@@ -877,13 +916,11 @@ test(
     // Arrange
     const harness = await createHarness(),
       endpoint = await startServer(harness.service),
-      root = await realpath(
-        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-      )
+      root = await makeLiveAgentFolder()
     context.after(async () => {
       await endpoint.close()
       await harness.close()
-      await removeTestFolder(root)
+      await removeTestFolder(dirname(root))
     })
     const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
     const { port } = await listen(context, (incoming, outgoing) => {
@@ -943,13 +980,11 @@ test(
     // Arrange
     const harness = await createHarness(),
       endpoint = await startServer(harness.service),
-      root = await realpath(
-        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-      )
+      root = await makeLiveAgentFolder()
     context.after(async () => {
       await endpoint.close()
       await harness.close()
-      await removeTestFolder(root)
+      await removeTestFolder(dirname(root))
     })
     const writeLive = (index: number, url: string): Promise<string> =>
       writeDescriptor(root, index, harness.directory, process.pid, {

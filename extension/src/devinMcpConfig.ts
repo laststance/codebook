@@ -75,6 +75,8 @@ const receiptSchema = z.object({
   installed: z.boolean(),
   /** Random id of the write that made this entry, so a rollback never removes a newer setup's entry. */
   generation: z.string(),
+  /** Random id of this setup's installation: made where no receipt stands, carried over by every managed rewrite (an update changes the generation, never this id) and gone with the receipt, so a bridge can tell a removed setup from an updated one ({@link installationIdOf}). A receipt of an older build has none until the next activation refresh ({@link withInstallationId}). */
+  installationId: z.string().optional(),
   /** The inode of the config Codebook last wrote; the file counts as Codebook's own only while it still matches. An older receipt also holds a device number, which is ignored. */
   config: z.object({ ino: fileIdSchema }),
 })
@@ -2040,11 +2042,44 @@ async function adoptPending(
       isSameFileId(pending.stagedIno, identity.ino),
     installed: true,
     generation: pending.generation ?? randomUUID(),
+    // The adopted write belongs to the installation a receipt that still stands names; none stands on a first setup.
+    installationId: installationIdOf(await readReceipt(context)),
     config: { ino: recordedFileId(identity.ino) },
   }
   await writeRecord(context.receiptPath, adopted)
   await retirePending(context, retained)
   return adopted
+}
+
+/**
+ * Gives the id a receipt written now carries; called by every receipt write ({@link publishEntry}, {@link adoptPending}).
+ * @param receipt - The receipt that stands, if any.
+ * @returns The receipt's installation id, or a new random one where no receipt stands or the receipt has none.
+ * @example
+ * installationIdOf(undefined) // => 'f3b1c0de-...'
+ */
+function installationIdOf(receipt: Receipt | undefined): string {
+  return receipt?.installationId ?? randomUUID()
+}
+
+/**
+ * Gives a receipt of an older build its installation id, rewriting only the receipt; called by {@link refreshManagedDevinMcpEntry} and {@link writeManagedDevinMcpEntry} when the entry is already current.
+ * @param context - The run.
+ * @param receipt - The receipt that stands.
+ * @returns Resolves once the receipt holds an id; nothing is written when it already does.
+ * @throws The failure of the receipt write; the entry and the config stay as they were.
+ * @example
+ * await withInstallationId(context, receipt)
+ */
+async function withInstallationId(
+  context: Context,
+  receipt: Receipt,
+): Promise<void> {
+  if (receipt.installationId) return
+  await writeRecord(context.receiptPath, {
+    ...receipt,
+    installationId: randomUUID(),
+  })
 }
 
 /**
@@ -2238,6 +2273,8 @@ async function publishEntry(
     createdFile,
     installed: true,
     generation,
+    // An update or a re-run of setup keeps the installation; a setup where no receipt stood starts one.
+    installationId: installationIdOf(receipt),
     config,
   }
   try {
@@ -2425,13 +2462,15 @@ export async function writeManagedDevinMcpEntry(
         retry,
       )
     const disabled = disabledFlagOf(current)
-    if (receipt.entrySha256 === entryHash)
+    if (receipt.entrySha256 === entryHash) {
+      await withInstallationId(context, receipt)
       return {
         status: 'current',
         path,
         generation: receipt.generation,
         ...disabled,
       }
+    }
     const published = await publishEntry(context, look, receipt)
     return { status: 'updated', path, ...published, ...disabled }
   })
@@ -2469,8 +2508,11 @@ export async function refreshManagedDevinMcpEntry(
     const disabled = disabledFlagOf(current)
     if (!ownsEntry(current, receipt))
       return { status: 'changed', path, ...disabled }
-    if (receipt.entrySha256 === entryHash)
+    if (receipt.entrySha256 === entryHash) {
+      // A receipt of an older build gains its installation id here; only the receipt is rewritten.
+      await withInstallationId(context, receipt)
       return { status: 'current', path, ...disabled }
+    }
     const published = await publishEntry(context, look, receipt)
     return {
       status: 'refreshed',
