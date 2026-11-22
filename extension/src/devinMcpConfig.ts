@@ -2501,6 +2501,8 @@ type RollbackResult = {
   outcome:
     'took-out' | 'replaced-config' | 'not-ours' | 'unreadable' | 'not-taken-out'
   keptLeft: KeptFile[]
+  /** Set with `took-out`: whether the whole file went or only the entry. */
+  removal?: 'file-removed' | 'removed'
 }
 
 /**
@@ -2531,11 +2533,11 @@ async function rollBackPublishedEntry(
   // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
   if (!isSameFileId(written.config.ino, look.identity.ino))
     return { outcome: 'replaced-config', keptLeft: [] }
-  const { keptLeft } = await takeEntryOut(
+  const { keptLeft, status } = await takeEntryOut(
     rollbackContextOf(context, written.generation),
     { look, receipt: written },
   )
-  return { outcome: 'took-out', keptLeft }
+  return { outcome: 'took-out', keptLeft, removal: status }
 }
 
 /**
@@ -2718,7 +2720,7 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
-  await markTakeBackOwed(context, pending.publishGeneration, pending.keptIno)
+  await markTakeBackOwed(context, pending.publishGeneration, pending)
   await retirePending(
     rollbackContext,
     retainedRecord(
@@ -2731,18 +2733,43 @@ async function settleRollbackJournal(context: Context): Promise<void> {
 }
 
 /**
+ * Tells whether a journal of an older build (no generation) provably belongs to another publish than the record; used by {@link markTakeBackOwed}.
+ * @param journal - The journal's displaced file (`keptIno`, `keptSha256`); undefined when there is none.
+ * @param publish - The publish record.
+ * @returns `true` only when both records carry an inode and a hash and the inode or the hash differs (a reused inode cannot hide another file's bytes).
+ * @example
+ * provesAnotherPublish({ keptIno: 5, keptSha256: 'a' }, { ...publish, stagedIno: 5, stagedSha256: 'b' }) // => true
+ */
+function provesAnotherPublish(
+  journal: Pick<Pending, 'keptIno' | 'keptSha256'> | undefined,
+  publish: Pending,
+): boolean {
+  if (
+    journal?.keptIno === undefined ||
+    journal.keptSha256 === undefined ||
+    publish.stagedIno === undefined ||
+    publish.stagedSha256 === undefined
+  )
+    return false
+  return (
+    String(journal.keptIno) !== String(publish.stagedIno) ||
+    journal.keptSha256 !== publish.stagedSha256
+  )
+}
+
+/**
  * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
  * Only the publish of the given generation is marked: another installation's pending publish stays as it is.
  * @param context - The run.
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when `legacyKeptIno` proves it belongs to the publish record.
- * @param legacyKeptIno - The inode the journal displaced (the published file); with no generation it must equal the publish record's `stagedIno`.
+ * @param legacyJournal - The rollback's journal; with no generation its `keptIno` and `keptSha256` are compared with the publish record's `stagedIno` and `stagedSha256`.
  * @example
  * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
   publishGeneration: string | undefined,
-  legacyKeptIno?: Pending['keptIno'],
+  legacyJournal?: Pick<Pending, 'keptIno' | 'keptSha256'>,
 ): Promise<void> {
   const publish = await readRecord(
     context.pendingPath,
@@ -2752,12 +2779,10 @@ async function markTakeBackOwed(
   )
   // No publish record, one of another config or of another generation (another installation's publish), or one already marked: nothing to mark.
   if (publish?.targetPath !== context.path || publish.takeBack) return
-  // A journal of an older build names no generation: it belongs to this publish only when the file it displaced is the file this publish staged.
+  // A journal of an older build names no generation: it belongs to another publish only when both records carry an inode and a hash and these prove it; an ambiguous journal marks take-back, as the previous release did.
   const belongsToPublish =
     publishGeneration === undefined
-      ? legacyKeptIno !== undefined &&
-        publish.stagedIno !== undefined &&
-        String(legacyKeptIno) === String(publish.stagedIno)
+      ? !provesAnotherPublish(legacyJournal, publish)
       : publish.generation === publishGeneration
   if (!belongsToPublish) return
   await writeRecord(context.pendingPath, { ...publish, takeBack: true })
@@ -2790,7 +2815,7 @@ function isTakeBackOwed(
  * @param receipt - The receipt that stands, if any.
  * @param retained - What stays of the setup's record after recovery ({@link retainedRecord}).
  * @param look - The config as it stands.
- * @returns The config as it looks after the entry was taken out; undefined when nothing was taken back (the record is then settled as before).
+ * @returns The config as it looks after the entry was taken out, and what the take-back removed (`removal`: the file or only the entry); undefined when nothing was taken back (the record is then settled as before).
  * @throws A refusal when the entry could not be taken out again; nothing else is changed then.
  * @example
  * const afterTakeBack = await finishCutShortSetup(context, pending, receipt, retained, look)
@@ -2801,7 +2826,9 @@ async function finishCutShortSetup(
   receipt: Receipt | undefined,
   retained: Pending | undefined,
   look: ConfigLook,
-): Promise<ConfigLook | undefined> {
+): Promise<
+  { look: ConfigLook; removal?: 'file-removed' | 'removed' } | undefined
+> {
   const { entrySha256, stagedIno } = pending
   if (
     look.kind !== 'present' ||
@@ -2836,7 +2863,7 @@ async function finishCutShortSetup(
       `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
   await retirePending(context, retained)
-  return lookAtConfig(context)
+  return { look: await lookAtConfig(context), removal: result.removal }
 }
 
 /**
@@ -2852,6 +2879,8 @@ async function inspect(context: Context): Promise<{
   look: ConfigLook
   current: unknown
   receipt: Receipt | undefined
+  /** Set when this run's take-back of an interrupted first setup removed the entry (or the file Codebook created): the removal answers it instead of `not-managed`. */
+  tookBack?: 'file-removed' | 'removed'
 }> {
   // A rollback cut short comes first: its original may be the only copy of the learner's other servers.
   await settleRollbackJournal(context)
@@ -2880,7 +2909,7 @@ async function inspect(context: Context): Promise<{
     pending && isTakeBackOwed(pending, stored)
       ? await finishCutShortSetup(context, pending, stored, retained, look)
       : undefined
-  if (afterTakeBack) look = afterTakeBack
+  if (afterTakeBack) look = afterTakeBack.look
   const current = currentEntryOf(look)
   const receipt = await settlePending(
     context,
@@ -2899,7 +2928,12 @@ async function inspect(context: Context): Promise<{
   })
   if (pending && reported)
     throw unsettledRefusal(context, pending.phase, reported)
-  return { look, current, receipt }
+  return {
+    look,
+    current,
+    receipt,
+    ...(afterTakeBack?.removal && { tookBack: afterTakeBack.removal }),
+  }
 }
 
 /**
@@ -3271,6 +3305,9 @@ async function answerRemovalWithoutTakeOut(
 ): Promise<DevinMcpRemovalResult> {
   // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
   if (status !== 'superseded') await rm(context.receiptPath, { force: true })
+  // The entry is gone because this run's take-back of an interrupted first setup took it out: the removal reports that, so the window is offered its reload.
+  if (status === 'not-managed' && inspected.tookBack)
+    return { status: inspected.tookBack, path: context.path }
   // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
   if (status === 'not-managed' && wasUnrecorded && inspected.receipt)
     return { status: 'removed', path: context.path }
