@@ -2815,7 +2815,7 @@ test('A put-back that cannot tell which name its link made keeps both names and 
         unlink,
       },
     },
-    { Error },
+    { Error, TextDecoder },
   )
   let isSwapped = false
 
