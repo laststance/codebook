@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import * as fileSystem from 'node:fs/promises'
 import {
   lstat,
   mkdtemp,
@@ -9,14 +10,17 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import {
   deployDevinSkill,
   removeManagedDevinSkill,
 } from '../cursorSkillDeployment'
+import type * as SkillDeploymentModule from '../cursorSkillDeployment'
 
+import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 
 const PUBLISHER_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
@@ -151,4 +155,38 @@ test('Devin removal deletes only the receipted skill and keeps another skill bes
   assert.equal(removed.status, 'removed')
   await assert.rejects(lstat(paths.skillFolder), { code: 'ENOENT' })
   assert.equal(await readFile(otherSkillPath, 'utf8'), 'Another skill')
+})
+
+// Value: protects=a Devin Desktop learner whose home folder is on a file system without hard links reads a sentence naming Devin Desktop and the path; fails_when=the refusal names Cursor, shows the raw EPERM text, or changes a file; why_new=host label of the shared link refusal is new; seam=node:fs/promises link of the loaded deployment, as the Cursor test does
+test('Devin setup on a file system that refuses hard links says so in Devin Desktop words and changes no file', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  const window = await loadModule<typeof SkillDeploymentModule>(
+    resolve(__dirname, '../cursorSkillDeployment.js'),
+    {
+      './constants': { ...constants },
+      'node:fs/promises': {
+        ...fileSystem,
+        link: async () => {
+          throw Object.assign(new Error('EPERM: refused, link'), {
+            code: 'EPERM',
+          })
+        },
+      },
+    },
+    { Error },
+  )
+  // Act
+  const message = await window
+    .deployDevinSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot)
+    .then(
+      () => 'installed',
+      (error: Error) => error.message,
+    )
+  // Assert
+  assert.equal(
+    message,
+    `Devin Desktop skill could not be installed: the file system refused to put Codebook's new file in place as ${paths.targetPath} (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await readdir(paths.skillFolder).catch(() => []), [])
 })
