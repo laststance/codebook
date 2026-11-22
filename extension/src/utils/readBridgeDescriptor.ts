@@ -150,6 +150,37 @@ async function within<T>(
  * @example
  * await readBridgeDescriptor('/agent/x.connection.json', { instanceId, pid: 4242, workspace: '/repo', devinChat: true, url }, 3_000)
  */
+/**
+ * Tells whether the descriptor read for a connection is no longer the one a bridge's selection validated.
+ *
+ * Called by {@link readBridgeDescriptor} on the one read the transport connects with, so a descriptor rewritten
+ * after the selection (another instance, another extension host, setup removed, another port) never receives a
+ * request. The workspace is compared by its real path, resolved inside the caller's startup budget.
+ *
+ * @param read - The descriptor as read and parsed for this connection, with its owner pid and devinChat mark.
+ * @param expected - What the selection validated.
+ * @param resolveWorkspace - Resolves the descriptor's workspace to the real path the selection compared.
+ * @returns `true` when any validated field differs.
+ *
+ * @example
+ * ```ts
+ * await changedSinceSelection({ descriptor, pid: 4242, devinChat: true }, expected, realOrSame) // => false
+ * ```
+ */
+async function changedSinceSelection(
+  read: ReturnType<typeof parseDescriptorText>,
+  expected: DescriptorExpectation,
+  resolveWorkspace: (path: string) => Promise<string>,
+): Promise<boolean> {
+  return (
+    read.descriptor.instanceId !== expected.instanceId ||
+    read.pid !== expected.pid ||
+    read.devinChat !== expected.devinChat ||
+    (expected.url !== undefined && read.descriptor.url !== expected.url) ||
+    (await resolveWorkspace(read.descriptor.workspace)) !== expected.workspace
+  )
+}
+
 export async function readBridgeDescriptor(
   descriptorPath: string,
   expected?: DescriptorExpectation,
@@ -169,11 +200,11 @@ export async function readBridgeDescriptor(
     // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
     if (
       expected &&
-      (descriptor.instanceId !== expected.instanceId ||
-        pid !== expected.pid ||
-        devinChat !== expected.devinChat ||
-        (expected.url !== undefined && descriptor.url !== expected.url) ||
-        (await resolveWorkspace(descriptor.workspace)) !== expected.workspace)
+      (await changedSinceSelection(
+        { descriptor, pid, devinChat },
+        expected,
+        resolveWorkspace,
+      ))
     )
       throw new Error(
         'Codebook connection descriptor changed after it was selected.',
