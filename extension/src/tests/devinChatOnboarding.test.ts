@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -25,6 +26,7 @@ import { startServer as startRealServer } from '../server'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
 import { readDevinInstallationId } from '../utils/readDevinInstallationId'
+import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
 import { setDescriptorDevinChat } from '../utils/setDescriptorDevinChat'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
 import { withDevinSetupLock } from '../utils/withDevinSetupLock'
@@ -125,7 +127,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam); `removalResult` what the entry removal resolves with (a plain removal when left out); `failSetupCommit` makes a write of a setup value (not a clearing) that follows a provisional one fail; `failSetupRestore` makes every write that follows a provisional one fail (the commit and the restore). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam); `removalResult` what the entry removal resolves with (a plain removal when left out); `failSetupCommit` makes a write of a setup value (not a clearing) that follows a provisional one fail; `failSetupRestore` makes every write that follows a provisional one fail (the commit and the restore); `skillReceiptMode` the mode the skill deployment leaves its receipt with (private when left out). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -162,6 +164,7 @@ async function devinWindow(
     removalResult?: { status: 'removed'; path: string; cleanupFailure?: string }
     failSetupCommit?: boolean
     failSetupRestore?: boolean
+    skillReceiptMode?: number
   } = {},
 ) {
   const directory =
@@ -408,7 +411,17 @@ async function devinWindow(
           await writeFile(
             join(directory, 'devin-skill/receipt.json'),
             '{"installed":true}',
+            { mode: 0o600 },
           )
+          // A receipt restored with another mode (a backup, a copy) is not private.
+          if (options.skillReceiptMode !== undefined) {
+            await chmod(
+              join(directory, 'devin-skill/receipt.json'),
+              options.skillReceiptMode,
+            )
+            // Only the first deployment restores the receipt with another mode.
+            options.skillReceiptMode = undefined
+          }
           if (options.holdDeploy) {
             deployEntered()
             await deployHeld
@@ -533,9 +546,9 @@ async function devinWindow(
         },
       }),
       // Reads the real records; an armed hold makes the next read wait after it read, as a removal that lands in between would find it.
-      './utils/hasDevinSetupReceipts': {
-        hasDevinSetupReceipts: async (storageRoot: string) => {
-          const stands = await hasDevinSetupReceipts(storageRoot)
+      './utils/readStandingDevinInstallationId': {
+        readStandingDevinInstallationId: async (storageRoot: string) => {
+          const stands = await readStandingDevinInstallationId(storageRoot)
           if (isReceiptsHoldArmed) {
             isReceiptsHoldArmed = false
             receiptsEntered()
@@ -591,6 +604,7 @@ async function devinWindow(
     await writeFile(
       join(directory, 'devin-skill/receipt.json'),
       '{"installed":true}',
+      { mode: 0o600 },
     )
   }
   const activated = loaded.activate({
@@ -1379,9 +1393,96 @@ test(
   },
 )
 
-// protects=Set Up AI Chat never reports success with a descriptor mark that lacks the installation id it checked, even when the receipt becomes unreadable right after the check (Cycle 0144 CR12) / fails_when=the queued mark reads the receipt again, finds it unreadable and writes devinChat without the id (or nothing) while setup resolves / no_claim=the activation reconnect and the rollback sync, which keep reading the receipt; seam=afterInstallationRead makes the receipt mode 0644 after the check
+// protects=a skill receipt that others can read ends setup in a refusal that names devin-skill/receipt.json with the mode repair, rolls back, offers no reload and leaves the window unmarked, because the bridge would refuse that receipt; fails_when=setup marks the window and offers Reload Window while Devin Local could never connect; no_claim=the wording beyond naming the file and the mode; seam=the real descriptor and receipt files, the skill deployment leaves its receipt with mode 0644
 test(
-  'Devin Desktop setup writes the installation id it checked into the mark although the receipt becomes unreadable right after the check',
+  'Devin Desktop setup refuses with the skill receipt to repair when others can read it, offering no reload',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, { skillReceiptMode: 0o644 })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(
+        setupOutcome,
+        `Codebook could not use its record at ${join(await realpath(window.directory), 'devin-skill', 'receipt.json')}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`,
+      )
+      assert.equal(await window.readDescriptorField(), undefined)
+      assert.deepEqual(window.notices, [])
+      assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=a re-run of setup whose skill receipt others can read unmarks a window that carried the mark of its earlier setup, so the rollback never marks what the bridge refuses; fails_when=the rollback's sync keeps the mark because the looser receipts check says the setup stands; no_claim=the wording of the refusal
+test(
+  'a Devin Desktop window with an earlier setup is unmarked after a setup re-run refused for a skill receipt others can read',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, {
+      savedSetup: true,
+      entryWrite: 'current',
+      skillReceiptMode: 0o644,
+    })
+    try {
+      await waitUntil(window.descriptorReadable, 'the reconnect descriptor')
+      await waitUntil(
+        async () => (await window.readDescriptorField()) === true,
+        'the earlier setup mark',
+      )
+      // Act
+      await window.commands.get('codebook.setupAiChat')!().catch(
+        () => undefined,
+      )
+      // Assert
+      assert.equal(await window.readDescriptorField(), undefined)
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=once the skill receipt is private again, setup succeeds and marks the window; fails_when=the new check refuses a setup whose records the bridge accepts; no_claim=the reload notice wording
+test(
+  'Devin Desktop setup succeeds after the skill receipt was made private again',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, { skillReceiptMode: 0o644 })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      await window.commands.get('codebook.setupAiChat')!().catch(
+        () => undefined,
+      )
+      await chmod(join(window.directory, 'devin-skill', 'receipt.json'), 0o600)
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(setupOutcome, 'resolved')
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=Set Up AI Chat never reports success when the MCP receipt became readable by others right after its installation id was read: the bridge's own check refuses it, the setup rolls back, the window ends unmarked and no reload is offered (Cycle 0145 task 9, was Cycle 0144 CR12); fails_when=setup resolves with a mark the bridge refuses; no_claim=the activation reconnect and the rollback sync; seam=afterInstallationRead makes the receipt mode 0644 after the check
+test(
+  'Devin Desktop setup rolls back and offers no reload when the receipt becomes readable by others right after the installation id check',
   { skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
@@ -1400,10 +1501,12 @@ test(
         (error: Error) => error.message,
       )
       // Assert
-      assert.deepEqual(
-        [setupOutcome, await window.readDescriptorInstallation()],
-        ['resolved', 'installation-test'],
+      assert.equal(
+        setupOutcome,
+        `Codebook could not use its record at ${join(await realpath(window.directory), 'devin-mcp', 'receipt.json')}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`,
       )
+      assert.equal(await window.readDescriptorField(), undefined)
+      assert.deepEqual(window.notices, [])
     } finally {
       await window.loaded.deactivate()
     }
