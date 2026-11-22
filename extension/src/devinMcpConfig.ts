@@ -1766,10 +1766,25 @@ function assertConfigStill(
     throw configChangedError(context, leftoverPath)
 }
 
-/** The refusal for a config name that changed while a leftover was about to be unlinked: the leftover stays and is named. */
-function configChangedError(context: Context, leftoverPath: string): Error {
-  return new Error(
-    `The config at ${context.path} changed just now, so Codebook kept the private file at ${leftoverPath} untouched.`,
+/**
+ * Thrown by {@link configChangedError} when the config name changed while recovery read a private copy or was about to unlink it; its own text names both files and says never to copy the copy over the config, so {@link unsettledRefusal} shows it as it is instead of the move-it-back advice, which would put an old file over a new save.
+ */
+class ConfigChangedError extends Error {}
+
+/**
+ * Builds the refusal for a config name that changed while a leftover was read or about to be unlinked; called by {@link assertConfigStill}, {@link assertConfigStillPublished} and {@link assertConfigUnchangedSince}, which keep the leftover.
+ * @param context - The run; its config path and retry are named.
+ * @param leftoverPath - The private copy that stays.
+ * @returns The {@link ConfigChangedError}, not thrown yet: both files stay untouched, and the learner is asked to look at both and never to copy the private file over the config.
+ * @example
+ * throw configChangedError(context, keptPath) // => 'The config at … changed just now while Codebook read the private copy at …; …'
+ */
+function configChangedError(
+  context: Context,
+  leftoverPath: string,
+): ConfigChangedError {
+  return new ConfigChangedError(
+    `The config at ${context.path} changed just now while Codebook read the private copy at ${leftoverPath}; Codebook left both files untouched. Look at both files before you use either, and never copy the private file over the config; ${context.retry}.`,
   )
 }
 
@@ -1820,6 +1835,20 @@ class PutBackCheckError extends Error {
   ) {
     super(message)
   }
+}
+
+/**
+ * Tells whether a recovery failure's own text names both files and what stays ({@link PutBackCheckError}, {@link ConfigChangedError}), so it is shown as it is; called by {@link unsettledRefusal} and {@link mergeWithLeftover}.
+ * @param cause - What stopped the leftover's recovery.
+ * @returns `true` for those two errors; `false` for every other failure, which {@link unsettledRefusal} words itself.
+ * @example
+ * namesBothFiles(configChangedError(context, keptPath)) // => true
+ * namesBothFiles(new Error('busy'))                     // => false
+ */
+function namesBothFiles(cause: unknown) {
+  return (
+    cause instanceof PutBackCheckError || cause instanceof ConfigChangedError
+  )
 }
 
 /** Tells whether a recovery failure hands the copy to the learner ({@link HandedCopyError}, or a {@link PutBackCheckError} that left an unverified file at the config name). */
@@ -1894,8 +1923,8 @@ function unsettledRefusal(
   phase: Pending['phase'],
   { leftover, cause, isHandedOver }: Unsettled,
 ): Error {
-  // The put-back check's own text names both paths and the state; the move-back advice would lose a new save.
-  if (cause instanceof PutBackCheckError) return cause
+  // The put-back check's and the changed config's own texts name both paths and the state; the move-back advice would lose a new save.
+  if (namesBothFiles(cause)) return cause
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
@@ -3031,22 +3060,25 @@ async function finishCutShortSetup(
   return { look: await lookAtConfig(context), removal: result.removal }
 }
 
-/**
- * Settles a kept copy and a pending record, reads the config and returns what a run decides on.
- * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that.
- * @param context - The run.
- * @returns The look at the config, its `codebook` entry and the receipt that stands.
- * @throws What {@link recoverLeftovers}, {@link lookAtConfig} and {@link settlePending} throw, and a refusal naming the first leftover that could not be settled.
- * @example
- * const { look, current, receipt } = await inspect(context)
- */
-async function inspect(context: Context): Promise<{
+/** What a run decides on after {@link inspect}: the look at the config, its `codebook` entry and the receipt that stands. */
+type Inspection = {
   look: ConfigLook
   current: unknown
   receipt: Receipt | undefined
   /** Set when this run's take-back of an interrupted first setup removed the entry (or the file Codebook created): the removal answers it instead of `not-managed`. */
   tookBack?: 'file-removed' | 'removed'
-}> {
+}
+
+/**
+ * Settles a kept copy and a pending record, reads the config and returns what a run decides on.
+ * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that; a refusal of the steps after recovery names it too when it was handed over in this run or its own text names both files ({@link mergeWithLeftover}).
+ * @param context - The run.
+ * @returns The {@link Inspection}.
+ * @throws What {@link recoverLeftovers} and {@link settleAfterRecovery} throw, and a refusal naming the first leftover that could not be settled.
+ * @example
+ * const { look, current, receipt } = await inspect(context)
+ */
+async function inspect(context: Context): Promise<Inspection> {
   // A rollback cut short comes first: its original may be the only copy of the learner's other servers.
   await settleRollbackJournal(context)
   const pending = await readRecord(
@@ -3057,7 +3089,6 @@ async function inspect(context: Context): Promise<{
   )
   // A copy an interrupted run kept comes back, or is deleted, or stays and is named, before the config is read.
   const unsettled = await recoverOwnLeftovers(context, pending)
-  let look = await lookAtConfig(context)
   // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending?.phase ? unsettled.slice(1) : unsettled
@@ -3068,6 +3099,40 @@ async function inspect(context: Context): Promise<{
       isHandedNow ? { ...pending, phase: 'handed' } : pending,
       tracked,
     )
+  const inspection = await settleAfterRecovery(
+    context,
+    pending,
+    retained,
+  ).catch((cause: unknown) => {
+    throw mergeWithLeftover(
+      context,
+      cause,
+      pending?.phase,
+      reported,
+      isHandedNow,
+    )
+  })
+  if (pending && reported)
+    throw unsettledRefusal(context, pending.phase, reported)
+  return inspection
+}
+
+/**
+ * Reads the config and the receipt once recovery settled the leftovers, finishes the take-back of a cut-short first setup and settles the pending record; called by {@link inspect}, which merges a refusal from here with a leftover that stays ({@link mergeWithLeftover}).
+ * @param context - The run.
+ * @param pending - The pending record as it was read; undefined when there is none.
+ * @param retained - What stays of that record after recovery ({@link retainedRecord}); undefined when nothing stays.
+ * @returns The {@link Inspection}.
+ * @throws What {@link lookAtConfig}, {@link readReceipt}, {@link finishCutShortSetup} and {@link settlePending} throw.
+ * @example
+ * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained)
+ */
+async function settleAfterRecovery(
+  context: Context,
+  pending: Pending | undefined,
+  retained: Pending | undefined,
+): Promise<Inspection> {
+  let look = await lookAtConfig(context)
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
   const afterTakeBack =
@@ -3083,22 +3148,43 @@ async function inspect(context: Context): Promise<{
     afterTakeBack ? undefined : pending,
     look,
     retained,
-  ).catch((cause: unknown) => {
-    // A refusal about the edited entry must not hide where the handed-over original is: the learner reads both in one message.
-    if (isHandedNow && reported && cause instanceof Error)
-      throw new Error(
-        `${cause.message} ${unsettledRefusal(context, pending?.phase, reported).message}`,
-      )
-    throw cause
-  })
-  if (pending && reported)
-    throw unsettledRefusal(context, pending.phase, reported)
+  )
   return {
     look,
     current,
     receipt,
     ...(afterTakeBack?.removal && { tookBack: afterTakeBack.removal }),
   }
+}
+
+/**
+ * Joins a refusal of the steps after recovery with the leftover recovery could not settle, so the learner reads both in one message; called by {@link inspect} when {@link settleAfterRecovery} throws.
+ * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read.
+ * @param context - The run.
+ * @param cause - What {@link settleAfterRecovery} threw.
+ * @param phase - The phase of the pending record.
+ * @param reported - The first leftover that stays, if any.
+ * @param isHandedNow - Whether a copy was handed to the learner in this run.
+ * @returns
+ * - One error whose message is the refusal's followed by the leftover's ({@link unsettledRefusal}), when such a leftover stays
+ * - `cause` itself otherwise, or when it is no `Error`
+ * @example
+ * throw mergeWithLeftover(context, entryDiffers, undefined, reported, false) // => 'Codebook found a "codebook" entry that differs … The config at … changed just now …'
+ */
+function mergeWithLeftover(
+  context: Context,
+  cause: unknown,
+  phase: Pending['phase'],
+  reported: Unsettled | undefined,
+  isHandedNow: boolean,
+): unknown {
+  if (!reported || !(cause instanceof Error)) return cause
+  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it.
+  if (!isHandedNow && !namesBothFiles(reported.cause)) return cause
+  return new Error(
+    `${cause.message} ${unsettledRefusal(context, phase, reported).message}`,
+    { cause },
+  )
 }
 
 /**

@@ -4356,6 +4356,148 @@ test("A displaced original is kept and named when an editor rewrites the publish
   assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
 })
 
+/**
+ * Writes the published config and a displaced original beside it, with the pending record of a publish that ended after its link and before it deleted the original.
+ * @param storage - Codebook's storage folder.
+ * @param configPath - The config file.
+ * @returns The private name of the displaced original, its bytes and the published config's bytes.
+ * @example
+ * const { keptPath, originalBytes, publishedBytes } = await arrangePublishedWithOriginal(storage, configPath)
+ */
+async function arrangePublishedWithOriginal(
+  storage: string,
+  configPath: string,
+): Promise<{
+  keptPath: string
+  originalBytes: string
+  publishedBytes: string
+}> {
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  await writeConfig(configPath, publishedBytes)
+  // An old modification time keeps an in-place rewrite visible on a file system with coarse timestamps.
+  utimesSync(configPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeFile(keptPath, originalBytes)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(publishedBytes),
+  })
+  return { keptPath, originalBytes, publishedBytes }
+}
+
+test('A config saved while the last private copy is read is never advised to be overwritten', async (context) => {
+  // Value: protects=a learner whose editor saved the config while recovery read the last private copy is told to look at both files and never to copy that copy over the config, so the new save survives; fails_when=the refusal advises moving the copy back over the config or deleting it, omits the config or the copy, or the save or the copy changes; no_claim=a save in the syscall gap after the last synchronous look, and the wording beyond both paths and the never-copy advice; seam=hand-written pending record of a publish that ended after its link, seam.afterStat rewrites the config in place with other bytes of the same size (no codebook entry left) during the third read of the copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const { keptPath, originalBytes, publishedBytes } =
+    await arrangePublishedWithOriginal(storage, configPath)
+  const concurrentSave = publishedBytes.replace('codebook', 'codebooX')
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      // Reads 1 and 2 are recovery's looks; read 3 follows the config's hash.
+      if (keptReadCount === 3) writeFileSync(configPath, concurrentSave)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    // A trailing space: the copy's path starts with the config's, so only this form proves the config itself is named.
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    assert.ok(error.message.includes('never copy'), error.message)
+    assert.ok(
+      !error.message.includes('move it back over the config or delete it'),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(keptReadCount, 3)
+  assert.equal(readFileSync(configPath, 'utf8'), concurrentSave)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A config saved with another codebook entry while the last private copy is read is refused naming both files', async (context) => {
+  // Value: protects=the refusal about a changed codebook entry still says where the private copy is and that the config changed while it was read, so the learner finds both files in one message; fails_when=the entry-differs refusal hides the copy's path or the look-at-both advice; no_claim=a save in the syscall gap after the last synchronous look, and the order of the two sentences; seam=hand-written pending record of a publish that ended after its link, seam.afterStat rewrites the config in place with a codebook entry of another command (same size) during the third read of the copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const { keptPath, originalBytes, publishedBytes } =
+    await arrangePublishedWithOriginal(storage, configPath)
+  const concurrentSave = publishedBytes.replace(
+    '/usr/bin/node',
+    '/usr/bin/nodX',
+  )
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      // Reads 1 and 2 are recovery's looks; read 3 follows the config's hash.
+      if (keptReadCount === 3) writeFileSync(configPath, concurrentSave)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(
+      error.message.includes(
+        'a "codebook" entry that differs from the one an interrupted Codebook run was writing',
+      ),
+      error.message,
+    )
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    assert.ok(error.message.includes('never copy'), error.message)
+    return true
+  })
+  assert.equal(keptReadCount, 3)
+  assert.equal(readFileSync(configPath, 'utf8'), concurrentSave)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A published config that stays unchanged while the last private copy is read lets recovery delete that copy and adopt the entry', async (context) => {
+  // Value: protects=the look-at-both refusal is only for a config that changed: an unchanged published config still lets recovery delete the verified original and adopt the entry; fails_when=the copy stays, a refusal is thrown or the entry is not adopted; no_claim=a change in the syscall gap after the last synchronous look; seam=hand-written pending record of a publish that ended after its link, seam.afterStat only counts the reads of the copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const { keptPath, publishedBytes } = await arrangePublishedWithOriginal(
+    storage,
+    configPath,
+  )
+  let keptReadCount = 0
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === keptPath) keptReadCount += 1
+    },
+  })
+
+  // Assert
+  assert.equal(result.status, 'current')
+  assert.equal(keptReadCount, 3)
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), publishedBytes)
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).entrySha256,
+    sha256(ENTRY_CANONICAL),
+  )
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('A displaced original is kept and named when a writer rewrites it with the same length while the published config is read again', async (context) => {
   // protects=the displaced copy's content is the last async read before the unlink, so a same-length rewrite during the config's re-read is not deleted; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite in the syscall gap after the last hash; seam=seam.afterStat rewrites the displaced copy in place with the same length during the config's re-read
   // Arrange
