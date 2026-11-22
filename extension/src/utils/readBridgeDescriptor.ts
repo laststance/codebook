@@ -152,18 +152,44 @@ export async function readBridgeDescriptor(
   // The read and every check after it, the workspace's real-path lookup included, spend one startup budget.
   return within(timeoutMs, async () => {
     const parsed = parseDescriptorText(await readDescriptorText(descriptorPath))
-    const { descriptor } = parsed
     // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
-    if (!isLoopbackMcpUrl(descriptor.url))
-      throw new Error(
-        'Codebook connection descriptor is not a loopback endpoint.',
-      )
+    assertLoopbackEndpoint(parsed.descriptor.url)
     // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
-    const change = expected
-      ? await changedSinceSelection(parsed, expected, resolveWorkspace)
-      : 'none'
-    if (change === 'mark') throw new DescriptorMarkChangedError()
-    if (change === 'identity') throw new Error(DESCRIPTOR_CHANGED_MESSAGE)
-    return descriptor
+    await assertUnchangedSinceSelection(parsed, expected, resolveWorkspace)
+    return parsed.descriptor
   })
+}
+
+/**
+ * Refuses a descriptor whose url is not Codebook's loopback MCP endpoint, so the token it holds never goes elsewhere; called by {@link readBridgeDescriptor} on the one read a connection uses.
+ * @param url - The descriptor's endpoint url.
+ * @throws When the url is not a loopback MCP endpoint.
+ * @example
+ * assertLoopbackEndpoint(descriptor.url) // returns for Codebook's own loopback endpoint, throws for any other url
+ */
+function assertLoopbackEndpoint(url: string): void {
+  if (!isLoopbackMcpUrl(url))
+    throw new Error(
+      'Codebook connection descriptor is not a loopback endpoint.',
+    )
+}
+
+/**
+ * Refuses the descriptor read for a connection when it is no longer the one the bridge's selection validated; called by {@link readBridgeDescriptor}, and a no-op when the caller validated nothing (`expected` absent).
+ * @param read - The descriptor as {@link parseDescriptorText} parsed it for this connection.
+ * @param expected - What the selection validated, or nothing.
+ * @param resolveWorkspace - Resolves the descriptor's workspace to its real path.
+ * @throws A {@link DescriptorMarkChangedError} when only the mark changed; an error with {@link DESCRIPTOR_CHANGED_MESSAGE} when the instance, pid, url or workspace changed.
+ * @example
+ * await assertUnchangedSinceSelection(read, undefined, realOrSame) // returns, nothing to compare
+ */
+async function assertUnchangedSinceSelection(
+  read: ReturnType<typeof parseDescriptorText>,
+  expected: DescriptorExpectation | undefined,
+  resolveWorkspace: (path: string) => Promise<string>,
+): Promise<void> {
+  if (expected === undefined) return
+  const change = await changedSinceSelection(read, expected, resolveWorkspace)
+  if (change === 'mark') throw new DescriptorMarkChangedError()
+  if (change === 'identity') throw new Error(DESCRIPTOR_CHANGED_MESSAGE)
 }

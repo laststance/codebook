@@ -3162,28 +3162,14 @@ export async function removeManagedDevinMcpEntry(
       // The retry has read the record; it ends it now ({@link inspect} leaves an unrecorded removal's record for this read).
       if (wasUnrecorded) await dropPending(context)
       const ownership = removalOwnership(inspected, options.expectedGeneration)
-      if ('status' in ownership) {
-        // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
-        if (ownership.status !== 'superseded')
-          await rm(context.receiptPath, { force: true })
-        // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
-        if (
-          ownership.status === 'not-managed' &&
-          wasUnrecorded &&
-          inspected.receipt
+      // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
+      if ('status' in ownership)
+        return answerRemovalWithoutTakeOut(
+          context,
+          ownership.status,
+          inspected,
+          wasUnrecorded,
         )
-          return { status: 'removed', path: context.path }
-        // An entry that stays without its receipt is no absent entry: the caller must not count the take-back complete.
-        const entryStays =
-          ownership.status === 'not-managed' &&
-          !inspected.receipt &&
-          inspected.current !== undefined
-        return {
-          status: ownership.status,
-          path: context.path,
-          ...(entryStays && { entryStays: true as const }),
-        }
-      }
       const { status, keptLeft } = await takeEntryOut(context, ownership)
       return dropReceiptAfterRemoval(
         context.receiptPath,
@@ -3193,4 +3179,39 @@ export async function removeManagedDevinMcpEntry(
       )
     },
   )
+}
+
+/**
+ * Answers a removal whose entry is not Codebook's to take out (gone, changed, or a newer setup's) without touching the config; called by {@link removeManagedDevinMcpEntry} under its lock.
+ * @param context - The locked removal's paths.
+ * @param status - What {@link removalOwnership} decided.
+ * @param inspected - What {@link inspect} found under the lock.
+ * @param wasUnrecorded - Whether an earlier removal took the entry out and left its record unwritten.
+ * @returns
+ * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload);
+ * - otherwise `status` itself, with `entryStays` when `not-managed` finds the entry still in the config without its receipt.
+ * @example
+ * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
+ */
+async function answerRemovalWithoutTakeOut(
+  context: Context,
+  status: Extract<RemovalOwnership, { status: string }>['status'],
+  inspected: Awaited<ReturnType<typeof inspect>>,
+  wasUnrecorded: boolean,
+): Promise<DevinMcpRemovalResult> {
+  // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
+  if (status !== 'superseded') await rm(context.receiptPath, { force: true })
+  // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
+  if (status === 'not-managed' && wasUnrecorded && inspected.receipt)
+    return { status: 'removed', path: context.path }
+  // An entry that stays without its receipt is no absent entry: the caller must not count the take-back complete.
+  const entryStays =
+    status === 'not-managed' &&
+    !inspected.receipt &&
+    inspected.current !== undefined
+  return {
+    status,
+    path: context.path,
+    ...(entryStays && { entryStays: true as const }),
+  }
 }
