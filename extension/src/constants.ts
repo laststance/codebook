@@ -528,6 +528,8 @@ export const DEVIN_SETUP_LOCK_RETRY_DELAY_MS = 100
 export const DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS = 15_000
 /** The longest a Devin Desktop setup or removal waits for its setup lock's release once its steps ended, before it answers with their result and lets the release go on; this window's next hold of the lock still waits for that release. */
 export const DEVIN_SETUP_LOCK_RELEASE_MS = 3_000
+/** How long the take-back of a failed Devin Desktop setup, or the steps of a removal, may wait on storage before the command answers with the step still waiting: the work goes on under the setup lock until storage answers, and the window refuses setup and removal meanwhile. Above a healthy take-back's worst case, the descriptor sync's mark read ({@link DEVIN_MARK_READ_RETRY_BUDGET_MS}) plus milliseconds of writes, so it is an answer deadline, never a cut. */
+export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 /** How long a Devin Desktop window's server start waits before it reads the setup receipts again after a read that could not look (descriptor exhaustion, `EIO`), so a moment of exhaustion does not leave the descriptor unmarked for the whole run. */
 export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
 /** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */

@@ -3,10 +3,20 @@ import {
   DevinMcpUnrecordedRemovalError,
   type DevinMcpRemovalResult,
 } from '../devinMcpConfig'
+import {
+  devinStorageWaitSentence,
+  type DevinStorageStep,
+} from '../devinWindowSentences'
 
 /** How the removal of Codebook's entry in Devin Desktop's MCP config ended ({@link removeManagedDevinMcpEntry}), or the refusal it threw; `isEntryRemoved` marks a refusal after the config already lost the entry. */
 type DevinEntryRemoval =
   DevinMcpRemovalResult | { refusal: string; isEntryRemoved?: boolean }
+
+/** What the steps of one Devin Desktop removal have ended with so far; only a step that ended is in it, so a notice shown while a later step waits never names a change that has not happened. */
+export type DevinRemovalProgress = {
+  skill?: CursorSkillRemovalStatus
+  entry?: DevinEntryRemoval
+}
 
 /**
  * Turns what {@link removeManagedDevinMcpEntry} threw into the refusal {@link devinRemovalNotice} words, keeping the fact that the entry was already out of the config; called by the removal command of {@link activate}.
@@ -118,4 +128,34 @@ export function devinRemovalNotice(
       : RESTORE_SENTENCE,
   ]
   return { severity: 'information', text: sentences.join(' '), reload }
+}
+
+/**
+ * Words the warning a learner reads when **Codebook: Remove Devin Desktop Setup** answers while one of its steps still waits on storage: what the steps that ended did, then the step that waits; called by the removal command of {@link activate} once that step outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, before {@link devinRemovalNotice} words the removal's end.
+ * @param progress - What the steps that ended answered.
+ * @param step - The step that waits on storage.
+ * @returns A warning without a reload: the removal's own notice offers one once its steps ended.
+ * @example
+ * devinRemovalPendingNotice({ skill: 'removed' }, 'MCP entry')
+ * // => { severity: 'warning', reload: false, text: "Codebook removed its Devin Desktop skill. Codebook's removal of the Devin Desktop setup is still waiting on storage (MCP entry) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window." }
+ */
+export function devinRemovalPendingNotice(
+  progress: DevinRemovalProgress,
+  step: DevinStorageStep,
+): { severity: 'warning'; text: string; reload: false } {
+  const { skill, entry } = progress
+  const sentences = [
+    // Only a step that ended is named; the skill step comes first.
+    ...(skill === undefined ? [] : [SKILL_SENTENCES[skill]]),
+    // An entry that was refused stays as it is, and the refusal says why.
+    ...(entry === undefined
+      ? []
+      : [
+          'refusal' in entry
+            ? entry.refusal
+            : ENTRY_SENTENCES[entry.status](entry.path),
+        ]),
+    devinStorageWaitSentence('removal', step),
+  ]
+  return { severity: 'warning', text: sentences.join(' '), reload: false }
 }
