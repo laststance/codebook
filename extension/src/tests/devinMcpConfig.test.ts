@@ -111,6 +111,9 @@ function sha256(text: string) {
 
 const ENTRY_CANONICAL =
   '{"args":["/ext/dist/devinMcpBridge.js","/storage/agent"],"command":"/usr/bin/node","env":{}}'
+/** The plain entry hash of {@link ENTRY} (the SHA-256 of {@link ENTRY_CANONICAL}), as a pending record of the released builds holds it, without the first-setup prefix. */
+const ENTRY_HASH =
+  '78fc5662b711e36b0ed8778a0b79fe62cd50de547097ad95ff10ff8c1996673e'
 
 test('Set Up AI Chat creates an absent Devin MCP config with exactly the Codebook entry, readable only by the user', async (context) => {
   // Value: protects=a fresh Devin Desktop gets a working config; fails_when=extra keys, wrong mode or no receipt; no_claim=Devin loads the entry
@@ -3136,6 +3139,8 @@ test('A refresh takes back a first setup whose rollback journal was written by t
   const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
   delete publishRecord.takeBack
   delete publishRecord.firstSetup
+  // The released builds wrote the plain entry hash, never the first-setup prefix.
+  publishRecord.entrySha256 = ENTRY_HASH
   writeFileSync(pendingPath, JSON.stringify(publishRecord))
 
   // Act
@@ -3149,12 +3154,21 @@ test('A refresh takes back a first setup whose rollback journal was written by t
   })
 })
 
-/** Leaves a first setup whose rollback was cut short, with the records of the released build (no generation, no newer marks); `editJournal` changes the journal. */
+/**
+ * Leaves a first setup whose rollback was cut short, with the records of the released builds: no publish generation in the journal, no newer marks and the plain {@link ENTRY_HASH} in the publish record.
+ * @param context - The test context.
+ * @param editJournal - Changes the journal before it is written back; it may also change the displaced file the journal names (`keptPath`, beside the config, whose name stays empty until a run puts that file back).
+ * @returns The home, storage, config, receipt, publish record and journal paths.
+ * @example
+ * const { home, storage, configPath } = await leaveLegacyCutShortSetup(context, (journal) => {
+ *   delete journal.keptIno
+ * })
+ */
 async function leaveLegacyCutShortSetup(
   context: TestContext,
   editJournal: (
     journal: Record<string, unknown>,
-    paths: { journalPath: string; configPath: string },
+    paths: { journalPath: string; configPath: string; keptPath: string },
   ) => void,
 ) {
   const { home, storage, configPath } = await arrange(context)
@@ -3173,21 +3187,95 @@ async function leaveLegacyCutShortSetup(
   rmSync(receiptPath, { recursive: true })
   const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
   delete journal.publishGeneration
-  editJournal(journal, { journalPath, configPath })
+  const keptPath = join(dirname(configPath), String(journal.keptName))
+  editJournal(journal, { journalPath, configPath, keptPath })
   writeFileSync(journalPath, JSON.stringify(journal))
   const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
   delete publishRecord.takeBack
   delete publishRecord.firstSetup
+  // The released builds wrote the plain entry hash, never the first-setup prefix.
+  publishRecord.entrySha256 = ENTRY_HASH
   writeFileSync(pendingPath, JSON.stringify(publishRecord))
-  return { home, storage, configPath, receiptPath }
+  return { home, storage, configPath, receiptPath, pendingPath, journalPath }
 }
 
-test('A legacy rollback journal with the published inode but another hash does not mark the pending publish for take-back', async (context) => {
-  // protects=an inode reused for another publish never takes out that publish's entry; fails_when=the refresh takes the entry out (status not-managed, no receipt); no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback; the journal's keptSha256 is changed to stand for another publish
+test('A legacy rollback journal whose published config was appended to in place still takes the failed first setup back', async (context) => {
+  // Value: protects=a cut-short rollback journal of the released builds (no publish generation) still finishes the take-back when a writer appended to the published config in place before the rollback hashed it, so the failed first setup is never adopted as installed; fails_when=the refresh answers current, writes a receipt or leaves the entry in the config; no_claim=an append that does not start right after a line break (only prefixes that end in one are compared), a real editor's in-place save; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; a line break appended to the displaced file, and its new hash in keptSha256, stand for the in-place append the rollback saw
   // Arrange
   const { home, storage, configPath, receiptPath } =
-    await leaveLegacyCutShortSetup(context, (journal) => {
-      journal.keptSha256 = 'f'.repeat(64)
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
+test('A legacy rollback journal whose published inode now holds the same entry among other settings is refused, and the config and both records stay as they are', async (context) => {
+  // Value: protects=an inode reused for another config that holds the same codebook entry is never taken for the failed setup's published file and nothing is decided on it, while the learner is told what Codebook found and how to go on; fails_when=the refresh takes the entry out, adopts it (current, a receipt), retires or rewrites pending.json or the journal, or changes the config's bytes; no_claim=a reused inode on a real disk; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the displaced file rewritten in place (same inode) with the same entry beside another server, and its hash in keptSha256, stand for the reused inode the rollback saw
+  // Arrange
+  const reusedText = `${JSON.stringify({ mcpServers: { beta: { command: 'b' }, codebook: ENTRY } }, null, 2)}\n`
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      writeFileSync(keptPath, reusedText)
+      journal.keptSha256 = sha256(reusedText)
+    })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const journalText = readFileSync(journalPath, 'utf8')
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, {
+    message: `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "codebook" entry in ${configPath} is the one the setup wrote. Codebook left the config and both records (${pendingPath}, ${journalPath}) untouched; if you did not write that entry, remove it by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(readFileSync(configPath, 'utf8'), reusedText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+  assert.equal(readFileSync(journalPath, 'utf8'), journalText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A legacy rollback journal whose restored config holds another entry does not mark the pending publish for take-back', async (context) => {
+  // Value: protects=a legacy journal whose put-back config holds another publish's codebook entry never marks this publish for take-back, so that entry is never taken out on this record's word; fails_when=the publish record gets takeBack, the refresh takes the entry out, or it answers anything but the entry-differs refusal; no_claim=which publish wrote the other entry; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the displaced file rewritten in place (same inode) with another entry, and its hash in keptSha256, stand for another publish's file
+  // Arrange
+  const otherText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY } }, null, 2)}\n`
+  const { home, storage, configPath, receiptPath, pendingPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      writeFileSync(keptPath, otherText)
+      journal.keptSha256 = sha256(otherText)
+    })
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, {
+    message: `Codebook found a "codebook" entry that differs from the one an interrupted Codebook run was writing in Devin Desktop's MCP config at ${configPath} and left that file untouched; rename or remove that entry, then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(
+    JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack,
+    undefined,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), otherText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A legacy rollback journal whose displaced file has another inode than the published one does not mark the pending publish for take-back', async (context) => {
+  // Value: protects=a legacy journal of another file (another inode) never marks this publish for take-back, so the publish's entry stays and is adopted as before; fails_when=the refresh takes the entry out (not-managed, no receipt); no_claim=how the other file came to be displaced; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the displaced file copied to a new inode (same bytes), and that inode in keptIno, stand for another file
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      swapFile(keptPath, readFileSync(keptPath, 'utf8'))
+      journal.keptIno = statSync(keptPath).ino
     })
 
   // Act

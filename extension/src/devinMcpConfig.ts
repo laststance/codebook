@@ -23,8 +23,10 @@ import {
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { canonicalJson } from './utils/canonicalJson'
 import { hasDuplicateJsonMember } from './utils/hasDuplicateJsonMember'
+import { hasPrefixWithSha256 } from './utils/hasPrefixWithSha256'
 import { isSameFileId } from './utils/isSameFileId'
 import { openWithoutFollowing } from './utils/openWithoutFollowing'
+import { plainEntryHashOf } from './utils/plainEntryHashOf'
 import { readUpToLimit } from './utils/readUpToLimit'
 import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
 import { withStorageLock } from './utils/withStorageLock'
@@ -2708,9 +2710,9 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
- * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one.
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched is refused before the journal is retired, and both records then stay.
  * @param context - The run.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes that do not start with the published ones, while the config holds the setup's entry: no record is written or retired then.
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -2727,7 +2729,12 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
-  await markTakeBackOwed(context, pending.publishGeneration, pending)
+  // A journal of an older build names no publish: the config its recovery just put back helps tell whether it is this publish's.
+  const legacy =
+    pending.publishGeneration === undefined
+      ? { journal: pending, restoredBytes: await restoredConfigBytes(context) }
+      : undefined
+  await markTakeBackOwed(context, pending.publishGeneration, legacy)
   await retirePending(
     rollbackContext,
     retainedRecord(
@@ -2739,28 +2746,118 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   if (reported) throw unsettledRefusal(rollbackContext, pending.phase, reported)
 }
 
+/** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is, `unmatched` (only an older build's journal, {@link legacyBelonging}) refuses and leaves both records ({@link unmatchedJournalRefusal}). */
+type JournalBelonging = 'belongs' | 'another' | 'unmatched'
+
+/** What a rollback journal of an older build (no publish generation) offers {@link legacyBelonging}: its displaced file's inode and hash, and the config its recovery put back. */
+type LegacyJournalEvidence = {
+  journal: Pick<Pending, 'keptIno' | 'keptSha256'>
+  /** The config's bytes ({@link restoredConfigBytes}); undefined when it could not be read. */
+  restoredBytes: Buffer | undefined
+}
+
 /**
- * Tells whether a journal of an older build (no generation) provably belongs to another publish than the record; used by {@link markTakeBackOwed}.
+ * Reads the bytes of the config a recovery just put back, without following a link and never past {@link DEVIN_MCP_CONFIG_LIMIT_BYTES}; called by {@link settleRollbackJournal} for a journal of an older build, so {@link legacyBelonging} can look at them before anything is refused on that config.
+ * @param context - The run.
+ * @returns The bytes; undefined when the config is absent, a link, no regular file or larger than the limit, or cannot be read.
+ * @example
+ * await restoredConfigBytes(context) // => <Buffer 7b 0a ...> once the original config is back
+ */
+async function restoredConfigBytes(
+  context: Context,
+): Promise<Buffer | undefined> {
+  const file = await openWithoutFollowing(context.path).catch(() => undefined)
+  // Absent, a link or not openable: nothing to decide on.
+  if (!file) return undefined
+  try {
+    const status = await file.stat()
+    if (!status.isFile()) return undefined
+    return await readWithinLimit(
+      file,
+      status.size,
+      DEVIN_MCP_CONFIG_LIMIT_BYTES,
+    )
+  } catch {
+    return undefined
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * Gives the core hash ({@link coreHashOf}) of the `codebook` entry in a config's bytes; used by {@link legacyBelonging} on the config a recovery put back.
+ * @param bytes - The config's bytes.
+ * @returns The hash; undefined for bytes that are no JSON object, an `mcpServers` that is no object, or an entry that is absent or no object.
+ * @example
+ * configEntryHashOf(Buffer.from('{"mcpServers":{}}')) // => undefined
+ */
+function configEntryHashOf(bytes: Buffer): string | undefined {
+  let root: unknown
+  try {
+    root = JSON.parse(bytes.toString('utf8'))
+  } catch {
+    return undefined
+  }
+  const servers = isJsonObject(root) ? root.mcpServers : undefined
+  return isJsonObject(servers) ? coreHashOf(servers[SERVER_NAME]) : undefined
+}
+
+/**
+ * Tells whether a rollback journal of an older build (no publish generation) belongs to the publish record; used by {@link markTakeBackOwed}.
+ * The journal's `keptSha256` hashes the published file as the rollback found it, so the same inode with another hash is either the published file with text appended in place or the inode reused for another file: the config the recovery put back decides.
  * @param journal - The journal's displaced file (`keptIno`, `keptSha256`); undefined when there is none.
  * @param publish - The publish record.
- * @returns `true` only when both records carry an inode and a hash and the inode or the hash differs (a reused inode cannot hide another file's bytes).
+ * @param restoredBytes - The config the recovery put back ({@link restoredConfigBytes}); undefined when it could not be read.
+ * @returns
+ * - `belongs` when an inode or a hash is missing (nothing proves another publish, so take-back is marked as the previous release did), when inode and hash both match, or when the inode matches and the restored config holds the setup's entry and starts with the published bytes ({@link hasPrefixWithSha256})
+ * - `another` for another inode, or for the same inode with another hash when the restored config cannot be read or holds no entry or another one
+ * - `unmatched` for the same inode with another hash when the restored config holds the setup's entry but does not start with the published bytes
  * @example
- * provesAnotherPublish({ keptIno: 5, keptSha256: 'a' }, { ...publish, stagedIno: 5, stagedSha256: 'b' }) // => true
+ * legacyBelonging({ keptIno: 5, keptSha256: 'a' }, { ...publish, stagedIno: 6, stagedSha256: 'a' }, bytes) // => 'another'
+ * legacyBelonging({ keptIno: 5, keptSha256: 'b' }, { ...publish, stagedIno: 5, stagedSha256: 'a' }, publishedBytesWithALineAppended) // => 'belongs'
+ * legacyBelonging({ keptIno: 5, keptSha256: 'b' }, { ...publish, stagedIno: 5, stagedSha256: 'a' }, sameEntryAmongOtherServers) // => 'unmatched'
  */
-function provesAnotherPublish(
+function legacyBelonging(
   journal: Pick<Pending, 'keptIno' | 'keptSha256'> | undefined,
   publish: Pending,
-): boolean {
+  restoredBytes: Buffer | undefined,
+): JournalBelonging {
+  const { stagedIno, stagedSha256 } = publish
+  // An inode or a hash missing on either side proves no other publish.
   if (
     journal?.keptIno === undefined ||
     journal.keptSha256 === undefined ||
-    publish.stagedIno === undefined ||
-    publish.stagedSha256 === undefined
+    stagedIno === undefined ||
+    stagedSha256 === undefined
   )
-    return false
-  return (
-    String(journal.keptIno) !== String(publish.stagedIno) ||
-    journal.keptSha256 !== publish.stagedSha256
+    return 'belongs'
+  if (String(journal.keptIno) !== String(stagedIno)) return 'another'
+  if (journal.keptSha256 === stagedSha256) return 'belongs'
+  // The same inode with other bytes: only a restored config that still holds the setup's entry can be the published file.
+  if (restoredBytes === undefined) return 'another'
+  const restoredEntryHash = configEntryHashOf(restoredBytes)
+  if (
+    restoredEntryHash === undefined ||
+    restoredEntryHash !== plainEntryHashOf(publish.entrySha256)
+  )
+    return 'another'
+  // Text appended in place keeps the published bytes at the start; a reused inode with the same entry among other settings does not.
+  return hasPrefixWithSha256(restoredBytes, stagedSha256)
+    ? 'belongs'
+    : 'unmatched'
+}
+
+/**
+ * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record; thrown by {@link markTakeBackOwed} before any record is written or retired, so the config and both records stay for the learner to decide about the entry.
+ * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
+ * @returns The error, not thrown yet.
+ * @example
+ * throw unmatchedJournalRefusal(context)
+ */
+function unmatchedJournalRefusal(context: Context): Error {
+  const { path, pendingPath, retry } = context
+  return new Error(
+    `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "${SERVER_NAME}" entry in ${path} is the one the setup wrote. Codebook left the config and both records (${pendingPath}, ${rollbackContextOf(context).pendingPath}) untouched; if you did not write that entry, remove it by hand, delete both records, ${retry}.`,
   )
 }
 
@@ -2768,15 +2865,16 @@ function provesAnotherPublish(
  * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
  * Only the publish of the given generation is marked: another installation's pending publish stays as it is.
  * @param context - The run.
- * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when `legacyKeptIno` proves it belongs to the publish record.
- * @param legacyJournal - The rollback's journal; with no generation its `keptIno` and `keptSha256` are compared with the publish record's `stagedIno` and `stagedSha256`.
+ * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
+ * @param legacy - Only for a journal of an older build: its displaced file's inode and hash, and the config its recovery put back.
+ * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record; nothing is written then. What reading or writing the record throws.
  * @example
  * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
   publishGeneration: string | undefined,
-  legacyJournal?: Pick<Pending, 'keptIno' | 'keptSha256'>,
+  legacy?: LegacyJournalEvidence,
 ): Promise<void> {
   const publish = await readRecord(
     context.pendingPath,
@@ -2784,14 +2882,17 @@ async function markTakeBackOwed(
     context.retry,
     context.seam,
   )
-  // No publish record, one of another config or of another generation (another installation's publish), or one already marked: nothing to mark.
+  // No publish record, one of another config, or one already marked: nothing to mark.
   if (publish?.targetPath !== context.path || publish.takeBack) return
-  // A journal of an older build names no generation: it belongs to another publish only when both records carry an inode and a hash and these prove it; an ambiguous journal marks take-back, as the previous release did.
-  const belongsToPublish =
+  // A journal of this build names the publish it rolled back (another generation is another installation's publish); one of an older build names none, so its displaced file and the restored config decide.
+  const belonging: JournalBelonging =
     publishGeneration === undefined
-      ? !provesAnotherPublish(legacyJournal, publish)
+      ? legacyBelonging(legacy?.journal, publish, legacy?.restoredBytes)
       : publish.generation === publishGeneration
-  if (!belongsToPublish) return
+        ? 'belongs'
+        : 'another'
+  if (belonging === 'unmatched') throw unmatchedJournalRefusal(context)
+  if (belonging === 'another') return
   await writeRecord(context, context.pendingPath, {
     ...publish,
     takeBack: true,
