@@ -35,6 +35,7 @@ import { withDevinSetupLock } from '../utils/withDevinSetupLock'
 import { createHarness } from './helpers'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
+import { within } from './utils/within'
 
 type Command = () => Promise<unknown>
 type Notice = {
@@ -166,6 +167,7 @@ async function devinWindow(
     failSetupCommit?: boolean
     onSetupCommit?: (window: {
       changeWorkspace: (folder: string) => void
+      changeFolder: (folder: string) => void
     }) => Promise<void>
     hangFinalReceiptsCheck?: boolean
     failSetupRestore?: boolean
@@ -176,6 +178,12 @@ async function devinWindow(
     receiptReadsHang?: boolean
     failFirstInstallationRead?: boolean
     removalDeletesReceipt?: boolean
+    /** How long each of the first reads of the setup receipts waits before it answers with no answer (`null`), by the read's position; a read past the list answers at once. */
+    receiptReadDelaysMs?: number[]
+    /** Runs once, right after the setup lock's release was awaited and before the setup's success notice (test seam for a folder change in that gap). */
+    afterSetupLockRelease?: (window: {
+      changeFolder: (folder: string) => void
+    }) => Promise<void>
   } = {},
 ) {
   const directory =
@@ -230,6 +238,15 @@ async function devinWindow(
   })
   // The folder the window serves now; a test seam changes it as a folder switch would.
   let currentWorkspace = directory
+  // The listeners the window registered for a change of the workspace's folders; {@link changeFolder} fires them as the editor does.
+  const folderListeners: Array<() => void> = []
+  /** Switches the folder the window serves and fires the window's registered folder-change listeners, as the editor does. */
+  const changeFolder = (folder: string): void => {
+    currentWorkspace = folder
+    for (const listener of folderListeners) listener()
+  }
+  // How many reads of the setup receipts the window started; a test reads it to see that a hung read is not asked again.
+  let receiptReadCount = 0
   // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
   let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
@@ -286,7 +303,10 @@ async function devinWindow(
       },
     },
     workspace: {
-      onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+      onDidChangeWorkspaceFolders: (listener: () => void) => {
+        folderListeners.push(listener)
+        return { dispose(): void {} }
+      },
       getConfiguration: () => ({
         get: (_name: string, fallback: string) => fallback,
       }),
@@ -392,6 +412,9 @@ async function devinWindow(
           presentation = undefined
           async attach(): Promise<void> {}
           async retire(): Promise<void> {}
+          releaseUnsavedStudies(): [] {
+            return []
+          }
           async dispose(): Promise<void> {}
         },
       },
@@ -561,6 +584,13 @@ async function devinWindow(
       // Reads the real records; an armed hold makes the next read wait after it read, as a removal that lands in between would find it.
       './utils/readStandingDevinInstallationId': {
         readStandingDevinInstallationId: async (storageRoot: string) => {
+          receiptReadCount += 1
+          // A read that answers late with no answer, as a slow storage that then fails.
+          const delayMs = options.receiptReadDelaysMs?.[receiptReadCount - 1]
+          if (delayMs !== undefined) {
+            await delay(delayMs)
+            return null
+          }
           // A read that never returns.
           if (options.receiptReadsHang)
             return new Promise<never>(() => undefined)
@@ -609,6 +639,20 @@ async function devinWindow(
             await afterRead()
           }
           return installationRead
+        },
+      },
+      // The real lock; a test seam runs once right after its release was awaited.
+      './utils/withDevinSetupLock': {
+        withDevinSetupLock: async (
+          ...parameters: Parameters<typeof withDevinSetupLock>
+        ) => {
+          const result = await withDevinSetupLock(...parameters)
+          const afterRelease = options.afterSetupLockRelease
+          if (afterRelease) {
+            options.afterSetupLockRelease = undefined
+            await afterRelease({ changeFolder })
+          }
+          return result
         },
       },
       './utils/resolveExternalNodeExecutable': {
@@ -698,6 +742,7 @@ async function devinWindow(
             changeWorkspace: (folder: string): void => {
               currentWorkspace = folder
             },
+            changeFolder,
           })
         state.set(key, structuredClone(value))
       },
@@ -726,6 +771,10 @@ async function devinWindow(
     releaseDeploy,
     rewriteReached,
     releaseRewrite,
+    /** Switches the folder the window serves and fires the registered folder-change listeners. */
+    changeFolder,
+    /** How many reads of the setup receipts the window started. */
+    receiptReadCount: (): number => receiptReadCount,
     /** Whether a read of the setup records is waiting for {@link releaseReceipts}; a test polls it with a time budget, so a hold that is never reached fails instead of hanging. */
     hasReceiptsReached: (): boolean => isReceiptsReached,
     releaseReceipts,
@@ -1767,6 +1816,88 @@ test('a Devin Desktop window whose receipt read never returns at server start pu
   }
 })
 
+// protects=server restarts while the receipt reads hang start the reads once, so they never pile up until the editor's file pool is held (Cycle 0145 last-round O4); fails_when=each start begins two more reads that never return; no_claim=the descriptor's mark (unmarked here)
+test('a Devin Desktop window whose receipt reads hang asks for them once however often its server starts', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadsHang: true,
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the first start's connection descriptor",
+      15_000,
+    )
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    await waitUntil(
+      window.descriptorReadable,
+      "the second start's connection descriptor",
+      15_000,
+    )
+    // Assert
+    assert.equal(window.receiptReadCount(), 1)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a read that answered nothing just before the deadline is not asked again after the descriptor was published unmarked (Cycle 0145 last-round G9); fails_when=the retry wait outlives the deadline and a second read starts; no_claim=a retry that falls within the budget (the exhaustion test above)
+test('a Devin Desktop window starts no receipt read after its unmarked descriptor was published at the deadline', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    // The first read answers nothing 100 ms before the 5 s deadline.
+    receiptReadDelaysMs: [4_900],
+  })
+  try {
+    // Act
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    // The retry wait of 500 ms would end after the deadline; a read started then shows within a second.
+    await delay(1_200)
+    // Assert
+    assert.equal(window.receiptReadCount(), 1)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a receipt read that never returns does not hold the removal, the descriptor queue or later writes of a window whose saved setup could not be cleared (Cycle 0145 last-round G11); fails_when=the mark decision waits on the read for ever, so the removal never ends; no_claim=the wording of the removal notice
+test('a Devin Desktop removal ends and unmarks the descriptor although the receipt read never returns', async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    confirmRemoval: true,
+    failSetupClear: true,
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    // The storage stops answering after the start.
+    options.receiptReadsHang = true
+    // Act
+    const removal = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!(),
+      15_000,
+    )
+    // Assert
+    assert.notEqual(removal, 'still waiting')
+    assert.equal(await window.readDescriptorField(), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // protects=a failed re-run of a valid setup whose rollback sync gets one read without an answer keeps the earlier mark and the server's token (Cycle 0145 final-range F12); fails_when=the sync turns the missing answer into not set up, removes the mark and rotates the token, and nothing marks again when the receipts read; no_claim=a receipt observed removed (it unmarks at once, the rotation test above)
 test('a failed Devin setup re-run whose rollback sync reads no answer once keeps the earlier setup marked with the same token', async (context) => {
   // Arrange
@@ -1777,6 +1908,7 @@ test('a failed Devin setup re-run whose rollback sync reads no answer once keeps
     skillManaged: false,
   }
   let tokenBefore: string | undefined
+  let readsBeforeFailure = 0
   options.onSkillCheck = async (): Promise<void> => {
     // The restarted server is marked; the next read of the receipts (the rollback's sync) gets no answer once.
     await window.commands.get('codebook.stopAgentServer')!()
@@ -1785,15 +1917,26 @@ test('a failed Devin setup re-run whose rollback sync reads no answer once keeps
       await readFile(await window.descriptorPath(), 'utf8'),
     ).token
     options.receiptReadsWithoutAnswer = 1
+    readsBeforeFailure = window.receiptReadCount()
     throw new Error('Injected skill check failure')
   }
   const window = await devinWindow(context, options)
   try {
     // Act
-    await window.commands.get('codebook.setupAiChat')!().catch(() => undefined)
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
     const descriptorFile = await window.descriptorPath()
     const tokenAfter = JSON.parse(await readFile(descriptorFile, 'utf8')).token
     // Assert
+    // The injected failure is what ended the setup.
+    assert.equal(setupOutcome, 'Injected skill check failure')
+    // The rollback's sync read without an answer (the stand-in used its one), and a retry read followed it.
+    assert.equal(options.receiptReadsWithoutAnswer, 0)
+    assert.equal(window.receiptReadCount() - readsBeforeFailure >= 2, true)
     assert.equal(await window.readDescriptorField(), true)
     assert.equal(typeof tokenBefore, 'string')
     assert.equal(tokenAfter, tokenBefore)
@@ -2357,16 +2500,50 @@ test('a Devin Desktop setup whose server was stopped while its commit was writte
   }
 })
 
-// protects: a Devin Desktop setup whose window switched to another folder while its commit was written reports that it did not complete and offers no reload; fails_when=the setup reports success and offers a reload that cannot connect the folder now open (the folder change cleared the saved value and stopped the old folder's server); no_claim=the saved value of the old folder (the folder-change handling clears it)
+// protects: a Devin Desktop setup whose window switched to another folder while its commit was written reports that it did not complete, offers no reload and leaves no saved setup of the old folder; fails_when=the setup reports success and offers a reload that cannot connect the folder now open, or the commit lands after the folder change cleared the saved value and the old folder's setup stays saved; no_claim=the wording of the folder-change handling's own notices
 test('a Devin Desktop setup whose folder changed while its commit was written offers no reload and says it did not complete', async (context) => {
   // Arrange
   const switchFolder = async (seam: {
-    changeWorkspace: (folder: string) => void
+    changeFolder: (folder: string) => void
   }): Promise<void> => {
-    seam.changeWorkspace('/other/folder')
-    await window.commands.get('codebook.stopAgentServer')!()
+    // The registered folder-change listeners run against the held commit write.
+    seam.changeFolder('/other/folder')
   }
   const window = await devinWindow(context, { onSetupCommit: switchFolder })
+  try {
+    await window.commands.get('codebook.startAgentServer')!()
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // The folder-change handling stops the old folder's server; both processes have settled when no descriptor is left.
+    await waitUntil(
+      async () => (await window.descriptorNames()).length === 0,
+      "the stop of the old folder's server",
+    )
+    // Assert
+    assert.equal(
+      setupOutcome,
+      'The workspace folder changed while Devin Desktop setup was finishing, so the setup did not complete for this folder. Run Codebook: Set Up AI Chat again.',
+    )
+    assert.deepEqual(window.notices, [])
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a Devin Desktop setup whose window switched to another folder while the setup lock was released reports that it did not complete and offers no reload; fails_when=the success notice and its Reload Window button come for the folder that just closed, because the folder is compared only inside the lock; no_claim=the old folder's saved value (the folder-change handling clears it)
+test('a Devin Desktop setup whose folder changed while its lock was released offers no reload and says it did not complete', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    afterSetupLockRelease: async (seam) => {
+      seam.changeFolder('/other/folder')
+    },
+  })
   try {
     await window.commands.get('codebook.startAgentServer')!()
     // Act

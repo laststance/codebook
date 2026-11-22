@@ -434,15 +434,42 @@ export function activate(
   /** Whether this window's connection descriptor carries the Devin AI chat mark right now: set once the mark is written, cleared before an unmark rewrites the descriptor. The server refuses a request of the Devin bridge while it is `false` ({@link startServer}), so a bridge that connected before a failed setup's rollback stops being served. */
   let isDevinChatMarked = false
   /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
-  const devinChatField = async (): Promise<DevinChatFields> =>
-    (await readDevinChatField()) ?? {}
+  const devinChatField = async (): Promise<DevinChatFields> => {
+    let field: DevinChatFields | undefined
+    // A read that has not answered within the bound is no answer, which reads as unmarked, so a hung storage never holds the descriptor queue (Cycle 0145 last-round G11).
+    const isInTime = await settledWithin(
+      readDevinChatField().then((read) => {
+        field = read
+      }),
+      DEVIN_SETUP_FINAL_CHECK_MS,
+    )
+    if (!isInTime) abandonStandingRead()
+    return field ?? {}
+  }
+  /** The receipts read of this window that is in flight, so one window never has two reads of the same two files running. */
+  let standingRead: Promise<unknown> | undefined
+  /** Whether {@link standingRead} outlived the bound a caller waited for it: then no new read starts (each would hold two more threads of the editor's small file pool) and a call that comes meanwhile gets no answer, until that read settles. */
+  let isStandingReadAbandoned = false
+  /** Marks the read in flight as outlived by its caller's bound; called by {@link devinChatField} and {@link devinChatFieldAtStart} when their bound passed. @example abandonStandingRead() */
+  const abandonStandingRead = (): void => {
+    isStandingReadAbandoned = standingRead !== undefined
+  }
   /** Reads the mark fields once and tells a read that could not look from a setup that does not stand; used by {@link devinChatField} (no answer counts as unmarked) and by {@link devinChatFieldAtStart} (no answer is asked again). @returns The fields, `{}` when the setup does not stand, or `undefined` when the receipts could not be read at all. @example await readDevinChatField() // => undefined during a moment of descriptor exhaustion */
   const readDevinChatField = async (): Promise<DevinChatFields | undefined> => {
     if (!isDevinHost || !setupMatchesCurrentWorkspace()) return {}
+    // A read that outlived its caller's bound still holds its threads: no second one starts, and the caller gets no answer (Cycle 0145 last-round O4).
+    if (isStandingReadAbandoned) return undefined
     // The bridge's receipt rules decide, in one read: both receipts installed and private, the id from the MCP one.
-    const installationId = await readStandingDevinInstallationId(
+    const read = readStandingDevinInstallationId(
       context.globalStorageUri.fsPath,
     )
+    const inFlight = read.finally(() => {
+      if (standingRead !== inFlight) return
+      standingRead = undefined
+      isStandingReadAbandoned = false
+    })
+    standingRead = inFlight
+    const installationId = await read
     // `null`: no answer; an unmarked descriptor published on it would stay unmarked for the whole run.
     if (installationId === null) return undefined
     return installationId
@@ -452,22 +479,34 @@ export function activate(
   /** The mark fields for a server that starts now, and for the sync of a rollback: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, and a read that settles later changes nothing. An observed removal answers at once. Called by {@link startServer}'s start and by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
   const devinChatFieldAtStart = async (): Promise<DevinChatFields> => {
     const deadline = Date.now() + DEVIN_MARK_READ_RETRY_BUDGET_MS
+    const stopWaiting = new AbortController()
+    /** Whether the deadline passed or the answer came: no read starts after it. */
+    const isOver = (): boolean =>
+      stopWaiting.signal.aborted || Date.now() >= deadline
     const readUntilAnswered = async (): Promise<
       DevinChatFields | undefined
     > => {
       let field = await readDevinChatField()
       // Only a read with no answer is asked again, and only within the budget.
-      while (field === undefined && Date.now() < deadline) {
-        await delay(DEVIN_MARK_READ_RETRY_DELAY_MS)
+      while (field === undefined && !isOver()) {
+        // The deadline ends the wait too, so no read starts after the descriptor was published unmarked.
+        await delay(DEVIN_MARK_READ_RETRY_DELAY_MS, undefined, {
+          signal: stopWaiting.signal,
+        }).catch(() => undefined)
+        if (isOver()) break
         field = await readDevinChatField()
       }
       return field
     }
-    const stopWaiting = new AbortController()
     const expiry = delay(DEVIN_MARK_READ_RETRY_BUDGET_MS, undefined, {
       signal: stopWaiting.signal,
     }).then(
-      () => undefined,
+      () => {
+        // Ends the retry wait and marks a read still in flight as outlived.
+        stopWaiting.abort()
+        abandonStandingRead()
+        return undefined
+      },
       () => undefined,
     )
     try {
@@ -1217,10 +1256,11 @@ export function activate(
     )
       throw new Error(DEVIN_SETUP_SERVER_CHANGED_SENTENCE)
   }
-  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved: the folder-change handling clears the saved value and stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). @throws With a retry sentence; the setup keeps what it saved, and the saved value is the folder-change handling's to clear. @example assertDevinSetupWorkspaceStands() */
-  const assertDevinSetupWorkspaceStands = (): void => {
-    if (!setupMatchesCurrentWorkspace())
-      throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
+  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved or the setup lock was released: the folder-change handling stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). The saved value is cleared here too, because a commit that landed after the folder-change handling cleared it would leave the old folder's setup saved. @throws With a retry sentence. @example await assertDevinSetupWorkspaceStands() */
+  const assertDevinSetupWorkspaceStands = async (): Promise<void> => {
+    if (setupMatchesCurrentWorkspace()) return
+    await clearSavedDevinSetup()
+    throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
   }
   /** Re-checks, after an awaited step of a Devin Desktop setup, that its removal has not begun and its checked server still stands; called by {@link setUpDevinChatLocked} after the receipts check and after the commit write. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupStillStands(checkedServer) */
   const assertDevinSetupStillStands = (server: Running): void => {
@@ -1499,7 +1539,7 @@ export function activate(
       throw error
     }
     // The commit write awaited: a folder change in that gap is no success, and nothing is rolled back for it.
-    assertDevinSetupWorkspaceStands()
+    await assertDevinSetupWorkspaceStands()
     return {
       cleanupFailure: entryWrite.cleanupFailure,
       disabled: entryWrite.disabled,
@@ -1512,6 +1552,8 @@ export function activate(
     requireWorkspace()
     const { cleanupFailure, disabled } =
       await underDevinLock(setUpDevinChatLocked)
+    // The lock's release was awaited: a folder change in that gap is no success, and no reload is offered for a folder that closed (Cycle 0145 last-round O11).
+    await assertDevinSetupWorkspaceStands()
     // A kept copy of the previous config holds other servers' settings, so the notice names it.
     offerDevinReload(
       'information',

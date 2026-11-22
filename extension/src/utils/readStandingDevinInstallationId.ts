@@ -1,9 +1,23 @@
 import { join } from 'node:path'
 
-import { readReceiptState } from './readReceiptState'
+import { readReceiptState, type ReceiptState } from './readReceiptState'
+
+/**
+ * Resolves with `true` once a receipt read is observed `removed`, and never otherwise, so {@link readStandingDevinInstallationId} can answer on one observed removal without waiting for the other read.
+ * @param read - One receipt read.
+ * @returns A promise that settles only for a removal.
+ * @example await whenRemoved(readReceiptState(path)) // => true for a removed receipt; pending for an installed one
+ */
+async function whenRemoved(read: Promise<ReceiptState>): Promise<true> {
+  const receipt = await read
+  // Anything but a removal never settles; the other read or the full answer decides.
+  if (receipt.state !== 'removed') return new Promise<never>(() => undefined)
+  return true
+}
 
 /**
  * Reads the installation id the window's descriptor mark would carry, but only while both receipts stand under the Devin bridge's own rules (each installed and private; the MCP one with its installation id), so a window is never marked for a setup the bridge would refuse; called by the extension's mark decision on every descriptor write and sync.
+ * An observed removal answers at once, without waiting for the other receipt's read (which may never return); both receipts installed is the only answer that needs both reads.
  * A receipt that was observed removed, unreadable by its mode or without an id counts as not standing; a receipt whose read could not look at all (descriptor exhaustion, `EIO`) is neither: it answers `null`, so a transient failure is never taken for a removal and the caller can ask again or keep the mark it had.
  * @param storageRoot - Codebook's global storage folder.
  * @returns The MCP receipt's installation id; `undefined` when a receipt was observed not standing or the id is missing; `null` when no answer could be had and nothing is known.
@@ -13,10 +27,20 @@ import { readReceiptState } from './readReceiptState'
 export async function readStandingDevinInstallationId(
   storageRoot: string,
 ): Promise<string | undefined | null> {
-  const [skill, entry] = await Promise.all([
-    readReceiptState(join(storageRoot, 'devin-skill', 'receipt.json')),
-    readReceiptState(join(storageRoot, 'devin-mcp', 'receipt.json')),
+  const skillRead = readReceiptState(
+    join(storageRoot, 'devin-skill', 'receipt.json'),
+  )
+  const entryRead = readReceiptState(
+    join(storageRoot, 'devin-mcp', 'receipt.json'),
+  )
+  const both = Promise.all([skillRead, entryRead])
+  // The first observed removal wins; otherwise both answers decide.
+  const answer = await Promise.race([
+    both,
+    Promise.race([whenRemoved(skillRead), whenRemoved(entryRead)]),
   ])
+  if (answer === true) return undefined
+  const [skill, entry] = answer
   // An observed removal is certain whatever the other read did.
   if (skill.state === 'removed' || entry.state === 'removed') return undefined
   // No observed removal, but a read that could not look: nothing is known.
