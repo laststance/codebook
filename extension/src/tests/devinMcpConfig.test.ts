@@ -11,7 +11,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import {
@@ -2626,15 +2625,19 @@ test('Set Up AI Chat and the activation refresh leave disabled out while the cod
 })
 
 /**
- * Replaces the file at a path with another file of the given text (a new inode), the way a sync tool that swaps a file in does.
+ * Replaces the file at a path with another file of the given text, the way a sync tool that swaps a file in does.
+ * The new file is written beside the old one and renamed over it, so the old inode is still allocated while the new one is made and the two numbers always differ (a delete-then-create may reuse the freed number on ext4, tmpfs and overlayfs).
  * @param path - The file to replace.
  * @param text - The content of the file that takes its place.
  * @example
  * swapFile('/tmp/t/home/.config/devin/mcp_config.json.x.codebook-displaced', '{"swapped":true}\n')
  */
 function swapFile(path: string, text: string): void {
-  unlinkSync(path)
-  writeFileSync(path, text)
+  const oldInode = statSync(path).ino
+  const siblingPath = `${path}.swap-sibling`
+  writeFileSync(siblingPath, text)
+  renameSync(siblingPath, path)
+  assert.notEqual(statSync(path).ino, oldInode)
 }
 
 /**
@@ -2733,10 +2736,12 @@ test('A leftover of a finished change is not deleted when a sync tool swapped an
     keptIno: (await stat(keptPath)).ino,
     keptSha256: sha256('{"theme":"dark"}\n'),
   })
+  // A different byte length than the original, so a size check alone would also see the swap.
+  const swappedText = '{"swapped":true,"longer":1}\n'
 
   // Act
   const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
-    beforeLeftoverCheck: (path) => swapFile(path, '{"swapped":true}\n'),
+    beforeLeftoverCheck: (path) => swapFile(path, swappedText),
   })
 
   // Assert
@@ -2744,7 +2749,7 @@ test('A leftover of a finished change is not deleted when a sync tool swapped an
     assert.ok(error.message.includes(keptPath), error.message)
     return true
   })
-  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped":true}\n')
+  assert.equal(readFileSync(keptPath, 'utf8'), swappedText)
 })
 
 test('A write keeps and names the displaced copy when a sync tool swapped another file in at its name before the cleanup', async (context) => {
@@ -2832,8 +2837,15 @@ test('A put-back that cannot tell which name its link made keeps both names and 
 
   // Assert
   await assert.rejects(attempt, (error: Error) => {
-    assert.ok(error.message.includes(keptPath), error.message)
-    assert.ok(error.message.includes(configPath), error.message)
+    // The wording puts the leftover first and the config second, so a message naming only the longer kept path fails the config check.
+    assert.ok(
+      error.message.includes(`kept at ${keptPath} and could not settle`),
+      error.message,
+    )
+    assert.ok(
+      error.message.includes(`config at ${configPath} and left`),
+      error.message,
+    )
     return true
   })
   assert.equal(readFileSync(configPath, 'utf8'), '{"swapped":true}\n')
@@ -2873,4 +2885,202 @@ test('A displaced original is kept and named, never deleted, when another config
 
   // Assert
   assert.equal(readFileSync(displacedPath, 'utf8'), original)
+})
+
+test('A leftover whose bytes were overwritten in place at the same size after the check is kept and named, not deleted', async (context) => {
+  // protects=the delete path re-hashes the leftover right before deleting it; fails_when=a same-size overwrite by another program keeps inode and size and the file is deleted; no_claim=the gap between the re-hash and the unlink; seam=seam.afterStat overwrites the leftover in place during the second read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, '{"theme":"dark"}\n')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256('{"theme":"dark"}\n'),
+  })
+  let statCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      statCount += 1
+      // The first read is recovery's own look; the overwrite lands before the re-hash.
+      if (statCount === 2) writeFileSync(keptPath, '{"theme":"DARK"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"theme":"DARK"}\n')
+})
+
+test('A put-back whose config name was replaced before the foreign link is undone leaves both names and refuses naming both', async (context) => {
+  // protects=the undo of a foreign link never unlinks a config that another program put there meanwhile; fails_when=the replaced config is deleted; no_claim=the syscall gap after the last look; seam=seam.afterLeftoverCheck swaps the displaced file and seam.beforeLeftoverCheck swaps the config name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  let isSwapped = false
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (isSwapped) return
+      isSwapped = true
+      swapFile(path, '{"swapped":true}\n')
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path === configPath) swapFile(configPath, '{"another config":1}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(
+      error.message.includes(`kept at ${keptPath} and could not settle`),
+      error.message,
+    )
+    assert.ok(
+      error.message.includes(`config at ${configPath} and left`),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(readFileSync(configPath, 'utf8'), '{"another config":1}\n')
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped":true}\n')
+})
+
+test('A second name of the config is kept when the config was replaced right before the name would be dropped', async (context) => {
+  // protects=the same-inode branch unlinks a second name only while the config still shows that inode; fails_when=the name is deleted after the config changed; no_claim=the syscall gap after the last look; seam=seam.beforeLeftoverCheck swaps the config name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  linkSync(keptPath, configPath)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path === configPath) swapFile(configPath, '{"another config":1}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"another config":1}\n')
+})
+
+test('A put-back keeps the displaced name when the config was replaced after the link and before the displaced name is unlinked', async (context) => {
+  // protects=the put-back unlinks the displaced name only while the config name still shows the linked file; fails_when=the displaced copy is deleted although the config changed; no_claim=the syscall gap after the last look; seam=seam.beforeLeftoverCheck swaps the config name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path === configPath) swapFile(configPath, '{"another config":1}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+})
+
+test('A write that published the config still writes its receipt when the recheck of the displaced copy fails', async (context) => {
+  // protects=a failing recheck after the publish keeps the displaced copy and reports it instead of failing before the receipt; fails_when=the write throws or the receipt is missing; no_claim=which errno the filesystem reports; seam=seam.beforeLeftoverCheck throws EIO
+  // Arrange
+  const { home, storage } = await arrange(context)
+  await writeConfig(
+    join(home, '.config', 'devin', 'mcp_config.json'),
+    '{"theme":"dark"}\n',
+  )
+  let displacedPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      displacedPath = path
+      throw Object.assign(new Error('input/output error'), { code: 'EIO' })
+    },
+  })
+
+  // Assert
+  assert.ok(displacedPath.length > 0)
+  assert.ok(result.cleanupFailure?.includes(displacedPath))
+  assert.equal(readFileSync(displacedPath, 'utf8'), '{"theme":"dark"}\n')
+  assert.equal((await readRecordFile(storage, 'receipt.json')).installed, true)
+})
+
+test('A displaced original of a record without a staged inode is not reported as handed over because another config stands', async (context) => {
+  // protects=the hand-over needs a recorded staged inode that differs from the config's; fails_when=a record without stagedIno gives the false another-config-was-saved refusal; no_claim=what happens to the copy afterwards beyond the hash check; seam=none
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  await writeFile(configPath, '{"another config":1}\n')
+
+  // Act
+  const outcome = await refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(
+    (error: Error) => error,
+  )
+
+  // Assert
+  assert.equal(
+    outcome instanceof Error &&
+      outcome.message.includes('handed to the learner'),
+    false,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), '{"another config":1}\n')
+  const pendingRecord = await readRecordFile(storage, 'pending.json').catch(
+    () => ({ phase: 'dropped' }),
+  )
+  assert.notEqual(pendingRecord.phase, 'handed')
+})
+
+test('A receipt of an older build whose entry the learner edited still gets an installation id and keeps the config as it is', async (context) => {
+  // protects=the changed path of a refresh gives an older receipt its installationId so the window can mark the installation; fails_when=the receipt has no id after the refresh or the config is rewritten; no_claim=the bridge accepting the descriptor; seam=none
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const { installationId, ...olderReceipt } = await readRecordFile(
+    storage,
+    'receipt.json',
+  )
+  assert.ok(installationId)
+  writeFileSync(receiptPath, JSON.stringify(olderReceipt))
+  const edited = JSON.parse(readFileSync(configPath, 'utf8'))
+  edited.mcpServers.codebook.command = '/usr/bin/other-node'
+  writeFileSync(configPath, `${JSON.stringify(edited, null, 2)}\n`)
+  const configBefore = readFileSync(configPath, 'utf8')
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'changed')
+  assert.match(
+    (await readRecordFile(storage, 'receipt.json')).installationId,
+    /^[0-9a-f-]{36}$/,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), configBefore)
 })

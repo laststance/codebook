@@ -872,11 +872,36 @@ async function discardDisplaced(
     return 'kept'
   }
   // The held handle proves the file that was compared, not the name: a file swapped in at the name since is kept, never deleted. Limit: a swap between this look and the unlink is not seen.
-  if (!isLeftoverStill(context, displacedPath, held)) {
-    await handOver(context, journal)
+  if (!(await isStillHeldOrUnprovable(context, journal, displacedPath, held)))
     return 'kept'
-  }
   return (await didUnlink(displacedPath)) ? 'deleted' : 'kept'
+}
+
+/**
+ * Tells whether the displaced name still shows the compared file, for {@link discardDisplaced}; a name that changed is handed to the learner, and a look that throws (EIO, EACCES) cannot prove the delete is safe, so the copy is kept without failing the publish that already happened.
+ * @param context - The run.
+ * @param journal - The record as it was written before the first move.
+ * @param displacedPath - The private name of the displaced copy.
+ * @param held - The copy as it was compared.
+ * @returns `true` only when the name still shows the compared file.
+ * @example
+ * if (!(await isStillHeldOrUnprovable(context, journal, path, held))) return 'kept'
+ */
+async function isStillHeldOrUnprovable(
+  context: Context,
+  journal: Pending,
+  displacedPath: string,
+  held: HeldCopy,
+): Promise<boolean> {
+  let isStill
+  try {
+    isStill = isLeftoverStill(context, displacedPath, held)
+  } catch {
+    // Cannot prove it is safe to delete: the copy stays and the cleanup notice names it.
+    return false
+  }
+  if (!isStill) await handOver(context, journal)
+  return isStill
 }
 
 /**
@@ -1672,6 +1697,27 @@ function assertLeftoverStill(
     )
 }
 
+/**
+ * Throws when the config name no longer shows the given inode; called right before a leftover name is unlinked while the config name is what makes that safe ({@link tidyLeftover}, {@link putBackDisplaced}).
+ * Limit: a swap between this look and the unlink is not seen.
+ * @param context - The run.
+ * @param ino - The inode the config name must show.
+ * @param leftoverPath - The name about to be unlinked; kept and named when the check fails.
+ * @throws An error naming `leftoverPath` when the config name changed.
+ * @example
+ * assertConfigStill(context, 42n, keptPath)
+ */
+function assertConfigStill(
+  context: Context,
+  ino: bigint,
+  leftoverPath: string,
+): void {
+  if (!isLeftoverStill(context, context.path, { ino }))
+    throw new Error(
+      `The config at ${context.path} changed just now, so Codebook kept the private file at ${leftoverPath} untouched.`,
+    )
+}
+
 /** The error for a put-back whose link produced another inode than the checked one and whose names Codebook cannot attribute: both names stay as they are. */
 function unprovenLinkError(context: Context, leftoverPath: string): Error {
   return new Error(
@@ -1826,6 +1872,8 @@ async function tidyLeftover(
   // The staged or displaced name of a config that has the same inode is only another name of it (a put-back whose unlink failed, or a published staged file): drop the name, the config keeps the inode and whatever the learner wrote since.
   if (config?.ino === copy.ino) {
     assertLeftoverStill(context, path, { ino: copy.ino })
+    // The config name must still show that inode right before its other name is dropped.
+    assertConfigStill(context, copy.ino, path)
     return unlink(path)
   }
   // A displaced original of an unfinished change while another config stands at the config name (an editor saved after the move-aside): it may be the only copy of the learner's other servers, so it is handed over and named, never deleted. The published staged file's inode means the change did finish, so that copy is Codebook's own leftover.
@@ -1833,8 +1881,8 @@ async function tidyLeftover(
     role === 'kept' &&
     phase === undefined &&
     config &&
-    (pending.stagedIno === undefined ||
-      !isSameFileId(pending.stagedIno, config.ino))
+    pending.stagedIno !== undefined &&
+    !isSameFileId(pending.stagedIno, config.ino)
   ) {
     await handOver(context, pending)
     throw new HandedCopyError(
@@ -1856,6 +1904,15 @@ async function tidyLeftover(
   if (copy.sha256 !== expectedSha256)
     throw new Error('The leftover file differs from what Codebook expected.')
   assertLeftoverStill(context, path, copy)
+  // Same-size overwrites keep inode and size: hash the file again right before deleting it.
+  const lastLook = await inspectCopy(path, context.seam)
+  if (
+    lastLook &&
+    (lastLook.sha256 !== expectedSha256 || lastLook.ino !== copy.ino)
+  )
+    throw new Error(
+      `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook left it untouched.`,
+    )
   await unlink(path)
 }
 
@@ -1890,6 +1947,8 @@ async function putBackDisplaced(
   if (!linked || copy.ino !== linked.ino)
     await undoForeignLink(context, path, linked?.ino)
   assertLeftoverStill(context, path, { ino: copy.ino })
+  // The config name must still show the linked inode before the displaced name goes.
+  assertConfigStill(context, copy.ino, path)
   await unlink(path)
   return true
 }
@@ -1910,6 +1969,7 @@ function isUnrecordedRemoval(context: Context, pending: Pending): boolean {
 
 /**
  * Settles a put-back whose link produced another file than the checked one; called by {@link putBackDisplaced}.
+ * The config name is looked at again right before it is unlinked ({@link isLeftoverStill}); one that shows another inode now is somebody else's, so both names stay. Limit: a swap between that look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run.
  * @param leftoverPath - The displaced name that was linked.
  * @param configIno - The inode the config name shows now; undefined when it shows nothing.
@@ -1926,7 +1986,9 @@ async function undoForeignLink(
   })
   if (configIno === undefined || !leftover || leftover.ino !== configIno)
     throw unprovenLinkError(context, leftoverPath)
-  // Both names show the swapped-in file: the link made the config name.
+  // Both names show the swapped-in file: the link made the config name. Look at the config name once more right before the unlink; limit: a swap between this look and the unlink is not seen.
+  if (!isLeftoverStill(context, context.path, { ino: configIno }))
+    throw unprovenLinkError(context, leftoverPath)
   await unlink(context.path)
   throw new Error(
     `The private file at ${leftoverPath} is no longer the file Codebook checked (another program replaced it just now), so Codebook linked it back out and left it untouched.`,
@@ -2506,8 +2568,11 @@ export async function refreshManagedDevinMcpEntry(
     if (!receipt || current === undefined)
       return { status: 'not-managed', path }
     const disabled = disabledFlagOf(current)
-    if (!ownsEntry(current, receipt))
+    if (!ownsEntry(current, receipt)) {
+      // An edited entry stays as it is, but a receipt of an older build still gains its installation id (receipt-only rewrite).
+      await withInstallationId(context, receipt)
       return { status: 'changed', path, ...disabled }
+    }
     if (receipt.entrySha256 === entryHash) {
       // A receipt of an older build gains its installation id here; only the receipt is rewritten.
       await withInstallationId(context, receipt)
