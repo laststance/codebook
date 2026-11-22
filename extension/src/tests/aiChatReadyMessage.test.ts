@@ -35,3 +35,14 @@ test('after setup in Devin Desktop the learner is told to reload the window and 
     "Codebook skill and MCP server saved for Devin Local. Reload this window so Devin Local loads Codebook's MCP server, then type /devin:codebook in a Local session.",
   )
 })
+
+// Value: protects=a Devin Desktop learner whose codebook entry is turned off in Devin's Customize is sent there instead of being promised that a reload loads the server; fails_when=the notice says the reload loads Codebook's MCP server although the entry stays disabled, so the learner reloads and finds no Codebook tool; why_new=review finding M6 (Cycle 0143 /ship cycle 3 final range, disabled entry); seam=none
+test('after setup in Devin Desktop with the entry turned off the learner is told to turn it on in Customize before the reload', () => {
+  // Arrange / Act
+  const message = aiChatReadyMessage('devin', { devinEntryDisabled: true })
+  // Assert
+  assert.equal(
+    message,
+    "Codebook skill and MCP server saved for Devin Local, but the codebook server is turned off in Devin's Customize. Turn it on there, reload this window, then type /devin:codebook in a Local session.",
+  )
+})

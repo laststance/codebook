@@ -36,6 +36,10 @@ const RELOAD_SENTENCE =
 const RESTORE_SENTENCE =
   'Codebook: Set Up AI Chat installs the skill and the entry again.'
 
+/** How the learner gets the setup back when an edited entry stays: setup refuses an entry of its own until it is renamed or deleted. */
+const RESTORE_AFTER_EDITED_ENTRY_SENTENCE =
+  'Rename or delete that remaining codebook entry before you run Codebook: Set Up AI Chat, which refuses an entry it did not write.'
+
 /**
  * Words the notice a learner reads when **Codebook: Remove Devin Desktop Setup** has removed or kept the skill: what became of the skill and of Codebook's entry in Devin Desktop's MCP config, and whether a reload is needed; called by the removal command of {@link activate}.
  * @param skillRemoval - How the removal ended for the skill ({@link CursorSkillRemovalStatus}).
@@ -43,6 +47,7 @@ const RESTORE_SENTENCE =
  * @returns
  * - After a refusal of the entry: a warning that leads with the refusal, says what became of the skill and how to finish
  * - When neither a skill nor an entry of Codebook's was found: one information sentence that nothing changed
+ * - After an edited entry that stays: an information notice that tells the learner to rename or delete that entry before setup runs again
  * - Otherwise: an information notice, which names a record Codebook could not delete and asks for a reload only after an entry or a file was removed
  * @example
  * devinRemovalNotice('removed', { status: 'removed', path: '/home/user/.config/devin/mcp_config.json' })
@@ -78,7 +83,10 @@ export function devinRemovalNotice(
     ENTRY_SENTENCES[entryRemoval.status](entryRemoval.path),
     ...cleanupFailure,
     ...(reload ? [RELOAD_SENTENCE] : []),
-    RESTORE_SENTENCE,
+    // An edited entry stays, and setup would refuse it, so the way back starts with that entry.
+    entryRemoval.status === 'changed'
+      ? RESTORE_AFTER_EDITED_ENTRY_SENTENCE
+      : RESTORE_SENTENCE,
   ]
   return { severity: 'information', text: sentences.join(' '), reload }
 }

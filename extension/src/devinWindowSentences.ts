@@ -24,3 +24,11 @@ export const DEVIN_SETUP_LOCK_HELD_SENTENCE =
 /** What the Devin Desktop setup answers when this window's connection descriptor cannot be read as a JSON object; fixed text, because the descriptor holds the bearer token and a parser's own message quotes part of the file. */
 export const DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE =
   "Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again."
+
+/** The Output line of the activation refresh when both setup records stand but the config holds no `codebook` entry of Codebook's (for example the learner deleted only mcp_config.json): the window reconnects nothing. */
+export const DEVIN_ENTRY_MISSING_LINE =
+  "Codebook found no codebook entry of its own in Devin Desktop's MCP config, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat again."
+
+/** What a Devin Desktop setup answers when the server it checked stopped, was replaced or no longer serves the workspace before the setup could finish. */
+export const DEVIN_SETUP_SERVER_CHANGED_SENTENCE =
+  'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup was taken back. Run Codebook: Set Up AI Chat again.'

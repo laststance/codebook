@@ -661,13 +661,16 @@ test('the bridge skips a descriptor that names no machine', async (context) => {
 })
 
 // Value: protects=the startup deadline of a bridge whose server accepts a connection and never answers; fails_when=the first connection waits for the SDK's 60 s request timeout instead of the remaining startup budget; why_new=B4 unbounded connect; seam=a loopback listener that never answers
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(
   'the bridge gives up on a server that never answers within its startup deadline',
-  { timeout: 15_000 },
+  { skip: process.platform === 'win32', timeout: 15_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace } = await createFolders(context)
-    const { port } = await listen(context, () => {
+    let initializeRequests = 0
+    const { port } = await listen(context, (incoming) => {
+      if (incoming.method === 'POST') initializeRequests += 1
       // The request is held open on purpose.
     })
     await writeDescriptor(agentDir, 0, workspace, process.pid, {
@@ -681,98 +684,112 @@ test(
       { timeoutMs: 1_500, intervalMs: 20 },
     )
     // Assert
+    // The server was reached, so exit code 1 is the deadline and not a refusal before any request.
+    assert.equal(initializeRequests >= 1, true)
     assert.equal(exitCode, 1)
   },
 )
 
 // Value: protects=a Devin window reaching Codebook while the server's sessions are full for a moment (three bridges start at window load); fails_when=an HTTP 429 drops the descriptor instead of asking the same one again; why_new=B5 transient 429; seam=a loopback proxy that answers 429 twice, then forwards to a real Codebook endpoint
-test('the bridge asks again after an HTTP 429 and connects', async (context) => {
-  // Arrange
-  const harness = await createHarness(),
-    endpoint = await startServer(harness.service),
-    root = await realpath(
-      await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-    )
-  context.after(async () => {
-    await endpoint.close()
-    await harness.close()
-    await removeTestFolder(root)
-  })
-  const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
-  let answers = 0
-  const { port } = await listen(context, (incoming, outgoing) => {
-    answers += 1
-    if (answers <= 2) {
-      outgoing.writeHead(429)
-      outgoing.end()
-    } else forward(upstreamPort, incoming, outgoing)
-  })
-  await writeDescriptor(root, 0, harness.directory, process.pid, {
-    ...endpoint.descriptor,
-    url: `http://127.0.0.1:${port}/mcp`,
-    instanceId: IDS[0],
-  })
-  // Act
-  const client = await connectThroughBridge(root, harness.directory, context)
-  // Assert
-  assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
-})
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge asks again after an HTTP 429 and connects',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+    let answers = 0
+    const { port } = await listen(context, (incoming, outgoing) => {
+      answers += 1
+      if (answers <= 2) {
+        outgoing.writeHead(429)
+        outgoing.end()
+      } else forward(upstreamPort, incoming, outgoing)
+    })
+    await writeDescriptor(root, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+  },
+)
 
 // Value: protects=a Devin window whose Codebook server is restarting when the bridge starts; fails_when=a reset or refused connection drops the descriptor so the bridge exits before the server listens again; why_new=B5 transient refusal, made deterministic (Cycle 0143 /ship pass 2 E6); seam=a listener that resets each connection and counts the resets, replaced by a proxy to a real Codebook endpoint on the same port once the first reset was observed
-test('the bridge keeps asking a refusing server until it listens again', async (context) => {
-  // Arrange
-  const harness = await createHarness(),
-    endpoint = await startServer(harness.service),
-    root = await realpath(
-      await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-    )
-  context.after(async () => {
-    await endpoint.close()
-    await harness.close()
-    await removeTestFolder(root)
-  })
-  const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
-  const server = createServer((incoming, outgoing) =>
-    forward(upstreamPort, incoming, outgoing),
-  )
-  context.after(
-    () =>
-      new Promise<void>((resolve) => {
-        server.closeAllConnections()
-        server.close(() => resolve())
-      }),
-  )
-  // The port is held by a listener that resets every connection; the first observed reset swaps the forwarding server in.
-  let resets = 0,
-    listening: Promise<void> = Promise.resolve()
-  const resetter: NetServer = createNetServer((socket) => {
-    // The reset follows the first bytes of the request: a reset straight after accept makes Node's socket setup throw in the bridge process.
-    socket.once('data', () => {
-      resets += 1
-      socket.resetAndDestroy()
-      if (resets === 1)
-        listening = new Promise<void>((resolve) =>
-          resetter.close(() => server.listen(port, '127.0.0.1', resolve)),
-        )
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge keeps asking a refusing server until it listens again',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
     })
-  })
-  await new Promise<void>((resolve) => resetter.listen(0, '127.0.0.1', resolve))
-  context.after(
-    () => new Promise<void>((resolve) => resetter.close(() => resolve())),
-  )
-  const port = (resetter.address() as AddressInfo).port
-  await writeDescriptor(root, 0, harness.directory, process.pid, {
-    ...endpoint.descriptor,
-    url: `http://127.0.0.1:${port}/mcp`,
-    instanceId: IDS[0],
-  })
-  // Act
-  const client = await connectThroughBridge(root, harness.directory, context)
-  await listening
-  // Assert
-  assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
-  assert.ok(resets >= 1)
-})
+    const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+    const server = createServer((incoming, outgoing) =>
+      forward(upstreamPort, incoming, outgoing),
+    )
+    context.after(
+      () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections()
+          server.close(() => resolve())
+        }),
+    )
+    // The port is held by a listener that resets every connection; the first observed reset swaps the forwarding server in.
+    let resets = 0,
+      listening: Promise<void> = Promise.resolve()
+    const resetter: NetServer = createNetServer((socket) => {
+      // The reset follows the first bytes of the request: a reset straight after accept makes Node's socket setup throw in the bridge process.
+      socket.once('data', () => {
+        resets += 1
+        socket.resetAndDestroy()
+        if (resets === 1)
+          listening = new Promise<void>((resolve) =>
+            resetter.close(() => server.listen(port, '127.0.0.1', resolve)),
+          )
+      })
+    })
+    await new Promise<void>((resolve) =>
+      resetter.listen(0, '127.0.0.1', resolve),
+    )
+    context.after(
+      () => new Promise<void>((resolve) => resetter.close(() => resolve())),
+    )
+    const port = (resetter.address() as AddressInfo).port
+    await writeDescriptor(root, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    await listening
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+    assert.ok(resets >= 1)
+  },
+)
 
 // Value: protects=a Devin window with two live descriptors of one workspace and pid connecting to the newest at once, with a connection budget that does not shrink to nothing; fails_when=selection waits out the whole selection window for a single descriptor, or the attempt after it gets the 1 ms left of the budget, so a server needing a few hundred milliseconds is never reached; why_new=newest-at-once and the connection floor (Cycle 0143 /ship pass 2 E4); seam=a spawned bridge entry, an older descriptor naming a dead port, a newer one naming a proxy that delays every answer by 400 ms
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
@@ -841,36 +858,41 @@ test('the bridge refuses with the setup line when the descriptor lacks devinChat
 })
 
 // Value: protects=a Devin window whose first matching descriptor fails with a server error still reaching its fresh instance within the startup wait; fails_when=the entry exits at the first failed connection instead of dropping that descriptor and polling on; why_new=a stale descriptor that passes the liveness check; seam=a spawned bridge entry, a loopback listener answering 500 whose first request publishes the fresh descriptor, and a real Codebook endpoint
-test('the bridge drops a descriptor whose server fails and connects to the fresh one published after its first attempt', async (context) => {
-  // Arrange
-  const harness = await createHarness(),
-    endpoint = await startServer(harness.service),
-    root = await realpath(
-      await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-    )
-  context.after(async () => {
-    await endpoint.close()
-    await harness.close()
-    await removeTestFolder(root)
-  })
-  const writeLive = (index: number, url: string): Promise<string> =>
-    writeDescriptor(root, index, harness.directory, process.pid, {
-      ...endpoint.descriptor,
-      url,
-      instanceId: IDS[index],
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge drops a descriptor whose server fails and connects to the fresh one published after its first attempt',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
     })
-  // The failing instance publishes the fresh one when the bridge first asks it, so the order never depends on a delay.
-  const { port } = await listen(context, (_request, response) => {
-    response.writeHead(500)
-    response.end()
-    void writeLive(1, endpoint.descriptor.url)
-  })
-  await writeLive(0, `http://127.0.0.1:${port}/mcp`)
-  // Act
-  const client = await connectThroughBridge(root, harness.directory, context)
-  // Assert
-  assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
-})
+    const writeLive = (index: number, url: string): Promise<string> =>
+      writeDescriptor(root, index, harness.directory, process.pid, {
+        ...endpoint.descriptor,
+        url,
+        instanceId: IDS[index],
+      })
+    // The failing instance publishes the fresh one when the bridge first asks it, so the order never depends on a delay.
+    const { port } = await listen(context, (_request, response) => {
+      response.writeHead(500)
+      response.end()
+      void writeLive(1, endpoint.descriptor.url)
+    })
+    await writeLive(0, `http://127.0.0.1:${port}/mcp`)
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+  },
+)
 
 // Value: protects=the bearer token never reaching another local service when the descriptor's port is rewritten after the selection; fails_when=the connection compares only instance, pid, workspace and devinChat, so a descriptor naming a different loopback port receives the token; why_new=Cycle 0143 /ship cycle 3 H1 exact endpoint url; seam=selectDevinDescriptor, a rewrite of the url's port, then runCursorMcpBridge with the selection's expectation against two loopback listeners that count requests
 // Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
@@ -1012,16 +1034,18 @@ test(
   },
 )
 
-// Value: protects=the bridge's total time after its startup deadline; fails_when=every remaining matching descriptor gets its own floor-length attempt once the deadline has passed, so three candidates cost three floors; why_new=Cycle 0143 /ship cycle 3 H3 one late attempt in total; seam=runDevinMcpBridge with three descriptors of one window naming a listener that never answers and counts initialize requests
+// Value: protects=the bridge's total time after its startup deadline; fails_when=every remaining matching descriptor gets its own floor-length attempt once the deadline has passed, so three candidates cost three floors; why_new=Cycle 0143 /ship cycle 3 H3 one late attempt in total; seam=runDevinMcpBridge with three descriptors of one window naming a listener that never answers and records when each initialize request arrives
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(
   'after the deadline the bridge starts at most one more connection attempt however many descriptors match',
-  { timeout: 30_000 },
+  { skip: process.platform === 'win32', timeout: 30_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace } = await createFolders(context)
-    let initializeRequests = 0
+    const startupMs = 2_000,
+      arrivals: number[] = []
     const { port } = await listen(context, (incoming) => {
-      if (incoming.method === 'POST') initializeRequests += 1
+      if (incoming.method === 'POST') arrivals.push(Date.now())
       // The request is held open on purpose.
     })
     for (const index of [0, 1, 2])
@@ -1029,14 +1053,21 @@ test(
         url: `http://127.0.0.1:${port}/mcp`,
       })
     // Act
+    const startedAt = Date.now()
     const { exitCode } = await runCapturingStderr(
       agentDir,
       workspace,
       { WINDSURF_EXT_HOST_PID: String(process.pid) },
-      { timeoutMs: 1_000, intervalMs: 20 },
+      { timeoutMs: startupMs, intervalMs: 20 },
     )
     // Assert
     assert.equal(exitCode, 1)
-    assert.equal(initializeRequests, 2)
+    assert.equal(arrivals.length, 2)
+    const firstArrival = arrivals[0] ?? Number.NaN,
+      secondArrival = arrivals[1] ?? Number.NaN
+    // The bridge's deadline lies at least startupMs after the test started, so the first attempt began before it. gstack-timing-ok: the contract is attempt start times against the deadline.
+    assert.equal(firstArrival - startedAt < startupMs, true)
+    // The deadline lies at most startupMs after the first attempt began, and the second attempt waited out the first one's floor: it began after the deadline. gstack-timing-ok: the contract is attempt start times against the deadline.
+    assert.equal(secondArrival - firstArrival >= startupMs, true)
   },
 )

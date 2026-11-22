@@ -112,23 +112,23 @@ async function readDescriptorText(descriptorPath: string): Promise<string> {
 }
 
 /**
- * Bounds {@link readDescriptorText} by the caller's startup budget; called by {@link readBridgeDescriptor}.
- * @param descriptorPath - The private connection descriptor of the instance.
- * @param timeoutMs - The budget for the read; unbounded when left out.
- * @returns The file's text.
- * @throws What {@link readDescriptorText} throws; an error when the budget ends first.
+ * Bounds an async step by the caller's startup budget; called by {@link readBridgeDescriptor} around the whole read and check, the workspace's real-path lookup included, so a file system that stops answering ends the attempt in time.
+ * @param timeoutMs - The budget; unbounded when left out.
+ * @param work - Starts the step; called once, at once.
+ * @returns What `work` resolves with.
+ * @throws What `work` throws; an error when the budget ends first.
  * @example
- * await readDescriptorTextWithin('/agent/x.connection.json', 3_000)
+ * await within(3_000, () => readDescriptorText('/agent/x.connection.json'))
  */
-async function readDescriptorTextWithin(
-  descriptorPath: string,
+async function within<T>(
   timeoutMs: number | undefined,
-): Promise<string> {
-  if (timeoutMs === undefined) return readDescriptorText(descriptorPath)
+  work: () => Promise<T>,
+): Promise<T> {
+  if (timeoutMs === undefined) return work()
   const timer = new AbortController()
   try {
     return await Promise.race([
-      readDescriptorText(descriptorPath),
+      work(),
       sleep(timeoutMs, undefined, { signal: timer.signal }).then(() => {
         throw new Error('Codebook connection did not finish in time.')
       }),
@@ -143,7 +143,8 @@ async function readDescriptorTextWithin(
  * The file is opened once without following links and without blocking, checked through that handle (regular, private to the owner, at most {@link DEVIN_DESCRIPTOR_LIMIT_BYTES}) and read from it, so a path swapped after the selection cannot be read.
  * @param descriptorPath - The private connection descriptor of the instance.
  * @param expected - What the Devin Desktop bridge's selection validated; Cursor's bridge passes none and takes any valid descriptor.
- * @param timeoutMs - The startup budget this read may use; unbounded when left out.
+ * @param timeoutMs - The startup budget the read and the checks may use together, the workspace's real-path lookup included; unbounded when left out.
+ * @param resolveWorkspace - Resolves the descriptor's workspace to its real path; {@link realOrSame} unless a test names its own.
  * @returns The connection fields of the descriptor read.
  * @throws When the file is not a private regular file within the size limit, is not a valid descriptor ({@link DESCRIPTOR_UNREADABLE_MESSAGE}), names a url that is not Codebook's loopback endpoint, differs from `expected` (its exact url included), or the budget ends first.
  * @example
@@ -153,26 +154,30 @@ export async function readBridgeDescriptor(
   descriptorPath: string,
   expected?: DescriptorExpectation,
   timeoutMs?: number,
+  resolveWorkspace: (path: string) => Promise<string> = realOrSame,
 ): Promise<BridgeDescriptor> {
-  const { descriptor, pid, devinChat } = parseDescriptorText(
-    await readDescriptorTextWithin(descriptorPath, timeoutMs),
-  )
-  // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
-  if (!isLoopbackMcpUrl(descriptor.url))
-    throw new Error(
-      'Codebook connection descriptor is not a loopback endpoint.',
+  // The read and every check after it, the workspace's real-path lookup included, spend one startup budget.
+  return within(timeoutMs, async () => {
+    const { descriptor, pid, devinChat } = parseDescriptorText(
+      await readDescriptorText(descriptorPath),
     )
-  // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
-  if (
-    expected &&
-    (descriptor.instanceId !== expected.instanceId ||
-      pid !== expected.pid ||
-      devinChat !== expected.devinChat ||
-      (expected.url !== undefined && descriptor.url !== expected.url) ||
-      (await realOrSame(descriptor.workspace)) !== expected.workspace)
-  )
-    throw new Error(
-      'Codebook connection descriptor changed after it was selected.',
+    // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
+    if (!isLoopbackMcpUrl(descriptor.url))
+      throw new Error(
+        'Codebook connection descriptor is not a loopback endpoint.',
+      )
+    // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
+    if (
+      expected &&
+      (descriptor.instanceId !== expected.instanceId ||
+        pid !== expected.pid ||
+        devinChat !== expected.devinChat ||
+        (expected.url !== undefined && descriptor.url !== expected.url) ||
+        (await resolveWorkspace(descriptor.workspace)) !== expected.workspace)
     )
-  return descriptor
+      throw new Error(
+        'Codebook connection descriptor changed after it was selected.',
+      )
+    return descriptor
+  })
 }

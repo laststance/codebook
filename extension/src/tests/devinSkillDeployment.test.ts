@@ -80,12 +80,19 @@ test('Devin setup installs the packaged skill with the publisher path filled in 
     result.sha256,
     createHash('sha256').update(expectedBody).digest('hex'),
   )
-  assert.equal(
-    (
-      await readFile(join(paths.storageRoot, 'devin-skill', 'receipt.json'))
-    ).includes(result.sha256),
-    true,
+  // The receipt names this skill by its three fields, not by a hash that appears anywhere in the file.
+  const receipt = JSON.parse(
+    await readFile(
+      join(paths.storageRoot, 'devin-skill', 'receipt.json'),
+      'utf8',
+    ),
   )
+  assert.equal(
+    receipt.skillSha256,
+    createHash('sha256').update(expectedBody).digest('hex'),
+  )
+  assert.equal(receipt.targetPath, paths.targetPath)
+  assert.equal(receipt.skillVersion, '1.0.0')
   await assert.rejects(lstat(join(paths.homeRoot, '.cursor')), {
     code: 'ENOENT',
   })
@@ -188,5 +195,12 @@ test('Devin setup on a file system that refuses hard links says so in Devin Desk
     message,
     `Devin Desktop skill could not be installed: the file system refused to put Codebook's new file in place as ${paths.targetPath} (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
   )
-  assert.deepEqual(await readdir(paths.skillFolder).catch(() => []), [])
+  assert.deepEqual(
+    await readdir(paths.skillFolder).catch((error: NodeJS.ErrnoException) => {
+      // Only a missing folder means the refused install left nothing; any other failure is a real error.
+      if (error.code === 'ENOENT') return []
+      throw error
+    }),
+    [],
+  )
 })

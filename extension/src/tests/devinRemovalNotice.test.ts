@@ -33,7 +33,7 @@ test('a removal that finds nothing of Codebook says that no file was changed and
   })
 })
 
-// Value: protects=an entry the learner edited after setup stays, and the notice says so and how to remove it by hand; fails_when=the notice says the entry was removed, or the reload is offered although Devin Local's servers did not change; why_new=Devin Desktop removal command (Cycle 0143); seam=none
+// Value: protects=an entry the learner edited after setup stays, and the notice says so, how to remove it by hand and that it must be renamed or deleted before setup runs again; fails_when=the notice says the entry was removed, says setup installs both again although it refuses the remaining entry, or the reload is offered although Devin Local's servers did not change; why_new=Devin Desktop removal command (Cycle 0143); seam=none
 test('a removal that meets an edited entry keeps it and says how to remove it by hand', () => {
   // Arrange / Act
   const notice = devinRemovalNotice('removed', {
@@ -43,7 +43,7 @@ test('a removal that meets an edited entry keeps it and says how to remove it by
   // Assert
   assert.deepEqual(notice, {
     severity: 'information',
-    text: 'Codebook removed its Devin Desktop skill. The codebook entry in /home/user/.config/devin/mcp_config.json was edited after setup, so Codebook left it in place; remove it by hand if you no longer want it. Codebook: Set Up AI Chat installs the skill and the entry again.',
+    text: 'Codebook removed its Devin Desktop skill. The codebook entry in /home/user/.config/devin/mcp_config.json was edited after setup, so Codebook left it in place; remove it by hand if you no longer want it. Rename or delete that remaining codebook entry before you run Codebook: Set Up AI Chat, which refuses an entry it did not write.',
     reload: false,
   })
 })

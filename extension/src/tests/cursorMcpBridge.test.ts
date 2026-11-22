@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
 import { runCursorMcpBridge } from '../cursorMcpBridge'
 import { startServer } from '../server'
+import { readBridgeDescriptor } from '../utils/readBridgeDescriptor'
 
 import { createHarness } from './helpers'
 import { removeTestFolder } from './utils/removeTestFolder'
@@ -250,6 +251,9 @@ test(
     const directory = await mkdtemp(
       join(tmpdir(), 'codebook-cursor-bridge-held-'),
     )
+    // Methods of the held requests that reached the server, and of those whose connection closed afterwards.
+    const arrivedMethods: string[] = [],
+      closedMethods: string[] = []
     let markHeldRequestClosed = (): void => undefined
     const heldRequestClosed = new Promise<void>((resolve) => {
       markHeldRequestClosed = resolve
@@ -266,7 +270,11 @@ test(
         const message = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         if (message.method !== 'initialize') {
           // The initialized notification is held on purpose.
-          outgoing.on('close', markHeldRequestClosed)
+          arrivedMethods.push(message.method)
+          outgoing.on('close', () => {
+            closedMethods.push(message.method)
+            markHeldRequestClosed()
+          })
           return
         }
         outgoing.writeHead(200, {
@@ -310,6 +318,47 @@ test(
     const outcome = runCursorMcpBridge(descriptorPath, 700)
     // Assert
     await assert.rejects(outcome, /did not finish in time/)
+    // The notification reached the server, so the wait below is for a close and not for an arrival that never happened.
+    assert.deepEqual(arrivedMethods, ['notifications/initialized'])
     await heldRequestClosed
+    assert.deepEqual(closedMethods, ['notifications/initialized'])
+  },
+)
+
+// Value: protects=the startup deadline of the descriptor check against a workspace whose file system never answers the real-path lookup; fails_when=the lookup runs after the read's timer was cleared, so the connection waits on it forever; why_new=Cycle 0143 /ship cycle 3 N1 lookup outside the deadline; seam=readBridgeDescriptor with a workspace resolver that never settles
+// Windows reports 0o666 for every file, so the private-file check refuses before the lookup this test reaches.
+test(
+  'the descriptor check ends within its startup deadline when the workspace lookup never answers',
+  { skip: process.platform === 'win32', timeout: 15_000 },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(
+      join(tmpdir(), 'codebook-cursor-bridge-lookup-'),
+    )
+    context.after(() => removeTestFolder(directory))
+    const descriptorPath = join(directory, 'lookup.connection.json')
+    const instanceId = '11111111-1111-4111-8111-111111111111'
+    await writeFile(
+      descriptorPath,
+      JSON.stringify({
+        url: ['http', '://127.0.0.1:1/mcp'].join(''),
+        token: 'test-token',
+        instanceId,
+        workspace: directory,
+        apiVersion: '1.0',
+        pid: process.pid,
+        devinChat: true,
+      }),
+      { mode: 0o600 },
+    )
+    // Act
+    const outcome = readBridgeDescriptor(
+      descriptorPath,
+      { instanceId, pid: process.pid, workspace: directory, devinChat: true },
+      300,
+      () => new Promise<string>(() => undefined),
+    )
+    // Assert
+    await assert.rejects(outcome, /did not finish in time/)
   },
 )
