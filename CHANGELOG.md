@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.139.0] - 2026-11-22 (development candidate)
+
+Cycle 0143 ([Issue #357](https://github.com/laststance/codebook/issues/357)), a feature cycle. **In Devin Desktop, Codebook: Set Up AI Chat now connects Devin Local, Devin Desktop's standard chat.** After the setup and one window reload, a new Devin Local session offers the bundled skill as `/devin:codebook`, and a natural question there reaches this window's Codebook instance: the agent's first Codebook call is `codebook_status` for this repository.
+
+### Added
+- **Codebook: Set Up AI Chat prepares Devin Local in Devin Desktop.** It installs the bundled skill to `~/.config/devin/skills/codebook/SKILL.md` and adds one `codebook` server to Devin's user MCP config, `~/.config/devin/mcp_config.json`, keeping every other key and server; an absent file is created as a private `0600` file. The entry starts this installation's local stdio bridge, which picks this window's instance by the workspace Devin starts it in and by Devin's extension host, so the config holds no credential. Setup ends with a **Reload Window** button, because Devin Local reads that config only when a window loads.
+- **Codebook: Remove Devin Desktop Setup** asks first, because every Devin Desktop window of the user shares the skill and the config. It then removes the skill and the entry Codebook wrote, and the config itself only when Codebook created it and nothing else is in it.
+- **Setup refuses rather than overwrite your config.** It names the file and leaves it untouched when the config cannot be read, is larger than 1 MiB or is not valid JSON, when the file is a link or has other hard links, when it holds the same key twice, when it holds a `codebook` server that Codebook did not write or that was edited after setup, or when it changed while Codebook was writing it. A config Codebook rewrites keeps only its owner permissions, and turning Codebook's server off or on in Devin's Customize keeps Codebook's ownership of the entry.
+- **A Devin Desktop window that opens again after an update moves Codebook's entry to this installation's bridge and Node** and offers **Reload Window**; when the entry is turned off in Customize, the notice asks you to turn `codebook` on there first.
+- **Devin Desktop setup on Windows and in remote windows (WSL, SSH, containers) is not supported yet.** Setup and removal there answer with one sentence and touch no file.
+
+### Changed
+- **The README says what this candidate checks in Devin Desktop.** Codebook: Set Up AI Chat connects Devin Local there; everything else has not been checked in Devin Desktop yet.
+
 ## [0.2.138.0] - 2026-11-22 (development candidate)
 
 Cycle 0141 ([Issue #353](https://github.com/laststance/codebook/issues/353)), a feature cycle. **Every page of a generated LLM Wiki now says when it was indexed.** A Wiki that Cursor's agent wrote showed "Indexed Unknown" in every page's header, because the agent named the generation time under another key. The bundled skill now names the key, and the publisher refuses a Wiki without a real date there. On Ubuntu, the Wiki reader in Cursor answered a repository question through the Cursor Agent CLI, and the README says so. The product goal now names Devin Desktop as a third supported editor, which this candidate has not been checked in yet.
