@@ -209,6 +209,31 @@ test('Set Up AI Chat refuses a config that is not valid JSON and leaves its byte
   assert.equal(await readFile(configPath, 'utf8'), original)
 })
 
+test('Set Up AI Chat refuses a config that is not valid UTF-8 and leaves its bytes unchanged', async (context) => {
+  // protects: another server's string is never rewritten with U+FFFD in place of its invalid bytes / fails_when: setup rewrites the config and stores the replacement character / no_claim: other encodings (UTF-16) are repaired
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalBytes = Buffer.concat([
+    Buffer.from('{"mcpServers":{"alpha":{"command":"a\u0020'),
+    Buffer.from([0xff]),
+    Buffer.from('"}}}\n'),
+  ])
+  await mkdir(dirname(configPath), { recursive: true })
+  await writeFile(configPath, originalBytes)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(configPath))
+    assert.match(error.message, /text that is not valid JSON/)
+    assert.match(error.message, /left that file untouched/)
+    return true
+  })
+  assert.deepEqual(await readFile(configPath), originalBytes)
+})
+
 test('Set Up AI Chat refuses an mcpServers value that is not an object and leaves the file unchanged', async (context) => {
   // Value: protects=an unexpected config shape is not rewritten; fails_when=the file changes; no_claim=other shapes are checked
   // Arrange
@@ -2298,7 +2323,7 @@ test('A put-back whose displaced name cannot be deleted keeps the record and nam
         },
       },
     },
-    { Error },
+    { Error, TextDecoder },
   )
   let displacedPath = ''
 

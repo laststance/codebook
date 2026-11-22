@@ -478,7 +478,17 @@ function parseConfig(
   identity: FileIdentity,
 ): ConfigLook {
   const { path, retry } = context
-  const text = bytes.toString('utf8')
+  const invalidContent = () =>
+    refusal('text that is not valid JSON', path, 'fix or move that file', retry)
+  let text: string
+  try {
+    // Invalid UTF-8 would become U+FFFD and a rewrite would save that; `ignoreBOM` keeps a BOM in the text, so the JSON parse refuses it as before.
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    )
+  } catch {
+    throw invalidContent()
+  }
   let parsed: unknown
   let hasLossyNumber = false
   try {
@@ -498,12 +508,7 @@ function parseConfig(
       },
     )
   } catch {
-    throw refusal(
-      'text that is not valid JSON',
-      path,
-      'fix or move that file',
-      retry,
-    )
+    throw invalidContent()
   }
   if (!isJsonObject(parsed))
     throw refusal(
