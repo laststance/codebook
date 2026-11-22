@@ -45,7 +45,10 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 import type { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
-import { readBridgeDescriptor } from '../utils/readBridgeDescriptor'
+import {
+  DescriptorMarkChangedError,
+  readBridgeDescriptor,
+} from '../utils/readBridgeDescriptor'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
 import { createHarness } from './helpers'
@@ -2311,6 +2314,359 @@ test(
     // Assert
     assert.equal(typeof refusal, 'string')
     assert.equal(connections, 1)
+  },
+)
+
+/**
+ * Loads the real descriptor reader with a descriptor text read that meets a file shortage first, so a stand-in connection reads the descriptor as the shared bridge does; the Devin bridge must be loaded with the returned module as its reader so both share one error class.
+ * @param shortages - How many reads reject with EMFILE before reads succeed.
+ * @returns The loaded reader module.
+ */
+async function loadReaderWithShortages(shortages: number) {
+  let reads = 0
+  return loadModule<{
+    readBridgeDescriptor: typeof readBridgeDescriptor
+  }>(resolve(__dirname, '../utils/readBridgeDescriptor.js'), {
+    './readDescriptorText': {
+      readDescriptorText: async (path: string) => {
+        reads += 1
+        if (reads <= shortages)
+          throw Object.assign(new Error('too many open files'), {
+            code: 'EMFILE',
+          })
+        return readFile(path, 'utf8')
+      },
+    },
+  })
+}
+
+// Value: protects=a window whose descriptor moved to another port after the descriptor read met a file shortage never being connected on the new port (Cycle 0146 task 10, D7 finding 1); fails_when=a shortage at the descriptor read waits unpinned like a busy server, so the retry takes the rewritten port as expected; no_claim=a shortage at the connect phase (fetch), which stays a retry
+test(
+  'a descriptor that moved to another port after the descriptor read met a file shortage is not connected on the retry',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const readerModule = await loadReaderWithShortages(1)
+    let connections = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/readBridgeDescriptor': readerModule,
+        './cursorMcpBridge': {
+          runCursorMcpBridge: async (
+            path: string,
+            timeoutMs: number,
+            expected: SeenConnection['expected'],
+          ) => {
+            connections += 1
+            try {
+              await readerModule.readBridgeDescriptor(path, expected, timeoutMs)
+            } finally {
+              // After the shortage the descriptor is rewritten for another endpoint.
+              await writeDescriptor(agentDir, 0, workspace, process.pid, {
+                url: 'http://127.0.0.1:2/mcp',
+              })
+            }
+          },
+        },
+      },
+      // The bridge tells a transient failure by `instanceof Error`; the stand-in's errors belong to this realm, as every error does in the bridge process.
+      { Error },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(
+      refusal,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
+    )
+    assert.equal(connections, 1)
+  },
+)
+
+// Value: protects=a window whose descriptor read met a file shortage still connecting to the same descriptor on the retry (Cycle 0146 task 10 guard); fails_when=the shortage ends the wait, drops the descriptor or pins an identity the unchanged descriptor does not match; no_claim=how many shortages a real machine meets
+test(
+  'a bridge whose descriptor read met a file shortage connects to the same descriptor on the retry',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const readerModule = await loadReaderWithShortages(1)
+    let connections = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/readBridgeDescriptor': readerModule,
+        './cursorMcpBridge': {
+          runCursorMcpBridge: async (
+            path: string,
+            timeoutMs: number,
+            expected: SeenConnection['expected'],
+          ) => {
+            connections += 1
+            await readerModule.readBridgeDescriptor(path, expected, timeoutMs)
+          },
+        },
+      },
+      // The bridge tells a transient failure by `instanceof Error`; the stand-in's errors belong to this realm, as every error does in the bridge process.
+      { Error },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(refusal, undefined)
+    assert.equal(connections, 2)
+  },
+)
+
+// Value: protects=a server that refused the connection at first being followed to the new port of the same descriptor (Cycle 0146 task 10 guard; Cycle 0145 FX6); fails_when=a transient server failure pins the first url, so the new port is never connected; no_claim=a rewrite for another instance
+test(
+  'a bridge whose server refused the connection is followed to the new port of the same descriptor',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const urls: (string | undefined)[] = []
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './cursorMcpBridge': {
+          runCursorMcpBridge: async (
+            _path: string,
+            _timeoutMs: number,
+            expected: SeenConnection['expected'],
+          ) => {
+            urls.push(expected?.url)
+            if (urls.length > 1) return
+            await writeDescriptor(agentDir, 0, workspace, process.pid, {
+              url: 'http://127.0.0.1:2/mcp',
+            })
+            throw Object.assign(new Error('refused'), {
+              code: 'ECONNREFUSED',
+            })
+          },
+        },
+      },
+      // The bridge tells a transient failure by `instanceof Error`; the stand-in's errors belong to this realm, as every error does in the bridge process.
+      { Error },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(refusal, undefined)
+    assert.deepEqual(urls, ['http://127.0.0.1:1/mcp', 'http://127.0.0.1:2/mcp'])
+  },
+)
+
+// Value: protects=a window whose descriptor moved to another port while its setup check could not answer never being connected on the new port (Cycle 0146 task 10); fails_when=an unverified setup waits unpinned, so the retry takes the rewritten port; no_claim=how the check fails to answer
+test(
+  'a descriptor that moved to another port while its setup check could not answer is not connected on the retry',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    let checks = 0,
+      connections = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './cursorMcpBridge': {
+          runCursorMcpBridge: () => {
+            connections += 1
+            return Promise.resolve()
+          },
+        },
+        './utils/checkDevinBridgeReceipts': {
+          // The first check cannot answer, after the descriptor moved; later checks stand.
+          checkDevinBridgeReceipts: async () => {
+            checks += 1
+            if (checks > 1) return { answer: 'stands' }
+            await writeDescriptor(agentDir, 0, workspace, process.pid, {
+              url: 'http://127.0.0.1:2/mcp',
+            })
+            return { answer: 'no-answer' }
+          },
+        },
+      },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(
+      refusal,
+      `Codebook could not check the AI chat setup for ${workspace} in this Devin Desktop window, because its setup records could not be read. Reload the window to try again.`,
+    )
+    assert.equal(connections, 0)
+  },
+)
+
+// Value: protects=a window whose setup was found replaced between selection and the receipts check never being connected on a port rewritten afterwards (Cycle 0146 task 10, Cycle 0145 J10); fails_when=a replaced answer waits unpinned like a busy server; no_claim=the replaced refusal line of a connected bridge
+test(
+  'a descriptor that moved to another port after its setup was found replaced is not connected on the retry',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    let checks = 0,
+      connections = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './cursorMcpBridge': {
+          runCursorMcpBridge: () => {
+            connections += 1
+            return Promise.resolve()
+          },
+        },
+        './utils/checkDevinBridgeReceipts': {
+          checkDevinBridgeReceipts: async () => {
+            checks += 1
+            if (checks > 1) return { answer: 'stands' }
+            await writeDescriptor(agentDir, 0, workspace, process.pid, {
+              url: 'http://127.0.0.1:2/mcp',
+            })
+            return { answer: 'replaced' }
+          },
+        },
+      },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(
+      refusal,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
+    )
+    assert.equal(connections, 0)
+  },
+)
+
+// Value: protects=a window whose descriptor gained its mark and moved to another port after the bridge waited for the mark never being connected on the new port (Cycle 0146 task 10, Cycle 0145 J10); fails_when=a not-set-up wait pins nothing, so the marked descriptor at the new port is connected; no_claim=a marked descriptor that keeps its first port
+test(
+  'a descriptor that gained its mark and moved to another port is not connected after the bridge waited for the mark',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      devinSetupInstallation: undefined,
+    })
+    let isMarked = false,
+      connections = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './cursorMcpBridge': {
+          runCursorMcpBridge: () => {
+            connections += 1
+            return Promise.resolve()
+          },
+        },
+        './utils/evidenceInUseElsewhere': {
+          // Runs after the unmarked candidate was read: setup marks it and the server restarts on another port.
+          isDescriptorOwnerGone: async () => {
+            if (!isMarked) {
+              isMarked = true
+              await writeDescriptor(agentDir, 0, workspace, process.pid, {
+                url: 'http://127.0.0.1:2/mcp',
+              })
+            }
+            return false
+          },
+        },
+      },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(
+      refusal,
+      `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${workspace}. Run Codebook: Set Up AI Chat here, then reload the window.`,
+    )
+    assert.equal(connections, 0)
+  },
+)
+
+// Value: protects=a pinned descriptor that changed identity and lost its AI chat mark not ending the search while another descriptor can connect (Cycle 0146 task 10, D7 finding 2); fails_when=the unmarked refusal fires before the pin check, so the other descriptor of this window never gets its turn; no_claim=which descriptor the selection prefers
+test(
+  'a pinned descriptor that changed identity and lost its AI chat mark does not stop another descriptor from connecting',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const olderPath = await writeDescriptor(agentDir, 1, workspace, process.pid)
+    const newerPath = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    // Descriptor 0 is the newer one, so it is selected first.
+    await utimes(olderPath, new Date(1_000), new Date(1_000))
+    await utimes(newerPath, new Date(2_000), new Date(2_000))
+    const connectedTo: (string | undefined)[] = []
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './cursorMcpBridge': {
+          runCursorMcpBridge: async (
+            _path: string,
+            _timeoutMs: number,
+            expected: SeenConnection['expected'],
+          ) => {
+            connectedTo.push(expected?.instanceId)
+            if (connectedTo.length > 1) return
+            // The first connection finds only the mark changed, so its path is pinned; then the descriptor is rewritten for another port without the AI chat mark.
+            await writeDescriptor(agentDir, 0, workspace, process.pid, {
+              url: 'http://127.0.0.1:2/mcp',
+              devinChat: false,
+            })
+            throw new DescriptorMarkChangedError()
+          },
+        },
+      },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(refusal, undefined)
+    assert.deepEqual(connectedTo, [instanceIdOf(0), instanceIdOf(1)])
   },
 )
 

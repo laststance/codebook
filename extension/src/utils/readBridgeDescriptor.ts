@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import type { z } from 'zod'
 
 import { connectionSchema } from './connectionSchema'
+import { isFileDescriptorExhaustion } from './isFileDescriptorExhaustion'
 import { isLoopbackMcpUrl } from './isLoopbackMcpUrl'
 import { readDescriptorText } from './readDescriptorText'
 import { readMarkedInstallation } from './readMarkedInstallation'
@@ -103,6 +104,36 @@ export class DescriptorMarkChangedError extends Error {
   }
 }
 
+/** The one sentence for a descriptor read that met a file shortage; it holds no path and no descriptor content. */
+const DESCRIPTOR_SHORTAGE_MESSAGE =
+  'Codebook connection descriptor could not be read for lack of open files.'
+
+/**
+ * The refusal for a descriptor read that met a file shortage (EMFILE, ENFILE), which says nothing about the descriptor; thrown by {@link readBridgeDescriptor}, and told apart by the Devin bridge's connection, which waits and selects the descriptor again only with the endpoint and instance it first selected.
+ * It carries one fixed sentence and neither a `code` nor a `cause`, so no path leaks and the bridge's check for a transient server failure never matches it.
+ * @example
+ * // after a read that met EMFILE: error instanceof DescriptorShortageError // => true
+ */
+export class DescriptorShortageError extends Error {
+  constructor() {
+    super(DESCRIPTOR_SHORTAGE_MESSAGE)
+    this.name = 'DescriptorShortageError'
+  }
+}
+
+/**
+ * Turns a failed descriptor read into what {@link readBridgeDescriptor} throws: a file shortage becomes a {@link DescriptorShortageError}, anything else is thrown as it is; called on the rejection of {@link readDescriptorText}.
+ * @param error - What the read rejected with.
+ * @throws A {@link DescriptorShortageError} for EMFILE or ENFILE; `error` itself otherwise.
+ * @example
+ * await readDescriptorText(path).catch(rethrowReadFailure) // throws DescriptorShortageError after EMFILE
+ */
+function rethrowReadFailure(error: unknown): never {
+  // A shortage is overcome when other reads free their descriptors; the fixed error drops the path the file system's error names.
+  if (isFileDescriptorExhaustion(error)) throw new DescriptorShortageError()
+  throw error
+}
+
 /**
  * Tells how the descriptor read for a connection differs from the one a bridge's selection validated; called by {@link readBridgeDescriptor} on the one read the transport connects with, so a descriptor rewritten after the selection (another instance, extension host, setup state or port) never receives a request.
  * @param read - The descriptor as {@link parseDescriptorText} parsed it for this connection, with its owner pid and devinChat mark.
@@ -139,7 +170,7 @@ async function changedSinceSelection(
  * @param timeoutMs - The startup budget the read and the checks may use together, the workspace's real-path lookup included; unbounded when left out.
  * @param resolveWorkspace - Resolves the descriptor's workspace to its real path; {@link realOrSame} unless a test names its own.
  * @returns The connection fields of the descriptor read.
- * @throws When the file is not a private regular file within the size limit, is not a valid descriptor ({@link DESCRIPTOR_UNREADABLE_MESSAGE}), names a url that is not Codebook's loopback endpoint, differs from `expected` (its exact url included), or the budget ends first; a {@link DescriptorMarkChangedError} when only the mark differs.
+ * @throws When the file is not a private regular file within the size limit, is not a valid descriptor ({@link DESCRIPTOR_UNREADABLE_MESSAGE}), names a url that is not Codebook's loopback endpoint, differs from `expected` (its exact url included), or the budget ends first; a {@link DescriptorMarkChangedError} when only the mark differs; a {@link DescriptorShortageError} when the read met a file shortage (EMFILE, ENFILE).
  * @example
  * await readBridgeDescriptor('/agent/x.connection.json', { instanceId, pid: 4242, workspace: '/repo', devinChat: true, url }, 3_000)
  */
@@ -151,7 +182,9 @@ export async function readBridgeDescriptor(
 ): Promise<BridgeDescriptor> {
   // The read and every check after it, the workspace's real-path lookup included, spend one startup budget.
   return within(timeoutMs, async () => {
-    const parsed = parseDescriptorText(await readDescriptorText(descriptorPath))
+    const parsed = parseDescriptorText(
+      await readDescriptorText(descriptorPath).catch(rethrowReadFailure),
+    )
     // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
     assertLoopbackEndpoint(parsed.descriptor.url)
     // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
