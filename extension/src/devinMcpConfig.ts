@@ -92,7 +92,7 @@ const pendingSchema = z.object({
   createdFile: z.boolean(),
   /** The id of the write or removal; every private name beside the config holds it ({@link journalNameOf}), and recovery accepts no other name. */
   generation: z.string().optional(),
-  /** The installation id the publish chose for its receipt ({@link installationIdFor}), so a run that adopts the entry after a crash writes the same id; absent for a removal and for a record of an older build. */
+  /** The installation id the publish chose for its receipt ({@link publishEntry}), so a run that adopts the entry after a crash writes the same id; absent for a removal and for a record of an older build. */
   installationId: z.string().optional(),
   /** The inode of the staged file before it was published; the config is Codebook's own only if it still has it. The probe link has this inode too. */
   stagedIno: fileIdSchema.optional(),
@@ -111,7 +111,7 @@ const pendingSchema = z.object({
   takeBack: z.boolean().optional(),
   /** Only in a rollback's own journal ({@link rollbackContextOf}): the generation of the publish whose entry that rollback was taking out. {@link settleRollbackJournal} marks a publish record for take-back only when it carries this generation, so a journal left by one installation never marks another's pending publish. */
   publishGeneration: z.string().optional(),
-  /** Set by a first setup (no receipt stood) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
+  /** Set by a first setup (no receipt owned an entry that stood, {@link isFirstSetup}) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
   firstSetup: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
@@ -2404,23 +2404,52 @@ async function adoptPending(
 }
 
 /**
- * Chooses the installation id a publish records in its pending record and its receipt; called by {@link publishEntry}.
- * An update or a re-run of setup keeps the installation while the receipt's entry still stands; a setup where no receipt stood, or the receipt of a removal that took the entry out and left the receipt behind, starts a new one, so descriptors marked before the removal stay refused.
+ * Tells whether a publish is a first setup: no receipt stands, or the receipt's entry no longer stands in the config (only `mcp_config.json` was deleted, or a removal took the entry out and left its receipt behind); called once by {@link publishEntry}.
+ * A first setup deletes that stale receipt before it publishes ({@link retireStaleReceipt}), starts a new installation id (so descriptors marked before a removal stay refused) and marks its publish record, so a run that stops before its receipt is taken back ({@link isTakeBackOwed}). Every other publish that a receipt stands for is an update of the entry it owns: a changed or foreign entry is refused before any publish.
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any.
- * @returns The carried-over id, or a new random one.
+ * @returns
+ * - `true` when no receipt owns the `codebook` entry that stands now (none stands, or the receipt is gone)
+ * - `false` for an update of the receipted entry
  * @example
- * const installationId = installationIdFor(look, receipt)
+ * isFirstSetup({ kind: 'absent' }, undefined)         // => true
+ * isFirstSetup({ kind: 'absent' }, staleReceipt)      // => true
+ * isFirstSetup(lookWithReceiptedEntry, receipt)       // => false
  */
-function installationIdFor(
-  look: ConfigLook,
-  receipt: Receipt | undefined,
-): string {
-  return installationIdOf(
-    receipt !== undefined && ownsEntry(currentEntryOf(look), receipt)
-      ? receipt
-      : undefined,
+function isFirstSetup(look: ConfigLook, receipt: Receipt | undefined): boolean {
+  return receipt === undefined || !ownsEntry(currentEntryOf(look), receipt)
+}
+
+/**
+ * Builds the refusal for a stale receipt that could not be deleted before a first setup publishes; called by {@link retireStaleReceipt}.
+ * @param context - The run; gives the receipt's path and the command to run again.
+ * @param cause - The failure of the deletion, kept for diagnosis and never put into the sentence.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw staleReceiptRefusal(context, error) // 'Codebook could not delete its own old record of a setup whose entry is gone, at …/receipt.json, so it changed nothing; delete that record by hand, then run Codebook: Set Up AI Chat again.'
+ */
+function staleReceiptRefusal(
+  { receiptPath, retry }: Context,
+  cause: unknown,
+): Error {
+  return new Error(
+    `Codebook could not delete its own old record of a setup whose entry is gone, at ${receiptPath}, so it changed nothing; delete that record by hand, ${retry}.`,
+    { cause },
   )
+}
+
+/**
+ * Deletes the receipt of an entry that is gone before a first setup publishes, so no reader takes the new entry for that receipt's, and a run that stops before the new receipt leaves an entry that is taken back; called by {@link publishEntry} when {@link isFirstSetup} holds and a receipt stands.
+ * Safe because the entry that receipt owned no longer stands, so it covers nothing.
+ * @param context - The run.
+ * @throws A {@link staleReceiptRefusal} when the receipt cannot be deleted; nothing is published then.
+ * @example
+ * await retireStaleReceipt(context) // receipt.json is gone
+ */
+async function retireStaleReceipt(context: Context): Promise<void> {
+  await rm(context.receiptPath, { force: true }).catch((cause: unknown) => {
+    throw staleReceiptRefusal(context, cause)
+  })
 }
 
 /**
@@ -2644,7 +2673,7 @@ async function takeOutUnrecordedEntry(
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
  * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted; an empty generation when the run has no entry.
- * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects.
+ * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} when a first setup cannot delete the receipt of an entry that is gone; nothing is published then. When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -2657,10 +2686,14 @@ async function publishEntry(
   if (!entry || !entryHash) return { generation: '' }
   assertRewritable(context, look)
   assertSingleLink(context, look)
+  const isFirst = isFirstSetup(look, receipt)
   const createdFile = createdFileFor(look, receipt)
   const generation = randomUUID()
-  const installationId = installationIdFor(look, receipt)
+  // A first setup starts a new installation, an update carries the receipt's over.
+  const installationId = installationIdOf(isFirst ? undefined : receipt)
   const root = rootWithEntry(look, entry)
+  // The receipt of an entry that is gone goes first, so no reader can take this publish for that receipt's.
+  if (isFirst && receipt !== undefined) await retireStaleReceipt(context)
   await context.seam?.afterRead?.()
   const { config, keptLeft } = await publishRoot(context, root, look, {
     entrySha256: entryHash,
@@ -2668,7 +2701,7 @@ async function publishEntry(
     generation,
     installationId,
     // A first setup is adoptable only once its receipt is written ({@link isTakeBackOwed}).
-    ...(receipt === undefined && { firstSetup: true }),
+    ...(isFirst && { firstSetup: true }),
   })
   const written: Receipt = {
     schemaVersion: 1,
@@ -2684,7 +2717,7 @@ async function publishEntry(
     await writeRecord(context, context.receiptPath, written)
   } catch (cause) {
     // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
-    if (receipt) throw cause
+    if (!isFirst) throw cause
     throw await takeOutUnrecordedEntry(context, written, cause, keptLeft)
   }
   // A record that names a copy that stays is kept, so the next run settles that copy.

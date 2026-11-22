@@ -4281,6 +4281,92 @@ test('A setup after a removal that left its receipt behind starts a new installa
   assert.notEqual(receiptAfter.installationId, receiptBefore.installationId)
 })
 
+test('Setup run again after only mcp_config.json was deleted is taken back when it stops before its receipt', async (context) => {
+  // Value: protects=a setup whose old receipt owns no entry that stands is a first setup, so a stop after it published and before its new receipt never leaves an entry the next run keeps as installed; fails_when=the refresh answers current (the crashed setup adopted), the old receipt still stands after the stop, the record lacks firstSetup, or the config Codebook created stays; no_claim=a real process end (seam.afterPublish throws in its place), and what older Codebook versions do with this record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  rmSync(configPath)
+
+  // Act
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const isReceiptLeftAfterStop = existsSync(receiptPath)
+  const recordAfterStop = await readRecordFile(storage, 'pending.json')
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(isReceiptLeftAfterStop, false)
+  assert.equal(recordAfterStop.firstSetup, true)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A setup that stops right after it deleted the old record of a deleted mcp_config.json leaves nothing behind', async (context) => {
+  // Value: protects=the old receipt goes before anything is published, so a stop in between leaves neither record nor config for any Codebook version to read; fails_when=the old receipt still stands after the stop, a pending record or a config is left, or the refresh answers anything but not-managed; no_claim=a real process end (seam.afterRead throws in its place), and the next setup's own success
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  rmSync(configPath)
+
+  // Act
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterRead: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+  assert.equal(existsSync(configPath), false)
+})
+
+test('A setup that cannot delete the old record of an entry that is gone refuses and changes nothing', async (context) => {
+  // Value: protects=an old receipt that cannot be deleted stops the setup before anything is published, with one sentence naming that record and the way out; fails_when=the setup publishes its entry, changes the learner's config, leaves a staged file or a pending record, or rejects with another sentence; no_claim=why a real deletion fails (seam.afterStat puts a folder at the receipt's name right after the receipt was opened, standing for a record that cannot be deleted)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  rmSync(configPath)
+  const learnerConfig = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, learnerConfig)
+  let hasSwapped = false
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== receiptPath || hasSwapped) return
+      hasSwapped = true
+      rmSync(receiptPath)
+      mkdirSync(receiptPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, {
+    message: `Codebook could not delete its own old record of a setup whose entry is gone, at ${receiptPath}, so it changed nothing; delete that record by hand, then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(hasSwapped, true)
+  assert.equal(readFileSync(configPath, 'utf8'), learnerConfig)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('A refusal about an entry the learner saved after a crash names the original that was handed over', async (context) => {
   // protects=the learner learns where the displaced original is even when the refusal is about their own entry; fails_when=the refusal names only the edited entry; no_claim=the wording around the path; seam=hand-written pending record of an interrupted write, then the learner's own codebook entry saved
   // Arrange
@@ -4319,10 +4405,11 @@ test('A refusal about an entry the learner saved after a crash names the origina
   assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
 })
 
-test('A crashed setup after a removal that left its receipt behind is adopted with a new installation id', async (context) => {
-  // protects=descriptors marked before a removal stay refused when the next run adopts a setup that crashed before its receipt write; fails_when=the adopted receipt carries the id of the removed installation; no_claim=the bridge check itself; seam=the receipt is written back after the removal and seam.afterPublish ends the setup before its receipt write
+test('A crashed setup after a removal that left its receipt behind is taken back, so no receipt keeps the removed installation id', async (context) => {
+  // Value: protects=descriptors marked before a removal stay refused when a setup that crashed before its receipt write follows it: that setup is a first setup, so it is taken back and the removed installation's receipt is gone; fails_when=the refresh adopts the crashed setup (current) or any receipt stands afterwards; no_claim=the bridge check itself; seam=the receipt is written back after the removal and seam.afterPublish ends the setup before its receipt write
   // Arrange
   const { home, storage } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
   const receiptBefore = await readRecordFile(storage, 'receipt.json')
   await removeManagedDevinMcpEntry(storage, home)
@@ -4334,10 +4421,9 @@ test('A crashed setup after a removal that left its receipt behind is adopted wi
   }).catch(() => undefined)
 
   // Act
-  await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
-  const receiptAfter = await readRecordFile(storage, 'receipt.json')
-  assert.match(receiptAfter.installationId, /^[0-9a-f-]{36}$/)
-  assert.notEqual(receiptAfter.installationId, receiptBefore.installationId)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
 })
