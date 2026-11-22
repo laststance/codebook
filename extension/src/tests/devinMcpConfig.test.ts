@@ -10,6 +10,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import {
@@ -2468,6 +2469,41 @@ test('A first setup whose receipt cannot be written never asks to remove a codeb
     return true
   })
   assert.equal(readFileSync(configPath, 'utf8'), learnersText)
+})
+
+test('A first setup whose receipt cannot be written and whose config cannot be read again never asks to remove the codebook entry by hand', async (context) => {
+  // protects: a rollback whose re-read failed never tells the learner to remove an entry it did not confirm as its own / fails_when: the refusal asks for a removal by hand after the config became unreadable (a link) / no_claim: what the link's target holds; the receipt failure is a folder where receipt.json goes
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const targetPath = `${configPath}.target`
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      // A link replaces the config, so the rollback's re-read throws.
+      writeFileSync(targetPath, '{"mcpServers":{}}\n')
+      rmSync(configPath)
+      symlinkSync(targetPath, configPath)
+      mkdirSync(receiptPath, { recursive: true })
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(configPath))
+    assert.match(
+      error.message,
+      /could not read that file again, so it left it unchanged/,
+    )
+    assert.doesNotMatch(error.message, /by hand/)
+    return true
+  })
+  assert.equal(readFileSync(targetPath, 'utf8'), '{"mcpServers":{}}\n')
 })
 
 test('Set Up AI Chat puts the moved-aside config back with its own mode and refuses when another link to it appeared after the read', async (context) => {
