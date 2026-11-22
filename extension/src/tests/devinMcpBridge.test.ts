@@ -2414,6 +2414,15 @@ async function startConnectedBridge(
   preloadSource?: string,
 ): Promise<ConnectedBridge> {
   let now = 0
+  // After-hooks run in the order they were registered: the bridge ends first, so it sends nothing to a server that is already closed.
+  const running: { child?: ChildProcess } = {}
+  context.after(async () => {
+    const { child } = running
+    if (!child || child.exitCode !== null || child.signalCode !== null) return
+    const ended = new Promise((done) => child.once('exit', done))
+    child.kill('SIGKILL')
+    await ended
+  })
   const harness = await createHarness(),
     endpoint = await startServer(harness.service, () => now),
     agentDir = await makeLiveAgentFolder(),
@@ -2465,6 +2474,7 @@ async function startConnectedBridge(
       killSignal: 'SIGKILL',
     },
   )
+  running.child = child
   const watcher = watchConnectedLine(child)
   const exited = new Promise<number | null>((done) => {
     child.on('exit', (code) => done(code))
@@ -2771,5 +2781,34 @@ test(
     assert.equal(bridge.readStderr().includes('is not set up'), false)
     // One request refused, one answered: the refused one was not sent twice.
     assert.equal(bridge.counts.others, 2)
+  },
+)
+
+// protects=a file shortage at the first connection's descriptor read counting as transient, so the same descriptor is tried again (Cycle 0145 task 13); fails_when=an EMFILE there answers dropped and the selection excludes the only descriptor until the startup deadline, so the bridge never connects; no_claim=the shortage in the scan's own read (readDescriptorFile retries that one) or ENFILE (same predicate)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a bridge whose first descriptor read for the connection meets a file shortage connects to the same descriptor on the retry',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // The preload fails the first descriptor read made for the connection (the one under readBridgeDescriptor), the way a full file table would.
+    const preload = `const fsPromises = require('node:fs/promises')
+const { writeSync } = require('node:fs')
+const originalOpen = fsPromises.open
+let hasFailed = false
+fsPromises.open = (path, ...rest) => {
+  const isConnectionRead = String(path).endsWith('.connection.json') && new Error().stack.includes('readBridgeDescriptor')
+  if (isConnectionRead && !hasFailed) {
+    hasFailed = true
+    writeSync(2, 'SHORTAGE_INJECTED\\n')
+    return Promise.reject(Object.assign(new Error('too many open files'), { code: 'EMFILE' }))
+  }
+  return originalOpen(path, ...rest)
+}
+`
+    // Act
+    const bridge = await startConnectedBridge(context, preload)
+    // Assert
+    assert.equal(bridge.readStderr().includes('SHORTAGE_INJECTED'), true)
   },
 )

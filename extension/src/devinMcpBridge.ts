@@ -777,7 +777,7 @@ export async function selectDevinDescriptor(
 /**
  * Says whether a failed connection is the Codebook server being busy or restarting, which a later attempt at the same descriptor can overcome; called by {@link runDevinMcpBridge}.
  * @param error - What {@link runCursorMcpBridge} threw.
- * @returns `true` for HTTP 429 (the server's sessions are full), ECONNREFUSED or ECONNRESET, also as the cause of a wrapping error; `false` otherwise.
+ * @returns `true` for HTTP 429 (the server's sessions are full), ECONNREFUSED, ECONNRESET, or EMFILE and ENFILE (this process or the system ran out of file descriptors, for example at the descriptor read), also as the cause of a wrapping error; `false` otherwise.
  * @example
  * isTransientFailure(Object.assign(new Error('x'), { code: 429 })) // => true
  */
@@ -788,6 +788,8 @@ function isTransientFailure(error: unknown): boolean {
     const { code } = current as { code?: unknown }
     if (code === 429 || code === 'ECONNREFUSED' || code === 'ECONNRESET')
       return true
+    // A file shortage at the descriptor read is overcome when other reads free their descriptors.
+    if (isFileDescriptorExhaustion(current)) return true
     current = current.cause
   }
   return false
@@ -1043,7 +1045,7 @@ function mayStartAttempt(
  * Without a usable `WINDSURF_EXT_HOST_PID` the bridge cannot tell its window from another window of the same folder, so it selects nothing and returns one refusal line.
  * A descriptor of this window that lacks `devinChat: true` means AI chat is not set up here: one refusal line, at once.
  * The function never writes the line and never ends the process: an imported function must not end its caller, and a lookup that never answers would keep the process alive anyway. The bridge entry file writes the line and exits 1 from the write's callback.
- * Each connection attempt (the descriptor read and the whole handshake) is bounded by the remaining startup deadline, but never by less than {@link DEVIN_CONNECT_FLOOR_MS}: the bridge's total time can exceed the 15 s startup window by that floor, and after the deadline at most one more attempt starts in total, however many descriptors remain. The connection reads the descriptor again and refuses it when it is no longer the one selected (see {@link devinDescriptorExpectation}). A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
+ * Each connection attempt (the descriptor read and the whole handshake) is bounded by the remaining startup deadline, but never by less than {@link DEVIN_CONNECT_FLOOR_MS}: the bridge's total time can exceed the 15 s startup window by that floor, and after the deadline at most one more attempt starts in total, however many descriptors remain. The connection reads the descriptor again and refuses it when it is no longer the one selected (see {@link devinDescriptorExpectation}). A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) or a file shortage (EMFILE, ENFILE) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
  *
  * @param agentDir - Folder holding the window instances' connection descriptors.
  * @param cwd - Working folder of the bridge process; the window's workspace.
