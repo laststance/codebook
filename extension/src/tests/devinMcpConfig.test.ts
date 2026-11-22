@@ -2478,6 +2478,38 @@ test('A first setup whose receipt cannot be written takes its own entry out agai
   assert.equal(retry.status, 'installed')
 })
 
+test('A refresh after a first setup whose receipt and rollback both failed takes the entry back instead of adopting it as installed', async (context) => {
+  // protects=a failed first setup is never adopted as installed when a full disk stopped its receipt and its rollback journal; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of the first refusal, the real ENOSPC code; seam=seam.afterPublish puts folders where the receipt and the rollback journal go, standing for the full disk
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const rollbackJournalPath = join(
+    storage,
+    'devin-mcp',
+    'pending.json.rollback',
+  )
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      mkdirSync(receiptPath, { recursive: true })
+      mkdirSync(rollbackJournalPath, { recursive: true })
+    },
+  }).catch(() => undefined)
+  // Space returns: both blockers are gone, the entry still stands in the config.
+  rmSync(receiptPath, { recursive: true })
+  rmSync(rollbackJournalPath, { recursive: true })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test('A first setup whose receipt cannot be written removes only its own entry from a config that has other servers', async (context) => {
   // Value: protects=the learner's other servers survive the roll-back of a failed first setup; fails_when=another server is dropped or the codebook entry stays; why_new=the receipt write could fail after the rename and left an unowned entry; seam=seam.afterPublish puts a folder where receipt.json goes
   // Arrange
@@ -2842,6 +2874,47 @@ test('A refresh that fails after settling a cut-short rollback does not let the 
     mcpServers: { alpha: { command: 'a' } },
   })
   assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('A rollback journal of another installation does not mark a pending publish for take-back', async (context) => {
+  // protects=a journal left by installation A never takes out the entry installation B is publishing; fails_when=B's published entry is taken out of the config or no receipt is written for it; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends A's rollback and seam.afterPublish makes its receipt unwritable; the journal names another generation than the publish record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  // The journal on disk belongs to installation A; the publish record is installation B's, which carries no take-back mark of its own.
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  writeFileSync(
+    journalPath,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(journalPath, 'utf8')),
+      publishGeneration: '11111111-2222-4333-8444-555555555555',
+    }),
+  )
+  const publishB = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  delete publishB.takeBack
+  writeFileSync(pendingPath, JSON.stringify(publishB))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'current')
+  assert.equal(existsSync(receiptPath), true)
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
 })
 
 test('A refresh whose take-back of a cut-short setup cannot start refuses, and the next refresh still takes the entry back', async (context) => {

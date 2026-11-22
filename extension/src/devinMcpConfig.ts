@@ -104,6 +104,8 @@ const pendingSchema = z.object({
   phase: z.enum(['completed', 'handed']).optional(),
   /** Set once a cut-short rollback of this publish was settled ({@link settleRollbackJournal}): the entry it published must be taken back ({@link finishCutShortSetup}), never adopted ({@link settlePending}). It lives here, not in the rollback's journal, because the take-back writes (and may delete) its own journal at that path. Gone once the take-back ended; an older build drops it. */
   takeBack: z.boolean().optional(),
+  /** Only in a rollback's own journal ({@link rollbackContextOf}): the generation of the publish whose entry that rollback was taking out. {@link settleRollbackJournal} marks a publish record for take-back only when it carries this generation, so a journal left by one installation never marks another's pending publish. */
+  publishGeneration: z.string().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
 type Pending = z.infer<typeof pendingSchema>
@@ -149,6 +151,8 @@ type Context = {
   seam: DevinMcpTestSeam | undefined
   /** The command a refusal asks the learner to run again: the setup's or the removal's. */
   retry: string
+  /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
+  rollbackOf?: string
 }
 
 /** A copy of the config that Codebook keeps for a moment, and what it must hold. */
@@ -1233,6 +1237,9 @@ function journalOf(
 ): Pending {
   return {
     ...head,
+    ...(context.rollbackOf !== undefined && {
+      publishGeneration: context.rollbackOf,
+    }),
     targetPath: context.path,
     stagedIno: recordedFileId(staged.ino),
     stagedName: basename(staged.temporary),
@@ -1351,6 +1358,9 @@ async function deleteConfig(
     targetPath: context.path,
     createdFile: false,
     generation,
+    ...(context.rollbackOf !== undefined && {
+      publishGeneration: context.rollbackOf,
+    }),
     keptName: basename(moved.path),
     keptIno: recordedFileId(moved.ino),
     keptSha256: moved.sha256,
@@ -1875,6 +1885,9 @@ function retainedRecord(
     createdFile: false,
     generation: pending.generation,
     phase: pending.phase,
+    ...(pending.publishGeneration !== undefined && {
+      publishGeneration: pending.publishGeneration,
+    }),
     ...(roles.has('kept') && {
       keptName: pending.keptName,
       keptIno: pending.keptIno,
@@ -2474,16 +2487,28 @@ async function rollBackPublishedEntry(
   // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
   if (!isSameFileId(written.config.ino, look.identity.ino))
     return { outcome: 'replaced-config', keptLeft: [] }
-  const { keptLeft } = await takeEntryOut(rollbackContextOf(context), {
-    look,
-    receipt: written,
-  })
+  const { keptLeft } = await takeEntryOut(
+    rollbackContextOf(context, written.generation),
+    { look, receipt: written },
+  )
   return { outcome: 'took-out', keptLeft }
 }
 
-/** The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads. */
-function rollbackContextOf(context: Context): Context {
-  return { ...context, pendingPath: `${context.pendingPath}.rollback` }
+/**
+ * The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads.
+ * @param context - The run.
+ * @param publishGeneration - The generation of the publish being rolled back; every journal of the rollback records it. Omit it to only read or settle a journal.
+ * @returns The rollback's context.
+ */
+function rollbackContextOf(
+  context: Context,
+  publishGeneration?: string,
+): Context {
+  return {
+    ...context,
+    pendingPath: `${context.pendingPath}.rollback`,
+    ...(publishGeneration !== undefined && { rollbackOf: publishGeneration }),
+  }
 }
 
 /**
@@ -2538,6 +2563,8 @@ async function takeOutUnrecordedEntry(
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
+  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. A failure to write the intent changes nothing: the run rejects as it does without it.
+  await markTakeBackOwed(context, written.generation).catch(() => undefined)
   try {
     result = await rollBackPublishedEntry(context, written)
   } catch {
@@ -2645,7 +2672,7 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
-  await markTakeBackOwed(context)
+  await markTakeBackOwed(context, pending.publishGeneration)
   await retirePending(
     rollbackContext,
     retainedRecord(
@@ -2658,20 +2685,31 @@ async function settleRollbackJournal(context: Context): Promise<void> {
 }
 
 /**
- * Records in this config's publish record that its entry must be taken back, before {@link settleRollbackJournal} retires the journal that proves the rollback was cut short; so a run that fails later still finds the intent.
+ * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
+ * Only the publish of the given generation is marked: another installation's pending publish stays as it is.
  * @param context - The run.
+ * @param publishGeneration - The generation of the publish being rolled back; a journal that names none (undefined) marks nothing.
  * @example
- * await markTakeBackOwed(context) // pending.json now holds takeBack: true
+ * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
  */
-async function markTakeBackOwed(context: Context): Promise<void> {
+async function markTakeBackOwed(
+  context: Context,
+  publishGeneration: string | undefined,
+): Promise<void> {
   const publish = await readRecord(
     context.pendingPath,
     pendingSchema,
     context.retry,
     context.seam,
   )
-  // No publish record, or one of another config: nothing of this config to take back.
-  if (publish?.targetPath !== context.path || publish.takeBack) return
+  // No publish record, one of another config or of another generation (another installation's publish), or one already marked: nothing to mark.
+  if (
+    publish?.targetPath !== context.path ||
+    publishGeneration === undefined ||
+    publish.generation !== publishGeneration ||
+    publish.takeBack
+  )
+    return
   await writeRecord(context.pendingPath, { ...publish, takeBack: true })
 }
 
