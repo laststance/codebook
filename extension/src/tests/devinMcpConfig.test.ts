@@ -2803,6 +2803,40 @@ test('A refresh whose take-back of a cut-short setup cannot start refuses, and t
   assert.equal(existsSync(pendingPath), false)
 })
 
+test('A refresh whose take-back finds the entry changed by an editor keeps the change and writes no installed receipt', async (context) => {
+  // protects=a take-back that finds the entry changed settles the record with a fresh look of the config; fails_when=an installed receipt is written for the failed setup or the editor's entry is lost; no_claim=the wording of any refusal; seam=seam.afterStat saves another entry into a new file between the run's first read and the take-back's read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const editedText =
+    '{"mcpServers":{"alpha":{"command":"a"},"codebook":{"command":"edited-by-hand"}}}\n'
+  let configReadCount = 0
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath) return
+      configReadCount += 1
+      // The first read is the run's own look; the editor's save lands before the take-back reads again.
+      if (configReadCount === 1) swapFile(configPath, editedText)
+    },
+  }).catch(() => undefined)
+
+  // Assert
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), editedText)
+})
+
 test('A refresh after a cut-short rollback never asks to remove the entry by hand when the config cannot be read again', async (context) => {
   // protects=the take-back of a cut-short setup asks for a removal by hand only after it confirmed the entry as its own; fails_when=the refusal says by hand after the config became unreadable or a receipt is written; no_claim=what the link's target holds; seam=seam.afterStat swaps the config for a link during the take-back's first read
   if (process.platform === 'win32') {
