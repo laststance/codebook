@@ -35,6 +35,7 @@ import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
 import { runCursorMcpBridge } from '../cursorMcpBridge'
 import type * as DevinMcpBridgeModule from '../devinMcpBridge'
 import {
+  createDevinSelectState,
   devinDescriptorExpectation,
   runDevinMcpBridge,
   selectDevinDescriptor,
@@ -1579,6 +1580,181 @@ test(
     assert.equal(selection?.matchedCwd, workspace)
     // gstack-timing-ok: the contract is a choice right after the lookup answers (about 1,100 ms), not after the first scan's 1,000 ms wait (about 2,000 ms); margin for the gate's parallel load.
     assert.equal(elapsedMs < 1_900, true)
+  },
+)
+
+// protects=a slow workspace mount whose lookup answers after one scan's one-second wait and before the next scan; fails_when=the settled lookup is dropped, so each scan starts it over and a workspace that always takes 1,300 ms never matches; no_claim=a real mount, or which scan takes the answer when several overlap
+test(
+  'a workspace lookup that answers between two scans is used by the next scan and ran once',
+  // A directory symlink needs a privilege on Windows.
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const slowFolder = join(agentDir, '..', 'slow-workspace')
+    await symlink(workspace, slowFolder)
+    const descriptorPath = await writeDescriptor(
+      agentDir,
+      0,
+      slowFolder,
+      process.pid,
+    )
+    let slowLookups = 0
+    const resolveWorkspace = (path: string): Promise<string> => {
+      if (path !== slowFolder) return Promise.resolve(path)
+      slowLookups += 1
+      // The answer comes 300 ms after the first scan's wait ended and before the next scan starts (1,500 ms pause).
+      return new Promise<string>((resolveLater) =>
+        setTimeout(() => resolveLater(workspace), 1_300),
+      )
+    }
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 6_000, intervalMs: 1_500, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, descriptorPath)
+    assert.equal(slowLookups, 1)
+  },
+)
+
+// protects=the newest of two descriptors of one slow workspace being chosen when the lookup answered between two scans; fails_when=the kept answer serves only the candidate that asks first, so the newer one starts another slow lookup and the older instance is chosen or none; no_claim=a real mount
+test(
+  'two descriptors of one slow workspace both use its late answer and the newer one is selected',
+  // A directory symlink needs a privilege on Windows.
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const slowFolder = join(agentDir, '..', 'slow-workspace')
+    await symlink(workspace, slowFolder)
+    const olderPath = await writeDescriptor(
+      agentDir,
+      0,
+      slowFolder,
+      process.pid,
+    )
+    const newerPath = await writeDescriptor(
+      agentDir,
+      1,
+      slowFolder,
+      process.pid,
+    )
+    // The older descriptor is listed and evaluated first.
+    await utimes(olderPath, new Date(1_000_000), new Date(1_000_000))
+    await utimes(newerPath, new Date(2_000_000), new Date(2_000_000))
+    const resolveWorkspace = (path: string): Promise<string> =>
+      path === slowFolder
+        ? new Promise<string>((resolveLater) =>
+            setTimeout(() => resolveLater(workspace), 1_300),
+          )
+        : Promise.resolve(path)
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 6_000, intervalMs: 1_500, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, newerPath)
+  },
+)
+
+// protects=a workspace whose resolution failed late being asked again by the next scan; fails_when=the fallback spelling is kept like a resolved answer, so the next scan judges the stale spelling and the repaired link never matches; no_claim=a real failing realpath (the stand-in rejects after 1,300 ms once)
+test(
+  'a workspace lookup that failed late is not kept and the next scan asks again',
+  // A directory symlink needs a privilege on Windows.
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const brokenFolder = join(agentDir, '..', 'broken-workspace')
+    const descriptorPath = await writeDescriptor(
+      agentDir,
+      0,
+      brokenFolder,
+      process.pid,
+    )
+    let brokenLookups = 0
+    const resolveWorkspace = (path: string): Promise<string> => {
+      if (path !== brokenFolder) return Promise.resolve(path)
+      brokenLookups += 1
+      // The first lookup fails after the first scan's wait; the link is repaired by the second.
+      return brokenLookups === 1
+        ? new Promise<string>((_resolve, rejectLater) =>
+            setTimeout(() => rejectLater(new Error('ENOENT')), 1_300),
+          )
+        : Promise.resolve(workspace)
+    }
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 4_000, intervalMs: 1_500, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, descriptorPath)
+    assert.equal(brokenLookups, 2)
+  },
+)
+
+// protects=a kept lookup answer being used once (the next selection takes it, the one after looks again); fails_when=the answer is never kept, so the second selection finds nothing, or stays in the state, so the third never looks again; no_claim=a real mount
+test(
+  'a selection after the kept workspace answer was taken starts a new lookup',
+  // A directory symlink needs a privilege on Windows.
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const slowFolder = join(agentDir, '..', 'slow-workspace')
+    await symlink(workspace, slowFolder)
+    await writeDescriptor(agentDir, 0, slowFolder, process.pid)
+    const state = createDevinSelectState()
+    let slowLookups = 0
+    const resolveWorkspace = (path: string): Promise<string> => {
+      if (path !== slowFolder) return Promise.resolve(path)
+      slowLookups += 1
+      return new Promise<string>((resolveLater) =>
+        setTimeout(() => resolveLater(workspace), 1_300),
+      )
+    }
+    const options = {
+      timeoutMs: 1_100,
+      intervalMs: 20,
+      resolveWorkspace,
+      state,
+    }
+    // Act
+    const first = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    await new Promise((resolveLater) => setTimeout(resolveLater, 500))
+    const second = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    const third = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    // Assert
+    // The first selection ends before the slow answer; the second takes the kept answer; the third looks again.
+    assert.equal(first, undefined)
+    assert.notEqual(second, undefined)
+    assert.equal(third, undefined)
+    assert.equal(slowLookups, 2)
   },
 )
 

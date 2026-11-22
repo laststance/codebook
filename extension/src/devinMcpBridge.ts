@@ -33,6 +33,7 @@ import {
 } from './utils/readRecordedOwner'
 import { readWikiRegularFile } from './utils/readWikiRegularFile'
 import { realOrSame } from './utils/realOrSame'
+import { resolveRealPath } from './utils/resolveRealPath'
 import {
   createSlotLimit,
   runWithinSlotLimit,
@@ -210,6 +211,12 @@ function sharedLookup<Answer>(
   return lookup
 }
 
+/** What a workspace lookup answered: `didResolve` is `false` when the resolver failed and `path` is the spelling the descriptor wrote. */
+interface WorkspaceResolution {
+  path: string
+  didResolve: boolean
+}
+
 /** The lookups of the bridge's working folder: how many have not answered yet and the newest real path one answered. */
 interface WorkingFolderLookups {
   pending: number
@@ -231,7 +238,11 @@ export interface DevinSelectState {
   readSlots: SlotLimit
   /** The folder listing, shared by the polls: one in flight, and the answer of one that settled between scans. */
   listing: FolderListing
-  workspaces: InFlightLookups<string>
+  workspaces: InFlightLookups<WorkspaceResolution>
+  /** Scans now waiting for each workspace's lookup; a resolved answer that settles while none waits is kept in `lateWorkspaceAnswers`. */
+  waitingScans: Map<string, number>
+  /** Real paths that settled after every waiting scan gave up, kept until the next scan for that workspace takes them. */
+  lateWorkspaceAnswers: Map<string, string>
   workingFolder: WorkingFolderLookups
 }
 
@@ -247,6 +258,8 @@ export function createDevinSelectState(): DevinSelectState {
     readSlots: createSlotLimit(),
     listing: { running: undefined, settled: undefined },
     workspaces: new Map(),
+    waitingScans: new Map(),
+    lateWorkspaceAnswers: new Map(),
     workingFolder: { pending: 0, answer: undefined, onAnswer: undefined },
   }
 }
@@ -308,10 +321,66 @@ interface ScanContext {
   extHostPid: number
   identity: StorageOwnerIdentity
   excludedPaths: ReadonlySet<string>
+  /** Rejects when the path does not resolve; the scan then judges the path as written, once. */
   resolveWorkspace: (path: string) => Promise<string>
   /** No new lookup starts after this instant. */
   scanDeadline: number
   state: DevinSelectState
+  /** Late answers this scan took from the state, so every candidate of a workspace in this scan uses the same one. */
+  takenLateAnswers: Map<string, string>
+}
+
+/**
+ * Gives the real path of a candidate's workspace for one scan; called by {@link evaluateCandidate}.
+ * The first scan after a late answer takes it from the state, once, and every candidate of that workspace in the scan uses it. Otherwise the shared lookup runs and is waited for until the scan's deadline. A resolved answer that reaches no waiting scan is kept for the next scan, so a slow mount still matches; a failed lookup serves its own scan with the path as written and keeps nothing.
+ * @param workspace - The workspace path the descriptor names.
+ * @param scan - What the scan judges by.
+ * @returns The real path, or `undefined` when none answered in time.
+ * @example
+ * await resolveWorkspaceForScan('/mnt/slow/repo', scan) // => '/repo' once the lookup answered
+ */
+async function resolveWorkspaceForScan(
+  workspace: string,
+  scan: ScanContext,
+): Promise<string | undefined> {
+  const { state, takenLateAnswers } = scan
+  const late = state.lateWorkspaceAnswers.get(workspace)
+  if (late !== undefined) {
+    // The next scan takes the kept answer, once; its other candidates read it from the scan.
+    state.lateWorkspaceAnswers.delete(workspace)
+    takenLateAnswers.set(workspace, late)
+  }
+  const taken = takenLateAnswers.get(workspace)
+  if (taken !== undefined) return taken
+  const lookup = sharedLookup(
+    state.workspaces,
+    workspace,
+    Date.now() < scan.scanDeadline,
+    () =>
+      scan.resolveWorkspace(workspace).then(
+        (path) => {
+          // No scan waits any more: keep the resolved answer for the next scan.
+          if (!state.waitingScans.get(workspace))
+            state.lateWorkspaceAnswers.set(workspace, path)
+          return { path, didResolve: true }
+        },
+        // A failed resolution is judged as written by the scans waiting now, never kept.
+        () => ({ path: workspace, didResolve: false }),
+      ),
+  )
+  if (!lookup) return undefined
+  state.waitingScans.set(
+    workspace,
+    (state.waitingScans.get(workspace) ?? 0) + 1,
+  )
+  try {
+    return (await answerWithin(lookup, scan.scanDeadline - Date.now()))?.path
+  } finally {
+    state.waitingScans.set(
+      workspace,
+      (state.waitingScans.get(workspace) ?? 1) - 1,
+    )
+  }
 }
 
 /**
@@ -342,17 +411,7 @@ async function evaluateCandidate(
       (await isDescriptorOwnerGone(descriptorPath, scan.identity))
     )
       return undefined
-    const lookup = sharedLookup(
-      scan.state.workspaces,
-      workspace,
-      Date.now() < scan.scanDeadline,
-      () => scan.resolveWorkspace(workspace),
-    )
-    if (!lookup) return undefined
-    const realWorkspace = await answerWithin(
-      lookup,
-      scan.scanDeadline - Date.now(),
-    )
+    const realWorkspace = await resolveWorkspaceForScan(workspace, scan)
     return realWorkspace === scan.realCwd
       ? {
           descriptorPath,
@@ -613,14 +672,14 @@ async function listDescriptorNames(
  */
 async function scanDescriptors(
   agentDir: string,
-  scan: Omit<ScanContext, 'scanDeadline'>,
+  scan: Omit<ScanContext, 'scanDeadline' | 'takenLateAnswers'>,
   deadline: number,
 ): Promise<ScanResult> {
   const scanDeadline = Math.min(
       Math.max(deadline, Date.now() + WORKSPACE_RESOLVE_FLOOR_MS),
       Date.now() + DEVIN_BRIDGE_SCAN_WAIT_MS,
     ),
-    context = { ...scan, scanDeadline },
+    context = { ...scan, scanDeadline, takenLateAnswers: new Map() },
     folder = scan.state.workingFolder,
     waiter: { wake: (() => void) | undefined } = { wake: undefined },
     notify = (): void => waiter.wake?.()
@@ -697,7 +756,8 @@ export async function selectDevinDescriptor(
         extHostPid,
         identity,
         excludedPaths: options.excludedPaths ?? new Set(),
-        resolveWorkspace,
+        // A rejecting resolver lets a scan tell a failed lookup from an answer.
+        resolveWorkspace: options.resolveWorkspace ?? resolveRealPath,
         state,
       },
       deadline,
