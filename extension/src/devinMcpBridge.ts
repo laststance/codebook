@@ -400,7 +400,13 @@ export async function runDevinMcpBridge(
     )
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     excludedPaths = new Set<string>(),
-    realCwd = await realOrSame(cwd)
+    // The working folder's lookup spends the same startup window, so a mount that never answers cannot hold the bridge before its first selection; one that does not answer is compared as written, as the selection does.
+    realCwd =
+      (await resolveWithinBudget(
+        options.resolveWorkspace ?? realOrSame,
+        cwd,
+        deadline,
+      )) ?? cwd
   const lateAttempt = { isSpent: false }
   for (;;) {
     // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.

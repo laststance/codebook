@@ -66,3 +66,38 @@ test('returns a file whose size equals the limit', async () => {
   // Assert
   assert.equal(bytes?.length, 20)
 })
+
+// protects: a small file under a large limit reserves no more than one chunk / fails_when: every read reserves the whole limit, so a 200-byte Wiki metadata file takes 64 MiB / no_claim: real allocator behaviour
+test('reads a small file under a large limit into a buffer of one chunk', async () => {
+  // Arrange
+  const content = Buffer.alloc(200, 'd')
+  const { file, buffersSeen } = createShortReadFile(content, 4096)
+
+  // Act
+  const bytes = await readUpToLimit(file, 200, 67_108_864)
+
+  // Assert
+  assert.equal(bytes?.length, 200)
+  assert.equal(buffersSeen[0]?.length, 65_536)
+})
+
+// protects: a file that grew past its stat size is still read whole, with memory near its size / fails_when: a growth loses bytes already read, or the buffer jumps to the whole limit / no_claim: real file growth timing
+test('reads a file that grew past its stat size by doubling one buffer', async () => {
+  // Arrange
+  const content = Buffer.alloc(153_600, 'e')
+  content.write('start', 0)
+  content.write('end', 153_597)
+  const { file, buffersSeen } = createShortReadFile(content, 32_768)
+
+  // Act
+  const bytes = await readUpToLimit(file, 10, 1_048_576)
+
+  // Assert
+  assert.equal(bytes?.length, 153_600)
+  assert.equal(bytes?.subarray(0, 5).toString(), 'start')
+  assert.equal(bytes?.subarray(153_597).toString(), 'end')
+  assert.deepEqual(
+    [...new Set(buffersSeen)].map((buffer) => buffer.length),
+    [65_536, 131_072, 262_144],
+  )
+})

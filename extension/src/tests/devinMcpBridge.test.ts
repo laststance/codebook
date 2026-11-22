@@ -22,7 +22,7 @@ import {
   type Server as NetServer,
 } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
@@ -31,6 +31,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod'
 
 import { runCursorMcpBridge } from '../cursorMcpBridge'
+import type * as DevinMcpBridgeModule from '../devinMcpBridge'
 import {
   devinDescriptorExpectation,
   runDevinMcpBridge,
@@ -40,6 +41,7 @@ import { startServer } from '../server'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 
 import { createHarness } from './helpers'
+import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
@@ -1128,5 +1130,52 @@ test(
     assert.equal(firstArrival - startedAt < startupMs, true)
     // The deadline lies at most startupMs after the first attempt began, and the second attempt waited out the first one's floor: it began after the deadline. gstack-timing-ok: the contract is attempt start times against the deadline.
     assert.equal(secondArrival - firstArrival >= startupMs, true)
+  },
+)
+
+// protects: the bridge's own lookup of its working folder spends the startup window, so a mount that never answers cannot hold the bridge before its first selection / fails_when: the bridge awaits the working folder's real path without a bound, so it neither selects nor refuses while the mount hangs / no_claim: how a real mount stops answering
+test(
+  'the bridge refuses within its startup window when its working folder never answers',
+  { timeout: 5_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/realOrSame': {
+          realOrSame: (path: string) =>
+            path === workspace
+              ? new Promise<string>(() => {})
+              : Promise.resolve(path),
+        },
+      },
+    )
+    const lines: string[] = [],
+      originalWrite = process.stderr.write.bind(process.stderr),
+      originalExitCode = process.exitCode
+    process.stderr.write = (chunk: string) => {
+      lines.push(chunk)
+      return true
+    }
+    let exitCode: typeof process.exitCode
+    // Act
+    try {
+      await bridgeModule.runDevinMcpBridge(
+        agentDir,
+        workspace,
+        { WINDSURF_EXT_HOST_PID: String(process.pid) },
+        { timeoutMs: 300, intervalMs: 20 },
+      )
+      exitCode = process.exitCode
+    } finally {
+      process.stderr.write = originalWrite
+      process.exitCode = originalExitCode
+    }
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.deepEqual(lines, [
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
+    ])
   },
 )

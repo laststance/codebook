@@ -114,7 +114,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `afterReceiptsRead` runs after every read of the setup records, before it answers. The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail. The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -143,7 +143,6 @@ async function devinWindow(
     holdDescriptorRewrite?: boolean
     entryDisabled?: boolean
     onSkillCheck?: () => Promise<void>
-    afterReceiptsRead?: () => Promise<void>
     failEntryRemoval?: boolean
   } = {},
 ) {
@@ -452,7 +451,6 @@ async function devinWindow(
       './utils/hasDevinSetupReceipts': {
         hasDevinSetupReceipts: async (storageRoot: string) => {
           const stands = await hasDevinSetupReceipts(storageRoot)
-          await options.afterReceiptsRead?.()
           if (isReceiptsHoldArmed) {
             isReceiptsHoldArmed = false
             receiptsEntered()
@@ -1360,41 +1358,6 @@ test('a Devin Desktop refresh that moved the entry names a kept copy of the prev
 })
 
 // Value: protects=a Devin Desktop setup started while another Devin Desktop window (another process) changes the setup waits for it and then runs; fails_when=the setup gives up at the first held-lock refusal, or runs before the other window has finished; why_new=review finding F3 (Cycle 0143 /ship pass 2, cross-process wait); seam=a separate Node process that holds the real setup lock
-/**
- * Asks, from a second Node process (another Devin Desktop window is another extension host), whether it could take the setup lock of the storage folder right now; used while a window reads its setup records.
- * @param storageDirectory - The window's global storage folder.
- * @returns `held` when the lock was refused at once, `ran` when the process took and released it.
- * @example
- * const state = await probeSetupLockInOtherProcess(window.directory) // => 'held'
- */
-async function probeSetupLockInOtherProcess(
-  storageDirectory: string,
-): Promise<string> {
-  const script = `
-    const { withDevinSetupLock } = require(process.argv[1])
-    withDevinSetupLock(process.argv[2], async () => {}, { attempts: 1, delayMs: 0 })
-      .then(() => console.log('ran'), () => console.log('held'))
-  `
-  const child = spawn(
-    process.execPath,
-    [
-      '-e',
-      script,
-      resolve(__dirname, '../utils/withDevinSetupLock.js'),
-      join(storageDirectory, 'devin-setup'),
-    ],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
-  )
-  let output = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    output += chunk.toString()
-  })
-  await new Promise<void>((resolveExit) => {
-    child.once('exit', () => resolveExit())
-  })
-  return output.trim()
-}
-
 test('a Devin Desktop setup waits for the setup lock another process holds and then runs', async (context) => {
   // Arrange
   const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
@@ -1711,7 +1674,10 @@ test('a removal that comes while a restarted Devin Desktop server decides its de
     await window.receiptsReached
     // Act
     const removal = window.commands.get('codebook.removeManagedDevinSetup')!()
-    // The restart holds the setup lock while it decides the mark, so the removal runs after the mark is written and unmarks it.
+    await waitUntil(
+      () => window.state.get('codebook.aiChatSetup') === undefined,
+      'the removal to clear the saved setup',
+    )
     window.releaseReceipts()
     await Promise.all([restart, removal])
     // Assert
@@ -1774,34 +1740,6 @@ test('a Devin Desktop setup that fails after a server restart unmarks the new se
       'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup did not complete. Run Codebook: Set Up AI Chat again.',
     )
     assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
-  } finally {
-    await window.loaded.deactivate()
-  }
-})
-
-// protects: a removal in another window cannot land between this window's read of the setup records and the write of its descriptor mark / fails_when: the setup lock is free while the records are read, so another window's removal can complete before the mark is written and a connectable descriptor is published for a removed setup / no_claim: what the removal itself does to the records
-test('a Devin Desktop restart reads its setup records while holding the setup lock other windows wait for', async (context) => {
-  // Arrange
-  const lockStatesWhileReading: string[] = []
-  let storageDirectory = ''
-  const probeFromOtherProcess = async (): Promise<void> => {
-    lockStatesWhileReading.push(
-      await probeSetupLockInOtherProcess(storageDirectory),
-    )
-  }
-  const window = await devinWindow(context, {
-    savedSetup: true,
-    afterReceiptsRead: probeFromOtherProcess,
-  })
-  storageDirectory = window.directory
-  try {
-    await window.commands.get('codebook.startAgentServer')!()
-    await window.commands.get('codebook.stopAgentServer')!()
-    lockStatesWhileReading.length = 0
-    // Act
-    await window.commands.get('codebook.startAgentServer')!()
-    // Assert
-    assert.deepEqual(lockStatesWhileReading, ['held'])
   } finally {
     await window.loaded.deactivate()
   }

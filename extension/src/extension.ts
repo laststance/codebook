@@ -416,41 +416,6 @@ export function activate(
   /** The field a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands, so the Devin bridge connects only in windows where Set Up AI Chat ran; empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true } in a set-up Devin Desktop window */
   const devinChatField = async (): Promise<{ devinChat?: true }> =>
     (await devinSetupStands()) ? { devinChat: true } : {}
-  /**
-   * Runs the start's descriptor mark with the cross-window setup lock held, so a Devin Desktop removal in another window (another extension host) cannot complete between the read of the setup records and the write of the mark; called by {@link start}.
-   * The lock is skipped when this window's own setup or removal is under way (it holds the lock itself, and waiting for it from here could never end), and a lock that another window keeps for about ten seconds leaves the descriptor unmarked, with a line in the Output.
-   * @param operation - The mark and the write; it gets `false` when the mark must not be decided here.
-   * @returns What the operation returns.
-   * @example
-   * const server = await withDevinMarkLock((mayMark) => writeDescriptor(mayMark))
-   */
-  const withDevinMarkLock = async <Value>(
-    operation: (mayMark: boolean) => Promise<Value>,
-  ): Promise<Value> => {
-    // Nothing to protect without a setup of this window, and an in-process setup or removal already owns the lock.
-    if (
-      !isDevinHost ||
-      !setupMatchesCurrentWorkspace() ||
-      devinSetup ||
-      devinRemoval ||
-      devinRemoving
-    )
-      return operation(true)
-    let didRun = false
-    try {
-      return await underDevinLock(() => {
-        didRun = true
-        return operation(true)
-      })
-    } catch (error) {
-      // An error of the operation itself is not the lock's.
-      if (didRun) throw error
-      diagnostics.info(
-        `Codebook started its agent server without the Devin chat mark: ${thrownMessage(error)}`,
-      )
-      return operation(false)
-    }
-  }
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -786,36 +751,33 @@ export function activate(
         )
         const startedService = service
         // The mark decision, the write and the publication of the running target share the queue of the removal's unmark: a removal that comes first leaves the decision unmarked, and one that comes later finds the target and unmarks it.
-        // The decision also runs under the cross-window setup lock, so a removal of another window never lands between its read of the records and the write.
-        return await withDevinMarkLock((mayMark) =>
-          inDescriptorQueue(async (): Promise<Running> => {
-            const devinFields = mayMark ? await devinChatField() : {}
-            // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
-            await writeFile(
-              descriptorPath,
-              JSON.stringify({
-                ...startedEndpoint.descriptor,
-                pid: process.pid,
-                ...(await currentStorageOwner()),
-                ...devinFields,
-              }),
-              {
-                mode: PRIVATE_FILE_MODE,
-                flag: 'wx',
-              },
-            )
-            const server: Running = {
-              endpoint: startedEndpoint,
-              environment,
-              descriptorPath,
-              service: startedService,
-              devinChat: devinFields.devinChat === true,
-            }
-            // A stop that is under way owns the instance through `starting`; the checks after the wait refuse it.
-            if (!stopping && startedEndpoint.listening) running = server
-            return server
-          }),
-        )
+        return await inDescriptorQueue(async (): Promise<Running> => {
+          const devinFields = await devinChatField()
+          // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
+          await writeFile(
+            descriptorPath,
+            JSON.stringify({
+              ...startedEndpoint.descriptor,
+              pid: process.pid,
+              ...(await currentStorageOwner()),
+              ...devinFields,
+            }),
+            {
+              mode: PRIVATE_FILE_MODE,
+              flag: 'wx',
+            },
+          )
+          const server: Running = {
+            endpoint: startedEndpoint,
+            environment,
+            descriptorPath,
+            service: startedService,
+            devinChat: devinFields.devinChat === true,
+          }
+          // A stop that is under way owns the instance through `starting`; the checks after the wait refuse it.
+          if (!stopping && startedEndpoint.listening) running = server
+          return server
+        })
       } catch (error) {
         try {
           if (endpoint) await endpoint.close()

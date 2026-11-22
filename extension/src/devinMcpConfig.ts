@@ -1943,9 +1943,9 @@ function disabledFlagOf(entry: unknown): { disabled?: true } {
 /** What a write reports about the entry it published. */
 type PublishedEntry = { generation: string; cleanupFailure?: string }
 
-/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone) or `not-taken-out` (it could not be taken out); `keptLeft` holds the copies the rollback itself left. */
+/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) or `not-taken-out` (Codebook's own entry could not be taken out); `keptLeft` holds the copies the rollback itself left. */
 type RollbackResult = {
-  outcome: 'took-out' | 'replaced-config' | 'not-taken-out'
+  outcome: 'took-out' | 'replaced-config' | 'not-ours' | 'not-taken-out'
   keptLeft: KeptFile[]
 }
 
@@ -1954,7 +1954,7 @@ type RollbackResult = {
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
- * @returns The {@link RollbackResult}; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged.
+ * @returns The {@link RollbackResult}; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`.
  * @throws The refusals of {@link takeEntryOut}; the caller turns them into `not-taken-out`.
  */
 async function rollBackPublishedEntry(
@@ -1962,11 +1962,12 @@ async function rollBackPublishedEntry(
   written: Receipt,
 ): Promise<RollbackResult> {
   const look = await lookAtConfig(context)
+  // The file is gone or its entry is no longer the one this setup wrote (an editor saved another one): the learner's entry is never Codebook's to remove.
   if (
     look.kind !== 'present' ||
     !ownsEntry(look.servers?.[SERVER_NAME], written)
   )
-    return { outcome: 'not-taken-out', keptLeft: [] }
+    return { outcome: 'not-ours', keptLeft: [] }
   // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
   if (!isSameFileId(written.config.ino, look.identity.ino))
     return { outcome: 'replaced-config', keptLeft: [] }
@@ -2029,6 +2030,7 @@ async function takeOutUnrecordedEntry(
   const sentence = {
     'took-out': 'so it took that entry out again and changed nothing else',
     'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
+    'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
     'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
   }[outcome]
   return new Error(

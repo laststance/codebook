@@ -2410,6 +2410,34 @@ test('A first setup whose receipt cannot be written leaves a config that was sav
   assert.equal(JSON.parse(savedText).mcpServers.codebook.command, ENTRY.command)
 })
 
+test('A first setup whose receipt cannot be written never asks to remove a codebook entry that an editor changed since', async (context) => {
+  // protects: the rollback never tells the learner to delete a codebook entry that is no longer the one Codebook wrote / fails_when: the refusal says to remove the codebook entry by hand although an editor saved the learner's own one, so following it loses that entry / no_claim: what the learner's entry holds
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const learnersText = '{"mcpServers":{"codebook":{"command":"learner-own"}}}\n'
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      // An editor saves the learner's own codebook entry in place.
+      writeFileSync(configPath, learnersText)
+      mkdirSync(receiptPath, { recursive: true })
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.match(
+      error.message,
+      /is no longer the one Codebook wrote, so it left that file unchanged/,
+    )
+    assert.doesNotMatch(error.message, /by hand/)
+    return true
+  })
+  assert.equal(readFileSync(configPath, 'utf8'), learnersText)
+})
+
 test('Set Up AI Chat puts the moved-aside config back with its own mode and refuses when another link to it appeared after the read', async (context) => {
   // Value: protects=a config that got a second name after Codebook read it is neither narrowed in mode nor replaced; fails_when=the mode is narrowed before the link count is rechecked or the new file is linked in beside the second name; why_new=the link count was read once, before the move-aside; seam=seam.afterCheck links the config, seam.afterMoveAside reads the moved file's mode
   if (process.platform === 'win32') {
