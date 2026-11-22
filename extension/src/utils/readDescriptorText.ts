@@ -11,15 +11,22 @@ const DESCRIPTOR_NOT_PRIVATE_MESSAGE =
 
 /**
  * Checks through the open handle that the descriptor is a private regular file within {@link DEVIN_DESCRIPTOR_LIMIT_BYTES}, then reads it; called by {@link readDescriptorText}.
+ * The owner-only permission bits are checked off Windows only: Windows reports every regular file as mode 0o666, so the check would refuse each descriptor there; the regular-file check, the no-follow open and the size limit still apply.
  * @param file - The descriptor opened by {@link openWithoutFollowing}.
+ * @param platform - The platform whose file modes are judged; tests pass one to cover each system.
  * @returns The file's text.
  * @throws An error with {@link DESCRIPTOR_NOT_PRIVATE_MESSAGE} for anything but a regular file private to its owner; an error naming the size limit for a larger file, also one that grew past it while read.
  * @example
  * await readOpenedDescriptor(file) // => '{"url":"..."}'
  */
-async function readOpenedDescriptor(file: FileHandle): Promise<string> {
+async function readOpenedDescriptor(
+  file: FileHandle,
+  platform: NodeJS.Platform,
+): Promise<string> {
   const status = await file.stat()
-  if (!status.isFile() || (status.mode & 0o077) !== 0)
+  // Windows has no owner-only mode bits to judge, so only a non-regular file is refused there.
+  const isReadableByOthers = platform !== 'win32' && (status.mode & 0o077) !== 0
+  if (!status.isFile() || isReadableByOthers)
     throw new Error(DESCRIPTOR_NOT_PRIVATE_MESSAGE)
   const bytes =
     status.size > DEVIN_DESCRIPTOR_LIMIT_BYTES
@@ -35,6 +42,7 @@ async function readOpenedDescriptor(file: FileHandle): Promise<string> {
 /**
  * Opens the descriptor once, without following a link and without waiting on a pipe, and reads it through that one handle; so the file checked is the file read; called by {@link readBridgeDescriptor} for a bridge's connection and by {@link setDescriptorDevinChat} for the mark update, so neither can hang on a pipe or read a huge file.
  * @param descriptorPath - The private connection descriptor of the instance.
+ * @param platform - The platform whose file modes are judged; callers leave it to default to this process's platform.
  * @returns The file's text.
  * @throws {@link DESCRIPTOR_NOT_PRIVATE_MESSAGE} for a link or another file the path came to hold; what {@link readOpenedDescriptor} throws; the file system's error when the path cannot be opened.
  * @example
@@ -42,6 +50,7 @@ async function readOpenedDescriptor(file: FileHandle): Promise<string> {
  */
 export async function readDescriptorText(
   descriptorPath: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
   const file = await openWithoutFollowing(descriptorPath).catch(
     (error: unknown) => {
@@ -53,7 +62,7 @@ export async function readDescriptorText(
     },
   )
   try {
-    return await readOpenedDescriptor(file)
+    return await readOpenedDescriptor(file, platform)
   } finally {
     await file.close().catch(() => undefined)
   }

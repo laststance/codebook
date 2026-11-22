@@ -845,6 +845,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/tests/openWithoutFollowing.test.ts',
     'extension/src/tests/processStartFormHere.test.ts',
     'extension/src/tests/readBootIdentity.test.ts',
+    'extension/src/tests/readDescriptorText.test.ts',
     'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
     'extension/src/tests/readProcessStart.test.ts',
     'extension/src/tests/readRecordedOwner.test.ts',
@@ -920,6 +921,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/processStartFormHere.ts',
     'extension/src/utils/psProgramPath.ts',
     'extension/src/utils/readBootIdentity.ts',
+    'extension/src/utils/readDescriptorText.ts',
     'extension/src/utils/readFileSystemNowMs.ts',
     'extension/src/utils/readLiveWikiUpdateMarker.ts',
     'extension/src/utils/readProcessStart.ts',
@@ -968,7 +970,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/removeOrphanBrowser.test.js dist/tests/isProgramFile.test.js',
+    'node --test --test-concurrency=1 dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readDescriptorText.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js dist/tests/dropSecondNameOfMovedFile.test.js dist/tests/removeWithoutFollowing.test.js dist/tests/listFolderTreeWithoutFollowing.test.js dist/tests/isFolderOfItsOwn.test.js dist/tests/runBoundedQuery.test.js dist/tests/runtime-profileProcesses.test.js dist/tests/removeAbandonedProfiles.test.js dist/tests/removeOrphanBrowser.test.js dist/tests/isProgramFile.test.js',
     'node --test --test-concurrency=1 scripts/tests/openWithoutFollowing.test.mjs',
   ])
   assert.deepEqual(actionReferences, [
@@ -1468,6 +1470,10 @@ const WINDOWS_JOB_TEST_KINDS = [
     kind: 'the program check of the search for Git',
     tests: ['isProgramFile'],
   },
+  {
+    kind: 'the reader of the Devin Desktop connection descriptor',
+    tests: ['readDescriptorText'],
+  },
 ]
 
 /**
@@ -1512,7 +1518,7 @@ test('the header of the Windows workflow names every kind of test the job runs, 
   // Assert: the kinds the header names; no file without a kind and no kind without a file.
   assert.equal(
     kindsSentence,
-    "the storage lock and its owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk, of the folder listing, of the sweep of abandoned browser profiles and of the program check of the search for Git",
+    "the storage lock and its owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk, of the folder listing, of the sweep of abandoned browser profiles, of the program check of the search for Git and of the reader of the Devin Desktop connection descriptor",
   )
   assert.deepEqual(
     kindsOfHeader,
