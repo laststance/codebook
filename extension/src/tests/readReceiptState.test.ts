@@ -15,6 +15,7 @@ import {
 } from './utils/createLinkIfAllowed'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
+import { within } from './utils/within'
 
 const WINDOWS_MODES = 'Windows reports mode 0o666 for every file'
 
@@ -273,119 +274,97 @@ for (const code of ['EPERM', 'EACCES'])
   })
 
 // protects=the bridge's check passing for a standing setup; fails_when=the three reads disagree on a setup that stands; no_claim=a removal
-test(
-  'the bridge check answers stands when the mark and both receipts name one installation',
-  { skip: process.platform === 'win32' && WINDOWS_MODES },
-  async (context) => {
-    // Arrange
-    const descriptorPath = await writeStandingSetup(
-      await arrangeStorage(context),
-    )
-    // Act
-    const answer = await realCheckDevinBridgeReceipts(descriptorPath)
-    // Assert
-    assert.deepEqual(answer, { answer: 'stands' })
-  },
-)
+test('the bridge check answers stands when the mark and both receipts name one installation', async (context) => {
+  // Arrange
+  const descriptorPath = await writeStandingSetup(await arrangeStorage(context))
+  // Act
+  const answer = await realCheckDevinBridgeReceipts(descriptorPath)
+  // Assert
+  assert.deepEqual(answer, { answer: 'stands' })
+})
 
 // protects=a removal naming the receipt it was seen on; fails_when=the answer lacks the reason or the path; no_claim=the bridge's line
-test(
-  'the bridge check answers removed with the skill receipt after a removal took it out',
-  { skip: process.platform === 'win32' && WINDOWS_MODES },
-  async (context) => {
-    // Arrange
-    const storage = await arrangeStorage(context)
-    const descriptorPath = await writeStandingSetup(storage)
-    const skillPath = join(storage, 'devin-skill', 'receipt.json')
-    await writePrivate(skillPath, JSON.stringify({ installed: false }))
-    // Act
-    const answer = await realCheckDevinBridgeReceipts(descriptorPath)
-    // Assert
-    assert.deepEqual(answer, {
-      answer: 'removed',
-      reason: 'uninstalled',
-      path: skillPath,
-    })
-  },
-)
+test('the bridge check answers removed with the skill receipt after a removal took it out', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const descriptorPath = await writeStandingSetup(storage)
+  const skillPath = join(storage, 'devin-skill', 'receipt.json')
+  await writePrivate(skillPath, JSON.stringify({ installed: false }))
+  // Act
+  const answer = await realCheckDevinBridgeReceipts(descriptorPath)
+  // Assert
+  assert.deepEqual(answer, {
+    answer: 'removed',
+    reason: 'uninstalled',
+    path: skillPath,
+  })
+})
 
 // protects=an unmarked descriptor (the window's mark taken away) counting as removed; fails_when=it answers stands or no-answer; no_claim=a mark of another installation
-test(
-  'the bridge check answers removed with no-mark when the descriptor names no installation',
-  { skip: process.platform === 'win32' && WINDOWS_MODES },
-  async (context) => {
-    // Arrange
-    const storage = await arrangeStorage(context)
-    const descriptorPath = await writeStandingSetup(storage)
-    await writePrivate(
-      descriptorPath,
-      JSON.stringify({ url: 'http://127.0.0.1:1/mcp' }),
-    )
-    // Act
-    const answer = await realCheckDevinBridgeReceipts(descriptorPath)
-    // Assert
-    assert.deepEqual(answer, {
-      answer: 'removed',
-      reason: 'no-mark',
-      path: descriptorPath,
-    })
-  },
-)
+test('the bridge check answers removed with no-mark when the descriptor names no installation', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const descriptorPath = await writeStandingSetup(storage)
+  await writePrivate(
+    descriptorPath,
+    JSON.stringify({ url: 'http://127.0.0.1:1/mcp' }),
+  )
+  // Act
+  const answer = await realCheckDevinBridgeReceipts(descriptorPath)
+  // Assert
+  assert.deepEqual(answer, {
+    answer: 'removed',
+    reason: 'no-mark',
+    path: descriptorPath,
+  })
+})
 
 // protects=the MCP receipt of another installation counting as removed; fails_when=it answers stands; no_claim=a bound check
-test(
-  'the bridge check answers removed with another-installation when the MCP receipt names another installation',
-  { skip: process.platform === 'win32' && WINDOWS_MODES },
-  async (context) => {
-    // Arrange
-    const storage = await arrangeStorage(context)
-    const descriptorPath = await writeStandingSetup(storage)
-    const mcpPath = join(storage, 'devin-mcp', 'receipt.json')
-    await writePrivate(
-      mcpPath,
-      JSON.stringify({ installed: true, installationId: 'installation-b' }),
-    )
-    // Act
-    const answer = await realCheckDevinBridgeReceipts(descriptorPath)
-    // Assert
-    assert.deepEqual(answer, {
-      answer: 'removed',
-      reason: 'another-installation',
-      path: mcpPath,
-    })
-  },
-)
+test('the bridge check answers removed with another-installation when the MCP receipt names another installation', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const descriptorPath = await writeStandingSetup(storage)
+  const mcpPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    mcpPath,
+    JSON.stringify({ installed: true, installationId: 'installation-b' }),
+  )
+  // Act
+  const answer = await realCheckDevinBridgeReceipts(descriptorPath)
+  // Assert
+  assert.deepEqual(answer, {
+    answer: 'removed',
+    reason: 'another-installation',
+    path: mcpPath,
+  })
+})
 
 // protects=a descriptor re-marked for another installation being told from a removal when the check is bound; fails_when=the bound check answers stands for installation B while the bridge is connected for A; no_claim=the bridge's line
-test(
-  'the bridge check bound to installation A answers replaced when the descriptor and receipt name B',
-  { skip: process.platform === 'win32' && WINDOWS_MODES },
-  async (context) => {
-    // Arrange
-    const storage = await arrangeStorage(context)
-    const descriptorPath = await writeStandingSetup(storage)
-    await writePrivate(
-      descriptorPath,
-      JSON.stringify({
-        url: 'http://127.0.0.1:1/mcp',
-        instanceId: '11111111-1111-4111-8111-111111111111',
-        devinSetupInstallation: 'installation-b',
-      }),
-    )
-    await writePrivate(
-      join(storage, 'devin-mcp', 'receipt.json'),
-      JSON.stringify({ installed: true, installationId: 'installation-b' }),
-    )
-    // Act
-    const answer = await realCheckDevinBridgeReceipts(descriptorPath, {
-      instanceId: '11111111-1111-4111-8111-111111111111',
+test('the bridge check bound to installation A answers replaced when the descriptor and receipt name B', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const descriptorPath = await writeStandingSetup(storage)
+  await writePrivate(
+    descriptorPath,
+    JSON.stringify({
       url: 'http://127.0.0.1:1/mcp',
-      installationId: 'installation-a',
-    })
-    // Assert
-    assert.deepEqual(answer, { answer: 'replaced' })
-  },
-)
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      devinSetupInstallation: 'installation-b',
+    }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'receipt.json'),
+    JSON.stringify({ installed: true, installationId: 'installation-b' }),
+  )
+  // Act
+  const answer = await realCheckDevinBridgeReceipts(descriptorPath, {
+    instanceId: '11111111-1111-4111-8111-111111111111',
+    url: 'http://127.0.0.1:1/mcp',
+    installationId: 'installation-a',
+  })
+  // Assert
+  assert.deepEqual(answer, { answer: 'replaced' })
+})
 
 // protects=a failed receipt read never reading as a removed setup in the bridge's check; fails_when=the EMFILE of the MCP receipt read answers removed; no_claim=the skill receipt read (same path)
 test('the bridge check answers no-answer when a receipt read fails with EMFILE', async () => {
@@ -412,4 +391,75 @@ test('the bridge check answers no-answer when a receipt read fails with EMFILE',
   // Assert
   // The module ran in its own realm, so its answer is compared by its JSON.
   assert.deepEqual(JSON.parse(JSON.stringify(answer)), { answer: 'no-answer' })
+})
+
+// protects=a removal seen in a receipt still ending the connected bridge when the descriptor read has no answer (EIO); fails_when=the failed descriptor read answers no-answer first, so a removed MCP receipt is masked and the bridge stays up on repeated refusals; no_claim=a descriptor read that fails while both receipts stand (still no-answer)
+test('the bridge check answers removed when the descriptor read fails with EIO but the MCP receipt was read as missing', async () => {
+  // Arrange
+  const mcpPath = '/storage/devin-mcp/receipt.json'
+  const maskedModule = await loadModule<{
+    checkDevinBridgeReceipts: typeof realCheckDevinBridgeReceipts
+  }>(resolve(__dirname, '../utils/checkDevinBridgeReceipts.js'), {
+    './readPrivateJsonState': {
+      readPrivateJsonState: () => Promise.resolve({ state: 'no-answer' }),
+    },
+    './readReceiptState': {
+      readReceiptState: (receiptPath: string) =>
+        Promise.resolve(
+          receiptPath === mcpPath
+            ? { state: 'removed', reason: 'missing', receiptPath }
+            : { state: 'installed', receipt: { installed: true } },
+        ),
+    },
+  })
+  // Act
+  const answer = await maskedModule.checkDevinBridgeReceipts(
+    '/storage/agent/x.connection.json',
+  )
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(answer)), {
+    answer: 'removed',
+    reason: 'missing',
+    path: mcpPath,
+  })
+})
+
+// protects=a removal seen in one receipt ending the bridge although the other receipt read never settles; fails_when=the check waits for every read, so every refusal times out and the bridge stays up for a removed setup; no_claim=a stalled read when nothing was observed (it stays pending)
+test('the bridge check answers removed at once when the skill receipt read never settles and the MCP receipt was read as missing', async () => {
+  // Arrange
+  const mcpPath = '/storage/devin-mcp/receipt.json'
+  const stalledModule = await loadModule<{
+    checkDevinBridgeReceipts: typeof realCheckDevinBridgeReceipts
+  }>(resolve(__dirname, '../utils/checkDevinBridgeReceipts.js'), {
+    './readPrivateJsonState': {
+      readPrivateJsonState: () =>
+        Promise.resolve({
+          state: 'read',
+          value: { devinSetupInstallation: 'installation-a' },
+        }),
+    },
+    './readReceiptState': {
+      readReceiptState: (receiptPath: string) =>
+        receiptPath === mcpPath
+          ? Promise.resolve({
+              state: 'removed',
+              reason: 'missing',
+              receiptPath,
+            })
+          : new Promise(() => {}),
+    },
+  })
+  // Act
+  const answer = await within(
+    stalledModule.checkDevinBridgeReceipts('/storage/agent/x.connection.json'),
+    5_000,
+  )
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(answer)), {
+    answer: 'removed',
+    reason: 'missing',
+    path: mcpPath,
+  })
 })

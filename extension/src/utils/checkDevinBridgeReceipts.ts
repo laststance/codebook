@@ -1,8 +1,15 @@
 import { dirname, join } from 'node:path'
 
 import { readMarkedInstallation } from './readMarkedInstallation'
-import { readPrivateJsonState } from './readPrivateJsonState'
-import { readReceiptState, type ReceiptRemovedReason } from './readReceiptState'
+import {
+  readPrivateJsonState,
+  type PrivateJsonState,
+} from './readPrivateJsonState'
+import {
+  readReceiptState,
+  type ReceiptRemovedReason,
+  type ReceiptState,
+} from './readReceiptState'
 
 /** What the Devin bridge's selection validated, so the check can tell a setup that was removed from one that was replaced by another installation: the instance id and the endpoint url the bridge connected for and the installation id the descriptor's mark named. A field left out is not compared. */
 export interface DevinBridgeBinding {
@@ -108,52 +115,136 @@ function isDescriptorReplaced(
 }
 
 /**
- * Says whether the setup a descriptor was marked for still stands, as the Devin bridge's check before it opens an MCP session (the first connection, a reconnect after an expired session, and a refusal with 401 or 403); called by the Devin bridge, and by setup for the bridge's own rules.
- * The descriptor must name an installation (its mark), the skill receipt must say `installed: true` and the MCP receipt must be installed with the descriptor's installation id. All three are read with the bounded read ({@link readPrivateJsonState}) from the parent of the agent folder, the folder the descriptor stands in. A read that only failed to look (descriptor exhaustion, `EIO`) is never read as a removal: it answers `no-answer`.
- * Order: a descriptor read that failed answers at once; a descriptor that differs from the binding is `replaced`; a descriptor without a mark, then a removed receipt, answer `removed`; a failed receipt read answers `no-answer`; a receipt of another installation answers `removed` with `another-installation`.
- * @param descriptorPath - The selected descriptor, in the agent folder.
- * @param binding - What the bridge connected for; without it only the descriptor's mark is compared with the receipts.
- * @returns A {@link DevinBridgeReceiptsAnswer}; never throws.
+ * Decides what the descriptor alone says, so a removed descriptor, a missing mark or a replacement is answered before the receipts are weighed; called by {@link decideFromSettledReads}.
+ * @param descriptor - The settled descriptor read.
+ * @param descriptorPath - The descriptor's path, named by a removal.
+ * @param binding - What the bridge connected for.
+ * @returns A `removed` or `replaced` answer; `undefined` when the descriptor read has no answer or the descriptor names a mark that matches the binding.
  * @example
- * await checkDevinBridgeReceipts('/storage/agent/x.connection.json') // => { answer: 'removed', reason: 'missing', path: '/storage/devin-skill/receipt.json' } after a removal
- * await checkDevinBridgeReceipts(path, { instanceId, url, installationId: 'a' }) // => { answer: 'replaced' } once the descriptor was re-marked 'b'
+ * decideFromDescriptor({ state: 'removed', reason: 'missing' }, '/storage/agent/x.connection.json', {}) // => { answer: 'removed', reason: 'missing', path: '/storage/agent/x.connection.json' }
  */
-export async function checkDevinBridgeReceipts(
+function decideFromDescriptor(
+  descriptor: PrivateJsonState,
   descriptorPath: string,
-  binding: DevinBridgeBinding = {},
-): Promise<DevinBridgeReceiptsAnswer> {
-  const storageRoot = dirname(dirname(descriptorPath))
-  const skillPath = join(storageRoot, 'devin-skill', 'receipt.json'),
-    mcpPath = join(storageRoot, 'devin-mcp', 'receipt.json')
-  const [descriptor, skill, mcp] = await Promise.all([
-    readPrivateJsonState(descriptorPath),
-    readReceiptState(skillPath),
-    readReceiptState(mcpPath),
-  ])
-  if (descriptor.state === 'no-answer') return { answer: 'no-answer' }
+  binding: DevinBridgeBinding,
+): DevinBridgeReceiptsAnswer | undefined {
   if (descriptor.state === 'removed')
     return {
       answer: 'removed',
       reason: descriptor.reason,
       path: descriptorPath,
     }
+  if (descriptor.state === 'no-answer') return undefined
   const marked = readMarkedInstallation(descriptor.value)
   if (marked === undefined)
     return { answer: 'removed', reason: 'no-mark', path: descriptorPath }
   if (isDescriptorReplaced(descriptor.value, marked, binding))
     return { answer: 'replaced' }
-  // An observed removal outranks a failed read of the other receipt.
+  return undefined
+}
+
+/** The three reads of one check; a read that has not settled yet is `undefined`. */
+interface SettledReads {
+  descriptor: PrivateJsonState | undefined
+  skill: ReceiptState | undefined
+  mcp: ReceiptState | undefined
+}
+
+/**
+ * Decides the check's answer from the reads that have settled so far; called by {@link checkDevinBridgeReceipts} after each read settles.
+ * A definite observation (a removed or replaced descriptor, a removed receipt) answers at once, without waiting for a read that is still pending, so one stalled read can never hide a removal. `no-answer`, `another-installation` and `stands` need every read.
+ * @param reads - The reads settled so far.
+ * @param descriptorPath - The descriptor's path.
+ * @param binding - What the bridge connected for.
+ * @returns The answer; `undefined` while more reads must settle.
+ * @example
+ * decideFromSettledReads({ descriptor: undefined, skill: undefined, mcp: { state: 'removed', reason: 'missing', receiptPath: '/s/devin-mcp/receipt.json' } }, '/s/agent/x.connection.json', {}) // => { answer: 'removed', reason: 'missing', path: '/s/devin-mcp/receipt.json' }
+ */
+function decideFromSettledReads(
+  reads: SettledReads,
+  descriptorPath: string,
+  binding: DevinBridgeBinding,
+): DevinBridgeReceiptsAnswer | undefined {
+  const { descriptor, skill, mcp } = reads
+  const fromDescriptor =
+    descriptor && decideFromDescriptor(descriptor, descriptorPath, binding)
+  if (fromDescriptor) return fromDescriptor
+  // An observed removal of a receipt outranks every unread or failed read.
   for (const receipt of [skill, mcp])
-    if (receipt.state === 'removed')
+    if (receipt?.state === 'removed')
       return {
         answer: 'removed',
         reason: receipt.reason,
         path: receipt.receiptPath,
       }
-  // Both receipts are installed or unread here; an unread one is no answer.
-  if (skill.state !== 'installed' || mcp.state !== 'installed')
+  // Nothing definite is known: wait for the reads that are pending.
+  if (!descriptor || !skill || !mcp) return undefined
+  // Every read settled and none observed a removal; a failed read is no answer.
+  if (
+    descriptor.state !== 'read' ||
+    skill.state !== 'installed' ||
+    mcp.state !== 'installed'
+  )
     return { answer: 'no-answer' }
-  if (mcp.receipt.installationId !== marked)
-    return { answer: 'removed', reason: 'another-installation', path: mcpPath }
+  if (mcp.receipt.installationId !== readMarkedInstallation(descriptor.value))
+    return {
+      answer: 'removed',
+      reason: 'another-installation',
+      path: join(dirname(dirname(descriptorPath)), 'devin-mcp', 'receipt.json'),
+    }
   return { answer: 'stands' }
+}
+
+/**
+ * Says whether the setup a descriptor was marked for still stands, as the Devin bridge's check before it opens an MCP session (the first connection, a reconnect after an expired session, and a refusal with 401 or 403); called by the Devin bridge, and by setup for the bridge's own rules.
+ * The descriptor must name an installation (its mark), the skill receipt must say `installed: true` and the MCP receipt must be installed with the descriptor's installation id. All three are read together with the bounded read ({@link readPrivateJsonState}) from the parent of the agent folder, the folder the descriptor stands in. A read that only failed to look (descriptor exhaustion, `EIO`) is never read as a removal: it answers `no-answer`, and only when no read observed a removal.
+ * Order: the check answers as soon as the reads that settled give a definite answer, without waiting for a read still pending: a removed descriptor, a descriptor without a mark, a descriptor that differs from the binding (`replaced`), then a removed receipt. Once every read settled, a failed read answers `no-answer` and a receipt of another installation answers `removed` with `another-installation`.
+ * @param descriptorPath - The selected descriptor, in the agent folder.
+ * @param binding - What the bridge connected for; without it only the descriptor's mark is compared with the receipts.
+ * @returns A {@link DevinBridgeReceiptsAnswer}; never rejects, and stays pending only while no settled read gives a definite answer.
+ * @example
+ * await checkDevinBridgeReceipts('/storage/agent/x.connection.json') // => { answer: 'removed', reason: 'missing', path: '/storage/devin-skill/receipt.json' } after a removal
+ * await checkDevinBridgeReceipts(path, { instanceId, url, installationId: 'a' }) // => { answer: 'replaced' } once the descriptor was re-marked 'b'
+ */
+export function checkDevinBridgeReceipts(
+  descriptorPath: string,
+  binding: DevinBridgeBinding = {},
+): Promise<DevinBridgeReceiptsAnswer> {
+  const storageRoot = dirname(dirname(descriptorPath))
+  const skillPath = join(storageRoot, 'devin-skill', 'receipt.json'),
+    mcpPath = join(storageRoot, 'devin-mcp', 'receipt.json')
+  return new Promise((resolve) => {
+    const reads: SettledReads = {
+      descriptor: undefined,
+      skill: undefined,
+      mcp: undefined,
+    }
+    // Weighs the reads settled so far; the first definite answer wins and a later call resolves nothing new.
+    const weigh = (): void => {
+      const answer = decideFromSettledReads(reads, descriptorPath, binding)
+      if (answer) resolve(answer)
+    }
+    const settleDescriptor = (state: PrivateJsonState): void => {
+      reads.descriptor = state
+      weigh()
+    }
+    const settleSkill = (state: ReceiptState): void => {
+      reads.skill = state
+      weigh()
+    }
+    const settleMcp = (state: ReceiptState): void => {
+      reads.mcp = state
+      weigh()
+    }
+    // The reads never throw; a rejection still counts as a read that gave no answer.
+    void readPrivateJsonState(descriptorPath).then(settleDescriptor, () =>
+      settleDescriptor({ state: 'no-answer' }),
+    )
+    void readReceiptState(skillPath).then(settleSkill, () =>
+      settleSkill({ state: 'no-answer', receiptPath: skillPath }),
+    )
+    void readReceiptState(mcpPath).then(settleMcp, () =>
+      settleMcp({ state: 'no-answer', receiptPath: mcpPath }),
+    )
+  })
 }
