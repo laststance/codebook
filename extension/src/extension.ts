@@ -167,6 +167,7 @@ import {
 } from './utils/devinRemovalNotice'
 import { devinRollbackLeftoverLine } from './utils/devinRollbackLeftoverLine'
 import { devinWindowRefusal } from './utils/devinWindowRefusal'
+import { effectiveDevinSetupOf } from './utils/effectiveDevinSetup'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
 import { findGeneratedWikiProblem } from './utils/findGeneratedWikiProblem'
@@ -400,11 +401,14 @@ export function activate(
   setDevinDesktopContext()
   /** The editor host as the LLM Wiki code names it ({@link WikiUpdateHost}). */
   const wikiHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
+  /** Whether a Devin setup run of this window is between its provisional save and its commit or rollback: only then does the provisional workspace count as the setup ({@link effectiveDevinSetupOf}), so a sync during the run does not unmark the run's own mark. */
+  let isDevinRunProvisional = false
   const setupMatchesCurrentWorkspace = () => {
     try {
       return (
-        context.workspaceState.get<{ workspace: string }>(
-          'codebook.aiChatSetup',
+        effectiveDevinSetupOf(
+          context.workspaceState.get('codebook.aiChatSetup'),
+          isDevinRunProvisional,
         )?.workspace === requireWorkspace()
       )
     } catch {
@@ -1298,6 +1302,8 @@ export function activate(
     },
     previousSetup: unknown,
   ): Promise<boolean> => {
+    // The run is over: the provisional value now reads as the setup before it, even when the restore write fails.
+    isDevinRunProvisional = false
     let isComplete = await saveDevinSetupAs(previousSetup, 'restore')
     if (entryWrite.status === 'installed')
       await removeManagedDevinMcpEntry(
@@ -1362,10 +1368,17 @@ export function activate(
       devinMcpEntry(nodeExecutable),
     )
     // A re-run that fails puts this value back instead of clearing it.
-    const previousSetup = context.workspaceState.get('codebook.aiChatSetup')
+    // Only the committed setup is carried: a provisional value left by a failed run reads as the one before it.
+    const previousSetup = effectiveDevinSetupOf(
+      context.workspaceState.get('codebook.aiChatSetup'),
+    )
     try {
+      // Provisional until the last step: a failed restore then still reads as `previousSetup`.
+      isDevinRunProvisional = true
       await context.workspaceState.update('codebook.aiChatSetup', {
         workspace: setupWorkspace,
+        provisional: true,
+        previous: previousSetup,
       })
       assertDevinSetupAvailable()
       await verifyManagedDevinSkill(
@@ -1386,6 +1399,11 @@ export function activate(
       await markDevinChatDescriptor(true, checkedInstallationId)
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
+      // The last step: a failing commit write rolls back like any other failed step.
+      await context.workspaceState.update('codebook.aiChatSetup', {
+        workspace: setupWorkspace,
+      })
+      isDevinRunProvisional = false
     } catch (error) {
       // A different Devin Desktop window may have removed the shared skill during the saved setup.
       const isRolledBack = await rollBackDevinSetup(entryWrite, previousSetup)
@@ -3952,7 +3970,7 @@ export function activate(
   // Settles when the reconnect at activation ended (started the server or decided not to); tests wait on it.
   let reconnectSettled: Promise<void> = Promise.resolve()
   if (
-    context.workspaceState.get<{ workspace: string }>('codebook.aiChatSetup')
+    effectiveDevinSetupOf(context.workspaceState.get('codebook.aiChatSetup'))
   ) {
     reconnectSettled = (async () => {
       if (!setupMatchesCurrentWorkspace())

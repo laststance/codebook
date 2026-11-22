@@ -2175,6 +2175,103 @@ test('a committed token rotation changes the MCP definition version and fires th
   }
 })
 
+// protects=a failed Devin setup whose restore of the saved setup also fails leaves no mark: the provisional value reads as no setup, so the rollback unmarks the window and a restarted server stays unmarked; fails_when=the half-saved value still counts as a setup while the receipts stand, so the rollback's sync keeps the Devin mark and the server serves a bridge for a failed setup; no_claim=the wording of the Output lines
+test('a Devin setup whose restore of the saved setup fails leaves the window unmarked, also after a server restart', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    failSetupClear: true,
+    afterInstallationRead: async (): Promise<void> => {
+      throw new Error('Injected failure after the saved setup')
+    },
+  })
+  try {
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    const markAfterRollback = await window.readDescriptorField()
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    const markAfterRestart = await window.readDescriptorField()
+    // Assert
+    assert.equal(setupOutcome.includes('could not take back everything'), true)
+    assert.equal(markAfterRollback, undefined)
+    assert.equal(markAfterRestart, undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a failed re-run whose commit and restore writes both fail keeps the earlier valid setup working: the provisional value reads as the setup before the run, so the window stays marked after a server restart; fails_when=the provisional value replaces the earlier setup, or vetoes it, so a valid setup stops working; no_claim=the rollback's wording
+test('a failed Devin setup re-run whose saved setup cannot be restored keeps the earlier setup marked after a restart', async (context) => {
+  // Arrange
+  let isSkillCheckFailing = false
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    entryWrite: 'current',
+    failSetupRestore: true,
+    onSkillCheck: async (): Promise<void> => {
+      if (isSkillCheckFailing) throw new Error('Injected skill check failure')
+    },
+  })
+  try {
+    await waitUntil(window.descriptorReadable, 'the reconnect descriptor')
+    isSkillCheckFailing = true
+    // Act
+    await window.commands.get('codebook.setupAiChat')!().catch(() => undefined)
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    // Assert
+    assert.equal(await window.readDescriptorField(), true)
+    assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
+      workspace: window.directory,
+      provisional: true,
+      previous: { workspace: window.directory },
+    })
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a Devin setup whose final write of the committed setup fails rolls back instead of reporting success; fails_when=the setup reports success while the saved value is still provisional; no_claim=which sentence the refusal carries
+test('a Devin setup whose final commit write fails rolls back and saves no setup', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { failSetupCommit: true })
+  try {
+    // Act
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    await assert.rejects(setup, {
+      message: 'Injected workspace state commit failure',
+    })
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    assert.deepEqual(window.entryRemovals, [
+      { expectedGeneration: 'generation-of-this-setup' },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a Devin setup that succeeds saves the committed value {workspace} without the provisional fields; fails_when=the committed value keeps provisional fields, so every reader treats a finished setup as one that failed; no_claim=the reload notice
+test('a successful Devin setup saves the committed setup without provisional fields', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {})
+  try {
+    // Act
+    await window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
+      workspace: window.directory,
+    })
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // protects=a rollback whose entry removal resolved with a kept receipt or copy reports itself incomplete and names the file in the Output; fails_when=only a rejected removal counts, so the learner is told the setup was taken back while a record stays; no_claim=the wording of the Output line beyond the named file
 test('a Devin setup rollback whose entry removal left a file behind tells the learner the take-back is incomplete and names the file', async (context) => {
   // Arrange
