@@ -2692,6 +2692,86 @@ test(
   },
 )
 
+// protects=two failures of one bridge (a 404 reconnect beside a 403 refusal) writing the refusal line once and the second failure resolving only after that line was written (Cycle 0145 review OCR2 P2); fails_when=the bridge counts as ended before its line is out, so a later caller resolves `false` at once and its shutdown can end the process before the line is written; no_claim=the wording of the line (the tests around this one)
+test(
+  'a second failure that arrives while the refusal line is being written waits for the line and does not write it again',
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const lines: string[] = []
+    const callbacks: Array<() => void> = []
+    const fakeProcess = Object.create(process, {
+      // An own property, so the bridge's `exitCode = 1` does not reach this test process's real exit code.
+      exitCode: { value: undefined, writable: true },
+      stderr: {
+        value: {
+          write: (line: string, callback?: () => void): boolean => {
+            lines.push(line)
+            if (callback) callbacks.push(callback)
+            return true
+          },
+        },
+      },
+    })
+    const checks: Array<() => Promise<boolean>> = []
+    const answers = ['stands', 'removed']
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/checkDevinBridgeReceipts': {
+          checkDevinBridgeReceipts: () =>
+            Promise.resolve({ answer: answers.shift() ?? 'removed' }),
+        },
+        './cursorMcpBridge': {
+          runCursorMcpBridge: (
+            _descriptorPath: string,
+            _timeoutMs: number,
+            _expected: unknown,
+            _header: unknown,
+            _onClosed: unknown,
+            beforeUpstream: () => Promise<boolean>,
+          ) => {
+            checks.push(beforeUpstream)
+            return Promise.resolve()
+          },
+        },
+      },
+      { process: fakeProcess },
+    )
+    await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 2_000, intervalMs: 20 },
+    )
+    const check = checks[0]!
+    lines.length = 0
+    // Act
+    const first = check()
+    await waitUntil(
+      () => (lines.length === 1 ? true : undefined),
+      'the refusal line being written',
+      5_000,
+    )
+    let isSecondSettled = false
+    const second = check().then((value) => {
+      isSecondSettled = true
+      return value
+    })
+    // A pause long enough for a wrongly resolved second call to settle.
+    await new Promise((done) => setTimeout(done, 100))
+    const wasSettledBeforeLine = isSecondSettled
+    callbacks.forEach((callback) => callback())
+    const results = await Promise.all([first, second])
+    // Assert
+    assert.equal(wasSettledBeforeLine, false)
+    assert.deepEqual(results, [false, false])
+    assert.equal(lines.length, 1)
+  },
+)
+
 // protects=a Devin bridge whose window was unmarked (the server answers 403) ending with the not-set-up line instead of failing every request for good (Cycle 0145 task 12); fails_when=the setup check runs only for the 404 Unknown MCP session, so a 403 never reaches it and the bridge stays up; no_claim=Cursor's bridge, which passes no check (cursorMcpBridge tests)
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(

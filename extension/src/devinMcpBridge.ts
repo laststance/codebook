@@ -215,10 +215,9 @@ function sharedLookup<Answer>(
   return lookup
 }
 
-/** What a workspace lookup answered: `didResolve` is `false` when the resolver failed and `path` is the spelling the descriptor wrote. */
+/** What a workspace lookup answered: `path` is the resolved real path, or the spelling the descriptor wrote when the resolver failed. */
 interface WorkspaceResolution {
   path: string
-  didResolve: boolean
 }
 
 /** The lookups of the bridge's working folder: how many have not answered yet and the newest real path one answered. */
@@ -366,10 +365,10 @@ async function resolveWorkspaceForScan(
           // No scan waits any more: keep the resolved answer for the next scan.
           if (!state.waitingScans.get(workspace))
             state.lateWorkspaceAnswers.set(workspace, path)
-          return { path, didResolve: true }
+          return { path }
         },
         // A failed resolution is judged as written by the scans waiting now, never kept.
-        () => ({ path: workspace, didResolve: false }),
+        () => ({ path: workspace }),
       ),
   )
   if (!lookup) return undefined
@@ -907,7 +906,7 @@ function setupCheckBeforeReconnect(
   cwd: string,
 ): () => Promise<boolean> {
   let inFlight: Promise<boolean> | undefined,
-    hasEnded = false
+    ending: Promise<boolean> | undefined
   async function checkOnce(): Promise<boolean> {
     const receipts = await receiptsAnswerWithin(
       descriptorPath,
@@ -919,15 +918,15 @@ function setupCheckBeforeReconnect(
       throw new Error('Codebook setup check did not answer.')
     if (receipts.answer === 'stands') return true
     process.exitCode = 1
-    hasEnded = true
-    await writeRefusalLine(
+    // The ending is one shared promise: a caller arriving while the line is still being written waits for it, so no shutdown runs before the line is out.
+    ending = writeRefusalLine(
       `${receipts.answer === 'replaced' ? replacedLine(cwd) : notSetUpLine(cwd)}\n`,
-    )
-    return false
+    ).then(() => false)
+    return ending
   }
   // Requests that fail together share one check, so the refusal line is written once; once the bridge has ended, no later request checks again.
   return () => {
-    if (hasEnded) return Promise.resolve(false)
+    if (ending) return ending
     inFlight ??= checkOnce().finally(() => {
       inFlight = undefined
     })
