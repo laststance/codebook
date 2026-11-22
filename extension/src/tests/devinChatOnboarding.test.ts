@@ -89,8 +89,9 @@ async function holdSetupLockInOtherProcess(
     ],
     { stdio: ['pipe', 'pipe', 'inherit'] },
   )
+  // `close` also fires after a failed spawn (`error`), where `exit` may never fire.
   const ended = new Promise<void>((resolveEnded) => {
-    child.once('exit', () => resolveEnded())
+    child.once('close', () => resolveEnded())
   })
   // The process ends with the test, whatever the test's outcome.
   context.after(async () => {
