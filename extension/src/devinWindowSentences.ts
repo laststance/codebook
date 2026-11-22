@@ -31,4 +31,8 @@ export const DEVIN_ENTRY_MISSING_LINE =
 
 /** What a Devin Desktop setup answers when the server it checked stopped, was replaced or no longer serves the workspace before the setup could finish. */
 export const DEVIN_SETUP_SERVER_CHANGED_SENTENCE =
-  'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup was taken back. Run Codebook: Set Up AI Chat again.'
+  'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup did not complete. Run Codebook: Set Up AI Chat again.'
+
+/** What a failed Devin Desktop setup adds to its sentence when its rollback could not take back everything it saved: the reasons are in the Output. */
+export const DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE =
+  "Codebook could not take back everything the setup saved; see Codebook's Output for details."
