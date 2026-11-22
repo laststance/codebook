@@ -1,13 +1,28 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
-import { CONNECTION_DESCRIPTOR_SUFFIX } from '../constants'
+import {
+  CONNECTION_DESCRIPTOR_SUFFIX,
+  DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
+  DEVIN_SETUP_LOCK_WAIT_ATTEMPTS,
+} from '../constants'
 import type * as ExtensionModule from '../extension'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
+import { withDevinSetupLock } from '../utils/withDevinSetupLock'
 
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
@@ -26,9 +41,65 @@ type DevinEntry = {
 type EntryRefreshStatus = 'refreshed' | 'current' | 'not-managed' | 'changed'
 
 /**
+ * Finds the connection descriptor a Devin Desktop window wrote in its storage.
+ * @param directory - The window's global storage folder.
+ * @returns The path of the one `<instance>.connection.json` in its agent folder.
+ * @example await descriptorPath(window.directory) // => '/tmp/codebook-devin-x/agent/instance-1.connection.json'
+ */
+async function descriptorPath(directory: string): Promise<string> {
+  const names = await readdir(join(directory, 'agent'))
+  return join(
+    directory,
+    'agent',
+    names.find((entry) => entry.endsWith(CONNECTION_DESCRIPTOR_SUFFIX))!,
+  )
+}
+
+/**
+ * Holds the setup lock of a Devin Desktop window from a separate Node process, as another Devin Desktop window (another extension host) holds it.
+ * @param context - The test, which stops the process afterwards.
+ * @param storageDirectory - The global storage folder the window shares.
+ * @param holdMs - How long the process keeps the lock before it releases it and ends.
+ * @returns Resolves once the process holds the lock.
+ * @example await holdSetupLockInOtherProcess(context, directory, 1_500)
+ */
+async function holdSetupLockInOtherProcess(
+  context: { after: (callback: () => Promise<void>) => void },
+  storageDirectory: string,
+  holdMs: number,
+): Promise<void> {
+  const script = `
+    const { withStorageLock } = require(process.argv[1])
+    withStorageLock(process.argv[2], async () => {
+      console.log('held')
+      await new Promise((release) => setTimeout(release, Number(process.argv[3])))
+    }).then(() => process.exit(0))
+  `
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      script,
+      resolve(__dirname, '../utils/withStorageLock.js'),
+      join(storageDirectory, 'devin-setup'),
+      String(holdMs),
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  )
+  context.after(async () => {
+    child.kill()
+  })
+  await new Promise<void>((resolveHeld, rejectHeld) => {
+    child.stdout.once('data', () => resolveHeld())
+    child.once('error', rejectHeld)
+    child.once('exit', () => rejectHeld(new Error('the lock holder ended')))
+  })
+}
+
+/**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it.
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it.
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -51,6 +122,10 @@ async function devinWindow(
     failSetupSave?: boolean
     storageDirectory?: string
     holdDeploy?: boolean
+    cleanupFailure?: string
+    skillReceipt?: boolean
+    afterRefresh?: () => Promise<void>
+    holdDescriptorRewrite?: boolean
   } = {},
 ) {
   const directory =
@@ -87,6 +162,14 @@ async function devinWindow(
   })
   const refreshReached = new Promise<void>((resolve) => {
     refreshEntered = resolve
+  })
+  // The descriptor rewrite waits here when a test holds it; `rewriteEntered` tells the test it read the file.
+  let releaseRewrite!: () => void, rewriteEntered!: () => void
+  const rewriteHeld = new Promise<void>((resolve) => {
+    releaseRewrite = resolve
+  })
+  const rewriteReached = new Promise<void>((resolve) => {
+    rewriteEntered = resolve
   })
   // A setup saved by an earlier window names the workspace this window opens.
   if (options.savedSetup)
@@ -233,6 +316,9 @@ async function devinWindow(
         },
         deployDevinSkill: async () => {
           steps.push('deploy Devin skill')
+          // The real deployment leaves its record in the storage.
+          await mkdir(join(directory, 'devin-skill'), { recursive: true })
+          await writeFile(join(directory, 'devin-skill/receipt.json'), '{}')
           if (options.holdDeploy) {
             deployEntered()
             await deployHeld
@@ -259,12 +345,18 @@ async function devinWindow(
           entry: DevinEntry,
         ) => {
           steps.push('write MCP entry')
+          // The real write leaves its record in the storage.
+          await mkdir(join(directory, 'devin-mcp'), { recursive: true })
+          await writeFile(join(directory, 'devin-mcp/receipt.json'), '{}')
           // The entry comes from the loaded module's own realm; a copy of this realm compares by value.
           writtenEntries.push(structuredClone(entry))
           return {
             status: options.entryWrite ?? 'installed',
             path: configPath,
             generation: 'generation-of-this-setup',
+            ...(options.cleanupFailure && {
+              cleanupFailure: options.cleanupFailure,
+            }),
           }
         },
         refreshManagedDevinMcpEntry: async (
@@ -281,7 +373,14 @@ async function devinWindow(
             refreshEntered()
             await refreshHeld
           }
-          return { status: options.entryRefresh ?? 'current', path: configPath }
+          await options.afterRefresh?.()
+          return {
+            status: options.entryRefresh ?? 'current',
+            path: configPath,
+            ...(options.cleanupFailure && {
+              cleanupFailure: options.cleanupFailure,
+            }),
+          }
         },
         removeManagedDevinMcpEntry: async (
           _storageRoot: string,
@@ -294,6 +393,24 @@ async function devinWindow(
           return { status: 'removed', path: configPath }
         },
       },
+      // A rewrite that has read the descriptor waits before it writes, as a stop that comes in between would find it.
+      ...(options.holdDescriptorRewrite && {
+        './utils/setDescriptorDevinChat': {
+          setDescriptorDevinChat: async (
+            path: string,
+            enabled: boolean,
+          ): Promise<void> => {
+            const fields = JSON.parse(await readFile(path, 'utf8'))
+            rewriteEntered()
+            await rewriteHeld
+            await atomicPrivateWrite(
+              path,
+              enabled ? { ...fields, devinChat: true } : fields,
+              65_536,
+            )
+          },
+        },
+      }),
       './utils/resolveExternalNodeExecutable': {
         resolveExternalNodeExecutable: async () => {
           steps.push('resolve Node')
@@ -319,6 +436,10 @@ async function devinWindow(
   if (options.savedSetup && options.entryReceipt !== false) {
     await mkdir(join(directory, 'devin-mcp'), { recursive: true })
     await writeFile(join(directory, 'devin-mcp/receipt.json'), '{}')
+  }
+  if (options.savedSetup && options.skillReceipt !== false) {
+    await mkdir(join(directory, 'devin-skill'), { recursive: true })
+    await writeFile(join(directory, 'devin-skill/receipt.json'), '{}')
   }
   loaded.activate({
     extensionPath: directory,
@@ -364,17 +485,22 @@ async function devinWindow(
     releaseRefresh,
     deployReached,
     releaseDeploy,
+    rewriteReached,
+    releaseRewrite,
     /** The `devinChat` field of this window's connection descriptor, or `undefined` when it is absent. */
     readDescriptorField: async (): Promise<unknown> => {
-      const names = await readdir(join(directory, 'agent'))
-      const name = names.find((entry) =>
-        entry.endsWith(CONNECTION_DESCRIPTOR_SUFFIX),
-      )
       const descriptor = JSON.parse(
-        await readFile(join(directory, 'agent', name!), 'utf8'),
+        await readFile(await descriptorPath(directory), 'utf8'),
       )
       return descriptor.devinChat
     },
+    /** The path of this window's connection descriptor. */
+    descriptorPath: () => descriptorPath(directory),
+    /** The names of the connection descriptors now in the agent folder. */
+    descriptorNames: async (): Promise<string[]> =>
+      (await readdir(join(directory, 'agent'))).filter((entry) =>
+        entry.endsWith(CONNECTION_DESCRIPTOR_SUFFIX),
+      ),
   }
 }
 
@@ -902,8 +1028,8 @@ test('a Devin Desktop refresh retries a held storage lock and then refreshes the
   }
 })
 
-// Value: protects=a removal from another Devin Desktop window waits for a setup that is deploying the skill, so it never lands between that setup's skill deployment and entry write; fails_when=the removal runs while the other window's setup is mid-way and leaves an entry with no skill; why_new=review finding C1 (one lock for setup and removal); seam=two windows on one storage folder, a held skill deployment
-test('a removal from a second Devin Desktop window waits until a running setup has finished', async (context) => {
+// Value: protects=a removal from a second Devin Desktop window of the same extension host queues behind a setup that is deploying the skill, so it never lands between that setup's skill deployment and entry write; fails_when=the removal runs while the other window's setup is mid-way and leaves an entry with no skill; why_new=review finding C1 (one lock for setup and removal), renamed in Cycle 0143 /ship pass 2 because both windows run in one process here and the cross-process wait has its own tests below; seam=two windows on one storage folder, a held skill deployment
+test('a removal from a second Devin Desktop window in the same extension host queues behind a running setup', async (context) => {
   // Arrange
   const first = await devinWindow(context, { holdDeploy: true })
   const second = await devinWindow(context, {
@@ -1057,6 +1183,312 @@ test('Set Up AI Chat in Devin Desktop with an unusable Node shows a fixed senten
       /TOKEN-LIKE-TEXT/,
     )
     assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a connection descriptor that does not parse never puts any of its content, which includes the bearer token, into the setup error or the Output; fails_when=the JSON parser's own message (it quotes part of the input) reaches the learner's error or the removal's Output line; why_new=review finding F1 (Cycle 0143 /ship pass 2, descriptor content in an error); seam=a real descriptor file overwritten with token-like text
+test('a Devin Desktop setup and removal never show the content of a connection descriptor that does not parse', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { confirmRemoval: true })
+  try {
+    await window.commands.get('codebook.startAgentServer')!()
+    await writeFile(await window.descriptorPath(), 'TOKEN-LIKE-TEXT {')
+    // Act
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    await assert.rejects(setup, {
+      message:
+        "Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again.",
+    })
+    await window.commands.get('codebook.removeManagedDevinSetup')!()
+    // Assert
+    assert.equal(
+      window.outputLines.includes(
+        "Codebook could not update this window's connection descriptor: Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again.",
+      ),
+      true,
+    )
+    assert.doesNotMatch(
+      JSON.stringify([window.notices, window.outputLines]),
+      /TOKEN-LIKE-TEXT/,
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a kept copy of the previous Devin config, which holds other servers' settings, is named in the setup notice; fails_when=the write's cleanupFailure sentence is dropped and the copy stays on disk unreported; why_new=review finding F2 (Cycle 0143 /ship pass 2); seam=an entry write stand-in that answers a cleanupFailure
+test('Set Up AI Chat in Devin Desktop names a kept copy of the previous config in its notice', async (context) => {
+  // Arrange
+  const sentence =
+    'Codebook could not delete its private copy of your config at /home/user/.config/devin/mcp_config.json.bak; delete that copy by hand.'
+  const window = await devinWindow(context, { cleanupFailure: sentence })
+  try {
+    // Act
+    await window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    assert.deepEqual(
+      window.notices.map((notice) => notice.message),
+      [
+        `Codebook skill and MCP server saved for Devin Local. Reload this window so Devin Local loads Codebook's MCP server, then type /devin:codebook in a Local session. ${sentence}`,
+      ],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=the activation refresh writes the sentence of a kept copy of the previous Devin config to the Output; fails_when=the refresh drops the cleanupFailure of the config module and the copy stays unreported; why_new=review finding F2 (Cycle 0143 /ship pass 2); seam=an entry refresh stand-in that answers a cleanupFailure
+test('a Devin Desktop refresh that moved the entry names a kept copy of the previous config in the Output', async (context) => {
+  // Arrange
+  const sentence =
+    'Codebook could not delete its private copy of your config at /home/user/.config/devin/mcp_config.json.bak; delete that copy by hand.'
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    entryRefresh: 'refreshed',
+    cleanupFailure: sentence,
+  })
+  try {
+    // Act
+    await waitUntil(
+      () => window.steps.includes('start server'),
+      'the reconnect at activation',
+    )
+    // Assert
+    assert.deepEqual(window.outputLines, [sentence])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop setup started while another Devin Desktop window (another process) changes the setup waits for it and then runs; fails_when=the setup gives up at the first held-lock refusal, or runs before the other window has finished; why_new=review finding F3 (Cycle 0143 /ship pass 2, cross-process wait); seam=a separate Node process that holds the real setup lock
+test('a Devin Desktop setup waits for the setup lock another process holds and then runs', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  const window = await devinWindow(context, { storageDirectory })
+  try {
+    await holdSetupLockInOtherProcess(context, storageDirectory, 1_500)
+    // Act
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    // gstack-timing-ok: the setup must show it ran nothing while another process holds the lock, which only elapsed time can show
+    await delay(400)
+    const stepsWhileHeld = [...window.steps]
+    await setup
+    // Assert
+    assert.deepEqual(stepsWhileHeld, [])
+    assert.deepEqual(window.steps, [
+      'resolve Node',
+      'deploy Devin skill',
+      'start server',
+      'write MCP entry',
+      'verify Devin skill',
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop removal started while another Devin Desktop window (another process) changes the setup waits for it and then runs; fails_when=the removal refuses at the first held-lock refusal; why_new=review finding F3 (Cycle 0143 /ship pass 2, cross-process wait); seam=a separate Node process that holds the real setup lock
+test('a Devin Desktop removal waits for the setup lock another process holds and then runs', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  const window = await devinWindow(context, {
+    storageDirectory,
+    confirmRemoval: true,
+  })
+  try {
+    await holdSetupLockInOtherProcess(context, storageDirectory, 1_500)
+    // Act
+    const removal = window.commands.get('codebook.removeManagedDevinSetup')!()
+    // gstack-timing-ok: the removal must show it ran nothing while another process holds the lock, which only elapsed time can show
+    await delay(400)
+    const stepsWhileHeld = [...window.steps]
+    await removal
+    // Assert
+    assert.deepEqual(stepsWhileHeld, [])
+    assert.deepEqual(window.steps, ['remove Devin skill', 'remove MCP entry'])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a setup lock that another process never frees ends the Devin Desktop setup or removal with one fixed sentence after the wait, with no step run and never the learning-storage message; fails_when=the refusal is the lock's own Learning storage sentence, or the operation runs without the lock; why_new=review finding F3 (Cycle 0143 /ship pass 2, refusal sentence); seam=a separate Node process that holds the real setup lock, a wait of three short attempts
+test('a Devin Desktop setup lock that stays held refuses with a try-again sentence and runs nothing', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await holdSetupLockInOtherProcess(context, storageDirectory, 5_000)
+  let operationRuns = 0
+  // Act
+  const refused = withDevinSetupLock(
+    join(storageDirectory, 'devin-setup'),
+    async () => {
+      operationRuns += 1
+    },
+    { attempts: 3, delayMs: 10 },
+  )
+  // Assert
+  await assert.rejects(refused, {
+    message:
+      'Another Codebook window is changing the Devin Desktop setup. Try again in a moment.',
+  })
+  assert.equal(operationRuns, 0)
+})
+
+// Value: protects=a held-lock refusal of a lock the operation itself takes (the MCP config's) reaches the learner as it is and the setup steps run once; fails_when=the setup lock's retry reruns a half-done setup, or rewrites that refusal as the other window's sentence; why_new=review finding F3 (Cycle 0143 /ship pass 2, only the taking of the lock is waited for); seam=an operation stand-in that throws the held-lock error
+test('a held-lock refusal thrown inside a Devin Desktop setup is not retried and keeps its own sentence', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  let operationRuns = 0
+  // Act
+  const refused = withDevinSetupLock(
+    join(storageDirectory, 'devin-setup'),
+    async () => {
+      operationRuns += 1
+      throw new StorageLockHeldError('Learning storage is locked: config')
+    },
+    { attempts: 3, delayMs: 10 },
+  )
+  // Assert
+  await assert.rejects(refused, {
+    message: 'Learning storage is locked: config',
+  })
+  assert.equal(operationRuns, 1)
+})
+
+// Value: protects=the wait for another window's setup lasts about ten seconds, not the Cursor reconnect's two; fails_when=the attempts or the pause shrink so that a setup running in another window ends the second one with a refusal; why_new=review finding F3 (Cycle 0143 /ship pass 2, bounded wait of about ten seconds); seam=the constants of the wait
+test('the Devin Desktop setup lock wait lasts between seven and fourteen seconds', () => {
+  // Arrange
+  const pauses = DEVIN_SETUP_LOCK_WAIT_ATTEMPTS - 1
+  // Act
+  // Each pause is the delay plus a random share of up to the same delay.
+  const waitRangeMs = [
+    pauses * DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
+    pauses * DEVIN_SETUP_LOCK_RETRY_DELAY_MS * 2,
+  ]
+  // Assert
+  assert.deepEqual(waitRangeMs, [6_900, 13_800])
+})
+
+// Value: protects=a removal finished in another window while this window's refresh ran leaves this window reconnecting nothing: no server start, and the removed line in the Output; fails_when=the refresh answers not-managed for a gone entry receipt and activation goes on to start a server for a removed setup; why_new=review finding F4 (Cycle 0143 /ship pass 2, removal during the refresh); seam=an entry refresh stand-in that removes the entry's record and answers not-managed
+test('a Devin Desktop window whose setup another window removed during the refresh reconnects nothing', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    entryRefresh: 'not-managed',
+    afterRefresh: () =>
+      rm(join(storageDirectory, 'devin-mcp/receipt.json'), { force: true }),
+  })
+  try {
+    // Act
+    await waitUntil(
+      () =>
+        window.outputLines.includes(
+          "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again.",
+        ),
+      'the removed line in the Output',
+    )
+    // Assert
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'refresh MCP entry',
+    ])
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a connection descriptor is marked for the Devin bridge only while the entry's record is left; fails_when=the descriptor written at the start carries devinChat although another window removed the entry, so the bridge connects for a removed setup; why_new=review finding F4 (Cycle 0143 /ship pass 2, mark decided at the write); seam=the real descriptor file, a saved setup without the entry's record
+test('a Devin Desktop window whose entry record is gone writes an unmarked connection descriptor', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    entryReceipt: false,
+  })
+  try {
+    // Act
+    await waitUntil(
+      () => window.steps.includes('start server'),
+      'the reconnect at activation',
+    )
+    // Assert
+    assert.equal(await window.readDescriptorField(), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a connection descriptor is marked for the Devin bridge only while the skill's record is left; fails_when=the descriptor carries devinChat although the skill's record is gone; why_new=review finding F4 (Cycle 0143 /ship pass 2, both records at the write); seam=the real descriptor file, a saved setup without the skill's record
+test('a Devin Desktop window whose skill record is gone writes an unmarked connection descriptor', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    skillReceipt: false,
+  })
+  try {
+    // Act
+    await waitUntil(
+      () => window.steps.includes('start server'),
+      'the reconnect at activation',
+    )
+    // Assert
+    assert.equal(await window.readDescriptorField(), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Stop Agent Server between the read and the write of a descriptor rewrite never leaves a descriptor for the stopped instance; fails_when=the rewrite's atomic write recreates the descriptor the stop removed, so the bridge finds a file whose server is gone; why_new=review finding F5 (Cycle 0143 /ship pass 2, rewrite and stop in one queue); seam=a descriptor rewrite stand-in that waits after its read
+test('a Stop Agent Server that comes while a Devin descriptor rewrite is pending leaves no descriptor', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { holdDescriptorRewrite: true })
+  try {
+    await window.commands.get('codebook.startAgentServer')!()
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    await window.rewriteReached
+    // Act
+    const stop = window.commands.get('codebook.stopAgentServer')!()
+    // gstack-timing-ok: an unqueued stop needs a real moment to remove the file first; the checked outcome is the missing descriptor
+    await delay(100)
+    window.releaseRewrite()
+    await Promise.all([setup, stop])
+    // Assert
+    assert.deepEqual(await window.descriptorNames(), [])
+  } finally {
+    window.releaseRewrite()
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a failed re-run of Set Up AI Chat on a workspace already set up keeps the saved setup, so the shared entry that stays current still reconnects at the next window load; fails_when=the rollback clears the setup the earlier run saved; why_new=review finding F6 (Cycle 0143 /ship pass 2, restore the previous setup); seam=a saved setup, a skill check that fails
+test('a failed Devin setup re-run keeps the setup saved before it', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    skillManaged: false,
+    entryWrite: 'current',
+  })
+  try {
+    await waitUntil(
+      () => window.steps.includes('start server'),
+      'the reconnect at activation',
+    )
+    // Act
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    await assert.rejects(setup)
+    assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
+      workspace: window.directory,
+    })
   } finally {
     await window.loaded.deactivate()
   }

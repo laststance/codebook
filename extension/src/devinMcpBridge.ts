@@ -1,9 +1,10 @@
-import { readdir, realpath } from 'node:fs/promises'
+import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import {
   CONNECTION_DESCRIPTOR_SUFFIX,
+  DEVIN_CONNECT_FLOOR_MS,
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
 } from './constants'
 import { runCursorMcpBridge } from './cursorMcpBridge'
@@ -12,11 +13,13 @@ import { currentStorageOwner } from './utils/currentStorageOwner'
 import { isDescriptorOwnerGone } from './utils/evidenceInUseElsewhere'
 import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 import { isSameStorageMachine } from './utils/isSameStorageMachine'
+import type { DescriptorExpectation } from './utils/readBridgeDescriptor'
 import {
   recordedOwnerSchema,
   type StorageOwnerIdentity,
 } from './utils/readRecordedOwner'
 import { readWikiRegularFile } from './utils/readWikiRegularFile'
+import { realOrSame } from './utils/realOrSame'
 
 /** Selected Codebook instance of one Devin Desktop window; carries no credential. */
 export interface DevinDescriptorSelection {
@@ -46,15 +49,6 @@ const TRANSIENT_RETRY_PAUSE_MS = 200
 type DevinCandidate = DevinDescriptorSelection & {
   pid: number
   modifiedAtMs: number
-}
-
-/** Resolves a path to its real path, or keeps it when it cannot be resolved (for example a closed folder). */
-async function realOrSame(path: string): Promise<string> {
-  try {
-    return await realpath(path)
-  } catch {
-    return path
-  }
 }
 
 /**
@@ -165,9 +159,9 @@ async function matchDescriptors(
  *
  * Called by {@link runDevinMcpBridge} when Devin starts the stdio bridge. A descriptor matches when its
  * workspace has the same real path as `cwd`, its `pid` is the extension host's and its owner still runs
- * (a descriptor a crashed window left behind is skipped). Polling continues until exactly one live match
- * remains; at the deadline several live matches resolve to the newest descriptor file (ties by instance
- * id), never by folder listing order.
+ * (a descriptor a crashed window left behind is skipped). Polling continues until one live match
+ * appears; with several live matches the newest descriptor file is taken at once (ties by instance
+ * id), never by folder listing order, and never after waiting for a single one.
  *
  * @param agentDir - Folder holding `*.connection.json` descriptors.
  * @param cwd - Working folder Devin starts the bridge in.
@@ -194,9 +188,9 @@ export async function selectDevinDescriptor(
       identity,
       options.excludedPaths ?? new Set(),
     )
-    if (matches.length === 1) return matches[0]
-    // Several live matches: keep polling for the one fresh descriptor; at the deadline take the newest.
-    if (Date.now() >= deadline) return matches[0]
+    // Matches come newest first, so several live ones resolve to the newest without waiting.
+    if (matches.length > 0) return matches[0]
+    if (Date.now() >= deadline) return undefined
     await sleep(intervalMs)
   }
 }
@@ -247,22 +241,48 @@ function refuse(line: string): void {
 }
 
 /**
+ * Names what the selection of one descriptor validated, so {@link runCursorMcpBridge} connects only with a descriptor that still says the same; called by {@link runDevinMcpBridge} for each selection.
+ * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
+ * @param pid - The extension host process id the selection matched.
+ * @param realCwd - The real path of the bridge's working folder, which the selection matched against the descriptor's workspace.
+ * @returns The instance id, the pid, the workspace real path and `devinChat: true` (a selection without it is refused before any connection).
+ * @example
+ * devinDescriptorExpectation(selection, 4242, '/repo') // => { instanceId: '1111…', pid: 4242, workspace: '/repo', devinChat: true }
+ */
+export function devinDescriptorExpectation(
+  selection: DevinDescriptorSelection,
+  pid: number,
+  realCwd: string,
+): DescriptorExpectation {
+  return {
+    instanceId: selection.instanceId,
+    pid,
+    workspace: realCwd,
+    devinChat: true,
+  }
+}
+
+/**
  * Connects the bridge to one selected instance within the remaining startup budget; called by {@link runDevinMcpBridge}.
  * A failure is not reported: the error may hold credential fragments.
+ * The attempt gets at least {@link DEVIN_CONNECT_FLOOR_MS}, also when the deadline has nearly passed, so the bridge's total time can exceed the startup window by that floor.
  * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
  * @param deadline - When the startup wait ends (epoch milliseconds).
- * @returns `connected` once the transport is up; `busy` after a pause when the server answered 429 or refused or reset the connection and time remains; `dropped` for any other failure and when no time remains.
+ * @param expected - What the selection validated ({@link devinDescriptorExpectation}).
+ * @returns `connected` once the transport is up; `busy` after a pause when the server answered 429 or refused or reset the connection and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
  * @example
- * await connectOnce(selection, Date.now() + 15_000) // => 'connected'
+ * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'
  */
 async function connectOnce(
   selection: DevinDescriptorSelection,
   deadline: number,
+  expected: DescriptorExpectation,
 ): Promise<'connected' | 'busy' | 'dropped'> {
   try {
     await runCursorMcpBridge(
       selection.descriptorPath,
-      Math.max(1, deadline - Date.now()),
+      Math.max(DEVIN_CONNECT_FLOOR_MS, deadline - Date.now()),
+      expected,
     )
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
@@ -277,44 +297,13 @@ async function connectOnce(
 }
 
 /**
- * Chooses the descriptor for the next connection attempt of {@link runDevinMcpBridge}.
- * After a busy answer (`isRetrying`) the newest live descriptor is taken without waiting for a unique one, so a fresh instance replaces a restarting one; when none is there, or on the first attempt, selection waits until the startup deadline.
- * @param where - The agent folder, the workspace folder and the extension host pid, as {@link selectDevinDescriptor} takes them.
- * @param options - Polling limits and the descriptors already dropped.
- * @param deadline - When the startup wait ends (epoch milliseconds).
- * @param isRetrying - Whether the last attempt ended with a busy answer.
- * @returns The chosen descriptor, or `undefined` when none is there in time.
- * @example
- * await selectForAttempt([agentDir, '/repo', 4242], { excludedPaths: new Set() }, Date.now() + 15_000, false)
- */
-async function selectForAttempt(
-  where: [agentDir: string, cwd: string, pid: number],
-  options: DevinSelectOptions,
-  deadline: number,
-  isRetrying: boolean,
-): Promise<DevinDescriptorSelection | undefined> {
-  const [agentDir, cwd, pid] = where
-  if (isRetrying) {
-    const newest = await selectDevinDescriptor(agentDir, cwd, pid, {
-      ...options,
-      timeoutMs: 0,
-    })
-    if (newest) return newest
-  }
-  return selectDevinDescriptor(agentDir, cwd, pid, {
-    ...options,
-    timeoutMs: Math.max(0, deadline - Date.now()),
-  })
-}
-
-/**
  * Bridges Devin Desktop's stdio MCP transport to this window's Codebook instance.
  *
  * Started by the bridge entry file from the `mcp_config.json` entry Set Up AI Chat writes.
  *
  * Without a usable `WINDSURF_EXT_HOST_PID` the bridge cannot tell its window from another window of the same folder, so it selects nothing, writes one line and exits 1.
  * A descriptor of this window that lacks `devinChat: true` means AI chat is not set up here: one line, exit 1, at once.
- * Each connection attempt is bounded by the remaining startup deadline. A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
+ * Each connection attempt (the whole handshake) is bounded by the remaining startup deadline, but never by less than {@link DEVIN_CONNECT_FLOOR_MS}: the bridge's total time can exceed the 15 s startup window by that floor. The connection reads the descriptor again and refuses it when it is no longer the one selected (see {@link devinDescriptorExpectation}). A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
  *
  * @param agentDir - Folder holding the window instances' connection descriptors.
  * @param cwd - Working folder of the bridge process; the window's workspace.
@@ -334,16 +323,15 @@ export async function runDevinMcpBridge(
       'Codebook cannot tell which Devin Desktop window started this bridge: WINDSURF_EXT_HOST_PID is not set. Reload the window; if this stays, Devin Desktop changed how it starts MCP servers.',
     )
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    excludedPaths = new Set<string>()
-  // After a busy answer the newest live descriptor is taken without waiting for a unique one, so a fresh instance replaces a restarting one.
-  let isRetrying = false
+    excludedPaths = new Set<string>(),
+    realCwd = await realOrSame(cwd)
   for (;;) {
-    const selection = await selectForAttempt(
-      [agentDir, cwd, pid],
-      { ...options, excludedPaths },
-      deadline,
-      isRetrying,
-    )
+    // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.
+    const selection = await selectDevinDescriptor(agentDir, cwd, pid, {
+      ...options,
+      excludedPaths,
+      timeoutMs: Math.max(0, deadline - Date.now()),
+    })
     // No match in time: one fixed recovery line, no descriptor contents.
     if (!selection)
       return refuse(
@@ -354,9 +342,12 @@ export async function runDevinMcpBridge(
       return refuse(
         `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${cwd}. Run Codebook: Set Up AI Chat here, then reload the window.`,
       )
-    const outcome = await connectOnce(selection, deadline)
+    const outcome = await connectOnce(
+      selection,
+      deadline,
+      devinDescriptorExpectation(selection, pid, realCwd),
+    )
     if (outcome === 'connected') return
     if (outcome === 'dropped') excludedPaths.add(selection.descriptorPath)
-    isRetrying = outcome === 'busy'
   }
 }

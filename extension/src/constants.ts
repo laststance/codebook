@@ -484,10 +484,18 @@ export const DEVIN_MCP_RECORD_LIMIT_BYTES = 16_384
 export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
 /** The largest connection descriptor (`<instanceId>.connection.json`) the Devin Desktop bridge reads; a real one is a few hundred bytes, so a larger file is skipped before it is parsed. */
 export const DEVIN_DESCRIPTOR_LIMIT_BYTES = 65_536
+/** The least time the Devin Desktop bridge gives one connection attempt, also when the 15 s selection window has nearly passed: a server that needs a moment to answer still connects, so the bridge's total time can exceed that window by this floor. */
+export const DEVIN_CONNECT_FLOOR_MS = 3_000
+/** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
+export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
 export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
 /** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */
 export const CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS = 100
+/** How often a Devin Desktop setup or removal checks the setup lock while another window holds it; with the pause below and its random share, a wait of about ten seconds (seven to fourteen) before the refusal. */
+export const DEVIN_SETUP_LOCK_WAIT_ATTEMPTS = 70
+/** How long a Devin Desktop setup or removal waits before it checks the setup lock again, before the random share that keeps windows opened together out of step. */
+export const DEVIN_SETUP_LOCK_RETRY_DELAY_MS = 100
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
 export const HTTP_ENVELOPE_LIMIT_BYTES = 65_536
 export const HTTP_BODY_LIMIT_BYTES =

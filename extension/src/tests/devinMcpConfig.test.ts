@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -14,7 +24,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import {
@@ -654,6 +664,26 @@ async function addKeyToEntry(
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`)
 }
 
+/** A generation id the journal tests give their hand-written pending records. */
+const JOURNAL_GENERATION = '0b6f0c8e-1111-4222-8333-444455556666'
+
+/** The private name Codebook gives a file beside the config for the write with {@link JOURNAL_GENERATION}. */
+function privateNameOf(
+  configPath: string,
+  end: 'codebook-displaced' | 'tmp' | 'probe',
+): string {
+  return join(
+    dirname(configPath),
+    `mcp_config.json.${JOURNAL_GENERATION}.${end}`,
+  )
+}
+
+/** The files beside the config other than the config itself. */
+async function leftoversBeside(configPath: string): Promise<string[]> {
+  const names = await readdir(dirname(configPath))
+  return names.filter((name) => name !== 'mcp_config.json').sort()
+}
+
 test('Activation refresh repoints an entry Devin marked disabled and keeps the disabled key', async (context) => {
   // Value: protects=toggling the server off in Devin's Customize does not strand the entry; fails_when=the entry with "disabled" is refused as changed or loses the key; why_new=ownership hashed the whole entry; seam=real config edited the way Devin 3.14 edits it
   // Arrange
@@ -791,13 +821,15 @@ test('A removal that was interrupted after it moved the config aside gets the co
   // Value: protects=a crash during removal never leaves the learner without a config; fails_when=the moved-aside copy is not put back; why_new=the private name was random and unrecorded; seam=pending record naming a private copy while the config name is empty
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  const keptPath = `${configPath}.fixed-name.codebook-displaced`
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
   await mkdir(dirname(configPath), { recursive: true })
   await writeFile(keptPath, '{"theme":"dark"}\n')
   await writeRecordFile(storage, 'pending.json', {
     targetPath: configPath,
     createdFile: false,
-    keptPath,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
     keptSha256: sha256('{"theme":"dark"}\n'),
   })
 
@@ -814,12 +846,14 @@ test('A leftover copy whose bytes differ from what Codebook expected stays and i
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"theme":"dark"}\n')
-  const keptPath = `${configPath}.fixed-name.codebook-displaced`
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
   await writeFile(keptPath, '{"theme":"saved by the learner"}\n')
   await writeRecordFile(storage, 'pending.json', {
     targetPath: configPath,
     createdFile: false,
-    keptPath,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
     keptSha256: sha256('{"theme":"dark"}\n'),
   })
 
@@ -843,12 +877,14 @@ test('A leftover copy that holds exactly the expected bytes is deleted on the ne
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"theme":"dark"}\n')
-  const keptPath = `${configPath}.fixed-name.codebook-displaced`
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
   await writeFile(keptPath, '{"theme":"dark"}\n')
   await writeRecordFile(storage, 'pending.json', {
     targetPath: configPath,
     createdFile: false,
-    keptPath,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
     keptSha256: sha256('{"theme":"dark"}\n'),
   })
 
@@ -926,8 +962,8 @@ test('Set Up AI Chat keeps the pending record and reports the copy when the disp
   assert.equal(result.status, 'installed')
   assert.ok(result.cleanupFailure?.includes(displacedPath))
   assert.equal(
-    (await readRecordFile(storage, 'pending.json')).keptPath,
-    displacedPath,
+    (await readRecordFile(storage, 'pending.json')).keptName,
+    basename(displacedPath),
   )
   assert.deepEqual(
     JSON.parse(await readFile(configPath, 'utf8')).mcpServers.codebook,
@@ -936,7 +972,7 @@ test('Set Up AI Chat keeps the pending record and reports the copy when the disp
 })
 
 test('Set Up AI Chat keeps a save that creates the config between the move-aside and the comparison and refuses', async (context) => {
-  // Value: protects=an editor's atomic save that lands right after Codebook moved the old config aside is never replaced; fails_when=the save is overwritten or the old copy stays; why_new=the link was made before the rename, so a save in between was replaced unseen; seam=seam.afterMoveAside creates the config
+  // Value: protects=an editor's atomic save that lands right after Codebook moved the old config aside is never replaced; fails_when=the save is overwritten or the old copy is deleted while a writer may still hold it; why_new=the link was made before the rename, so a save in between was replaced unseen; seam=seam.afterMoveAside creates the config
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"theme":"dark"}\n')
@@ -950,10 +986,13 @@ test('Set Up AI Chat keeps a save that creates the config between the move-aside
   // Assert
   await assert.rejects(attempt, /changed while Codebook was working on it/)
   assert.equal(await readFile(configPath, 'utf8'), newerSave)
-  assert.deepEqual(await readdir(dirname(configPath)), ['mcp_config.json'])
-  await assert.rejects(stat(join(storage, 'devin-mcp', 'pending.json')), {
-    code: 'ENOENT',
-  })
+  const [copyName, ...rest] = await leftoversBeside(configPath)
+  assert.match(copyName ?? '', /\.codebook-displaced$/)
+  assert.equal(rest.length, 0)
+  assert.equal(
+    await readFile(join(dirname(configPath), copyName ?? ''), 'utf8'),
+    '{"theme":"dark"}\n',
+  )
 })
 
 test('Set Up AI Chat keeps a save that creates the config between the comparison and the link-in and refuses', async (context) => {
@@ -971,7 +1010,9 @@ test('Set Up AI Chat keeps a save that creates the config between the comparison
   // Assert
   await assert.rejects(attempt, /changed while Codebook was working on it/)
   assert.equal(await readFile(configPath, 'utf8'), newerSave)
-  assert.deepEqual(await readdir(dirname(configPath)), ['mcp_config.json'])
+  const [copyName, ...rest] = await leftoversBeside(configPath)
+  assert.match(copyName ?? '', /\.codebook-displaced$/)
+  assert.equal(rest.length, 0)
 })
 
 test('Set Up AI Chat puts the moved-aside config back when it was written into after the move and refuses', async (context) => {
@@ -1137,4 +1178,398 @@ test('Removal refusals end with the removal command, not the setup command', asy
     )
     return true
   })
+})
+
+test('Recovery refuses a pending record that names a file outside the config folder and touches nothing', async (context) => {
+  // Value: protects=a planted pending.json never makes Codebook link, move or delete a file elsewhere; fails_when=the named outside file is linked in as the config or deleted; why_new=recovery trusted the paths in the record; seam=hand-written pending record whose displaced name climbs out of the folder
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const victim = join(home, 'victim.json')
+  await writeFile(victim, 'precious')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: '../../victim.json',
+    keptIno: (await stat(victim)).ino,
+    keptSha256: sha256('precious'),
+  })
+
+  // Act
+  const attempt = removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  await assert.rejects(attempt, /record at .*pending\.json/)
+  assert.equal(await readFile(victim, 'utf8'), 'precious')
+  assert.deepEqual(await readdir(dirname(configPath)), [])
+})
+
+test('Recovery refuses a pending record that names a bare file Codebook does not generate and touches nothing', async (context) => {
+  // Value: protects=the learner's own file beside the config is never taken for a Codebook leftover; fails_when=a file called notes.txt is linked in as the config or deleted; why_new=recovery accepted any path the record named; seam=hand-written pending record naming notes.txt
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const notes = join(dirname(configPath), 'notes.txt')
+  await writeFile(notes, 'my notes')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: 'notes.txt',
+    keptIno: (await stat(notes)).ino,
+    keptSha256: sha256('my notes'),
+  })
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, /record at .*pending\.json/)
+  assert.equal(await readFile(notes, 'utf8'), 'my notes')
+  assert.deepEqual(await leftoversBeside(configPath), ['notes.txt'])
+})
+
+test('Recovery refuses a pending record whose generated name holds a file with another inode than the record says and touches nothing', async (context) => {
+  // Value: protects=a file the learner put under a Codebook-looking name is never deleted or linked in; fails_when=the file with the wrong inode is linked in as the config; why_new=recovery compared bytes only; seam=hand-written pending record with an inode that is not the file's
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, '{"theme":"dark"}\n')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256('{"theme":"dark"}\n'),
+  })
+
+  // Act
+  const attempt = removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  await assert.rejects(attempt, /record at .*pending\.json/)
+  assert.equal(await readFile(keptPath, 'utf8'), '{"theme":"dark"}\n')
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+})
+
+test('Set Up AI Chat names the kept copy in the refusal when a config appeared before the link-in, and says what it holds', async (context) => {
+  // Value: protects=the learner can find and delete the copy of the old config, and no writer's open file is deleted under it; fails_when=the displaced copy is deleted or the refusal omits its path or what it holds; why_new=the copy used to be deleted at once; seam=seam.afterCompare creates the config
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"theme":"dark","mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, original)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCompare: () => writeFileSync(configPath, '{"theme":"saved late"}\n'),
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.match(
+      error.message,
+      /previous Devin MCP config at \S+\.codebook-displaced/,
+    )
+    assert.match(error.message, /settings of your other servers/)
+    assert.match(error.message, /delete that copy when you no longer need it/)
+    return true
+  })
+  const [copyName] = await leftoversBeside(configPath)
+  assert.equal(
+    await readFile(join(dirname(configPath), copyName ?? ''), 'utf8'),
+    original,
+  )
+})
+
+test('Set Up AI Chat keeps the displaced copy private while it holds it and gives the config its original permissions back when it goes back', async (context) => {
+  // Value: protects=the copy of the learner's other servers is never group-readable while it exists, and a put-back keeps the learner's mode; fails_when=the moved copy keeps 0664 or the config comes back with another mode; why_new=the displaced copy kept the config's mode; seam=seam.afterMoveAside reads the mode and writes into the moved file
+  if (process.platform === 'win32') {
+    context.skip('permission bits are not enforced on Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  await chmod(configPath, 0o664)
+  let modeWhileMovedAside = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterMoveAside: (displacedPath) => {
+      modeWhileMovedAside = statSync(displacedPath).mode & 0o777
+      writeFileSync(displacedPath, '{"theme":"written into the old file"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, /changed while Codebook was working on it/)
+  assert.equal(modeWhileMovedAside, 0o600)
+  assert.equal((await stat(configPath)).mode & 0o777, 0o664)
+})
+
+test('Set Up AI Chat keeps and reports the displaced copy when a writer wrote into the old file after the config was published', async (context) => {
+  // Value: protects=a write that reached the old file through a handle kept open is not deleted unseen; fails_when=the copy is deleted or not named in cleanupFailure or not recorded as completed; why_new=the copy was deleted whatever happened after the comparison; seam=seam.afterPublish appends to the displaced file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  let displacedPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (path) => {
+      displacedPath = path ?? ''
+      appendFileSync(displacedPath, ' ')
+    },
+  })
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.ok(result.cleanupFailure?.includes(displacedPath))
+  assert.match(result.cleanupFailure ?? '', /settings of your other servers/)
+  assert.match(
+    result.cleanupFailure ?? '',
+    /delete it when you no longer need it/,
+  )
+  assert.equal(await readFile(displacedPath, 'utf8'), '{"theme":"dark"}\n ')
+  const pending = await readRecordFile(storage, 'pending.json')
+  assert.equal(pending.phase, 'completed')
+  assert.equal(pending.keptName, basename(displacedPath))
+})
+
+test('The next run reports a kept copy that a writer changed once and stops tracking it', async (context) => {
+  // Value: protects=a changed copy is named to the learner once and not forever; fails_when=the second run is refused again or the record stays; why_new=a leftover that differs was refused on every run; seam=seam.afterPublish appends to the displaced file, then two more runs
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  let displacedPath = ''
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (path) => {
+      displacedPath = path ?? ''
+      appendFileSync(displacedPath, ' ')
+    },
+  })
+
+  // Act
+  const firstRun = refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+  await assert.rejects(firstRun, (error: Error) => {
+    assert.ok(error.message.includes(displacedPath))
+    assert.match(error.message, /delete that file when you no longer need it/)
+    return true
+  })
+  const secondRun = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(secondRun.status, 'refreshed')
+  assert.equal(await readFile(displacedPath, 'utf8'), '{"theme":"dark"}\n ')
+  await assert.rejects(stat(join(storage, 'devin-mcp', 'pending.json')), {
+    code: 'ENOENT',
+  })
+})
+
+test('A leftover copy of a finished change is deleted and never put back when its bytes still equal the recorded ones', async (context) => {
+  // Value: protects=a removed or replaced config does not come back from a leftover copy; fails_when=the completed copy is linked back as the config or stays; why_new=recovery put a copy back whenever the config name was empty; seam=hand-written completed pending record with the config absent
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, '{"theme":"old"}\n')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256('{"theme":"old"}\n'),
+    phase: 'completed',
+  })
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    mcpServers: { codebook: ENTRY },
+  })
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
+test('A removal whose last delete of the displaced copy fails keeps the record completed, and the retry deletes the copy instead of putting the config back', async (context) => {
+  // Value: protects=a removed config stays removed after a failed cleanup; fails_when=the retry links the old config back or the record is not completed; why_new=the retry linked the copy back and answered not-managed with the entry still there; seam=seam.afterPublish makes the config folder read-only so the unlink fails
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('a read-only folder does not stop root or Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  // The folder is writable again before the test folder is removed, whichever hook runs first.
+  context.after(() => chmod(dirname(configPath), 0o700).catch(() => undefined))
+  let movedPath = ''
+
+  // Act
+  const first = await removeManagedDevinMcpEntry(storage, home, {
+    afterPublish: (path) => {
+      movedPath = path ?? ''
+      chmodSync(dirname(configPath), 0o500)
+    },
+  })
+  const pendingAfterFirst = await readRecordFile(storage, 'pending.json')
+  await chmod(dirname(configPath), 0o700)
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(first.status, 'file-removed')
+  assert.ok(
+    first.status === 'file-removed' &&
+      first.cleanupFailure?.includes(movedPath),
+  )
+  assert.equal(pendingAfterFirst.phase, 'completed')
+  assert.equal(retry.status, 'not-managed')
+  await assert.rejects(stat(configPath), { code: 'ENOENT' })
+  assert.deepEqual(await readdir(dirname(configPath)), [])
+})
+
+test('Set Up AI Chat gives the hard-link probe a name that is in the pending record before the probe is created', async (context) => {
+  // Value: protects=a crash between the probe's creation and its removal leaves a named file that recovery can delete; fails_when=the record holds no probe name when the probe is about to be linked; why_new=the probe name was random and unrecorded; seam=seam.afterCheck reads pending.json and the folder right before the probe link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  let journal: { generation: string; probeName: string } | undefined
+  let didProbeExist = true
+
+  // Act
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => {
+      journal = JSON.parse(
+        readFileSync(join(storage, 'devin-mcp', 'pending.json'), 'utf8'),
+      )
+      didProbeExist = existsSync(
+        join(dirname(configPath), journal?.probeName ?? 'missing'),
+      )
+    },
+  })
+
+  // Assert
+  assert.equal(
+    journal?.probeName,
+    `mcp_config.json.${journal?.generation}.probe`,
+  )
+  assert.equal(didProbeExist, false)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
+test('Recovery deletes a leftover probe whose inode equals the recorded staged inode', async (context) => {
+  // Value: protects=a crash during the hard-link probe does not leave a stray link for good; fails_when=the probe stays beside the config; why_new=the probe was not in any record; seam=hand-written pending record naming a probe file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const probePath = privateNameOf(configPath, 'probe')
+  await writeFile(probePath, '{"mcpServers":{}}\n')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    stagedIno: (await stat(probePath)).ino,
+    probeName: basename(probePath),
+  })
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
+test('Recovery refuses a leftover probe whose inode is not the recorded staged inode and keeps it', async (context) => {
+  // Value: protects=a file under the probe's name that Codebook did not create is never deleted; fails_when=the probe with another inode is deleted; why_new=the probe was not in any record; seam=hand-written pending record with the wrong staged inode
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const probePath = privateNameOf(configPath, 'probe')
+  await writeFile(probePath, 'not made by Codebook')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    stagedIno: (await stat(probePath)).ino + 1,
+    probeName: basename(probePath),
+  })
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, /record at .*pending\.json/)
+  assert.deepEqual(await leftoversBeside(configPath), [basename(probePath)])
+})
+
+test('Activation refresh keeps owning an entry whose disabledTools Devin set and keeps that key', async (context) => {
+  // Value: protects=Devin's per-tool toggles do not strand the entry; fails_when=an entry with disabledTools is refused as changed or loses the key; why_new=only disabled was tolerated by name; seam=real config with disabledTools added
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await addKeyToEntry(configPath, 'disabledTools', ['codebook_run'])
+
+  // Act
+  const refreshed = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(refreshed.status, 'refreshed')
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    mcpServers: {
+      codebook: { ...OTHER_ENTRY, disabledTools: ['codebook_run'] },
+    },
+  })
+})
+
+test('Activation refresh treats an entry with a key the learner added as edited and leaves the file unchanged', async (context) => {
+  // Value: protects=a timeout or another setting the learner added to the entry is never overwritten; fails_when=the entry with "timeout" is refreshed; why_new=ownership hashed only command, args and env, so any added key was ignored; seam=real config with a timeout key added
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await addKeyToEntry(configPath, 'timeout', 30)
+  const edited = await readFile(configPath, 'utf8')
+
+  // Act
+  const refreshed = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(refreshed.status, 'changed')
+  assert.equal(await readFile(configPath, 'utf8'), edited)
+})
+
+test('Removal keeps an entry with a key the learner added and reports it as edited', async (context) => {
+  // Value: protects=the learner's tuned entry survives Remove Devin Desktop Setup; fails_when=the entry with "timeout" is removed; why_new=ownership hashed only command, args and env, so any added key was ignored; seam=real config with a timeout key added
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await addKeyToEntry(configPath, 'timeout', 30)
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(result, { status: 'changed', path: configPath })
+  assert.deepEqual(
+    JSON.parse(await readFile(configPath, 'utf8')).mcpServers.codebook,
+    { ...ENTRY, timeout: 30 },
+  )
 })

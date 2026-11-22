@@ -1,4 +1,4 @@
-import { readFile, lstat } from 'node:fs/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import {
@@ -16,40 +16,75 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 
 import {
+  CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS,
   CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS,
   EXTENSION_VERSION,
 } from './constants'
-import { connectionSchema } from './utils/connectionSchema'
-import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
+import {
+  readBridgeDescriptor,
+  type DescriptorExpectation,
+} from './utils/readBridgeDescriptor'
+
+/**
+ * Connects `client` over `http` and bounds the whole handshake (initialize, then the initialized notification) by `timeoutMs`; called by {@link runCursorMcpBridge}.
+ * The bundled SDK applies its `timeout` to the initialize request alone, so a server that answers initialize and then holds the notification would otherwise keep the bridge waiting past its deadline.
+ * @param client - The MCP client to connect.
+ * @param http - The HTTP transport to the instance.
+ * @param timeoutMs - The budget for the complete handshake; the SDK's own request timeout applies when left out.
+ * @throws When the handshake fails or does not finish in time; the caller closes the transport.
+ * @example
+ * await connectWithin(client, http, 3_000)
+ */
+async function connectWithin(
+  client: Client,
+  http: StreamableHTTPClientTransport,
+  timeoutMs: number | undefined,
+): Promise<void> {
+  if (timeoutMs === undefined) return client.connect(http)
+  const timer = new AbortController()
+  try {
+    await Promise.race([
+      client.connect(http, { timeout: timeoutMs }),
+      sleep(timeoutMs, undefined, { signal: timer.signal }).then(() => {
+        throw new Error('Codebook connection did not finish in time.')
+      }),
+    ])
+  } finally {
+    timer.abort()
+  }
+}
+
+/**
+ * Releases the session a failed handshake may have allocated, without waiting longer than {@link CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS} for a server that no longer answers; called by {@link runCursorMcpBridge} before it closes a failed client.
+ * @param http - The transport whose session is released.
+ * @example
+ * await releaseHalfOpenSession(http)
+ */
+async function releaseHalfOpenSession(
+  http: StreamableHTTPClientTransport,
+): Promise<void> {
+  // Initialize may have allocated a server session before the later initialized notification fails.
+  await Promise.race([
+    http.terminateSession().catch(() => undefined),
+    // Unreferenced, so a finished release never keeps the process alive.
+    sleep(CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS, undefined, { ref: false }),
+  ])
+}
 
 /**
  * Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window.
  * @param descriptorPath - The private connection descriptor of the instance.
- * @param connectTimeoutMs - Longest wait for the server's answer to the first connection; the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
- * @throws When the descriptor is not private, names a url that is not Codebook's loopback endpoint, the server does not answer in time or refuses the connection.
+ * @param connectTimeoutMs - Longest wait for the whole connection handshake (initialize and the initialized notification); the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
+ * @param expected - What the Devin Desktop bridge's selection validated; the descriptor read for the connection must still say the same, else nothing is sent. Cursor's bridge passes none.
+ * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
  * @example await runCursorMcpBridge('/private/current.connection.json')
  */
 export async function runCursorMcpBridge(
   descriptorPath: string,
   connectTimeoutMs?: number,
+  expected?: DescriptorExpectation,
 ): Promise<void> {
-  const identity = await lstat(descriptorPath)
-  if (
-    !identity.isFile() ||
-    identity.isSymbolicLink() ||
-    (identity.mode & 0o077) !== 0
-  )
-    throw new Error(
-      'Codebook connection descriptor is not a private regular file.',
-    )
-  const descriptor = connectionSchema.parse(
-    JSON.parse(await readFile(descriptorPath, 'utf8')),
-  )
-  // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
-  if (!isLoopbackMcpUrl(descriptor.url))
-    throw new Error(
-      'Codebook connection descriptor is not a loopback endpoint.',
-    )
+  const descriptor = await readBridgeDescriptor(descriptorPath, expected)
   const connectUpstream = async () => {
     const client = new Client({
       name: 'codebook-cursor-bridge',
@@ -59,19 +94,9 @@ export async function runCursorMcpBridge(
       requestInit: { headers: { Authorization: `Bearer ${descriptor.token}` } },
     })
     try {
-      await client.connect(
-        http,
-        connectTimeoutMs === undefined
-          ? undefined
-          : { timeout: connectTimeoutMs },
-      )
+      await connectWithin(client, http, connectTimeoutMs)
     } catch (error) {
-      // Initialize may have allocated a server session before the later initialized notification fails.
-      try {
-        await http.terminateSession()
-      } catch {
-        /* No session may have been established. */
-      }
+      await releaseHalfOpenSession(http)
       await client.close()
       throw error
     }
