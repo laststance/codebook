@@ -478,6 +478,8 @@ export const CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS = 100
 export const CURSOR_MCP_STAGED_CONFIG_GRACE_MS = 60_000
 export const CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS = 120_000
 export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
+/** The largest receipt or pending record of the Devin Desktop MCP entry ({@link writeManagedDevinMcpEntry}) that is written. */
+export const DEVIN_MCP_RECORD_LIMIT_BYTES = 16_384
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
 export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
 /** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */
