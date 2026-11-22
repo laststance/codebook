@@ -1580,6 +1580,47 @@ test('Set Up AI Chat gives the hard-link probe a name that is in the pending rec
   assert.deepEqual(await leftoversBeside(configPath), [])
 })
 
+test('Every record write of a first setup passes the record-write seam, and a completed record the seam cancels leaves the earlier pending record byte for byte', async (context) => {
+  // Value: protects=the seam the Cycle 0146 tests use to fail one record write sees the setup's pending record, its completed rewrite and its receipt, and a cancelled write keeps the earlier record on disk the way a full disk at the temporary file does; fails_when=a record write bypasses the seam, or the cancelled completed write changes or deletes pending.json or leaves its temporary file; no_claim=a real ENOSPC, and the writers this setup does not reach (handOver, retirePending, adoption, the take-back mark, the removal's record), which their own tests drive
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const writes: Array<{ name: string; phase: unknown }> = []
+  let recordOnDiskAtCompleted: string | undefined
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      const phase =
+        typeof record === 'object' && record !== null && 'phase' in record
+          ? record.phase
+          : undefined
+      writes.push({ name: basename(path), phase })
+      if (phase !== 'completed') return
+      recordOnDiskAtCompleted = readFileSync(path, 'utf8')
+      throw Object.assign(new Error('no space left on device'), {
+        code: 'ENOSPC',
+      })
+    },
+  })
+
+  // Assert
+  assert.deepEqual(writes, [
+    { name: 'pending.json', phase: undefined },
+    { name: 'pending.json', phase: 'completed' },
+    { name: 'receipt.json', phase: undefined },
+  ])
+  assert.equal(result.status, 'installed')
+  const pendingAfter = await readFile(pendingPath, 'utf8')
+  assert.equal(pendingAfter, recordOnDiskAtCompleted)
+  assert.equal(JSON.parse(pendingAfter).phase, undefined)
+  assert.equal(JSON.parse(pendingAfter).targetPath, configPath)
+  assert.deepEqual((await readdir(join(storage, 'devin-mcp'))).sort(), [
+    'pending.json',
+    'receipt.json',
+  ])
+})
+
 test('Recovery deletes a leftover probe whose inode equals the recorded staged inode', async (context) => {
   // Value: protects=a crash during the hard-link probe does not leave a stray link for good; fails_when=the probe stays beside the config; why_new=the probe was not in any record; seam=hand-written pending record naming a probe file
   // Arrange

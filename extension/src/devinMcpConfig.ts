@@ -17,6 +17,7 @@ import { z } from 'zod'
 import {
   DEVIN_MCP_CONFIG_LIMIT_BYTES,
   DEVIN_MCP_RECORD_LIMIT_BYTES,
+  FIRST_SETUP_HASH_PREFIX,
   PRIVATE_FILE_MODE,
 } from './constants'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
@@ -61,6 +62,8 @@ export type DevinMcpTestSeam = {
   beforeLeftoverCheck?: (path: string) => void
   /** Called right after that second look passed and before the link or unlink it guards, so a test can swap the file in the gap the second look cannot close. */
   afterLeftoverCheck?: (path: string) => void
+  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them; a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
+  beforeRecordWrite?: (write: { path: string; record: unknown }) => void
 }
 
 /** A file number as a record holds it: a number up to 2^53 and its digits as text above ({@link recordedFileId}). */
@@ -681,11 +684,10 @@ async function markCompleted(
   journal: Pending,
 ): Promise<boolean> {
   try {
-    await atomicPrivateWrite(
-      context.pendingPath,
-      { ...journal, phase: 'completed' } satisfies Pending,
-      DEVIN_MCP_RECORD_LIMIT_BYTES,
-    )
+    await writeRecord(context, context.pendingPath, {
+      ...journal,
+      phase: 'completed',
+    } satisfies Pending)
     return true
   } catch {
     return false
@@ -700,11 +702,10 @@ async function markCompleted(
  */
 async function handOver(context: Context, journal: Pending): Promise<void> {
   try {
-    await atomicPrivateWrite(
-      context.pendingPath,
-      { ...journal, phase: 'handed' } satisfies Pending,
-      DEVIN_MCP_RECORD_LIMIT_BYTES,
-    )
+    await writeRecord(context, context.pendingPath, {
+      ...journal,
+      phase: 'handed',
+    } satisfies Pending)
   } catch {
     await dropPending(context)
   }
@@ -1296,11 +1297,7 @@ async function publishRoot(
     displaced,
   )
   try {
-    await atomicPrivateWrite(
-      context.pendingPath,
-      journal satisfies Pending,
-      DEVIN_MCP_RECORD_LIMIT_BYTES,
-    )
+    await writeRecord(context, context.pendingPath, journal satisfies Pending)
   } catch (error) {
     // Nothing moved yet.
     await unlink(staged.temporary).catch(() => undefined)
@@ -1367,11 +1364,7 @@ async function deleteConfig(
     keptIno: recordedFileId(moved.ino),
     keptSha256: moved.sha256,
   }
-  await atomicPrivateWrite(
-    context.pendingPath,
-    journal,
-    DEVIN_MCP_RECORD_LIMIT_BYTES,
-  )
+  await writeRecord(context, context.pendingPath, journal)
   try {
     assertConfigUnchanged(context, look.identity)
     context.seam?.afterCheck?.()
@@ -1538,9 +1531,23 @@ async function readRecord<Schema extends z.ZodType>(
   return record.data
 }
 
-/** Writes one of Codebook's own records atomically. */
-function writeRecord(path: string, value: unknown): Promise<void> {
-  return atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES)
+/**
+ * Writes one of Codebook's own records (the receipt, `pending.json` or a rollback's journal) atomically; every record write of a run goes through here, so a test sees each one at {@link DevinMcpTestSeam.beforeRecordWrite}.
+ * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename.
+ * @param path - The record file.
+ * @param value - The complete record.
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam throws; the previous record then stays byte for byte.
+ * @example
+ * await writeRecord(context, context.pendingPath, { ...journal, phase: 'completed' })
+ */
+function writeRecord(
+  context: Context,
+  path: string,
+  value: unknown,
+): Promise<void> {
+  return atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () =>
+    context.seam?.beforeRecordWrite?.({ path, record: value }),
+  )
 }
 
 /** The receipt, when it covers this run's config path. */
@@ -1936,7 +1943,7 @@ async function retirePending(
   context: Context,
   retained: Pending | undefined,
 ): Promise<void> {
-  if (retained) await writeRecord(context.pendingPath, retained)
+  if (retained) await writeRecord(context, context.pendingPath, retained)
   else await rm(context.pendingPath, { force: true })
 }
 
@@ -2389,7 +2396,7 @@ async function adoptPending(
       pending.installationId ?? installationIdOf(await readReceipt(context)),
     config: { ino: recordedFileId(identity.ino) },
   }
-  await writeRecord(context.receiptPath, adopted)
+  await writeRecord(context, context.receiptPath, adopted)
   await retirePending(context, retained)
   return adopted
 }
@@ -2439,7 +2446,7 @@ async function withInstallationId(
   receipt: Receipt,
 ): Promise<void> {
   if (receipt.installationId) return
-  await writeRecord(context.receiptPath, {
+  await writeRecord(context, context.receiptPath, {
     ...receipt,
     installationId: randomUUID(),
   })
@@ -2672,7 +2679,7 @@ async function publishEntry(
     config,
   }
   try {
-    await writeRecord(context.receiptPath, written)
+    await writeRecord(context, context.receiptPath, written)
   } catch (cause) {
     // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
     if (receipt) throw cause
@@ -2785,14 +2792,33 @@ async function markTakeBackOwed(
       ? !provesAnotherPublish(legacyJournal, publish)
       : publish.generation === publishGeneration
   if (!belongsToPublish) return
-  await writeRecord(context.pendingPath, { ...publish, takeBack: true })
+  await writeRecord(context, context.pendingPath, {
+    ...publish,
+    takeBack: true,
+  })
+}
+
+/**
+ * Tells whether a publish record is a first setup's: it carries the `firstSetup` flag, or an entry hash with the {@link FIRST_SETUP_HASH_PREFIX}, which an older build's rewrite of the record keeps when it drops the flag; called by {@link isTakeBackOwed}.
+ * @param pending - The publish record.
+ * @returns `true` for either mark; `false` for an update's, a removal's or an older build's record.
+ * @example
+ * isFirstSetupRecord({ ...pending, firstSetup: true })                 // => true
+ * isFirstSetupRecord({ ...pending, entrySha256: 'first-setup:9f86d081' }) // => true
+ * isFirstSetupRecord({ ...pending, entrySha256: '9f86d081' })             // => false
+ */
+function isFirstSetupRecord(pending: Pending): boolean {
+  return (
+    pending.firstSetup === true ||
+    pending.entrySha256?.startsWith(FIRST_SETUP_HASH_PREFIX) === true
+  )
 }
 
 /**
  * Tells whether the entry a publish record covers must be taken back instead of adopted; called by {@link inspect} and {@link settlePending}.
  * @param pending - The publish record.
  * @param receipt - The receipt that stands, if any.
- * @returns `true` when the record is marked `takeBack`, or is a first setup's whose own receipt (same generation) was never written.
+ * @returns `true` when the record is marked `takeBack`, or is a first setup's ({@link isFirstSetupRecord}) whose own receipt (same generation) was never written.
  * @example
  * isTakeBackOwed({ ...pending, firstSetup: true }, undefined) // => true
  */
@@ -2802,7 +2828,7 @@ function isTakeBackOwed(
 ): boolean {
   if (pending.takeBack) return true
   return (
-    pending.firstSetup === true &&
+    isFirstSetupRecord(pending) &&
     (receipt === undefined || receipt.generation !== pending.generation)
   )
 }
