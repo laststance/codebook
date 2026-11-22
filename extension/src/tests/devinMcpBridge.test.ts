@@ -2596,3 +2596,88 @@ test(
     assert.equal(bridge.counts.initializes, 1)
   },
 )
+
+// protects=a connected bridge surviving a file shortage while its reconnect check reads a valid receipt (Cycle 0145 task 6); fails_when=any failed read of a receipt answers 'removed', so one EMFILE ends the bridge with the not-set-up line although nothing was removed; no_claim=a shortage at the first connection (task 13) or other failure codes (the receipt state tests)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose reconnect check meets a file shortage fails only that request, keeps running and reconnects on the next one',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // The preload fails the first open of the MCP receipt after the test created its flag file, the way a full file table would.
+    const preload = `const fsPromises = require('node:fs/promises')
+const { existsSync, unlinkSync } = require('node:fs')
+const { dirname, join } = require('node:path')
+const originalOpen = fsPromises.open
+fsPromises.open = (path, ...rest) => {
+  const receiptPath = String(path)
+  if (receiptPath.endsWith(join('devin-mcp', 'receipt.json'))) {
+    const flagPath = join(dirname(dirname(receiptPath)), 'fail-receipt-once')
+    if (existsSync(flagPath)) {
+      unlinkSync(flagPath)
+      return Promise.reject(Object.assign(new Error('too many open files'), { code: 'EMFILE' }))
+    }
+  }
+  return originalOpen(path, ...rest)
+}
+`
+    const bridge = await startConnectedBridge(context, preload)
+    await writeFile(join(bridge.root, 'fail-receipt-once'), '')
+    bridge.handshake()
+    await bridge.expireSession()
+    // Act
+    bridge.askToolsList(1)
+    const failedRequest = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 1),
+      'the failed answer of the request that met the shortage',
+      20_000,
+      undefined,
+      20,
+    )
+    bridge.askToolsList(2)
+    const nextRequest = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 2),
+      'the answer to the next request',
+      20_000,
+      undefined,
+      20,
+    )
+    // Assert
+    assert.equal('error' in failedRequest, true)
+    assert.equal('result' in nextRequest, true)
+    assert.equal(bridge.readStderr().includes('is not set up'), false)
+    assert.equal(bridge.counts.initializes, 1)
+  },
+)
+
+// protects=a Devin window whose receipts check could not tell (a read failed) reaching a retry before the first connection instead of a wrong "not set up" refusal (Cycle 0145 task 6); fails_when=a no-answer counts as a removed setup, so the wait ends with the not-set-up line; no_claim=the real read failure (the check answers no-answer from a stand-in)
+test(
+  'a receipts check that answers no-answer ends the wait with the not-running line, not the not-set-up line',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/checkDevinBridgeReceipts': {
+          checkDevinBridgeReceipts: () =>
+            Promise.resolve({ answer: 'no-answer' }),
+        },
+      },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 1_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(
+      refusal,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
+    )
+  },
+)

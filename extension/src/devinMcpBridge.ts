@@ -895,7 +895,7 @@ function writeRefusalLine(line: string): Promise<void> {
  * @param binding - What the bridge connected for ({@link bindingOfSelection}).
  * @param cwd - The bridge's working folder, named by the refusal line.
  * @returns A check resolving `true` when the setup stands and `false` after it wrote the refusal.
- * @throws From the returned check, when the receipts read does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS}: that request fails and the bridge stays up for the next one.
+ * @throws From the returned check, when the receipts check does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS} or answers `no-answer` (a read failed without telling whether the setup stands): that request fails, no line is written and the bridge stays up for the next one.
  * @example
  * await setupCheckBeforeReconnect('/storage/agent/x.connection.json', binding, '/repo')() // => false once the setup was removed
  */
@@ -910,8 +910,9 @@ function setupCheckBeforeReconnect(
       binding,
       DEVIN_BRIDGE_RECONNECT_CHECK_MS,
     )
-    if (receipts === undefined)
-      throw new Error('Codebook setup check did not answer in time.')
+    // No answer in time, or a read that failed to look (a file shortage, EIO): nothing is known, so only this request fails and the bridge stays up.
+    if (receipts === undefined || receipts.answer === 'no-answer')
+      throw new Error('Codebook setup check did not answer.')
     if (receipts.answer === 'stands') return true
     process.exitCode = 1
     await writeRefusalLine(
@@ -931,7 +932,7 @@ function setupCheckBeforeReconnect(
  * @param onClosed - Called once the bridge's cleanup has completed after its stdio closed.
  * @param cwd - The bridge's working folder, named by the refusal a later reconnection ends with.
  * Before any request it requires the setup receipts of the descriptor's installation ({@link checkDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
- * @returns `connected` once the transport is up; `not-set-up` after a pause when the receipts check answered that the setup does not stand; `busy` after a pause when the receipts check did not answer in time, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
+ * @returns `connected` once the transport is up; `not-set-up` after a pause when the receipts check observed the setup removed; `busy` after a pause when the receipts check did not answer in time or answered `no-answer` or `replaced`, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
  * @example
  * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'
  */
@@ -953,10 +954,8 @@ async function connectOnce(
     const remaining = deadline - Date.now()
     if (remaining > 0)
       await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
-    // A descriptor that changed since the selection is scanned again; no answer is transient; any other answer is a setup that does not stand.
-    return receipts === undefined || receipts.answer === 'replaced'
-      ? 'busy'
-      : 'not-set-up'
+    // A descriptor that changed since the selection is scanned again, and no answer is transient; only an observed removal is a setup that does not stand.
+    return receipts?.answer === 'removed' ? 'not-set-up' : 'busy'
   }
   try {
     await runCursorMcpBridge(
