@@ -62,3 +62,20 @@ test('a refused entry removal warns with its cause and names the command that fi
     reload: false,
   })
 })
+
+// Value: protects=an entry removed while Codebook's own record could not be deleted is still reported as removed, with the record sentence and the reload Devin Local needs; fails_when=the notice turns the finished config change into a refusal without a reload, so Devin Local keeps the removed server until some later reload; why_new=review round (CodeRabbit, a record-cleanup failure after the config change); seam=none
+test('a removal whose record could not be deleted still reports the removed entry and asks for a reload', () => {
+  // Arrange / Act
+  const notice = devinRemovalNotice('removed', {
+    status: 'removed',
+    path: '/home/user/.config/devin/mcp_config.json',
+    cleanupFailure:
+      'Codebook could not delete its own record of that entry at /private/devin-mcp/receipt.json; delete that record by hand.',
+  })
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'information',
+    text: "Codebook removed its Devin Desktop skill. Codebook removed its codebook entry from /home/user/.config/devin/mcp_config.json and kept the file's other entries. Codebook could not delete its own record of that entry at /private/devin-mcp/receipt.json; delete that record by hand. Reload this window so Devin Local stops Codebook's MCP server. Codebook: Set Up AI Chat installs the skill and the entry again.",
+    reload: true,
+  })
+})

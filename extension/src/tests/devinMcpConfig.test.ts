@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
+  rename,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -66,7 +70,9 @@ test('Set Up AI Chat creates an absent Devin MCP config with exactly the Codeboo
   const result = await writeManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
-  assert.deepEqual(result, { status: 'installed', path: configPath })
+  assert.equal(result.status, 'installed')
+  assert.equal(result.path, configPath)
+  assert.match(result.generation, /^[0-9a-f-]{36}$/)
   assert.equal(
     await readFile(configPath, 'utf8'),
     `${JSON.stringify({ mcpServers: { codebook: ENTRY } }, null, 2)}\n`,
@@ -75,12 +81,15 @@ test('Set Up AI Chat creates an absent Devin MCP config with exactly the Codeboo
   const receipt = JSON.parse(
     await readFile(join(storage, 'devin-mcp', 'receipt.json'), 'utf8'),
   )
+  const { dev, ino } = await stat(configPath)
   assert.deepEqual(receipt, {
     schemaVersion: 1,
     targetPath: configPath,
     entrySha256: sha256(ENTRY_CANONICAL),
     createdFile: true,
     installed: true,
+    generation: result.generation,
+    config: { dev, ino },
   })
 })
 
@@ -320,10 +329,12 @@ test('A run after an interrupted write adopts the entry it finds instead of refu
   const result = await writeManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
-  assert.deepEqual(result, { status: 'current', path: configPath })
+  assert.equal(result.status, 'current')
+  assert.equal(result.path, configPath)
   const receipt = JSON.parse(
     await readFile(join(folder, 'receipt.json'), 'utf8'),
   )
+  assert.equal(result.generation, receipt.generation)
   assert.equal(receipt.entrySha256, sha256(ENTRY_CANONICAL))
   assert.equal(receipt.createdFile, true)
   await assert.rejects(stat(join(folder, 'pending.json')), { code: 'ENOENT' })
@@ -462,4 +473,148 @@ test('Set Up AI Chat refuses a config larger than one mebibyte before reading it
     return true
   })
   assert.equal(await readFile(configPath, 'utf8'), original)
+})
+
+test('Set Up AI Chat keeps a save that lands after its identity check and refuses', async (context) => {
+  // Value: protects=an edit saved by Devin or an editor right after the check is never overwritten; fails_when=the rename replaces the newer file or no refusal is thrown; why_new=the identity check alone cannot see a save after it; seam=seam.afterCheck writes in place between the check and the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  const newerSave = '{"theme":"light","note":"saved meanwhile"}\n'
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => writeFileSync(configPath, newerSave),
+  })
+
+  // Assert
+  await assert.rejects(attempt, /changed while Codebook was working on it/)
+  assert.equal(await readFile(configPath, 'utf8'), newerSave)
+  assert.deepEqual(await readdir(dirname(configPath)), ['mcp_config.json'])
+})
+
+test('Removal keeps a save that lands after its identity check and refuses', async (context) => {
+  // Value: protects=an edit saved right after the check is never deleted with the file Codebook created; fails_when=the unlink deletes the newer file; why_new=the identity check alone cannot see a save after it; seam=seam.afterCheck writes in place between the check and the rename-aside
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const newerSave = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+
+  // Act
+  const attempt = removeManagedDevinMcpEntry(storage, home, {
+    afterCheck: () => writeFileSync(configPath, newerSave),
+  })
+
+  // Assert
+  await assert.rejects(attempt, /changed while Codebook was working on it/)
+  assert.equal(await readFile(configPath, 'utf8'), newerSave)
+  assert.deepEqual(await readdir(dirname(configPath)), ['mcp_config.json'])
+})
+
+test('Set Up AI Chat does not replace a config that appears while it creates one', async (context) => {
+  // Value: protects=a config created meanwhile by Devin is never replaced; fails_when=the new file overwrites it; why_new=creation used a rename that replaces; seam=seam.afterCheck creates the config before the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const otherWriter = '{"theme":"created meanwhile"}\n'
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => {
+      mkdirSync(dirname(configPath), { recursive: true })
+      writeFileSync(configPath, otherWriter)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, /changed while Codebook was working on it/)
+  assert.equal(await readFile(configPath, 'utf8'), otherWriter)
+  assert.deepEqual(await readdir(dirname(configPath)), ['mcp_config.json'])
+})
+
+test('Set Up AI Chat refuses a config holding a number it could not write back unchanged', async (context) => {
+  // Value: protects=an unrelated big integer is not rounded by a rewrite; fails_when=9007199254740993 becomes 9007199254740992; why_new=JSON.parse rounds silently; seam=a real file with an integer beyond 2^53
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"id":9007199254740993}\n'
+  await writeConfig(configPath, original)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, /a number Codebook cannot write back unchanged/)
+  assert.equal(await readFile(configPath, 'utf8'), original)
+})
+
+test('Removal keeps a config the learner replaced after Codebook created the original', async (context) => {
+  // Value: protects=a file the user wrote is never deleted as Codebook's; fails_when=createdFile stays true for a replaced file and removal deletes it; why_new=createdFile was carried without checking the file; seam=an atomic replace by another file with new file numbers
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const replacement = join(dirname(configPath), 'user-edit.tmp')
+  await writeFile(replacement, '{"mcpServers":{}}\n')
+  await rename(replacement, configPath)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(result.status, 'removed')
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    mcpServers: {},
+  })
+})
+
+test('Removal reports the finished config change when only Codebook’s own record cannot be deleted', async (context) => {
+  // Value: protects=the window still tells the learner the entry is gone; fails_when=the call rejects after the config changed; why_new=the receipt deletion could throw after the change; seam=seam.afterRead puts a folder where the receipt file was
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home, {
+    afterRead: async () => {
+      await rm(receiptPath)
+      await mkdir(receiptPath)
+    },
+  })
+
+  // Assert
+  assert.equal(result.status, 'removed')
+  assert.ok(
+    result.status === 'removed' && result.cleanupFailure?.includes(receiptPath),
+  )
+  assert.doesNotMatch(JSON.stringify(result), /EISDIR|EPERM|EACCES/)
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+    theme: 'dark',
+    mcpServers: {},
+  })
+})
+
+test('A removal that names the generation it wrote removes it, and one that names an older generation leaves a newer setup alone', async (context) => {
+  // Value: protects=a rolled-back setup never removes a newer setup's entry; fails_when=a stale generation removes the entry or the matching one does not; why_new=identical entry content cannot tell setups apart; seam=two real setups with two receipts
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const first = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await removeManagedDevinMcpEntry(storage, home, undefined, {
+    expectedGeneration: first.generation,
+  })
+  const second = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Act
+  const stale = await removeManagedDevinMcpEntry(storage, home, undefined, {
+    expectedGeneration: first.generation,
+  })
+  const matching = await removeManagedDevinMcpEntry(storage, home, undefined, {
+    expectedGeneration: second.generation,
+  })
+
+  // Assert
+  assert.notEqual(first.generation, second.generation)
+  assert.deepEqual(stale, { status: 'superseded', path: configPath })
+  assert.equal(matching.status, 'file-removed')
+  await assert.rejects(stat(configPath), { code: 'ENOENT' })
 })
