@@ -1718,9 +1718,38 @@ function assertConfigStill(
   leftoverPath: string,
 ): void {
   if (!isLeftoverStill(context, context.path, { ino }))
-    throw new Error(
-      `The config at ${context.path} changed just now, so Codebook kept the private file at ${leftoverPath} untouched.`,
-    )
+    throw configChangedError(context, leftoverPath)
+}
+
+/** The refusal for a config name that changed while a leftover was about to be unlinked: the leftover stays and is named. */
+function configChangedError(context: Context, leftoverPath: string): Error {
+  return new Error(
+    `The config at ${context.path} changed just now, so Codebook kept the private file at ${leftoverPath} untouched.`,
+  )
+}
+
+/**
+ * Throws unless the config name still shows the published staged file (inode and bytes); called by {@link tidyLeftover} after the last read of a displaced original and before it is unlinked.
+ * The bytes are read again because an editor can rewrite the published file in place and keep its inode.
+ * Limit: a change between this read and the unlink is not seen.
+ * @param context - The run.
+ * @param pending - The pending record; its staged hash names the published bytes.
+ * @param ino - The published inode.
+ * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
+ * @throws An error naming `leftoverPath` when the config name shows another inode or other bytes, or is gone.
+ * @example
+ * await assertConfigStillPublished(context, pending, 42n, keptPath)
+ */
+async function assertConfigStillPublished(
+  context: Context,
+  pending: Pending,
+  ino: bigint,
+  leftoverPath: string,
+): Promise<void> {
+  assertConfigStill(context, ino, leftoverPath)
+  const config = await inspectCopy(context.path, context.seam)
+  if (!config || config.ino !== ino || config.sha256 !== pending.stagedSha256)
+    throw configChangedError(context, leftoverPath)
 }
 
 /** The error for a put-back whose link produced another inode than the checked one and whose names Codebook cannot attribute: both names stay as they are. */
@@ -1883,8 +1912,11 @@ async function tidyLeftover(
     return unlink(path)
   }
   // A displaced original of an unfinished change while another config stands at the config name (an editor saved after the move-aside): it may be the only copy of the learner's other servers, so it is handed over and named, never deleted. The published staged file's inode means the change did finish, so that copy is Codebook's own leftover.
-  if (role === 'kept' && phase === undefined && config)
-    await keepOriginalUnlessPublished(context, pending, config.ino)
+  // When the check returns, the config is the published staged file: its inode is checked again right before the unlink.
+  const publishedIno =
+    role === 'kept' && phase === undefined && config ? config.ino : undefined
+  if (publishedIno !== undefined)
+    await keepOriginalUnlessPublished(context, pending, publishedIno)
   if (
     role === 'kept' &&
     (await putBackDisplaced(
@@ -1908,6 +1940,9 @@ async function tidyLeftover(
     throw new Error(
       `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook left it untouched.`,
     )
+  // A save by rename or in place may have changed the published config since the first look: the config name is checked first and the displaced name last, right before the unlink.
+  if (publishedIno !== undefined)
+    await assertConfigStillPublished(context, pending, publishedIno, path)
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file.
   assertLeftoverStill(context, path, lastLook)
   await unlink(path)
