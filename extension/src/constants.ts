@@ -1493,6 +1493,24 @@ export const WIKI_SKILL_STEP_REMOVAL_END = 'skill-removal'
 /** What Codebook says when Remove Managed Cursor Skill meets a Cursor skill step of this window that is still running after the grace, so a late deploy could write the skill again; nothing is removed (Cycle 0056 RT3-C). */
 export const WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE =
   'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.'
+/** The button of the notices that ask for a reload in Devin Desktop, whose Devin Local loads its MCP servers only when a window loads (Cycle 0142, observation O6). */
+export const RELOAD_WINDOW_ACTION = 'Reload Window'
+/** The editor command the {@link RELOAD_WINDOW_ACTION} button runs. */
+export const RELOAD_WINDOW_COMMAND = 'workbench.action.reloadWindow'
+/** What Set Up AI Chat answers in a Windows Devin Desktop window, where Devin's skill folder and the editor itself are unchecked (Cycle 0143, decision D6). */
+export const DEVIN_WINDOWS_UNSUPPORTED_SENTENCE =
+  'Devin Desktop setup on Windows is not supported yet.'
+/** What a Devin Desktop window says after it brought Codebook's MCP entry to this installation (an update moved the bridge, or the configured Node changed): Devin Local runs the new entry only after a reload. */
+export const DEVIN_ENTRY_REFRESHED_SENTENCE =
+  'Codebook updated its MCP server entry for Devin Local to this installation. Reload this window so Devin Local starts the updated server.'
+/** The Output line of a Devin Desktop window whose setup was removed (from another window): it reconnects nothing and writes no file until Set Up AI Chat runs again. */
+export const DEVIN_SETUP_REMOVED_LINE =
+  "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again."
+/** The modal question of Remove Devin Desktop Setup: the skill and the MCP config are shared by every Devin Desktop window of this user. */
+export const DEVIN_REMOVAL_QUESTION =
+  "Remove the Codebook-owned Devin Desktop skill and Codebook's entry in Devin's MCP config? Every Devin Desktop window of this user shares them."
+/** The confirming button of {@link DEVIN_REMOVAL_QUESTION}. */
+export const DEVIN_REMOVAL_ACTION = 'Remove Devin setup'
 /** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. Written from the raw bounds here because the helpers that name each bound read this module; `wikiRunBoundMs.test.ts` pins it against {@link longestWikiRunMs} over every kind and host, so a changed bound that this list misses fails there. */
 export const LONGEST_WIKI_RUN_MS = Math.max(
   WIKI_GENERATE_TIMEOUT_MS,

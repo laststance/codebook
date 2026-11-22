@@ -93,6 +93,10 @@
         "title": "Codebook: Restore Managed Cursor Skill"
       },
       {
+        "command": "codebook.removeManagedDevinSetup",
+        "title": "Codebook: Remove Devin Desktop Setup"
+      },
+      {
         "command": "codebook.openStudyWorkspace",
         "title": "Codebook: Open Study Workspace"
       },
