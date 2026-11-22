@@ -87,7 +87,7 @@ const receiptSchema = z.object({
 })
 const pendingSchema = z.object({
   targetPath: z.string(),
-  /** Hash of the entry a write was about to publish; absent for a removal. */
+  /** Hash of the entry a write was about to publish; absent for a removal. A first setup's carries the {@link FIRST_SETUP_HASH_PREFIX} before it, so an older build, which adopts only an entry whose hash equals this one, never adopts it; {@link plainEntryHashOf} strips it. */
   entrySha256: z.string().optional(),
   createdFile: z.boolean(),
   /** The id of the write or removal; every private name beside the config holds it ({@link journalNameOf}), and recovery accepts no other name. */
@@ -2316,6 +2316,7 @@ async function settlePending(
     return receipt
   const isReceipted =
     receipt !== undefined && receipt.generation === pending.generation
+  // The hash is compared as recorded: a first setup's prefixed hash never equals an entry's, so such a record is never adopted here.
   if (
     look.kind === 'present' &&
     pending.targetPath === context.path &&
@@ -2668,6 +2669,7 @@ async function takeOutUnrecordedEntry(
 
 /**
  * Publishes the config with Codebook's entry: the pending record is written by {@link publishRoot} before the rename, the receipt after it.
+ * A first setup ({@link isFirstSetup}) records its entry hash with the {@link FIRST_SETUP_HASH_PREFIX} and `firstSetup`, so no Codebook version adopts its entry before its receipt exists and this one takes it back ({@link isTakeBackOwed}); the receipt holds the plain hash.
  * An existing `codebook` entry keeps the keys Devin manages itself (`disabled`, which Customize sets when the server is toggled off, and `disabledTools`); any other added key makes the entry an edit that is never replaced.
  * @param context - The run; its entry must be set.
  * @param look - What the config looked like.
@@ -2696,7 +2698,8 @@ async function publishEntry(
   if (isFirst && receipt !== undefined) await retireStaleReceipt(context)
   await context.seam?.afterRead?.()
   const { config, keptLeft } = await publishRoot(context, root, look, {
-    entrySha256: entryHash,
+    // A first setup's record carries the prefix so no older build adopts its entry; its receipt below keeps the plain hash.
+    entrySha256: isFirst ? `${FIRST_SETUP_HASH_PREFIX}${entryHash}` : entryHash,
     createdFile,
     generation,
     installationId,
@@ -2989,7 +2992,9 @@ async function finishCutShortSetup(
 ): Promise<
   { look: ConfigLook; removal?: 'file-removed' | 'removed' } | undefined
 > {
-  const { entrySha256, stagedIno } = pending
+  const { stagedIno } = pending
+  // A first setup's record carries the prefix; the entry and the receipt the rollback checks against hash plainly.
+  const entrySha256 = plainEntryHashOf(pending.entrySha256)
   if (
     look.kind !== 'present' ||
     pending.targetPath !== context.path ||

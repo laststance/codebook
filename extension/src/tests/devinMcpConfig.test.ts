@@ -2754,6 +2754,178 @@ test('A refresh takes back a first setup whose receipt, take-back mark and rollb
   })
 })
 
+test('A first setup that stopped before its receipt leaves a record no older Codebook version adopts, and the next refresh takes the entry back', async (context) => {
+  // Value: protects=a first setup's publish record puts the first-setup prefix before its entry hash, so a window still on 0.2.140.0 or 0.2.141.0 (each adopts only an entry whose hash equals the record's) never installs it, while this version takes the entry back; fails_when=the record's entrySha256 is the entry's plain hash, the record lacks firstSetup, a receipt stands after the stop, or the refresh keeps the entry or answers anything but not-managed; no_claim=the older versions' answers come from reading their code (7a279c9b: settlePending and isPendingStale; 4102b28d: finishCutShortSetup and settlePending), not from running them; a real process end (seam.afterPublish throws in its place)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+
+  // Act
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const recordAfterStop = await readRecordFile(storage, 'pending.json')
+  const isReceiptLeftAfterStop = existsSync(receiptPath)
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    recordAfterStop.entrySha256,
+    'first-setup:78fc5662b711e36b0ed8778a0b79fe62cd50de547097ad95ff10ff8c1996673e',
+  )
+  assert.equal(recordAfterStop.firstSetup, true)
+  assert.equal(isReceiptLeftAfterStop, false)
+  assert.equal(result.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A first setup record whose flags an older Codebook version dropped is still taken back through its hash prefix, never adopted', async (context) => {
+  // Value: protects=the prefix alone carries a first setup's take-back, so a record that 0.2.140.0 rewrote (its handOver keeps entrySha256 and drops the firstSetup and takeBack keys its schema does not know) is taken back, not installed; fails_when=the refresh adopts the entry (current, a receipt written), keeps the entry in the config, or refuses it as an entry that differs; no_claim=0.2.140.0's rewrite itself (both keys are deleted from the record in its place, the handed phase it also writes is not reproduced); a real process end (seam.afterPublish throws in its place)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  delete publishRecord.firstSetup
+  delete publishRecord.takeBack
+  writeFileSync(pendingPath, JSON.stringify(publishRecord))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A 0.2.141.0 first setup record with a plain hash and the firstSetup flag is still taken back', async (context) => {
+  // Value: protects=a record that 0.2.141.0 wrote before it stopped (plain entry hash plus firstSetup) is taken back by this version as it was by that one; fails_when=the refresh adopts the entry (current) or keeps it in the config; no_claim=0.2.141.0's writer itself (the prefix is removed from this version's record in its place); a real process end (seam.afterPublish throws in its place)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(pendingPath, 'utf8')),
+      entrySha256:
+        '78fc5662b711e36b0ed8778a0b79fe62cd50de547097ad95ff10ff8c1996673e',
+      firstSetup: true,
+    }),
+  )
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A first setup record whose own receipt was written is retired and the entry stays installed', async (context) => {
+  // Value: protects=a prefixed record whose same-generation receipt exists (the run stopped only before it deleted the record) is settled without a take-back, so a finished setup is never undone; fails_when=the refresh takes the entry out, deletes the receipt, or leaves pending.json; no_claim=the stop between the receipt write and the record's deletion (the receipt is written by hand from the record, as that write would have written it); a real process end (seam.afterPublish throws in its place)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const publishRecord = await readRecordFile(storage, 'pending.json')
+  await writeRecordFile(storage, 'receipt.json', {
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256:
+      '78fc5662b711e36b0ed8778a0b79fe62cd50de547097ad95ff10ff8c1996673e',
+    createdFile: false,
+    installed: true,
+    generation: publishRecord.generation,
+    installationId: publishRecord.installationId,
+    config: { ino: publishRecord.stagedIno },
+  })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'current')
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+  assert.equal(existsSync(receiptPath), true)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('An update that stopped before its receipt keeps a plain entry hash without firstSetup and is adopted', async (context) => {
+  // Value: protects=only a first setup's record carries the prefix and the firstSetup flag, so an update that stopped before its receipt is still adopted as before; fails_when=the update's record carries the prefix or firstSetup, or the refresh takes the updated entry out; no_claim=a real process end (seam.afterPublish throws in its place)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Act
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const recordAfterStop = await readRecordFile(storage, 'pending.json')
+  const result = await refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+
+  // Assert
+  assert.equal(
+    recordAfterStop.entrySha256,
+    'ac2315e6a57265f50d9ac50f2f4ea13720f46de69a96edf77f972d1912caa196',
+  )
+  assert.equal('firstSetup' in recordAfterStop, false)
+  assert.equal(result.status, 'current')
+  assert.deepEqual(
+    JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.codebook,
+    OTHER_ENTRY,
+  )
+})
+
 test('A first setup whose receipt cannot be written removes only its own entry from a config that has other servers', async (context) => {
   // Value: protects=the learner's other servers survive the roll-back of a failed first setup; fails_when=another server is dropped or the codebook entry stays; why_new=the receipt write could fail after the rename and left an unowned entry; seam=seam.afterPublish puts a folder where receipt.json goes
   // Arrange
@@ -3121,7 +3293,7 @@ test('A refresh that fails after settling a cut-short rollback does not let the 
 })
 
 test('A refresh takes back a first setup whose rollback journal was written by the released build and names no publish', async (context) => {
-  // protects=a cut-short rollback journal of an older build, which names no publish generation, still finishes the take-back when it belongs to the publish record; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the generation and the newer marks are removed from the records to stand for the older build
+  // protects=a cut-short rollback journal of an older build, which names no publish generation, still finishes the take-back when it belongs to the publish record; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the generation and the newer marks (the flags and the first-setup hash prefix) are removed from the records to stand for the older build
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -3398,8 +3570,10 @@ test('A rollback journal of another installation does not mark a pending publish
   )
   const publishB = JSON.parse(readFileSync(pendingPath, 'utf8'))
   delete publishB.takeBack
-  // Installation B's publish is an update (not a first setup), so it stays adoptable once its journal-free record is settled.
+  // Installation B's publish is an update (not a first setup): no firstSetup and the plain entry hash, so it stays adoptable once its journal-free record is settled.
   delete publishB.firstSetup
+  publishB.entrySha256 =
+    '78fc5662b711e36b0ed8778a0b79fe62cd50de547097ad95ff10ff8c1996673e'
   writeFileSync(pendingPath, JSON.stringify(publishB))
 
   // Act
@@ -4282,7 +4456,7 @@ test('A setup after a removal that left its receipt behind starts a new installa
 })
 
 test('Setup run again after only mcp_config.json was deleted is taken back when it stops before its receipt', async (context) => {
-  // Value: protects=a setup whose old receipt owns no entry that stands is a first setup, so a stop after it published and before its new receipt never leaves an entry the next run keeps as installed; fails_when=the refresh answers current (the crashed setup adopted), the old receipt still stands after the stop, the record lacks firstSetup, or the config Codebook created stays; no_claim=a real process end (seam.afterPublish throws in its place), and what older Codebook versions do with this record
+  // Value: protects=a setup whose old receipt owns no entry that stands is a first setup, so a stop after it published and before its new receipt never leaves an entry the next run keeps as installed; fails_when=the refresh answers current (the crashed setup adopted), the old receipt still stands after the stop, the record lacks firstSetup or the first-setup hash prefix, or the config Codebook created stays; no_claim=a real process end (seam.afterPublish throws in its place), and what older Codebook versions do with this record
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
@@ -4306,6 +4480,10 @@ test('Setup run again after only mcp_config.json was deleted is taken back when 
   assert.equal(result.status, 'not-managed')
   assert.equal(isReceiptLeftAfterStop, false)
   assert.equal(recordAfterStop.firstSetup, true)
+  assert.equal(
+    recordAfterStop.entrySha256,
+    'first-setup:78fc5662b711e36b0ed8778a0b79fe62cd50de547097ad95ff10ff8c1996673e',
+  )
   assert.equal(existsSync(configPath), false)
   assert.equal(existsSync(receiptPath), false)
 })
