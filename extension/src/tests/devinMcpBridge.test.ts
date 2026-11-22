@@ -2661,9 +2661,9 @@ test(
       process.pid,
       { ...endpoint.descriptor, instanceId: IDS[1] },
     )
-    // The hanging candidate is the older one, so the live one is taken at once.
-    await utimes(hangingPath, new Date(1_000_000), new Date(1_000_000))
-    await utimes(livePath, new Date(2_000_000), new Date(2_000_000))
+    // The hanging candidate is the newer one, so its lookup always starts first; the live one is taken once the scan's wait ends.
+    await utimes(hangingPath, new Date(2_000_000), new Date(2_000_000))
+    await utimes(livePath, new Date(1_000_000), new Date(1_000_000))
     const preloadPath = join(root, 'preload.js')
     // The preload gives the lookup of the other window's workspace a referenced handle and never settles it.
     await writeFile(
