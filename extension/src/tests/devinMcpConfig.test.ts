@@ -2054,6 +2054,84 @@ test('A removal that keeps other servers and cannot write its completed record k
   assert.equal(existsSync(displacedPath), true)
 })
 
+test('A whole-file removal whose moved-aside file grew past the limit puts the config back and refuses', async (context) => {
+  // Value: protects=a removal never leaves mcp_config.json missing when the moved-aside file cannot be compared; fails_when=the removal refuses without linking the file back, so the config stays gone and a retry hits the same limit; why_new=Cycle 0143 /ship last-round finding v3/outside-voice#3; seam=seam.afterMoveAside grows the moved file past 1 MiB through the same inode
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const grownBytes = 'x'.repeat(1_048_577)
+
+  // Act
+  const attempt = removeManagedDevinMcpEntry(storage, home, {
+    afterMoveAside: (movedPath) => writeFileSync(movedPath, grownBytes),
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.match(error.message, /could not be read back while Codebook removed/)
+    assert.match(error.message, /Codebook: Remove Devin Desktop Setup again/)
+    return true
+  })
+  assert.equal(await readFile(configPath, 'utf8'), grownBytes)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
+test('A whole-file removal that cannot compare the moved-aside file keeps a config saved meanwhile and names the displaced file', async (context) => {
+  // Value: protects=a config saved while the removal could not compare is never replaced by the put-back, and the learner is told where the displaced file stays; fails_when=the saved config is overwritten or the refusal does not name the displaced path; why_new=Cycle 0143 /ship last-round finding v3/outside-voice#3; seam=seam.afterMoveAside grows the moved file past 1 MiB and saves a new config
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const savedMeanwhile = '{"theme":"saved by an editor"}\n'
+  let displacedPath = ''
+
+  // Act
+  const attempt = removeManagedDevinMcpEntry(storage, home, {
+    afterMoveAside: (movedPath) => {
+      displacedPath = movedPath
+      writeFileSync(displacedPath, 'x'.repeat(1_048_577))
+      writeFileSync(configPath, savedMeanwhile)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(displacedPath))
+    return true
+  })
+  assert.equal(await readFile(configPath, 'utf8'), savedMeanwhile)
+  assert.equal(existsSync(displacedPath), true)
+})
+
+test('A retry after a removal that took the entry out but could not record it reports the entry as removed', async (context) => {
+  // Value: protects=the retry still offers the reload, because the loaded bridge runs until one; fails_when=the retry answers not-managed; why_new=Cycle 0143 /ship last-round finding v3/outside-voice#5; seam=seam.afterPublish keeps pending.json's bytes and replaces the file by a folder so the completed record fails, then the bytes are restored
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let pendingBytes = ''
+  await assert.rejects(
+    removeManagedDevinMcpEntry(storage, home, {
+      afterPublish: () => {
+        pendingBytes = readFileSync(pendingPath, 'utf8')
+        rmSync(pendingPath, { force: true })
+        mkdirSync(pendingPath)
+      },
+    }),
+    /could not write its own record/,
+  )
+  // The record's room is back, as the refusal asked.
+  rmSync(pendingPath, { recursive: true })
+  writeFileSync(pendingPath, pendingBytes)
+
+  // Act
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'receipt.json')), false)
+})
+
 test('Recovery puts a displaced file with another inode but the recorded bytes back when the config name is still empty and deletes nothing', async (context) => {
   // Value: protects=a displaced file that still holds the recorded bytes is not lost when its inode changed and the run ended before the comparison; fails_when=the file with another inode but the recorded bytes is deleted, left aside or refused while the config name is empty; why_new=recovery refused every file whose inode differed from the record; seam=hand-written pending record whose recorded inode is not the file's, with no config at the config name
   // Arrange

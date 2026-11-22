@@ -1,8 +1,30 @@
 import type { CursorSkillRemovalStatus } from '../cursorSkillDeployment'
-import type { DevinMcpRemovalResult } from '../devinMcpConfig'
+import {
+  DevinMcpUnrecordedRemovalError,
+  type DevinMcpRemovalResult,
+} from '../devinMcpConfig'
 
-/** How the removal of Codebook's entry in Devin Desktop's MCP config ended ({@link removeManagedDevinMcpEntry}), or the refusal it threw. */
-type DevinEntryRemoval = DevinMcpRemovalResult | { refusal: string }
+/** How the removal of Codebook's entry in Devin Desktop's MCP config ended ({@link removeManagedDevinMcpEntry}), or the refusal it threw; `isEntryRemoved` marks a refusal after the config already lost the entry. */
+type DevinEntryRemoval =
+  DevinMcpRemovalResult | { refusal: string; isEntryRemoved?: boolean }
+
+/**
+ * Turns what {@link removeManagedDevinMcpEntry} threw into the refusal {@link devinRemovalNotice} words, keeping the fact that the entry was already out of the config; called by the removal command of {@link activate}.
+ * @param error - The thrown value.
+ * @param describe - Words the thrown value as a sentence.
+ * @returns The refusal, with `isEntryRemoved` after an {@link DevinMcpUnrecordedRemovalError}.
+ * @example
+ * devinEntryRemovalOf(new Error('x'), (error) => String(error)) // => { refusal: 'Error: x', isEntryRemoved: false }
+ */
+export function devinEntryRemovalOf(
+  error: unknown,
+  describe: (error: unknown) => string,
+): { refusal: string; isEntryRemoved: boolean } {
+  return {
+    refusal: describe(error),
+    isEntryRemoved: error instanceof DevinMcpUnrecordedRemovalError,
+  }
+}
 
 /** What the notice says of the skill, for each way its removal can end. */
 const SKILL_SENTENCES: Record<CursorSkillRemovalStatus, string> = {
@@ -57,6 +79,13 @@ export function devinRemovalNotice(
   skillRemoval: CursorSkillRemovalStatus,
   entryRemoval: DevinEntryRemoval,
 ): { severity: 'information' | 'warning'; text: string; reload: boolean } {
+  // The entry is out but its record is not written: the refusal says so, and the loaded bridge still needs the reload.
+  if ('refusal' in entryRemoval && entryRemoval.isEntryRemoved)
+    return {
+      severity: 'warning',
+      text: `${entryRemoval.refusal} ${SKILL_SENTENCES[skillRemoval]} ${RELOAD_SENTENCE}`,
+      reload: true,
+    }
   // A refused entry stays as it is; the warning says so first and names the command that finishes the removal.
   if ('refusal' in entryRemoval)
     return {

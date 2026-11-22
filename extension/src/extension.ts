@@ -157,7 +157,10 @@ import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { describeWikiGenerateConfirmation } from './utils/describeWikiGenerateConfirmation'
 import { describeWikiSkillStepEnd } from './utils/describeWikiSkillStepEnd'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
-import { devinRemovalNotice } from './utils/devinRemovalNotice'
+import {
+  devinEntryRemovalOf,
+  devinRemovalNotice,
+} from './utils/devinRemovalNotice'
 import { devinWindowRefusal } from './utils/devinWindowRefusal'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
@@ -1389,7 +1392,7 @@ export function activate(
     const skillRemoval = (await removeManagedDevinSkill(storageRoot)).status
     // A refused entry (an unreadable config, a removal journal of another file) keeps the config as it is, and the warning says so.
     const entryRemoval = await removeManagedDevinMcpEntry(storageRoot).catch(
-      (error: unknown) => ({ refusal: thrownMessage(error) }),
+      (error: unknown) => devinEntryRemovalOf(error, thrownMessage),
     )
     // The saved setup is cleared after the entry, and a failed write of it only goes to the Output: the next window then reconnects nothing (its refresh finds no receipt).
     await clearSavedDevinSetup()

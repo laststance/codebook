@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { devinRemovalNotice } from '../utils/devinRemovalNotice'
+import { DevinMcpUnrecordedRemovalError } from '../devinMcpConfig'
+import {
+  devinEntryRemovalOf,
+  devinRemovalNotice,
+} from '../utils/devinRemovalNotice'
 
 // Value: protects=after a full removal the learner reads what went, that the config's other servers stayed, and that a reload stops the bridge Devin Local already runs; fails_when=the notice hides the kept entries or drops the reload, so Devin Local keeps calling a removed setup until some later reload; why_new=Devin Desktop removal command (Cycle 0143); seam=none
 test('a removal of the skill and the entry asks for a reload and says the other MCP entries were kept', () => {
@@ -76,6 +80,27 @@ test('a removal whose record could not be deleted still reports the removed entr
   assert.deepEqual(notice, {
     severity: 'information',
     text: "Codebook removed its Devin Desktop skill. Codebook removed its codebook entry from /home/user/.config/devin/mcp_config.json and kept the file's other entries. Codebook could not delete its own record of that entry at /private/devin-mcp/receipt.json; delete that record by hand. Reload this window so Devin Local stops Codebook's MCP server. Codebook: Set Up AI Chat installs the skill and the entry again.",
+    reload: true,
+  })
+})
+
+// Value: protects=after a removal that took the entry out but could not record it the learner is still offered the reload and told the facts apart; fails_when=the refusal returns reload false, so the loaded bridge keeps running until some later reload; why_new=Cycle 0143 /ship last-round finding v3/outside-voice#5; seam=none
+test('a removal whose record could not be written still offers the reload and says the entry is out', () => {
+  // Arrange
+  const refusal = devinEntryRemovalOf(
+    new DevinMcpUnrecordedRemovalError(
+      'Codebook took its entry out of the config but could not write its own record of that step, so it kept its receipt; make room for that record, run Codebook: Remove Devin Desktop Setup again.',
+    ),
+    (error) => (error instanceof Error ? error.message : String(error)),
+  )
+
+  // Act
+  const notice = devinRemovalNotice('removed', refusal)
+
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'warning',
+    text: "Codebook took its entry out of the config but could not write its own record of that step, so it kept its receipt; make room for that record, run Codebook: Remove Devin Desktop Setup again. Codebook removed its Devin Desktop skill. Reload this window so Devin Local stops Codebook's MCP server.",
     reload: true,
   })
 })

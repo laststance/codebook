@@ -886,6 +886,20 @@ async function restoreDisplaced(
   await dropPending(context)
 }
 
+/** The refusal for a removal whose moved-aside file could not be compared with what was read (it grew past the limit or could not be read) and went back to the config name: the config is as it was and the receipt stays. */
+function unreadableCopyRefusal(
+  { path, retry }: Context,
+  cause: unknown,
+): Error {
+  return refusal(
+    'a file that could not be read back while Codebook removed its entry (larger than the limit or unreadable; Codebook put it back unchanged)',
+    path,
+    'look at the file',
+    retry,
+    cause,
+  )
+}
+
 /** The refusal for a put-back whose displaced name could not be deleted afterwards: the config is back, and a second name for it stays, named here; the record stays, and the next run deletes that name. */
 function extraNameRefusal({ path, retry }: Context, copyPath: string): Error {
   return refusal(
@@ -1344,7 +1358,9 @@ async function settleHeldRemoval(
   try {
     held = await readHeld(opened.handle)
   } catch (error) {
-    throw leftCopyRefusal(context, moved.path, error)
+    // The comparison cannot be made (the file grew past the limit or cannot be read): it goes back as on a mismatch, so the config is never left missing; a config saved meanwhile stays, and the refusal names the displaced path.
+    await restoreDisplaced(context, moved.path, opened)
+    throw unreadableCopyRefusal(context, error)
   }
   if (opened.isShared || !isExpectedCopy(held, moved)) {
     // The file is not the one that was read, whatever its bytes, or it has another name now: link it back (never replacing a newer file) and refuse.
@@ -2335,14 +2351,20 @@ async function takeEntryOut(
   return { status: 'removed', keptLeft }
 }
 
-/** The refusal for a removal whose reduced config stands but whose completed record could not be written: the receipt stays and the previous config's private copy is named; the next run settles the copy and drops the receipt. */
+/**
+ * The refusal of a removal whose reduced config stands but whose completed record could not be written: the receipt stays and the previous config's private copy is named; the next run settles the copy and drops the receipt.
+ * Its own class so the removal command can tell that the config changed (the loaded Codebook bridge keeps running until a reload) from a refusal that touched nothing; thrown by {@link takeEntryOut}, read by {@link devinEntryRemovalOf}.
+ */
+export class DevinMcpUnrecordedRemovalError extends Error {}
+
+/** Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses. */
 function unrecordedRemovalRefusal(
   { path, retry }: Context,
   keptLeft: KeptFile[],
-): Error {
+): DevinMcpUnrecordedRemovalError {
   const previous = keptLeft.find(({ holds }) => holds === 'previous')
   const copy = previous ? ` and ${keptCopyPhrase(previous.path)}` : ''
-  return new Error(
+  return new DevinMcpUnrecordedRemovalError(
     `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step, so it kept its receipt${copy}; make room for that record, ${retry}.`,
   )
 }
@@ -2392,6 +2414,26 @@ export type DevinMcpRemovalOptions = {
 }
 
 /**
+ * Tells whether the pending record is that of a removal that was started and never recorded as completed, which a retry finds after the entry was already taken out ({@link DevinMcpUnrecordedRemovalError}); called by {@link removeManagedDevinMcpEntry} before {@link inspect} retires the record.
+ * @param context - The run.
+ * @returns `true` for a record of this config that holds no entry hash (a removal) and no phase (never completed).
+ * @throws The refusal of {@link readRecord} for a record that cannot be read.
+ */
+async function hasUnrecordedRemoval(context: Context): Promise<boolean> {
+  const pending = await readRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  )
+  return (
+    pending?.targetPath === context.path &&
+    pending.entrySha256 === undefined &&
+    pending.phase === undefined
+  )
+}
+
+/**
  * Removes the receipted `codebook` entry; called by Codebook: Remove Devin Desktop Setup and by a setup that rolls back its own write.
  * Deletes the file only when Codebook created it (the receipt says so and the inode is the one Codebook wrote) and nothing else is left in it. An entry that was edited since the receipt (any key but `disabled` and `disabledTools` added or changed) is left alone and the receipt is dropped, because Codebook no longer owns it; those two keys, which Devin sets, do not change ownership.
  * @param storageRoot - Codebook's global storage folder.
@@ -2415,14 +2457,21 @@ export async function removeManagedDevinMcpEntry(
     undefined,
     seam,
     async (context) => {
-      const ownership = removalOwnership(
-        await inspect(context),
-        options.expectedGeneration,
-      )
+      // Read before inspect retires it: an earlier removal that took the entry out and left its record unwritten.
+      const wasUnrecorded = await hasUnrecordedRemoval(context)
+      const inspected = await inspect(context)
+      const ownership = removalOwnership(inspected, options.expectedGeneration)
       if ('status' in ownership) {
         // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
         if (ownership.status !== 'superseded')
           await rm(context.receiptPath, { force: true })
+        // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
+        if (
+          ownership.status === 'not-managed' &&
+          wasUnrecorded &&
+          inspected.receipt
+        )
+          return { status: 'removed', path: context.path }
         return { status: ownership.status, path: context.path }
       }
       const { status, keptLeft } = await takeEntryOut(context, ownership)
