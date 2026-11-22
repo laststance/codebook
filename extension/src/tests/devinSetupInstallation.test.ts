@@ -237,32 +237,19 @@ for (const { name, skillInstalled, mcp } of REFUSED_SETUPS)
       `http://127.0.0.1:${port}/mcp`,
       storage,
     )
-    const originalExitCode = process.exitCode
-    const originalWrite = process.stderr.write.bind(process.stderr)
-    const lines: string[] = []
-    process.stderr.write = (chunk: string) => {
-      lines.push(chunk)
-      return true
-    }
-
     // Act
-    try {
-      await runDevinMcpBridge(
-        agentDir,
-        storage,
-        { WINDSURF_EXT_HOST_PID: String(process.pid) },
-        { timeoutMs: 400, intervalMs: 20 },
-      )
-    } finally {
-      process.stderr.write = originalWrite
-    }
-    const exitCode = process.exitCode
-    process.exitCode = originalExitCode
+    const refusal = await runDevinMcpBridge(
+      agentDir,
+      storage,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 400, intervalMs: 20 },
+    )
 
     // Assert
-    assert.equal(exitCode, 1)
     assert.equal(counter.requests, 0)
-    assert.equal(lines.length, 1)
-    assert.match(lines[0] ?? '', /Codebook is not running for/)
+    assert.equal(
+      refusal,
+      `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${storage}. Run Codebook: Set Up AI Chat here, then reload the window.`,
+    )
     assert.equal(dirname(agentDir), storage)
   })

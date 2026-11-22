@@ -1325,9 +1325,9 @@ test(
     // Arrange
     const harness = await createHarness(),
       endpoint = await startServer(harness.service),
-      root = await realpath(
-        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
-      )
+      // The agent folder sits in a storage folder holding the setup receipts the bridge checks before its session.
+      agentDir = await makeLiveAgentFolder(),
+      root = dirname(agentDir)
     context.after(async () => {
       await endpoint.close()
       await harness.close()
@@ -1335,7 +1335,7 @@ test(
     })
     const linkedFolder = join(root, 'linked-workspace')
     await symlink(harness.directory, linkedFolder)
-    await writeDescriptor(root, 0, harness.directory, process.pid, {
+    await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
       ...endpoint.descriptor,
       instanceId: IDS[0],
     })
@@ -1361,7 +1361,7 @@ bridge.runDevinMcpBridge = (agentDirectory) =>
     )
     // Act
     const client = await connectThroughBridge(
-      root,
+      agentDir,
       harness.directory,
       context,
       {

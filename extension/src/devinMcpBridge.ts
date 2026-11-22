@@ -498,13 +498,13 @@ async function connectOnce(
   selection: DevinDescriptorSelection,
   deadline: number,
   expected: DescriptorExpectation,
-): Promise<'connected' | 'busy' | 'dropped'> {
-  // The last check before an MCP session: the setup the descriptor was marked for must still stand. A failed check counts like an unmarked descriptor: the bridge keeps polling until its deadline.
+): Promise<'connected' | 'busy' | 'dropped' | 'not-set-up'> {
+  // The last check before an MCP session: the setup the descriptor was marked for must still stand. A failed check counts like an unmarked descriptor: the bridge keeps polling until its deadline, then names the missing setup.
   if (!(await hasDevinBridgeReceipts(selection.descriptorPath))) {
     const remaining = deadline - Date.now()
     if (remaining > 0)
       await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
-    return 'busy'
+    return 'not-set-up'
   }
   try {
     await runCursorMcpBridge(
@@ -586,7 +586,9 @@ export async function runDevinMcpBridge(
     excludedPaths = new Set<string>(),
     // One memory for every selection of this bridge: lookups that never answered are not started again beyond two.
     state = createDevinSelectState()
-  const lateAttempt = { isSpent: false }
+  const lateAttempt = { isSpent: false },
+    // Set once a selected descriptor's setup is found removed: the refusal at the end of the wait then names the missing setup, not a missing Codebook.
+    wait = { isSetupMissing: false }
   for (;;) {
     // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.
     const selection = await selectDevinDescriptor(agentDir, cwd, pid, {
@@ -596,12 +598,11 @@ export async function runDevinMcpBridge(
       timeoutMs: Math.max(0, deadline - Date.now()),
     })
     // No match in time: one fixed recovery line, no descriptor contents.
-    if (!selection) return notRunningLine(cwd)
+    if (!selection) return endOfWaitLine(cwd, wait)
     // This window runs Codebook but its AI chat setup is for another folder or missing: nothing to wait for.
-    if (!selection.devinChat)
-      return `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${cwd}. Run Codebook: Set Up AI Chat here, then reload the window.`
+    if (!selection.devinChat) return notSetUpLine(cwd)
     // Once the deadline has passed only one more attempt may start in total, however many descriptors remain.
-    if (!mayStartAttempt(deadline, lateAttempt)) return notRunningLine(cwd)
+    if (!mayStartAttempt(deadline, lateAttempt)) return endOfWaitLine(cwd, wait)
     const outcome = await connectOnce(
       selection,
       deadline,
@@ -609,6 +610,49 @@ export async function runDevinMcpBridge(
       devinDescriptorExpectation(selection, pid, selection.matchedCwd),
     )
     if (outcome === 'connected') return undefined
-    if (outcome === 'dropped') excludedPaths.add(selection.descriptorPath)
+    noteConnectOutcome(outcome, selection.descriptorPath, excludedPaths, wait)
   }
+}
+
+/**
+ * Records what a failed connection attempt means for the rest of the wait; called by {@link runDevinMcpBridge} after each {@link connectOnce} that did not connect.
+ * A dropped descriptor is not selected again; a descriptor whose setup was removed makes the final refusal name the missing setup.
+ * @param outcome - The attempt's outcome.
+ * @param descriptorPath - The attempted descriptor.
+ * @param excludedPaths - The descriptors the selection skips from now on.
+ * @param wait - The wait's state; `isSetupMissing` is set for `not-set-up`.
+ * @example noteConnectOutcome('dropped', '/storage/agent/a.connection.json', excludedPaths, wait) // excludedPaths now holds that path
+ */
+function noteConnectOutcome(
+  outcome: 'busy' | 'dropped' | 'not-set-up',
+  descriptorPath: string,
+  excludedPaths: Set<string>,
+  wait: { isSetupMissing: boolean },
+): void {
+  if (outcome === 'dropped') excludedPaths.add(descriptorPath)
+  if (outcome === 'not-set-up') wait.isSetupMissing = true
+}
+
+/**
+ * The refusal for a window where Codebook runs but this folder's AI chat setup is missing or was removed; returned by {@link runDevinMcpBridge}.
+ * @param cwd - The bridge's working folder, as Devin Desktop started it.
+ * @returns One fixed recovery sentence without descriptor contents.
+ * @example notSetUpLine('/repo') // => 'Codebook is running in this Devin Desktop window, but AI chat is not set up for /repo. Run Codebook: Set Up AI Chat here, then reload the window.'
+ */
+function notSetUpLine(cwd: string): string {
+  return `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${cwd}. Run Codebook: Set Up AI Chat here, then reload the window.`
+}
+
+/**
+ * The refusal when the bridge's startup window ends without a connection; returned by {@link runDevinMcpBridge}.
+ * @param cwd - The bridge's working folder.
+ * @param wait - The wait's state: whether a selected descriptor's setup was found removed.
+ * @returns {@link notSetUpLine} when a descriptor's setup was removed, else {@link notRunningLine}.
+ * @example endOfWaitLine('/repo', { isSetupMissing: true }) // => notSetUpLine('/repo')
+ */
+function endOfWaitLine(
+  cwd: string,
+  wait: { readonly isSetupMissing: boolean },
+): string {
+  return wait.isSetupMissing ? notSetUpLine(cwd) : notRunningLine(cwd)
 }
