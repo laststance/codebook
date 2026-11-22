@@ -980,6 +980,8 @@ test('A leftover copy that holds exactly the expected bytes is deleted on the ne
     targetPath: configPath,
     createdFile: false,
     generation: JOURNAL_GENERATION,
+    // The publish finished, so the displaced copy is Codebook's own leftover.
+    phase: 'completed',
     keptName: basename(keptPath),
     keptIno: (await stat(keptPath)).ino,
     keptSha256: sha256('{"theme":"dark"}\n'),
@@ -2834,4 +2836,39 @@ test('A put-back that cannot tell which name its link made keeps both names and 
   })
   assert.equal(readFileSync(configPath, 'utf8'), '{"swapped":true}\n')
   assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped again":true}\n')
+})
+
+test('A displaced original is kept and named, never deleted, when another config was saved after a write ended at its move-aside', async (context) => {
+  // protects=the only copy of the learner's other servers survives a crash followed by an editor save; fails_when=the displaced copy is deleted because its bytes match the record; no_claim=what the new config holds; seam=seam.afterMoveAside ends the write
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, original)
+  let displacedPath = ''
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterMoveAside: (path) => {
+      displacedPath = path
+      throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  const newerSave = '{"theme":"saved by the editor"}\n'
+  writeFileSync(configPath, newerSave)
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(displacedPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(displacedPath, 'utf8'), original)
+  assert.equal(readFileSync(configPath, 'utf8'), newerSave)
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
+
+  // Assert
+  assert.equal(readFileSync(displacedPath, 'utf8'), original)
 })

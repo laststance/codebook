@@ -1582,6 +1582,8 @@ type LeftoverLook =
 type Unsettled = {
   leftover: Leftover
   cause: unknown
+  /** Set when the copy was just handed to the learner ({@link HandedCopyError}): the record turns to handed and the refusal names the copy as kept. */
+  isHandedOver?: boolean
 }
 
 /**
@@ -1675,6 +1677,9 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
   )
 }
 
+/** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
+class HandedCopyError extends Error {}
+
 /** The refusal for a displaced file that has another inode than the record says while a config stands at the config name: it may be a newer save of the learner's, so nothing is moved or deleted and the record stays. */
 function otherInodeRefusal(
   { path, pendingPath, retry }: Context,
@@ -1717,7 +1722,11 @@ async function recoverLeftovers(
       if (look.kind === 'unreadable') throw look.cause
       await tidyLeftover(context, leftover, look.copy, pending)
     } catch (cause) {
-      unsettled.push({ leftover, cause })
+      unsettled.push({
+        leftover,
+        cause,
+        ...(cause instanceof HandedCopyError && { isHandedOver: true }),
+      })
     }
   }
   return unsettled
@@ -1733,8 +1742,9 @@ async function recoverLeftovers(
 function unsettledRefusal(
   context: Context,
   phase: Pending['phase'],
-  { leftover, cause }: Unsettled,
+  { leftover, cause, isHandedOver }: Unsettled,
 ): Error {
+  if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
     : leftCopyRefusal(context, leftover.path, cause)
@@ -1787,7 +1797,7 @@ async function retirePending(
  * Puts back or deletes one leftover; called by {@link recoverLeftovers}.
  * @param context - The run.
  * @param leftover - The accepted leftover.
- * Right before each link and unlink the name is looked at again ({@link isLeftoverStill}); a file swapped in since the first look is neither linked nor deleted.
+ * Right before each link and unlink the name is looked at again ({@link isLeftoverStill}); a file swapped in since the first look is neither linked nor deleted. A displaced original of an unfinished change whose config name holds another file (not the published staged one) is handed to the learner ({@link handOver}) and never deleted.
  * @param copy - What {@link lookAtLeftover} found.
  * @param pending - The pending record of the interrupted run; its phase is absent while the change was in progress.
  * @throws When the file differs from what Codebook expected, was handed to the learner, was swapped meanwhile, or the move or delete fails.
@@ -1815,6 +1825,19 @@ async function tidyLeftover(
   if (config?.ino === copy.ino) {
     assertLeftoverStill(context, path, { ino: copy.ino })
     return unlink(path)
+  }
+  // A displaced original of an unfinished change while another config stands at the config name (an editor saved after the move-aside): it may be the only copy of the learner's other servers, so it is handed over and named, never deleted. The published staged file's inode means the change did finish, so that copy is Codebook's own leftover.
+  if (
+    role === 'kept' &&
+    phase === undefined &&
+    config &&
+    (pending.stagedIno === undefined ||
+      !isSameFileId(pending.stagedIno, config.ino))
+  ) {
+    await handOver(context, pending)
+    throw new HandedCopyError(
+      'Another config stands at the config name, so the displaced copy was handed to the learner.',
+    )
   }
   if (
     role === 'kept' &&
@@ -2263,8 +2286,15 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   // No rollback was cut short, or the journal belongs to another config, which this run does not settle.
   if (pending?.targetPath !== context.path) return
   const unsettled = await recoverLeftovers(rollbackContext, pending)
+  const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
-  await retirePending(rollbackContext, retainedRecord(pending, tracked))
+  await retirePending(
+    rollbackContext,
+    retainedRecord(
+      isHandedNow ? { ...pending, phase: 'handed' } : pending,
+      tracked,
+    ),
+  )
   const [reported] = unsettled
   if (reported) throw unsettledRefusal(rollbackContext, pending.phase, reported)
 }
@@ -2295,7 +2325,8 @@ async function inspect(context: Context): Promise<{
   const unsettled = await recoverOwnLeftovers(context, pending)
   const look = await lookAtConfig(context)
   const current = currentEntryOf(look)
-  // A finished or handed change names its leftover once: the one reported is no longer tracked.
+  // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
+  const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending?.phase ? unsettled.slice(1) : unsettled
   const receipt = await settlePending(
     context,
@@ -2303,7 +2334,11 @@ async function inspect(context: Context): Promise<{
     await readReceipt(context),
     pending,
     look,
-    pending && retainedRecord(pending, tracked),
+    pending &&
+      retainedRecord(
+        isHandedNow ? { ...pending, phase: 'handed' } : pending,
+        tracked,
+      ),
   )
   const [reported] = unsettled
   if (pending && reported)
