@@ -1800,6 +1800,27 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
 
+/**
+ * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of the move-it-back advice.
+ * `isHanded` is set when the config name may hold a file Codebook did not verify: the record then turns to handed, so no later run deletes the displaced name on the strength of a shared inode.
+ */
+class PutBackCheckError extends Error {
+  constructor(
+    message: string,
+    readonly isHanded: boolean,
+  ) {
+    super(message)
+  }
+}
+
+/** Tells whether a recovery failure hands the copy to the learner ({@link HandedCopyError}, or a {@link PutBackCheckError} that left an unverified file at the config name). */
+function isHandedCause(cause: unknown): boolean {
+  return (
+    cause instanceof HandedCopyError ||
+    (cause instanceof PutBackCheckError && cause.isHanded)
+  )
+}
+
 /** The refusal for a displaced file that has another inode than the record says while a config stands at the config name: it may be a newer save of the learner's, so nothing is moved or deleted and the record stays. */
 function otherInodeRefusal(
   { path, pendingPath, retry }: Context,
@@ -1845,7 +1866,7 @@ async function recoverLeftovers(
       unsettled.push({
         leftover,
         cause,
-        ...(cause instanceof HandedCopyError && { isHandedOver: true }),
+        ...(isHandedCause(cause) && { isHandedOver: true }),
       })
     }
   }
@@ -1864,6 +1885,8 @@ function unsettledRefusal(
   phase: Pending['phase'],
   { leftover, cause, isHandedOver }: Unsettled,
 ): Error {
+  // The put-back check's own text names both paths and the state; the move-back advice would lose a new save.
+  if (cause instanceof PutBackCheckError) return cause
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
@@ -2182,17 +2205,26 @@ async function assertLinkedBytes(
     () => undefined,
   )
   if (published?.ino === ino && published.sha256 === expectedSha256) return
-  // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so.
+  // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so. The displaced name is looked at first and the config name last, synchronously right before the unlink: only the syscall gap after that last look remains.
   if (
-    !isLeftoverStill(context, context.path, { ino }) ||
-    !isLeftoverStill(context, path, { ino })
+    !isLeftoverStill(context, path, { ino }) ||
+    !isLeftoverStill(context, context.path, { ino })
   )
-    throw new Error(
-      `The private file at ${path} could not be checked after Codebook put it back, and the names no longer show the file Codebook linked, so Codebook could not take the config name away again and left both names as they are; ${context.path} may hold a file Codebook did not verify.`,
+    throw new PutBackCheckError(
+      `The private file at ${path} could not be checked after Codebook put it back, and the names no longer show the file Codebook linked, so Codebook could not take the config name ${context.path} away again and left both names as they are; ${context.path} may hold a file Codebook did not verify, so look at both files before you use either.`,
+      true,
     )
-  await unlink(context.path).catch(() => undefined)
-  throw new Error(
-    `The private file at ${path} changed or could not be read while Codebook put it back (another program wrote to it just now), so Codebook took the config name away again and left that file untouched.`,
+  try {
+    await unlink(context.path)
+  } catch {
+    throw new PutBackCheckError(
+      `The private file at ${path} changed or could not be read while Codebook put it back, and Codebook could not take the config name ${context.path} away again, so ${context.path} may hold a file Codebook did not verify; ${path} stays as it is, so look at both files before you use either.`,
+      true,
+    )
+  }
+  throw new PutBackCheckError(
+    `The private file at ${path} changed or could not be read while Codebook put it back (another program wrote to it just now), so Codebook took the config name ${context.path} away again and left the file at ${path} untouched.`,
+    false,
   )
 }
 

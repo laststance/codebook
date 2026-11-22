@@ -2300,6 +2300,11 @@ test('Recovery takes the config name away again when the displaced file was rewr
   // Assert
   await assert.rejects(attempt, (error: Error) => {
     assert.ok(error.message.includes(keptPath), error.message)
+    // The shown text itself says what happened to the config name and names it.
+    assert.ok(
+      error.message.includes(`took the config name ${configPath} away again`),
+      error.message,
+    )
     return true
   })
   assert.equal(existsSync(configPath), false)
@@ -2340,7 +2345,103 @@ test('Recovery takes the config name away again when the displaced file grew pas
     assert.ok(error.message.includes(keptPath), error.message)
     return true
   })
+  // The growth was injected (the refusal did not come from another path before the hook ran).
+  assert.equal(isGrown, true)
+  assert.ok(statSync(keptPath).size > 1_048_576)
   assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(keptPath), true)
+})
+
+const PUT_BACK_BYTES = '{"theme":"dark"}\n'
+
+/** Records a displaced file that matches by its bytes alone (another inode) and returns its name. */
+async function arrangeBytesOnlyDisplaced(
+  storage: string,
+  configPath: string,
+): Promise<string> {
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, PUT_BACK_BYTES)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(PUT_BACK_BYTES),
+  })
+  return keptPath
+}
+
+test('Recovery keeps an editor save that landed at the config name while the displaced name was checked after a failed put-back check', async (context) => {
+  // protects=the put-back check looks at the config name last, right before it unlinks it, so a save by rename during the displaced name's look survives; fails_when=the editor's file is unlinked; no_claim=the syscall gap after the last look; seam=seam.afterLeftoverCheck rewrites the displaced file in place, seam.beforeLeftoverCheck renames another file over the config name during the displaced name's second look
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  let isRewritten = false
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      writeFileSync(keptPath, '{"theme":"evil"}\n')
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || !isRewritten || isSaved) return
+      isSaved = true
+      swapFile(configPath, '{"editor":"saved"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(configPath), error.message)
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(configPath, 'utf8'), '{"editor":"saved"}\n')
+})
+
+test('Recovery says the config name could not be taken away when its unlink fails, names both paths and keeps the displaced file in a later run', async (context) => {
+  // protects=a failed unlink never reads as taken away, and the displaced name that shares the config's inode is handed over, not deleted by a later run; fails_when=the refusal says the name was taken away, omits a path, or a later recovery deletes the displaced file; no_claim=the learner's repair; seam=seam.afterLeftoverCheck makes the config directory read-only at the last look before the unlink
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  let isRewritten = false
+  let isLocked = false
+  // The directory is made writable again so the temp folder can be removed, even when the temp folder is already gone.
+  context.after(() => chmod(dirname(configPath), 0o700).catch(() => undefined))
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path === keptPath && !isRewritten) {
+        isRewritten = true
+        writeFileSync(keptPath, '{"theme":"evil"}\n')
+      }
+      if (path === configPath && isRewritten && !isLocked) {
+        isLocked = true
+        chmodSync(dirname(configPath), 0o500)
+      }
+    },
+  })
+  let shown = ''
+  await attempt.catch((error: Error) => {
+    shown = error.message
+  })
+  await chmod(dirname(configPath), 0o700)
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
+
+  // Assert
+  assert.equal(isLocked, true)
+  assert.ok(shown.includes('could not take the config name'), shown)
+  assert.ok(shown.includes(keptPath), shown)
+  assert.ok(shown.includes(configPath), shown)
+  assert.ok(!shown.includes('move it back over the config or delete it'), shown)
   assert.equal(existsSync(keptPath), true)
 })
 
