@@ -106,13 +106,15 @@ const pendingSchema = z.object({
   takeBack: z.boolean().optional(),
   /** Only in a rollback's own journal ({@link rollbackContextOf}): the generation of the publish whose entry that rollback was taking out. {@link settleRollbackJournal} marks a publish record for take-back only when it carries this generation, so a journal left by one installation never marks another's pending publish. */
   publishGeneration: z.string().optional(),
+  /** Set by a first setup (no receipt stood) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
+  firstSetup: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
 type Pending = z.infer<typeof pendingSchema>
 /** What a run knows about a pending record before the file is staged. */
 type PendingHead = Pick<
   Pending,
-  'entrySha256' | 'createdFile' | 'generation' | 'installationId'
+  'entrySha256' | 'createdFile' | 'generation' | 'installationId' | 'firstSetup'
 >
 /** A parsed JSON object; its own keys, `__proto__` included, are kept as parsed. */
 type JsonObject = Record<string, unknown>
@@ -2260,7 +2262,7 @@ async function settlePending(
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
   // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
-  if (pending.takeBack) {
+  if (isTakeBackOwed(pending, receipt)) {
     await retirePending(context, retained)
     return receipt
   }
@@ -2622,6 +2624,8 @@ async function publishEntry(
     createdFile,
     generation,
     installationId,
+    // A first setup is adoptable only once its receipt is written ({@link isTakeBackOwed}).
+    ...(receipt === undefined && { firstSetup: true }),
   })
   const written: Receipt = {
     schemaVersion: 1,
@@ -2682,7 +2686,7 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
-  await markTakeBackOwed(context, pending.publishGeneration)
+  await markTakeBackOwed(context, pending.publishGeneration, pending.keptIno)
   await retirePending(
     rollbackContext,
     retainedRecord(
@@ -2698,13 +2702,15 @@ async function settleRollbackJournal(context: Context): Promise<void> {
  * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
  * Only the publish of the given generation is marked: another installation's pending publish stays as it is.
  * @param context - The run.
- * @param publishGeneration - The generation of the publish being rolled back; a journal that names none (undefined) marks nothing.
+ * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when `legacyKeptIno` proves it belongs to the publish record.
+ * @param legacyKeptIno - The inode the journal displaced (the published file); with no generation it must equal the publish record's `stagedIno`.
  * @example
  * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
   publishGeneration: string | undefined,
+  legacyKeptIno?: Pending['keptIno'],
 ): Promise<void> {
   const publish = await readRecord(
     context.pendingPath,
@@ -2713,14 +2719,35 @@ async function markTakeBackOwed(
     context.seam,
   )
   // No publish record, one of another config or of another generation (another installation's publish), or one already marked: nothing to mark.
-  if (
-    publish?.targetPath !== context.path ||
-    publishGeneration === undefined ||
-    publish.generation !== publishGeneration ||
-    publish.takeBack
-  )
-    return
+  if (publish?.targetPath !== context.path || publish.takeBack) return
+  // A journal of an older build names no generation: it belongs to this publish only when the file it displaced is the file this publish staged.
+  const belongsToPublish =
+    publishGeneration === undefined
+      ? legacyKeptIno !== undefined &&
+        publish.stagedIno !== undefined &&
+        isSameFileId(legacyKeptIno, publish.stagedIno)
+      : publish.generation === publishGeneration
+  if (!belongsToPublish) return
   await writeRecord(context.pendingPath, { ...publish, takeBack: true })
+}
+
+/**
+ * Tells whether the entry a publish record covers must be taken back instead of adopted; called by {@link inspect} and {@link settlePending}.
+ * @param pending - The publish record.
+ * @param receipt - The receipt that stands, if any.
+ * @returns `true` when the record is marked `takeBack`, or is a first setup's whose own receipt (same generation) was never written.
+ * @example
+ * isTakeBackOwed({ ...pending, firstSetup: true }, undefined) // => true
+ */
+function isTakeBackOwed(
+  pending: Pending,
+  receipt: Receipt | undefined,
+): boolean {
+  if (pending.takeBack) return true
+  return (
+    pending.firstSetup === true &&
+    (receipt === undefined || receipt.generation !== pending.generation)
+  )
 }
 
 /**
@@ -2817,9 +2844,10 @@ async function inspect(context: Context): Promise<{
     )
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
-  const afterTakeBack = pending?.takeBack
-    ? await finishCutShortSetup(context, pending, stored, retained, look)
-    : undefined
+  const afterTakeBack =
+    pending && isTakeBackOwed(pending, stored)
+      ? await finishCutShortSetup(context, pending, stored, retained, look)
+      : undefined
   if (afterTakeBack) look = afterTakeBack
   const current = currentEntryOf(look)
   const receipt = await settlePending(
