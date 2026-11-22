@@ -6,7 +6,10 @@ import { dirname, join } from 'node:path'
 
 import { z } from 'zod'
 
-import { DEVIN_MCP_RECORD_LIMIT_BYTES } from './constants'
+import {
+  DEVIN_MCP_CONFIG_LIMIT_BYTES,
+  DEVIN_MCP_RECORD_LIMIT_BYTES,
+} from './constants'
 import { atomicPrivateBytes } from './utils/atomicPrivateBytes'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { canonicalJson } from './utils/canonicalJson'
@@ -29,7 +32,6 @@ export type DevinMcpEntry = {
 /** What a test can hook into: called after the config was read and before it is replaced, so a test can change the file in between ({@link assertConfigUnchanged}). */
 export type DevinMcpTestSeam = { afterRead?: () => Promise<void> | void }
 
-const jsonObjectSchema = z.record(z.string(), z.unknown())
 const receiptSchema = z.object({
   schemaVersion: z.literal(1),
   targetPath: z.string(),
@@ -43,10 +45,18 @@ const pendingSchema = z.object({
   createdFile: z.boolean(),
 })
 type Receipt = z.infer<typeof receiptSchema>
-type JsonObject = z.infer<typeof jsonObjectSchema>
+/** A parsed JSON object; its own keys, `__proto__` included, are kept as parsed. */
+type JsonObject = Record<string, unknown>
 
 /** Size, times and file numbers that tell whether a file is still the one that was read. */
-type FileIdentity = { dev: number; ino: number; size: number; mtimeMs: number }
+type FileIdentity = {
+  dev: number
+  ino: number
+  size: number
+  mtimeMs: number
+  /** The permission bits (`mode & 0o777`) the file had when it was read, so a replacement keeps them. */
+  mode: number
+}
 
 type ConfigLook =
   | { kind: 'absent' }
@@ -90,14 +100,49 @@ function hashOf(value: unknown): string {
  * @param found - What Codebook found.
  * @param path - The config file.
  * @param wayOut - What the learner does next.
+ * @param cause - The failure behind the refusal, kept for diagnosis and never put into the sentence.
  * @returns The error, not thrown yet.
  * @example
  * throw refusal('text that is not valid JSON', path, `fix it, ${SET_UP_AGAIN}`)
  */
-function refusal(found: string, path: string, wayOut: string): Error {
+function refusal(
+  found: string,
+  path: string,
+  wayOut: string,
+  cause?: unknown,
+): Error {
   return new Error(
     `Codebook found ${found} in Devin Desktop's MCP config at ${path} and left that file untouched; ${wayOut}.`,
+    cause === undefined ? undefined : { cause },
   )
+}
+
+/**
+ * Builds the refusal for a config that could not be opened or read (permissions, a parent that is a file, a failing disk); called by {@link lookAtConfig}.
+ * @param path - The config file.
+ * @param cause - The file system error; kept as `cause`, not echoed.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw unreadableRefusal(path, error)
+ */
+function unreadableRefusal(path: string, cause: unknown): Error {
+  return refusal(
+    'a file it could not read',
+    path,
+    `make it readable by you, ${SET_UP_AGAIN}`,
+    cause,
+  )
+}
+
+/**
+ * Tells a parsed JSON object from every other JSON value without copying it, so own keys such as `__proto__` stay as parsed.
+ * @param value - A `JSON.parse` result.
+ * @returns Whether it is a non-null, non-array object.
+ * @example
+ * isJsonObject(JSON.parse('{"__proto__":{}}')) // => true
+ */
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** The error code of a failed file system call, if it has one. */
@@ -105,17 +150,17 @@ function codeOf(error: unknown): unknown {
   return error instanceof Error && 'code' in error ? error.code : undefined
 }
 
-/** Picks the numbers that identify a file from a `stat` answer. */
+/** Picks the numbers that identify a file from a `stat` answer; the mode is cut to its permission bits. */
 function identityOf(status: FileIdentity): FileIdentity {
-  const { dev, ino, size, mtimeMs } = status
-  return { dev, ino, size, mtimeMs }
+  const { dev, ino, size, mtimeMs, mode } = status
+  return { dev, ino, size, mtimeMs, mode: mode & 0o777 }
 }
 
 /**
  * Reads the config without following a link and checks its shape; every run starts here.
  * @param path - The config file.
  * @returns `absent` for a missing file, else the parsed object with the identity of the file that was read.
- * @throws A {@link refusal} for a link, a non-regular file, invalid JSON, a top level that is no object or an `mcpServers` that is no object.
+ * @throws A {@link refusal} for a link, a non-regular file, a file that cannot be read, a file larger than {@link DEVIN_MCP_CONFIG_LIMIT_BYTES}, invalid JSON, a top level that is no object or an `mcpServers` that is no object.
  * @example
  * await lookAtConfig('/home/lume/.config/devin/mcp_config.json') // => { kind: 'absent' }
  */
@@ -132,17 +177,30 @@ async function lookAtConfig(path: string): Promise<ConfigLook> {
         path,
         `replace the link with the file itself, ${SET_UP_AGAIN}`,
       )
-    throw error
+    // EACCES, ENOTDIR, EIO and the rest: one sentence instead of a raw error.
+    throw unreadableRefusal(path, error)
   }
   try {
-    const status = await file.stat()
+    const status = await file.stat().catch((error) => {
+      throw unreadableRefusal(path, error)
+    })
     if (!status.isFile())
       throw refusal(
         'something that is no regular file',
         path,
         `remove it, ${SET_UP_AGAIN}`,
       )
-    return parseConfig(path, await file.readFile('utf8'), identityOf(status))
+    // A huge file is refused before it is read into memory.
+    if (status.size > DEVIN_MCP_CONFIG_LIMIT_BYTES)
+      throw refusal(
+        `a file larger than ${DEVIN_MCP_CONFIG_LIMIT_BYTES} bytes`,
+        path,
+        `shrink or move it, ${SET_UP_AGAIN}`,
+      )
+    const text = await file.readFile('utf8').catch((error) => {
+      throw unreadableRefusal(path, error)
+    })
+    return parseConfig(path, text, identityOf(status))
   } finally {
     await file.close()
   }
@@ -173,23 +231,22 @@ function parseConfig(
       `fix or move that file, ${SET_UP_AGAIN}`,
     )
   }
-  const root = jsonObjectSchema.safeParse(parsed)
-  if (!root.success)
+  if (!isJsonObject(parsed))
     throw refusal(
       'a top-level value that is no object',
       path,
       `fix or move that file, ${SET_UP_AGAIN}`,
     )
-  if (root.data.mcpServers === undefined)
-    return { kind: 'present', root: root.data, servers: undefined, identity }
-  const servers = jsonObjectSchema.safeParse(root.data.mcpServers)
-  if (!servers.success)
+  const rawServers = parsed.mcpServers
+  if (rawServers === undefined)
+    return { kind: 'present', root: parsed, servers: undefined, identity }
+  if (!isJsonObject(rawServers))
     throw refusal(
       'an "mcpServers" value that is no object',
       path,
       `fix that value, ${SET_UP_AGAIN}`,
     )
-  return { kind: 'present', root: root.data, servers: servers.data, identity }
+  return { kind: 'present', root: parsed, servers: rawServers, identity }
 }
 
 /**
@@ -224,7 +281,7 @@ function assertConfigUnchanged(
  * Replaces the config atomically with two-space JSON and a final newline.
  * @param path - The config file.
  * @param root - The complete new top-level object.
- * @param identity - What was read; undefined when the file was absent (its folders are then created).
+ * @param identity - What was read, whose mode the replacement keeps; undefined when the file was absent (its folders are then created, the file is private).
  * @throws A {@link refusal} when the file changed since the read; nothing was written.
  * @example
  * await publishRoot(path, { mcpServers: {} }, undefined)
@@ -235,8 +292,13 @@ async function publishRoot(
   identity: FileIdentity | undefined,
 ): Promise<void> {
   if (!identity) await mkdir(dirname(path), { recursive: true })
-  await atomicPrivateBytes(path, `${JSON.stringify(root, null, 2)}\n`, () =>
-    assertConfigUnchanged(path, identity),
+  // An existing config keeps the permission bits it had; only a file Codebook creates is private.
+  await atomicPrivateBytes(
+    path,
+    `${JSON.stringify(root, null, 2)}\n`,
+    () => assertConfigUnchanged(path, identity),
+    undefined,
+    identity?.mode,
   )
 }
 

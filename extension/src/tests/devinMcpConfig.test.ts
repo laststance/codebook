@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -348,4 +355,111 @@ test('A run that finds a pending record and a different codebook entry refuses a
   await assert.rejects(attempt, /interrupted Codebook run/)
   assert.equal(await readFile(configPath, 'utf8'), original)
   await assert.rejects(stat(join(folder, 'receipt.json')), { code: 'ENOENT' })
+})
+
+test('Set Up AI Chat keeps the permission bits of a config the learner shares with a group', async (context) => {
+  // Value: protects=a group-shared 0664 config stays 0664; fails_when=the replacement narrows the mode to 0600; why_new=the create case only pins 0600; seam=real file in a temporary home
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  await chmod(configPath, 0o664)
+
+  // Act
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal((await stat(configPath)).mode & 0o777, 0o664)
+})
+
+test('Set Up AI Chat keeps top-level and server keys named __proto__ with their values', async (context) => {
+  // Value: protects=no user data is deleted by a rewrite; fails_when=an own "__proto__" key is dropped at the top level or in mcpServers; why_new=a record schema dropped them silently; seam=real file in a temporary home
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    '{"__proto__":{"top":1},"mcpServers":{"__proto__":{"command":"kept"}}}\n',
+  )
+
+  // Act
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  const written = JSON.parse(await readFile(configPath, 'utf8'))
+  assert.deepEqual(Object.keys(written), ['__proto__', 'mcpServers'])
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(written, '__proto__')?.value,
+    { top: 1 },
+  )
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(written.mcpServers, '__proto__')?.value,
+    { command: 'kept' },
+  )
+  assert.deepEqual(written.mcpServers.codebook, ENTRY)
+})
+
+test('Set Up AI Chat refuses a config under a parent that is a file in one sentence', async (context) => {
+  // Value: protects=an unreadable config gives the learner a way out; fails_when=a raw ENOTDIR error is thrown; why_new=only ENOENT and ELOOP were handled; seam=a parent folder that is a file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(dirname(configPath)), { recursive: true })
+  await writeFile(dirname(configPath), 'not a folder')
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.match(error.message, /Devin Desktop's MCP config/)
+    assert.ok(error.message.includes(configPath))
+    assert.match(error.message, /a file it could not read/)
+    assert.match(error.message, /left that file untouched/)
+    assert.match(error.message, /Codebook: Set Up AI Chat again/)
+    assert.doesNotMatch(error.message, /ENOTDIR/)
+    assert.equal((error.cause as NodeJS.ErrnoException).code, 'ENOTDIR')
+    return true
+  })
+})
+
+test('Set Up AI Chat refuses a config without read permission in one sentence', async (context) => {
+  // Value: protects=a mode 000 config gives the learner a way out; fails_when=a raw EACCES error is thrown; why_new=only ENOENT and ELOOP were handled; seam=chmod 000 on a real file
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('mode 000 does not stop root or Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{}\n')
+  await chmod(configPath, 0o000)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.match(error.message, /a file it could not read/)
+    assert.ok(error.message.includes(configPath))
+    assert.doesNotMatch(error.message, /EACCES/)
+    assert.equal((error.cause as NodeJS.ErrnoException).code, 'EACCES')
+    return true
+  })
+})
+
+test('Set Up AI Chat refuses a config larger than one mebibyte before reading it and leaves it untouched', async (context) => {
+  // Value: protects=a huge file is never read into memory; fails_when=a 1 MiB + 1 byte config is parsed and rewritten; why_new=reads had no size cap; seam=real oversized but valid JSON file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const original = `{"note":"${'x'.repeat(1_048_576)}"}\n`
+  await writeConfig(configPath, original)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.match(error.message, /a file larger than 1048576 bytes/)
+    assert.ok(error.message.includes(configPath))
+    assert.match(error.message, /Codebook: Set Up AI Chat again/)
+    return true
+  })
+  assert.equal(await readFile(configPath, 'utf8'), original)
 })
