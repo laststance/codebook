@@ -862,6 +862,35 @@ test('a reconnect whose refresh is passed by a confirmed removal starts no serve
   }
 })
 
+// Value: protects=a Stop Agent Server run while the reconnect refreshed the entry is not undone by the automatic start (Cycle 0144 task 12); fails_when=activation goes on to start() after the learner's stop, so a server runs and writes a descriptor after the stop; no_claim=a start the learner asks for later; seam=a held entry refresh
+test('a reconnect whose refresh is passed by Stop Agent Server starts no server and writes no descriptor', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    holdRefresh: true,
+  })
+  try {
+    await window.refreshReached
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    window.releaseRefresh()
+    // Assert
+    // Without the check a server start follows within milliseconds; one second without it shows the reconnect stopped.
+    await assert.rejects(
+      waitUntil(
+        () => window.steps.includes('start server'),
+        'a server start after the stop',
+        1_000,
+      ),
+      { message: 'Timed out waiting for a server start after the stop' },
+    )
+    // No server ever started, so not even the agent folder with the descriptors exists.
+    await assert.rejects(window.descriptorNames(), { code: 'ENOENT' })
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a failed write of the saved setup never stops the removal before Codebook's entry is taken out of the shared config, and the learner still gets the notice; fails_when=the state write rejects first and the entry stays in Devin's config with no notice; why_new=review round (CodeRabbit, the state write came before the entry cleanup); seam=a workspace state stand-in that rejects the clear
 test('Remove Devin Desktop Setup removes the MCP entry and shows its notice even when clearing the saved setup fails', async (context) => {
   // Arrange

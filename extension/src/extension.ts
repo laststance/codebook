@@ -3905,10 +3905,17 @@ export function activate(
           context.extensionPath,
           context.globalStorageUri.fsPath,
         )
+      // A Stop Agent Server asked for while the refresh runs stops nothing (no server runs yet); it is counted, as {@link awaitReplacedReaders} does.
+      const stopsAskedBefore = stopsAskedFor
       // Devin Local starts the bridge its config names when the window loads; a removed setup reconnects nothing.
       if (isDevinHost && !(await refreshDevinSetup())) return
-      // A removal confirmed while the refresh ran clears the saved setup (or is clearing it): nothing is started for it.
-      if (isDevinHost && (devinRemoving || !setupMatchesCurrentWorkspace()))
+      // A removal confirmed while the refresh ran clears the saved setup (or is clearing it): nothing is started for it. A stop asked for meanwhile ends the reconnect too, so the learner's stop is not undone by the automatic start.
+      if (
+        isDevinHost &&
+        (devinRemoving ||
+          !setupMatchesCurrentWorkspace() ||
+          stopsAskedFor !== stopsAskedBefore)
+      )
         return
       await start()
       notifyMcpDefinitions()
