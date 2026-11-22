@@ -1123,6 +1123,11 @@ export function activate(
   }
   /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. @returns `false` when neither receipt is left (the setup was removed), so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
   const refreshDevinSetup = async (): Promise<boolean> => {
+    // Windows has no Devin Desktop setup yet, so a saved setup there (an older Codebook's VS Code path) reconnects nothing.
+    if (process.platform === 'win32') {
+      diagnostics.info(DEVIN_WINDOWS_UNSUPPORTED_SENTENCE)
+      return false
+    }
     const storageRoot = context.globalStorageUri.fsPath
     const isSkillManaged = await verifyManagedDevinSkill(
       context.extensionPath,
@@ -3159,6 +3164,9 @@ export function activate(
     registerCommand('codebook.removeManagedDevinSetup', async () => {
       if (!isDevinHost)
         throw new Error('This command is available in Devin Desktop only.')
+      // Windows has no Devin Desktop setup yet, so there is nothing of Codebook's to remove at the macOS and Linux paths.
+      if (process.platform === 'win32')
+        throw new Error(DEVIN_WINDOWS_UNSUPPORTED_SENTENCE)
       if (devinRemoval) return devinRemoval
       const choice = await vscode.window.showWarningMessage(
         DEVIN_REMOVAL_QUESTION,
@@ -3176,11 +3184,18 @@ export function activate(
           // A skill refusal (edited or replaced after setup) ends the removal before the entry, as Cursor's removal does.
           const skillRemoval = (await removeManagedDevinSkill(storageRoot))
             .status
-          await context.workspaceState.update('codebook.aiChatSetup', undefined)
           // A refused entry (an unreadable config, a removal journal of another file) keeps the config as it is, and the warning says so.
           const entryRemoval = await removeManagedDevinMcpEntry(
             storageRoot,
           ).catch((error: unknown) => ({ refusal: thrownMessage(error) }))
+          // The saved setup is cleared after the entry, and a failed write of it only goes to the Output: the next window then reconnects nothing (its refresh finds no receipt).
+          await context.workspaceState
+            .update('codebook.aiChatSetup', undefined)
+            .then(undefined, (error: unknown) => {
+              diagnostics.info(
+                `Codebook could not clear this window's saved Devin Desktop setup: ${thrownMessage(error)}`,
+              )
+            })
           const notice = devinRemovalNotice(skillRemoval, entryRemoval)
           if (notice.reload) offerDevinReload(notice.severity, notice.text)
           else void showNotice(notice.severity, notice.text)
@@ -3606,6 +3621,9 @@ export function activate(
         )
       // Devin Local starts the bridge its config names when the window loads; a removed setup reconnects nothing.
       if (isDevinHost && !(await refreshDevinSetup())) return
+      // A removal confirmed while the refresh ran clears the saved setup (or is clearing it): nothing is started for it.
+      if (isDevinHost && (devinRemoving || !setupMatchesCurrentWorkspace()))
+        return
       await start()
       notifyMcpDefinitions()
     })().catch((error) => {

@@ -26,7 +26,7 @@ type EntryRefreshStatus = 'refreshed' | 'current' | 'not-managed' | 'changed'
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system; `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed.
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail.
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -39,6 +39,8 @@ async function devinWindow(
     entryRefresh?: EntryRefreshStatus
     noticeChoice?: string
     confirmRemoval?: boolean
+    holdRefresh?: boolean
+    failSetupClear?: boolean
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
@@ -54,6 +56,14 @@ async function devinWindow(
     writtenEntries: DevinEntry[] = [],
     refreshedEntries: DevinEntry[] = []
   let instance = 0
+  // The refresh waits here when a test holds it; `refreshEntered` tells the test it is waiting.
+  let releaseRefresh!: () => void, refreshEntered!: () => void
+  const refreshHeld = new Promise<void>((resolve) => {
+    releaseRefresh = resolve
+  })
+  const refreshReached = new Promise<void>((resolve) => {
+    refreshEntered = resolve
+  })
   // A setup saved by an earlier window names the workspace this window opens.
   if (options.savedSetup)
     state.set('codebook.aiChatSetup', { workspace: directory })
@@ -228,6 +238,10 @@ async function devinWindow(
         ) => {
           steps.push('refresh MCP entry')
           refreshedEntries.push(structuredClone(entry))
+          if (options.holdRefresh) {
+            refreshEntered()
+            await refreshHeld
+          }
           return { status: options.entryRefresh ?? 'current', path: configPath }
         },
         removeManagedDevinMcpEntry: async () => {
@@ -242,16 +256,14 @@ async function devinWindow(
         },
       },
     },
-    // A test may open the window on another system, which the setup reads as `process.platform`.
+    // The window runs on macOS unless a test names another system, which the setup reads as `process.platform`: the suite also runs on Windows, where Devin Desktop setup refuses.
     {
-      process: options.platform
-        ? new Proxy(process, {
-            get: (target, key) =>
-              key === 'platform'
-                ? options.platform
-                : Reflect.get(target, key, target),
-          })
-        : process,
+      process: new Proxy(process, {
+        get: (target, key) =>
+          key === 'platform'
+            ? (options.platform ?? 'darwin')
+            : Reflect.get(target, key, target),
+      }),
     },
   )
   loaded.activate({
@@ -262,6 +274,13 @@ async function devinWindow(
       get: (key: string) => state.get(key),
       // A copy of this realm, so the saved setup compares by value.
       update: async (key: string, value: unknown) => {
+        // A storage failure of the editor when the saved setup is cleared.
+        if (
+          options.failSetupClear &&
+          key === 'codebook.aiChatSetup' &&
+          value === undefined
+        )
+          throw new Error('Injected workspace state write failure')
         state.set(key, structuredClone(value))
       },
     },
@@ -279,6 +298,8 @@ async function devinWindow(
     refreshedEntries,
     directory,
     configPath,
+    refreshReached,
+    releaseRefresh,
   }
 }
 
@@ -442,6 +463,115 @@ test('Remove Devin Desktop Setup removes the skill and the MCP entry, clears the
         actions: ['Reload Window'],
       },
     ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Windows Devin Desktop learner who runs the removal is told setup is not supported there, and nothing at the macOS and Linux paths is touched; fails_when=the removal reaches the skill and config helpers on Windows after the confirmation; why_new=review round (CodeRabbit, the Windows guard covered only setup); seam=process.platform of the loaded module
+test('Remove Devin Desktop Setup in a Windows Devin Desktop window refuses before it touches any file', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    platform: 'win32',
+    confirmRemoval: true,
+  })
+  try {
+    // Act
+    const removal = window.commands.get('codebook.removeManagedDevinSetup')!()
+    // Assert
+    await assert.rejects(removal, {
+      message: 'Devin Desktop setup on Windows is not supported yet.',
+    })
+    assert.deepEqual(window.steps, [])
+    assert.deepEqual(window.modalQuestions, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Windows Devin Desktop window whose workspace has a saved setup (an older Codebook's VS Code path) reconnects nothing and touches no skill or config; fails_when=activation refreshes the macOS and Linux paths or starts a server for Devin Local on Windows; why_new=review round (CodeRabbit, the Windows guard covered only setup); seam=process.platform of the loaded module
+test('a Windows Devin Desktop window with a saved setup reconnects nothing and writes the refusal to the Output', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    platform: 'win32',
+    savedSetup: true,
+  })
+  try {
+    // Act
+    await waitUntil(
+      () =>
+        window.outputLines.includes(
+          'Devin Desktop setup on Windows is not supported yet.',
+        ),
+      'the Output line of the Windows refusal',
+    )
+    // Assert
+    assert.deepEqual(window.steps, [])
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a removal confirmed while the reconnect refreshed the entry stops that reconnect: no server starts for a setup the learner removed; fails_when=activation goes on to start() after its earlier skill check, so a removed setup's server runs until the window closes; why_new=review round (CodeRabbit, an activation check before the removal's state change); seam=a held entry refresh
+test('a reconnect whose refresh is passed by a confirmed removal starts no server', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    confirmRemoval: true,
+    holdRefresh: true,
+  })
+  try {
+    await window.refreshReached
+    // Act
+    await window.commands.get('codebook.removeManagedDevinSetup')!()
+    window.releaseRefresh()
+    // Assert
+    // Without the check a server start follows within milliseconds; one second without it shows the reconnect stopped.
+    await assert.rejects(
+      waitUntil(
+        () => window.steps.includes('start server'),
+        'a server start after the removal',
+        1_000,
+      ),
+      { message: 'Timed out waiting for a server start after the removal' },
+    )
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'refresh MCP entry',
+      'remove Devin skill',
+      'remove MCP entry',
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a failed write of the saved setup never stops the removal before Codebook's entry is taken out of the shared config, and the learner still gets the notice; fails_when=the state write rejects first and the entry stays in Devin's config with no notice; why_new=review round (CodeRabbit, the state write came before the entry cleanup); seam=a workspace state stand-in that rejects the clear
+test('Remove Devin Desktop Setup removes the MCP entry and shows its notice even when clearing the saved setup fails', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    confirmRemoval: true,
+    failSetupClear: true,
+  })
+  try {
+    await window.commands.get('codebook.setupAiChat')!()
+    window.steps.length = 0
+    window.notices.length = 0
+    // Act
+    await window.commands.get('codebook.removeManagedDevinSetup')!()
+    // Assert
+    assert.deepEqual(window.steps, ['remove Devin skill', 'remove MCP entry'])
+    assert.equal(
+      window.outputLines.includes(
+        "Codebook could not clear this window's saved Devin Desktop setup: Injected workspace state write failure",
+      ),
+      true,
+    )
+    assert.equal(window.notices.length, 1)
+    assert.equal(window.notices[0]!.severity, 'information')
   } finally {
     await window.loaded.deactivate()
   }
