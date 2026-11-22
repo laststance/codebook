@@ -39,6 +39,7 @@ import {
 } from '../devinMcpBridge'
 import { startServer } from '../server'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
 import { createHarness } from './helpers'
 import { loadModule } from './utils/loadModule'
@@ -51,6 +52,13 @@ const IDS = [
   '22222222-2222-4222-8222-222222222222',
   '33333333-3333-4333-8333-333333333333',
 ]
+
+/** The instance id of descriptor `index`: one of {@link IDS}, or a numbered id for the tests that need many. */
+function instanceIdOf(index: number): string {
+  return (
+    IDS[index] ?? `44444444-4444-4444-8444-${String(index).padStart(12, '0')}`
+  )
+}
 
 /** Makes an agent folder and workspace folders that are removed when the test ends. */
 async function createFolders(context: {
@@ -80,13 +88,13 @@ async function writeDescriptor(
   pid: number,
   overrides: Record<string, unknown> = {},
 ): Promise<string> {
-  const path = join(agentDir, `${IDS[index]}.connection.json`)
+  const path = join(agentDir, `${instanceIdOf(index)}.connection.json`)
   await writeFile(
     path,
     JSON.stringify({
       url: 'http://127.0.0.1:1/mcp',
       token: 'fake-test-value',
-      instanceId: IDS[index],
+      instanceId: instanceIdOf(index),
       workspace,
       apiVersion: '1.0',
       pid,
@@ -1177,5 +1185,124 @@ test(
     assert.deepEqual(lines, [
       `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
     ])
+  },
+)
+
+// protects=a selection scan's length with many same-window descriptors whose workspace lookups never answer; fails_when=each hanging candidate gets its own 200 ms floor after the deadline, so twenty of them add about four seconds; no_claim=how a real mount stops answering (the resolver never settles)
+test(
+  'a scan with twenty hanging same-window candidates ends within the deadline plus one grace',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+    for (let index = 0; index < 20; index += 1)
+      await writeDescriptor(
+        agentDir,
+        index,
+        `${otherWorkspace}-${index}`,
+        process.pid,
+      )
+    const resolveWorkspace = (path: string): Promise<string> =>
+      path === workspace
+        ? Promise.resolve(path)
+        : new Promise<string>(() => undefined)
+    // Act
+    const startedAt = Date.now()
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 500, intervalMs: 20, resolveWorkspace },
+    )
+    const elapsedMs = Date.now() - startedAt
+    // Assert
+    assert.equal(selection, undefined)
+    // gstack-timing-ok: the contract is the scan's length against the deadline plus one grace, with a 1,500 ms margin for the gate's parallel load.
+    assert.equal(elapsedMs < 500 + 1_500, true)
+  },
+)
+
+// protects=a healthy descriptor being chosen before the deadline although an older same-window descriptor's lookup never answers; fails_when=the hanging candidate is looked up first and spends the whole budget before the healthy one starts; no_claim=which descriptor wins when both answer
+test(
+  'a hanging same-window candidate listed first does not delay the healthy one listed second',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+    const hangingPath = await writeDescriptor(
+      agentDir,
+      0,
+      otherWorkspace,
+      process.pid,
+    )
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      1,
+      workspace,
+      process.pid,
+    )
+    // The hanging descriptor is the older one.
+    await utimes(hangingPath, new Date(1_000_000), new Date(1_000_000))
+    const resolveWorkspace = (path: string): Promise<string> =>
+      path === otherWorkspace
+        ? new Promise<string>(() => undefined)
+        : Promise.resolve(path)
+    // Act
+    const startedAt = Date.now()
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 3_000, intervalMs: 20, resolveWorkspace },
+    )
+    const elapsedMs = Date.now() - startedAt
+    // Assert
+    assert.equal(selection?.descriptorPath, healthyPath)
+    // gstack-timing-ok: the contract is a choice before the 3,000 ms deadline.
+    assert.equal(elapsedMs < 2_000, true)
+  },
+)
+
+// protects=a healthy descriptor being chosen beside a descriptor whose read never returns; fails_when=descriptors are read one after another, so the stalled read holds the scan; no_claim=how a real read stalls (the read stand-in never settles for one path)
+test(
+  'a descriptor whose read stalls does not hold a healthy descriptor',
+  { timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const stalledPath = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+    )
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      1,
+      workspace,
+      process.pid,
+    )
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/readWikiRegularFile': {
+          readWikiRegularFile: (
+            ...parameters: Parameters<typeof readWikiRegularFile>
+          ) =>
+            parameters[0] === stalledPath
+              ? new Promise<undefined>(() => undefined)
+              : readWikiRegularFile(...parameters),
+        },
+      },
+    )
+    // Act
+    const selection = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 600, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, healthyPath)
   },
 )

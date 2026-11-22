@@ -41,6 +41,8 @@ export interface DevinSelectOptions {
   excludedPaths?: ReadonlySet<string>
   /** Resolves a workspace to its real path; {@link realOrSame} unless a test names its own (for example one that never answers). */
   resolveWorkspace?: (path: string) => Promise<string>
+  /** The lookups still running from earlier selections of one bridge ({@link createDevinSelectState}); a new one when absent. */
+  state?: DevinSelectState
 }
 
 /** Polling defaults: Codebook may still be activating when Devin starts the bridge. */
@@ -102,97 +104,212 @@ async function readCandidate(
   }
 }
 
-/** Reads every usable connection descriptor of the agent folder without keeping its token. */
-async function readCandidates(
-  agentDir: string,
-  identity: StorageOwnerIdentity,
-): Promise<DevinCandidate[]> {
-  let names: string[]
-  try {
-    names = (await readdir(agentDir)).filter((name) =>
-      name.endsWith(CONNECTION_DESCRIPTOR_SUFFIX),
-    )
-  } catch {
-    return []
-  }
-  const candidates: DevinCandidate[] = []
-  for (const name of names) {
-    const candidate = await readCandidate(join(agentDir, name), identity)
-    if (candidate) candidates.push(candidate)
-  }
-  return candidates
-}
-
 /**
- * Resolves a workspace to its real path within a time budget; called by {@link matchDescriptors} and {@link selectDevinDescriptor} so a mount that never answers cannot hold the selection past its startup deadline.
- * @param resolveWorkspace - The resolver, {@link realOrSame} unless a test names its own.
- * @param path - The workspace folder to resolve.
- * @param deadline - Epoch milliseconds at which the startup window ends.
- * @returns The real path, or `undefined` when the resolver did not answer within the remaining budget (never less than {@link WORKSPACE_RESOLVE_FLOOR_MS}).
+ * Waits for a promise for at most `budgetMs`, so one lookup that never answers cannot hold the selection; called by {@link scanDescriptors} and {@link selectDevinDescriptor}.
+ * The promise is not cancelled: a file system request cannot be, so it keeps running after the bound.
+ * @param pending - The lookup; it must not reject.
+ * @param budgetMs - How long the caller may wait; zero or less takes the answer only when it is already there.
+ * @returns What the lookup answered, or `undefined` when the bound passed first.
  * @example
- * await resolveWithinBudget(realOrSame, '/repo', Date.now() + 15_000) // => '/repo'
+ * await answerWithin(realOrSame('/repo'), 200) // => '/repo', or undefined for a mount that never answers
  */
-async function resolveWithinBudget(
-  resolveWorkspace: (path: string) => Promise<string>,
-  path: string,
-  deadline: number,
-): Promise<string | undefined> {
-  const budgetMs = Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now())
+async function answerWithin<Answer>(
+  pending: Promise<Answer>,
+  budgetMs: number,
+): Promise<Answer | undefined> {
   let timer: NodeJS.Timeout | undefined
   const timedOut = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => resolve(undefined), budgetMs)
+    timer = setTimeout(() => resolve(undefined), Math.max(0, budgetMs))
   })
   try {
-    return await Promise.race([resolveWorkspace(path), timedOut])
+    return await Promise.race([pending, timedOut])
   } finally {
     clearTimeout(timer)
   }
 }
 
-/** Keeps the descriptors whose pid is the extension host's, whose owner still runs and whose workspace has the same real path as `realCwd`; newest first, by file time then instance id. The cheap fields are judged first, so another window's descriptor never has its workspace resolved; a workspace that does not answer before `deadline` skips that descriptor. */
-async function matchDescriptors(
-  agentDir: string,
-  realCwd: string,
-  extHostPid: number,
-  identity: StorageOwnerIdentity,
-  excludedPaths: ReadonlySet<string>,
-  resolveWorkspace: (path: string) => Promise<string>,
-  deadline: number,
-): Promise<DevinDescriptorSelection[]> {
-  const matches: Array<DevinDescriptorSelection & { modifiedAtMs: number }> = []
-  for (const { pid, ...selection } of await readCandidates(
-    agentDir,
-    identity,
-  )) {
-    // Cheap fields first: another window's descriptor is dropped before any file system lookup.
+/** Lookups that have not answered yet, one per key, so the polls of one selection never pile up several requests for one path on libuv's four-thread pool. */
+type InFlightLookups<Answer> = Map<string, Promise<Answer | undefined>>
+
+/**
+ * Returns the lookup already running for `key`, or starts one when `mayStart`; called by {@link scanDescriptors} for descriptor reads and workspace lookups.
+ * The entry is removed when the lookup settles, so a later poll looks again and sees a changed file; a rejection becomes `undefined`.
+ * @param lookups - The running lookups of one kind.
+ * @param key - The path the lookup is about.
+ * @param mayStart - Whether a new lookup may start now; `false` after the scan's deadline.
+ * @param start - Starts the lookup.
+ * @returns The shared promise, or `undefined` when none runs and none may start.
+ * @example
+ * sharedLookup(lookups, '/repo', true, () => realOrSame('/repo')) // the same promise until it settles
+ */
+function sharedLookup<Answer>(
+  lookups: InFlightLookups<Answer>,
+  key: string,
+  mayStart: boolean,
+  start: () => Promise<Answer | undefined>,
+): Promise<Answer | undefined> | undefined {
+  const running = lookups.get(key)
+  if (running || !mayStart) return running
+  const lookup: Promise<Answer | undefined> = start()
+    .catch(() => undefined)
+    .finally(() => {
+      if (lookups.get(key) === lookup) lookups.delete(key)
+    })
+  lookups.set(key, lookup)
+  return lookup
+}
+
+/** What one selection remembers across its polls: the lookups still running (descriptor reads and workspace lookups). */
+export interface DevinSelectState {
+  reads: InFlightLookups<DevinCandidate>
+  workspaces: InFlightLookups<string>
+}
+
+/**
+ * Makes the memory one bridge keeps across its selections; called by {@link selectDevinDescriptor} when the caller names none, and by {@link runDevinMcpBridge} once per bridge.
+ * @returns Empty lookups.
+ * @example
+ * createDevinSelectState().reads.size // => 0
+ */
+export function createDevinSelectState(): DevinSelectState {
+  return { reads: new Map(), workspaces: new Map() }
+}
+
+/** A descriptor candidate that was read and is being judged: `match` answers with the selection when the candidate is this window's. */
+interface EvaluatedCandidate {
+  modifiedAtMs: number
+  instanceId: string
+  match: Promise<DevinDescriptorSelection | undefined>
+}
+
+/** What one scan of the agent folder judges candidates by. */
+interface ScanContext {
+  realCwd: string
+  extHostPid: number
+  identity: StorageOwnerIdentity
+  excludedPaths: ReadonlySet<string>
+  resolveWorkspace: (path: string) => Promise<string>
+  /** No new lookup starts after this instant. */
+  scanDeadline: number
+  state: DevinSelectState
+}
+
+/**
+ * Judges one candidate: its pid, its exclusion, its owner and, last, its workspace's real path; called by {@link startCandidate} as soon as the candidate is read.
+ * The cheap fields are judged first, so another window's descriptor never has its workspace resolved. It never rejects.
+ * @param candidate - The candidate read from one descriptor.
+ * @param scan - What the scan judges by.
+ * @returns The selection without its credential when the candidate is this window's, else `undefined` (also when the workspace did not answer before the scan's deadline).
+ * @example
+ * await evaluateCandidate(candidate, scan) // => { descriptorPath, instanceId, ... } or undefined
+ */
+async function evaluateCandidate(
+  candidate: DevinCandidate,
+  scan: ScanContext,
+): Promise<DevinDescriptorSelection | undefined> {
+  const { descriptorPath, instanceId, workspace, url, devinChat } = candidate
+  try {
     if (
-      pid !== extHostPid ||
-      excludedPaths.has(selection.descriptorPath) ||
-      (await isDescriptorOwnerGone(selection.descriptorPath, identity))
+      candidate.pid !== scan.extHostPid ||
+      scan.excludedPaths.has(descriptorPath) ||
+      (await isDescriptorOwnerGone(descriptorPath, scan.identity))
     )
-      continue
-    const realWorkspace = await resolveWithinBudget(
-      resolveWorkspace,
-      selection.workspace,
-      deadline,
-    )
-    if (realWorkspace === realCwd) matches.push(selection)
-  }
-  // Newest first, ties by instance id: the order never depends on the folder's listing order.
-  matches.sort(
-    (first, second) =>
-      second.modifiedAtMs - first.modifiedAtMs ||
-      first.instanceId.localeCompare(second.instanceId),
-  )
-  return matches.map(
-    ({ descriptorPath, instanceId, workspace, url, devinChat }) => ({
-      descriptorPath,
-      instanceId,
+      return undefined
+    const lookup = sharedLookup(
+      scan.state.workspaces,
       workspace,
-      url,
-      devinChat,
-    }),
+      Date.now() < scan.scanDeadline,
+      () => scan.resolveWorkspace(workspace),
+    )
+    if (!lookup) return undefined
+    const realWorkspace = await answerWithin(
+      lookup,
+      scan.scanDeadline - Date.now(),
+    )
+    return realWorkspace === scan.realCwd
+      ? { descriptorPath, instanceId, workspace, url, devinChat }
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Reads one descriptor and starts judging it at once; called by {@link scanDescriptors} for each file, all together.
+ * @param descriptorPath - The `<instanceId>.connection.json` file.
+ * @param scan - What the scan judges by.
+ * @returns The candidate's order keys and its pending judgement, or `undefined` for a file that must not be used.
+ * @example
+ * await startCandidate('/storage/agent/instance.connection.json', scan) // => { modifiedAtMs, instanceId, match }
+ */
+async function startCandidate(
+  descriptorPath: string,
+  scan: ScanContext,
+): Promise<EvaluatedCandidate | undefined> {
+  const candidate = await sharedLookup(
+    scan.state.reads,
+    descriptorPath,
+    true,
+    () => readCandidate(descriptorPath, scan.identity),
   )
+  if (!candidate) return undefined
+  return {
+    modifiedAtMs: candidate.modifiedAtMs,
+    instanceId: candidate.instanceId,
+    match: evaluateCandidate(candidate, scan),
+  }
+}
+
+/**
+ * Finds the newest live descriptor of this window in the agent folder within one scan; called by {@link selectDevinDescriptor} at each poll.
+ * One grace per scan: `scanDeadline` is the startup deadline, or {@link WORKSPACE_RESOLVE_FLOOR_MS} after the scan began when the deadline has passed, and no lookup starts after it. Every descriptor is read and judged concurrently under it, so a read or lookup that never answers costs this scan at most that deadline, whatever their number, and never holds a healthy candidate. The candidates that answered are taken newest first by file time, ties by instance id, never by listing order.
+ * @param agentDir - Folder holding `*.connection.json` descriptors.
+ * @param scan - What the scan judges by, without its `scanDeadline`.
+ * @param deadline - The startup deadline (epoch milliseconds).
+ * @returns The newest match without its token, or `undefined` when none answered in time.
+ * @example
+ * await scanDescriptors('/storage/agent', scan, Date.now() + 15_000) // => the newest selection of this window
+ */
+async function scanDescriptors(
+  agentDir: string,
+  scan: Omit<ScanContext, 'scanDeadline'>,
+  deadline: number,
+): Promise<DevinDescriptorSelection | undefined> {
+  const scanDeadline = Math.max(
+      deadline,
+      Date.now() + WORKSPACE_RESOLVE_FLOOR_MS,
+    ),
+    context = { ...scan, scanDeadline }
+  const names = await answerWithin(
+    readdir(agentDir).then(
+      (listed) =>
+        listed.filter((name) => name.endsWith(CONNECTION_DESCRIPTOR_SUFFIX)),
+      () => [],
+    ),
+    scanDeadline - Date.now(),
+  )
+  const started = await Promise.all(
+    (names ?? []).map((name) =>
+      answerWithin(
+        startCandidate(join(agentDir, name), context),
+        scanDeadline - Date.now(),
+      ),
+    ),
+  )
+  // Newest first, ties by instance id: the order never depends on the folder's listing order.
+  const ordered = started
+    .filter((entry) => entry !== undefined)
+    .sort(
+      (first, second) =>
+        second.modifiedAtMs - first.modifiedAtMs ||
+        first.instanceId.localeCompare(second.instanceId),
+    )
+  // Judgements run concurrently; taking them in order returns as soon as the newest possible match answered.
+  for (const entry of ordered) {
+    const match = await answerWithin(entry.match, scanDeadline - Date.now())
+    if (match) return match
+  }
+  return undefined
 }
 
 /**
@@ -222,20 +339,27 @@ export async function selectDevinDescriptor(
     resolveWorkspace = options.resolveWorkspace ?? realOrSame,
     // A working folder that does not answer in time is compared as written, like one that does not resolve.
     realCwd =
-      (await resolveWithinBudget(resolveWorkspace, cwd, deadline)) ?? cwd,
-    identity = options.identity ?? (await currentStorageOwner())
+      (await answerWithin(
+        resolveWorkspace(cwd),
+        Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
+      )) ?? cwd,
+    identity = options.identity ?? (await currentStorageOwner()),
+    state = options.state ?? createDevinSelectState()
   for (;;) {
-    const matches = await matchDescriptors(
+    // The scan returns the newest live match, so several live ones resolve to the newest without waiting.
+    const match = await scanDescriptors(
       agentDir,
-      realCwd,
-      extHostPid,
-      identity,
-      options.excludedPaths ?? new Set(),
-      resolveWorkspace,
+      {
+        realCwd,
+        extHostPid,
+        identity,
+        excludedPaths: options.excludedPaths ?? new Set(),
+        resolveWorkspace,
+        state,
+      },
       deadline,
     )
-    // Matches come newest first, so several live ones resolve to the newest without waiting.
-    if (matches.length > 0) return matches[0]
+    if (match) return match
     if (Date.now() >= deadline) return undefined
     await sleep(intervalMs)
   }
@@ -402,17 +526,18 @@ export async function runDevinMcpBridge(
     excludedPaths = new Set<string>(),
     // The working folder's lookup spends the same startup window, so a mount that never answers cannot hold the bridge before its first selection; one that does not answer is compared as written, as the selection does.
     realCwd =
-      (await resolveWithinBudget(
-        options.resolveWorkspace ?? realOrSame,
-        cwd,
-        deadline,
-      )) ?? cwd
+      (await answerWithin(
+        (options.resolveWorkspace ?? realOrSame)(cwd),
+        Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
+      )) ?? cwd,
+    state = createDevinSelectState()
   const lateAttempt = { isSpent: false }
   for (;;) {
     // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.
     const selection = await selectDevinDescriptor(agentDir, cwd, pid, {
       ...options,
       excludedPaths,
+      state,
       timeoutMs: Math.max(0, deadline - Date.now()),
     })
     // No match in time: one fixed recovery line, no descriptor contents.
