@@ -1,15 +1,11 @@
-import type { FileHandle } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import type { z } from 'zod'
 
-import { DEVIN_DESCRIPTOR_LIMIT_BYTES } from '../constants'
-
 import { connectionSchema } from './connectionSchema'
 import { isLoopbackMcpUrl } from './isLoopbackMcpUrl'
-import { openWithoutFollowing } from './openWithoutFollowing'
+import { readDescriptorText } from './readDescriptorText'
 import { recordedOwnerSchema } from './readRecordedOwner'
-import { readUpToLimit } from './readUpToLimit'
 import { realOrSame } from './realOrSame'
 
 /** What a bridge's caller validated when it selected a descriptor; the descriptor read for the connection must still say the same. */
@@ -56,58 +52,6 @@ function parseDescriptorText(text: string): {
   } catch {
     // The parsers' messages quote the input; the file may hold a token.
     throw new Error(DESCRIPTOR_UNREADABLE_MESSAGE)
-  }
-}
-
-/** The one sentence for a descriptor that is no private regular file (a link, a pipe, a device, readable by others). */
-const DESCRIPTOR_NOT_PRIVATE_MESSAGE =
-  'Codebook connection descriptor is not a private regular file.'
-
-/**
- * Checks through the open handle that the descriptor is a private regular file within {@link DEVIN_DESCRIPTOR_LIMIT_BYTES}, then reads it; called by {@link readDescriptorText}.
- * @param file - The descriptor opened by {@link openWithoutFollowing}.
- * @returns The file's text.
- * @throws An error with {@link DESCRIPTOR_NOT_PRIVATE_MESSAGE} for anything but a regular file private to its owner; an error naming the size limit for a larger file, also one that grew past it while read.
- * @example
- * await readOpenedDescriptor(file) // => '{"url":"..."}'
- */
-async function readOpenedDescriptor(file: FileHandle): Promise<string> {
-  const status = await file.stat()
-  if (!status.isFile() || (status.mode & 0o077) !== 0)
-    throw new Error(DESCRIPTOR_NOT_PRIVATE_MESSAGE)
-  const bytes =
-    status.size > DEVIN_DESCRIPTOR_LIMIT_BYTES
-      ? undefined
-      : await readUpToLimit(file, status.size, DEVIN_DESCRIPTOR_LIMIT_BYTES)
-  if (!bytes)
-    throw new Error(
-      `Codebook connection descriptor is larger than ${DEVIN_DESCRIPTOR_LIMIT_BYTES} bytes.`,
-    )
-  return bytes.toString('utf8')
-}
-
-/**
- * Opens the descriptor once, without following a link and without waiting on a pipe, and reads it through that one handle; called by {@link readBridgeDescriptor}, so the file checked is the file read.
- * @param descriptorPath - The private connection descriptor of the instance.
- * @returns The file's text.
- * @throws {@link DESCRIPTOR_NOT_PRIVATE_MESSAGE} for a link or another file the path came to hold; what {@link readOpenedDescriptor} throws; the file system's error when the path cannot be opened.
- * @example
- * await readDescriptorText('/agent/x.connection.json') // => '{"url":"..."}'
- */
-async function readDescriptorText(descriptorPath: string): Promise<string> {
-  const file = await openWithoutFollowing(descriptorPath).catch(
-    (error: unknown) => {
-      const { code } = error as { code?: unknown }
-      // A link (ELOOP) or a file other than the one looked at is no private regular file.
-      if (code === 'ELOOP' || code === 'ENOTREG' || code === 'EREPLACED')
-        throw new Error(DESCRIPTOR_NOT_PRIVATE_MESSAGE)
-      throw error
-    },
-  )
-  try {
-    return await readOpenedDescriptor(file)
-  } finally {
-    await file.close().catch(() => undefined)
   }
 }
 
@@ -163,7 +107,7 @@ async function changedSinceSelection(
 
 /**
  * Reads the private connection descriptor a bridge connects with and refuses any that is not the one its caller validated; called by {@link runCursorMcpBridge} once per connection, so the token goes only to the url checked here.
- * The file is opened once without following links and without blocking, checked through that handle (regular, private to the owner, at most {@link DEVIN_DESCRIPTOR_LIMIT_BYTES}) and read from it, so a path swapped after the selection cannot be read.
+ * The file is opened once without following links and without blocking, checked through that handle (regular, private to the owner, at most the descriptor size cap) and read from it, so a path swapped after the selection cannot be read.
  * @param descriptorPath - The private connection descriptor of the instance.
  * @param expected - What the Devin Desktop bridge's selection validated; Cursor's bridge passes none and takes any valid descriptor.
  * @param timeoutMs - The startup budget the read and the checks may use together, the workspace's real-path lookup included; unbounded when left out.
