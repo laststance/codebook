@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +10,8 @@ import { promisify } from 'node:util'
 import { DEVIN_DESCRIPTOR_LIMIT_BYTES } from '../constants'
 import { DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE } from '../devinWindowSentences'
 import { setDescriptorDevinChat } from '../utils/setDescriptorDevinChat'
+
+import { removeTestFolder } from './utils/removeTestFolder'
 
 const run = promisify(execFile)
 
@@ -43,7 +45,7 @@ test('mark update refuses a named pipe at the descriptor path instead of holding
     // Unblocks a read that is still waiting on the pipe, so the process can end.
     const releasing = await open(descriptorPath, 'r+').catch(() => undefined)
     await releasing?.close()
-    await rm(folder, { recursive: true, force: true })
+    await removeTestFolder(folder)
   })
 
   // Act
@@ -61,7 +63,7 @@ test('mark update refuses an oversized descriptor without reading it and leaves 
   // protects=a huge file at the descriptor path is not read whole; fails_when=the update parses or rewrites a file over the size cap; no_claim=a descriptor that grows while it is read
   // Arrange
   const folder = await mkdtemp(join(tmpdir(), 'codebook-descriptor-big-'))
-  context.after(() => rm(folder, { recursive: true, force: true }))
+  context.after(() => removeTestFolder(folder))
   const descriptorPath = join(folder, 'instance.connection.json')
   const oversized = JSON.stringify({
     url: 'http://127.0.0.1:1/mcp',
