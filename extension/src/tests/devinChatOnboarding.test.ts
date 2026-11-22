@@ -204,6 +204,8 @@ async function devinWindow(
     instanceLabel?: string
     /** Runs when the setup resolves Node, its first step under the setup lock. */
     onResolveNode?: () => void
+    /** Holds the first read of the MCP receipt's installation id until `holds.firstInstallationRead` is released, then reads the real receipt. */
+    hangFirstInstallationRead?: boolean
   } = {},
 ) {
   const directory =
@@ -288,6 +290,7 @@ async function devinWindow(
     skillRemoval: createGate(),
     savedSetupWrite: createGate(),
     descriptorUnmark: createGate(),
+    firstInstallationRead: createGate(),
   }
   // Whether the one held write of the saved setup was reached; the writes after it are not held.
   let isSavedSetupWriteHeld = false
@@ -682,6 +685,11 @@ async function devinWindow(
       },
       './utils/readDevinInstallationId': {
         readDevinInstallationId: async (storageRoot: string) => {
+          // A first read that does not return until the test or the window's deactivate releases it, as a read stuck on a failing disk.
+          if (options.hangFirstInstallationRead) {
+            options.hangFirstInstallationRead = false
+            await holds.firstInstallationRead.wait()
+          }
           const installationRead = await readDevinInstallationId(storageRoot)
           // A first read that failed to look (for example EMFILE) classifies as no answer, whatever the receipt holds.
           if (options.failFirstInstallationRead) {
@@ -834,7 +842,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `hangFirstInstallationRead`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -3532,3 +3540,38 @@ for (const holdCase of REMOVAL_HOLD_CASES) {
     }
   })
 }
+
+// protects=a Devin setup whose first read of the installation id never returns ends 3 seconds after that read started with the retry sentence, and takes back what it saved (the saved setup and the entry it installed), so a stalled disk never holds the setup lock before the commit (Cycle 0146 task 1b) / fails_when=the setup waits on that read for ever, or ends without taking the entry and the saved setup back / no_claim=a read that answers late (it is not waited for); a stand-in read held at a gate stands for the stalled disk
+test('a Devin setup whose first installation-id read never returns ends within 3 s and takes back what it saved', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    hangFirstInstallationRead: true,
+  })
+  try {
+    // Act
+    const setupEnd = window.commands.get('codebook.setupAiChat')!().then(
+      () => ({ atMs: performance.now(), message: 'resolved' }),
+      (error: Error) => ({ atMs: performance.now(), message: error.message }),
+    )
+    const readStartedAtMs = await waitUntil(
+      () => window.holds.firstInstallationRead.reachedAtMs(),
+      'the first read of the installation id',
+    )
+    const setupOutcome = await within(setupEnd, 8_000)
+    // Assert
+    assert.ok(setupOutcome !== 'still waiting', 'the setup command answered')
+    const answeredAfterMs = setupOutcome.atMs - readStartedAtMs
+    assert.ok(
+      answeredAfterMs >= 2_900 && answeredAfterMs <= 5_000,
+      `the setup answered ${answeredAfterMs} ms after the read started`,
+    )
+    assert.equal(
+      setupOutcome.message,
+      'Codebook could not read its setup records just now; run Codebook: Set Up AI Chat again.',
+    )
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    assert.deepEqual(window.steps.slice(-1), ['remove MCP entry'])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})

@@ -218,6 +218,7 @@ import { createLlmWikiView } from './utils/llmWikiView'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
 import { readDevinInstallationId } from './utils/readDevinInstallationId'
+import { readDevinInstallationIdWithin } from './utils/readDevinInstallationIdWithin'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readLlmWikiViewFacts } from './utils/readLlmWikiViewFacts'
 import { readStandingDevinInstallationId } from './utils/readStandingDevinInstallationId'
@@ -1629,7 +1630,9 @@ export function activate(
         'devin-mcp',
         'receipt.json',
       )
-      const installationRead = await readDevinInstallationId(
+      // A read that has not answered within its bound is no answer: the setup asks for a retry and takes itself back instead of holding the lock.
+      const installationRead = await readDevinInstallationIdWithin(
+        readDevinInstallationId,
         context.globalStorageUri.fsPath,
       )
       const checkedInstallationId = installationRead.installationId
