@@ -486,6 +486,10 @@ export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
 export const DEVIN_DESCRIPTOR_LIMIT_BYTES = 65_536
 /** The least time the Devin Desktop bridge gives one connection attempt, also when the 15 s selection window has nearly passed: a server that needs a moment to answer still connects, so the bridge's total time can exceed that window by this floor. */
 export const DEVIN_CONNECT_FLOOR_MS = 3_000
+/** The longest one lookup of the Devin Desktop bridge's own working folder is waited for in one poll, so a hanging lookup cannot spend the whole startup window; a lookup that timed out is asked again at a later poll. */
+export const DEVIN_BRIDGE_CWD_LOOKUP_MS = 1_000
+/** The most working-folder lookups of the Devin Desktop bridge that may be unanswered at once, so a hung mount holds at most two of libuv's four pool threads. */
+export const DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX = 2
 /** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
 export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */

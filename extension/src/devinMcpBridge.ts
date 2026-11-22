@@ -4,6 +4,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import {
   CONNECTION_DESCRIPTOR_SUFFIX,
+  DEVIN_BRIDGE_CWD_LOOKUP_MS,
+  DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX,
   DEVIN_CONNECT_FLOOR_MS,
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
 } from './constants'
@@ -159,10 +161,17 @@ function sharedLookup<Answer>(
   return lookup
 }
 
-/** What one selection remembers across its polls: the lookups still running (descriptor reads and workspace lookups). */
+/** The lookups of the bridge's working folder: how many have not answered yet and the newest real path one answered. */
+interface WorkingFolderLookups {
+  pending: number
+  answer: string | undefined
+}
+
+/** What one bridge remembers across its polls: the lookups still running (descriptor reads and workspace lookups) and those of its working folder. */
 export interface DevinSelectState {
   reads: InFlightLookups<DevinCandidate>
   workspaces: InFlightLookups<string>
+  workingFolder: WorkingFolderLookups
 }
 
 /**
@@ -172,7 +181,54 @@ export interface DevinSelectState {
  * createDevinSelectState().reads.size // => 0
  */
 export function createDevinSelectState(): DevinSelectState {
-  return { reads: new Map(), workspaces: new Map() }
+  return {
+    reads: new Map(),
+    workspaces: new Map(),
+    workingFolder: { pending: 0, answer: undefined },
+  }
+}
+
+/**
+ * Gives the working-folder value a selection matches with; called by {@link selectDevinDescriptor} at each poll.
+ * While no lookup has answered and fewer than {@link DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX} are pending, a new lookup starts and is waited for at most {@link DEVIN_BRIDGE_CWD_LOOKUP_MS}, so one hanging lookup never spends the startup window and a hung mount holds at most two of libuv's four pool threads. A lookup that answers later still sets the answer for the next poll.
+ * @param lookups - The working folder's pending count and newest answer.
+ * @param cwd - Working folder as the bridge was started in.
+ * @param resolveWorkspace - The resolver, {@link realOrSame} unless a test names its own.
+ * @param deadline - The startup deadline (epoch milliseconds).
+ * @returns The newest real path a lookup answered, else `cwd` as written.
+ * @example
+ * await lookUpWorkingFolder(createDevinSelectState().workingFolder, '/link', realOrSame, Date.now() + 15_000) // => '/real'
+ */
+async function lookUpWorkingFolder(
+  lookups: WorkingFolderLookups,
+  cwd: string,
+  resolveWorkspace: (path: string) => Promise<string>,
+  deadline: number,
+): Promise<string> {
+  if (
+    lookups.answer === undefined &&
+    lookups.pending < DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX
+  ) {
+    lookups.pending += 1
+    const lookup = resolveWorkspace(cwd)
+      .then(
+        (real) => {
+          lookups.answer = real
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        lookups.pending -= 1
+      })
+    await answerWithin(
+      lookup,
+      Math.min(
+        DEVIN_BRIDGE_CWD_LOOKUP_MS,
+        Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
+      ),
+    )
+  }
+  return lookups.answer ?? cwd
 }
 
 /** A descriptor candidate that was read and is being judged: `match` answers with the selection when the candidate is this window's. */
@@ -325,32 +381,33 @@ async function scanDescriptors(
  * @param cwd - Working folder Devin starts the bridge in.
  * @param extHostPid - Extension host process id Devin exports; the window's identity.
  * @param options - Polling limits (defaults 15 000 ms in total, every 250 ms), the identity judging owners and descriptors to leave out.
- * @returns The match without its token, or undefined when none appears in time.
+ * @returns The match without its token, with `matchedCwd`, the working-folder value it was matched with (the newest real path the lookup answered, else `cwd` as written); the connection check must compare with that same value. Undefined when none appears in time.
  */
 export async function selectDevinDescriptor(
   agentDir: string,
   cwd: string,
   extHostPid: number,
   options: DevinSelectOptions = {},
-): Promise<DevinDescriptorSelection | undefined> {
+): Promise<(DevinDescriptorSelection & { matchedCwd: string }) | undefined> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS,
     deadline = Date.now() + timeoutMs,
     resolveWorkspace = options.resolveWorkspace ?? realOrSame,
-    // A working folder that does not answer in time is compared as written, like one that does not resolve.
-    realCwd =
-      (await answerWithin(
-        resolveWorkspace(cwd),
-        Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
-      )) ?? cwd,
     identity = options.identity ?? (await currentStorageOwner()),
     state = options.state ?? createDevinSelectState()
   for (;;) {
+    // The newest answer for the working folder, else its spelling as written; a lookup that timed out is asked again at a later poll.
+    const matchedCwd = await lookUpWorkingFolder(
+      state.workingFolder,
+      cwd,
+      resolveWorkspace,
+      deadline,
+    )
     // The scan returns the newest live match, so several live ones resolve to the newest without waiting.
     const match = await scanDescriptors(
       agentDir,
       {
-        realCwd,
+        realCwd: matchedCwd,
         extHostPid,
         identity,
         excludedPaths: options.excludedPaths ?? new Set(),
@@ -359,7 +416,7 @@ export async function selectDevinDescriptor(
       },
       deadline,
     )
-    if (match) return match
+    if (match) return { ...match, matchedCwd }
     if (Date.now() >= deadline) return undefined
     await sleep(intervalMs)
   }
@@ -515,12 +572,7 @@ export async function runDevinMcpBridge(
     return 'Codebook cannot tell which Devin Desktop window started this bridge: WINDSURF_EXT_HOST_PID is not set. Reload the window; if this stays, Devin Desktop changed how it starts MCP servers.'
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     excludedPaths = new Set<string>(),
-    // The working folder's lookup spends the same startup window, so a mount that never answers cannot hold the bridge before its first selection; one that does not answer is compared as written, as the selection does.
-    realCwd =
-      (await answerWithin(
-        (options.resolveWorkspace ?? realOrSame)(cwd),
-        Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
-      )) ?? cwd,
+    // One memory for every selection of this bridge: lookups that never answered are not started again beyond two.
     state = createDevinSelectState()
   const lateAttempt = { isSpent: false }
   for (;;) {
@@ -541,7 +593,8 @@ export async function runDevinMcpBridge(
     const outcome = await connectOnce(
       selection,
       deadline,
-      devinDescriptorExpectation(selection, pid, realCwd),
+      // The connection check compares with the working-folder value the selection matched with, never a second lookup of its own.
+      devinDescriptorExpectation(selection, pid, selection.matchedCwd),
     )
     if (outcome === 'connected') return undefined
     if (outcome === 'dropped') excludedPaths.add(selection.descriptorPath)

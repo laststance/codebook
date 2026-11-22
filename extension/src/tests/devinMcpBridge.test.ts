@@ -56,7 +56,8 @@ const IDS = [
 /** The instance id of descriptor `index`: one of {@link IDS}, or a numbered id for the tests that need many. */
 function instanceIdOf(index: number): string {
   return (
-    IDS[index] ?? `44444444-4444-4444-8444-${String(index).padStart(12, '0')}`
+    IDS[index] ??
+    `aaaaaaaa-aaaa-4aaa-8aaa-${index.toString(16).padStart(12, 'a')}`
   )
 }
 
@@ -179,14 +180,19 @@ async function connectThroughBridge(
   root: string,
   cwd: string,
   context: { after: (callback: () => Promise<void>) => void },
+  launch: { nodeArgs?: string[]; env?: Record<string, string> } = {},
 ): Promise<Client> {
   const client = new Client({ name: 'devin-bridge-test', version: '1.0' })
   context.after(() => client.close())
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [join(__dirname, '../devinMcpBridgeEntry.js'), root],
+    args: [
+      ...(launch.nodeArgs ?? []),
+      join(__dirname, '../devinMcpBridgeEntry.js'),
+      root,
+    ],
     cwd,
-    env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+    env: { WINDSURF_EXT_HOST_PID: String(process.pid), ...launch.env },
     stderr: 'pipe',
   })
   await client.connect(transport, { timeout: 10_000 })
@@ -1238,6 +1244,64 @@ bridge.runDevinMcpBridge = (agentDirectory) =>
     )
     // gstack-timing-ok: the contract is an exit before 3,000 ms with a 500 ms deadline.
     assert.equal(result.elapsedMs < 3_000, true)
+  },
+)
+
+// protects=a Devin window whose symlinked working folder has one lookup that never answers still connecting to its valid descriptor; fails_when=the connection check compares the unresolved folder while the selection matched the real one, so the descriptor is dropped and the bridge refuses; no_claim=a real hung mount (the first resolver call never settles, later ones answer with the real path)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge connects when only the first lookup of a symlinked working folder never answers',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const linkedFolder = join(root, 'linked-workspace')
+    await symlink(harness.directory, linkedFolder)
+    await writeDescriptor(root, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      instanceId: IDS[0],
+    })
+    const preloadPath = join(root, 'preload.js')
+    // The preload starts the bridge in the symlinked folder; its resolver never answers the first lookup of that folder and answers every other one with the real path.
+    await writeFile(
+      preloadPath,
+      `const { realpath } = require('node:fs/promises')
+const bridge = require(${JSON.stringify(resolve(__dirname, '../devinMcpBridge.js'))})
+const original = bridge.runDevinMcpBridge
+let lookupsOfLink = 0
+bridge.runDevinMcpBridge = (agentDirectory) =>
+  original(agentDirectory, process.env.LINKED_FOLDER, process.env, {
+    timeoutMs: 8_000,
+    intervalMs: 20,
+    resolveWorkspace: (path) => {
+      if (path === process.env.LINKED_FOLDER && (lookupsOfLink += 1) === 1)
+        return new Promise(() => {})
+      return realpath(path)
+    },
+  })
+`,
+    )
+    // Act
+    const client = await connectThroughBridge(
+      root,
+      harness.directory,
+      context,
+      {
+        nodeArgs: ['--require', preloadPath],
+        env: { LINKED_FOLDER: linkedFolder },
+      },
+    )
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
   },
 )
 
