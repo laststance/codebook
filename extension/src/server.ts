@@ -329,7 +329,8 @@ export async function startServer(
           if (!hasCurrentToken(request.headers.authorization)) {
             if (isInitialization) {
               pendingSessions.delete(session)
-              await session.protocol.close()
+              // Best effort: a failed close of the reserved session must not turn the refusal into a 500.
+              await session.protocol.close().catch(() => undefined)
             }
             rejectUnauthorized(response)
             return
@@ -344,7 +345,7 @@ export async function startServer(
             // An initialization of this request reserved the session (it has no id yet): give the slot back.
             if (isInitialization) {
               pendingSessions.delete(session)
-              await session.protocol.close()
+              await session.protocol.close().catch(() => undefined)
             }
             rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
             return
@@ -354,7 +355,7 @@ export async function startServer(
             const room = takeSessionRoom(sessions, admittedSessions.size)
             if (room === 'full') {
               pendingSessions.delete(session)
-              await session.protocol.close()
+              await session.protocol.close().catch(() => undefined)
               rejectHttp(response, 429, SESSION_LIMIT_SENTENCE)
               return
             }

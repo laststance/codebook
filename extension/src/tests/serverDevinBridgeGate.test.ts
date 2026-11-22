@@ -406,3 +406,65 @@ test('a Devin initialization that replaces an idle session is dispatched without
   // Assert
   assert.equal(answeredStatus, 200)
 })
+
+test('an initialization whose token was rotated while its session connected is refused with 401 even when closing the reserved session fails', async (context) => {
+  // protects=a request refused by the bearer re-check after its session was reserved still gets its 401 when closing that session fails (Cycle 0144, Step 11 on the final tree); fails_when=the failed close throws past the refusal and the request is answered 500; no_claim=a close that never settles
+  // Arrange: the reserved session's connect commits a token rotation, and its close fails.
+  let endpoint: Awaited<ReturnType<typeof startServer>> | undefined
+  const createProtocol = protocolModule.createProtocol
+  context.mock.method(
+    protocolModule,
+    'createProtocol',
+    (service: Parameters<typeof protocolModule.createProtocol>[0]) => {
+      const protocol = createProtocol(service)
+      const connectProtocol = protocol.connect.bind(protocol)
+      protocol.connect = async (
+        ...args: Parameters<typeof connectProtocol>
+      ): Promise<void> => {
+        endpoint?.prepareTokenRotation().commit()
+        await connectProtocol(...args)
+      }
+      protocol.close = async (): Promise<void> => {
+        throw new Error('transport close failed')
+      }
+      return protocol
+    },
+  )
+  const started = await startGatedServer(context, true)
+  endpoint = started.endpoint
+
+  // Act
+  const answer = await post(started.endpoint, INITIALIZE, {})
+
+  // Assert
+  assert.equal(answer.status, 401)
+})
+
+test('an initialization refused at the dispatch-time Devin gate is refused with 403 even when closing the reserved session fails', async (context) => {
+  // protects=a Devin initialization refused after it reserved a session still gets its 403 when closing that session fails (Cycle 0144, Step 11 on the final tree); fails_when=the failed close throws past the refusal and the request is answered 500; no_claim=a close that never settles
+  // Arrange: the early gate (first call) lets the request reserve a session, the dispatch-time gate (second call) refuses it, and the reserved session's close fails.
+  const createProtocol = protocolModule.createProtocol
+  context.mock.method(
+    protocolModule,
+    'createProtocol',
+    (service: Parameters<typeof protocolModule.createProtocol>[0]) => {
+      const protocol = createProtocol(service)
+      protocol.close = async (): Promise<void> => {
+        throw new Error('transport close failed')
+      }
+      return protocol
+    },
+  )
+  let gateCalls = 0
+  const { endpoint } = await startGatedServer(
+    context,
+    true,
+    () => (gateCalls += 1) % 2 === 1,
+  )
+
+  // Act
+  const answer = await post(endpoint, INITIALIZE, DEVIN_HEADERS)
+
+  // Assert
+  assert.equal(answer.status, 403)
+})
