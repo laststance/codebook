@@ -24,6 +24,7 @@ import type * as ExtensionModule from '../extension'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer as startRealServer } from '../server'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
+import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
 import { readDevinInstallationId } from '../utils/readDevinInstallationId'
 import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
@@ -163,7 +164,10 @@ async function devinWindow(
     afterInstallationRead?: () => Promise<void>
     removalResult?: { status: 'removed'; path: string; cleanupFailure?: string }
     failSetupCommit?: boolean
-    onSetupCommit?: () => Promise<void>
+    onSetupCommit?: (window: {
+      changeWorkspace: (folder: string) => void
+    }) => Promise<void>
+    hangFinalReceiptsCheck?: boolean
     failSetupRestore?: boolean
     skillReceiptMode?: number
     /** How many of the first reads of the setup receipts get no answer (descriptor exhaustion), as `null`. */
@@ -224,6 +228,8 @@ async function devinWindow(
   const receiptsHeld = new Promise<void>((resolve) => {
     releaseReceipts = resolve
   })
+  // The folder the window serves now; a test seam changes it as a folder switch would.
+  let currentWorkspace = directory
   // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
   let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
@@ -336,7 +342,7 @@ async function devinWindow(
       vscode,
       './service': { StudyService: Service },
       './environment': {
-        requireWorkspace: () => directory,
+        requireWorkspace: () => currentWorkspace,
         createEnvironment: async () => ({
           workspace: directory,
           dispose(): void {},
@@ -574,6 +580,15 @@ async function devinWindow(
         },
       },
       // Reads the real receipt; `afterInstallationRead` runs once, right after the first read answered, as a receipt that becomes unreadable between the setup's check and its mark write.
+      // The setup's final receipts check: a test makes it never settle, as a skill receipt read that hangs.
+      './utils/checkDevinBridgeReceipts': {
+        checkDevinBridgeReceipts: (
+          ...parameters: Parameters<typeof checkDevinBridgeReceipts>
+        ) =>
+          options.hangFinalReceiptsCheck
+            ? new Promise<never>(() => {})
+            : checkDevinBridgeReceipts(...parameters),
+      },
       './utils/readDevinInstallationId': {
         readDevinInstallationId: async (storageRoot: string) => {
           const installationRead = await readDevinInstallationId(storageRoot)
@@ -679,7 +694,11 @@ async function devinWindow(
           value !== null &&
           !('provisional' in value)
         )
-          await options.onSetupCommit()
+          await options.onSetupCommit({
+            changeWorkspace: (folder: string): void => {
+              currentWorkspace = folder
+            },
+          })
         state.set(key, structuredClone(value))
       },
     },
@@ -1585,7 +1604,7 @@ test(
       // Assert
       assert.equal(
         setupOutcome,
-        'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.',
+        'The Devin Desktop setup changed while this setup ran; run Codebook: Stop Agent Server, then Codebook: Set Up AI Chat again.',
       )
       assert.deepEqual(window.notices, [])
       assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
@@ -1618,7 +1637,7 @@ test(
       // Assert
       assert.equal(
         setupOutcome,
-        'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.',
+        'The Devin Desktop setup changed while this setup ran; run Codebook: Stop Agent Server, then Codebook: Set Up AI Chat again.',
       )
       assert.deepEqual(window.notices, [])
     } finally {
@@ -2333,6 +2352,63 @@ test('a Devin Desktop setup whose server was stopped while its commit was writte
     assert.deepEqual(window.entryRemovals, [])
     assert.equal(window.notices.length, 1)
     assert.deepEqual(window.notices[0]?.actions, ['Reload Window'])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a Devin Desktop setup whose window switched to another folder while its commit was written reports that it did not complete and offers no reload; fails_when=the setup reports success and offers a reload that cannot connect the folder now open (the folder change cleared the saved value and stopped the old folder's server); no_claim=the saved value of the old folder (the folder-change handling clears it)
+test('a Devin Desktop setup whose folder changed while its commit was written offers no reload and says it did not complete', async (context) => {
+  // Arrange
+  const switchFolder = async (seam: {
+    changeWorkspace: (folder: string) => void
+  }): Promise<void> => {
+    seam.changeWorkspace('/other/folder')
+    await window.commands.get('codebook.stopAgentServer')!()
+  }
+  const window = await devinWindow(context, { onSetupCommit: switchFolder })
+  try {
+    await window.commands.get('codebook.startAgentServer')!()
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(
+      setupOutcome,
+      'The workspace folder changed while Devin Desktop setup was finishing, so the setup did not complete for this folder. Run Codebook: Set Up AI Chat again.',
+    )
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a Devin Desktop setup whose final receipts check never answers takes its records back within a bound and offers no reload; fails_when=the setup waits for ever on a skill receipt read that hangs, never rolls back, and a removal queued behind it waits too; no_claim=a check that answers late (it is no answer once the bound passed)
+test('a Devin Desktop setup whose final receipts check never answers takes the entry back and offers no reload', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { hangFinalReceiptsCheck: true })
+  try {
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(
+      setupOutcome,
+      'Codebook could not read its setup records just now; run Codebook: Set Up AI Chat again.',
+    )
+    assert.deepEqual(window.notices, [])
+    assert.deepEqual(window.entryRemovals, [
+      { expectedGeneration: 'generation-of-this-setup' },
+    ])
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
   } finally {
     await window.loaded.deactivate()
   }

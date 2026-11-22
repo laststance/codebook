@@ -14,6 +14,8 @@ import { removeTestFolder } from './utils/removeTestFolder'
 const MODE_REPAIR_TEXT = 'Make that file readable only by you (mode 600)'
 const CHANGED_SENTENCE =
   'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.'
+const STOP_FIRST_SENTENCE =
+  'The Devin Desktop setup changed while this setup ran; run Codebook: Stop Agent Server, then Codebook: Set Up AI Chat again.'
 const UNREADABLE_SENTENCE =
   'Codebook could not read its setup records just now; run Codebook: Set Up AI Chat again.'
 const PERMISSION_SENTENCE =
@@ -117,8 +119,8 @@ test('a no-answer says the records could not be read, without a mode repair', ()
   assert.equal(UNREADABLE_SENTENCE.includes(MODE_REPAIR_TEXT), false)
 })
 
-// protects=a standing answer, an installed receipt and a replaced descriptor map to no refusal or to the changed sentence as designed; fails_when=a success is refused, or a replaced setup passes; no_claim=the removed reasons
-test('stands and installed give no refusal, replaced says the setup changed', () => {
+// protects=a standing answer, an installed receipt and a replaced descriptor map to no refusal or to the stop-first sentence as designed; fails_when=a success is refused, or a replaced setup passes; no_claim=the removed reasons
+test('stands and installed give no refusal, replaced asks to stop the agent server first', () => {
   // Arrange
   const stands = { answer: 'stands' } as const
   const installed = {
@@ -133,7 +135,7 @@ test('stands and installed give no refusal, replaced says the setup changed', ()
     devinSetupRefusalSentence(replaced),
   ]
   // Assert
-  assert.deepEqual(sentences, [undefined, undefined, CHANGED_SENTENCE])
+  assert.deepEqual(sentences, [undefined, undefined, STOP_FIRST_SENTENCE])
 })
 
 // protects=a mark is decided only while both receipts stand; fails_when=a window is marked for a setup whose receipt is missing, so the bridge refuses it; no_claim=the other receipt states

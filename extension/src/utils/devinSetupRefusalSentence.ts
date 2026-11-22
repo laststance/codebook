@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 
 import {
   DEVIN_SETUP_CHANGED_MEANWHILE_SENTENCE,
+  DEVIN_SETUP_DESCRIPTOR_REPLACED_SENTENCE,
   DEVIN_SETUP_RECORDS_UNREADABLE_SENTENCE,
   devinReceiptPermissionSentence,
 } from '../devinWindowSentences'
@@ -10,7 +11,7 @@ import type { DevinBridgeReceiptsAnswer } from './checkDevinBridgeReceipts'
 import type { ReceiptState } from './readReceiptState'
 
 /**
- * Words why a Devin Desktop setup cannot report success, from what its records say: a permission problem of a receipt names its file with the mode-600 repair (a link or other non-regular file, or any reason seen on the descriptor, does not), a record removed meanwhile says the setup changed, and a read that failed to look offers no repair; called by the setup after the bridge's receipts check and after its installation-id read.
+ * Words why a Devin Desktop setup cannot report success, from what its records say: a permission problem of a receipt names its file with the mode-600 repair (a link or other non-regular file, or any reason seen on the descriptor, does not), a record removed meanwhile says the setup changed, a descriptor that names another server also asks to stop the agent server first, and a read that failed to look offers no repair; called by the setup after the bridge's receipts check and after its installation-id read.
  * @param answer - The bridge's receipts answer, or the state of one receipt.
  * @returns The sentence for the learner; `undefined` when the answer is `stands` or an installed receipt (nothing to refuse).
  * @example
@@ -24,7 +25,7 @@ export function devinSetupRefusalSentence(
     if (answer.answer === 'no-answer')
       return DEVIN_SETUP_RECORDS_UNREADABLE_SENTENCE
     if (answer.answer === 'replaced')
-      return DEVIN_SETUP_CHANGED_MEANWHILE_SENTENCE
+      return DEVIN_SETUP_DESCRIPTOR_REPLACED_SENTENCE
     // A reason seen on the descriptor itself is no receipt's mode problem: the repair is for receipts only.
     return isPermissionReason(answer.reason) && isReceiptPath(answer.path)
       ? devinReceiptPermissionSentence(answer.path)

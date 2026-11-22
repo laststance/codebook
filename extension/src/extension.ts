@@ -64,6 +64,7 @@ import {
   NODE_SERVER_SHUTDOWN_GRACE_MS,
   DEVIN_MARK_READ_RETRY_BUDGET_MS,
   DEVIN_MARK_READ_RETRY_DELAY_MS,
+  DEVIN_SETUP_FINAL_CHECK_MS,
   DEVIN_REMOVAL_ACTION,
   DEVIN_REMOVAL_QUESTION,
   DEVIN_SETUP_REMOVED_LINE,
@@ -96,6 +97,7 @@ import {
   DEVIN_SERVER_RESTARTED_SENTENCE,
   DEVIN_SETUP_NODE_FAILURE_SENTENCE,
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
+  DEVIN_SETUP_FOLDER_CHANGED_SENTENCE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
 } from './devinWindowSentences'
@@ -129,7 +131,10 @@ import { assertNoLinkOnWikiPath } from './utils/assertNoLinkOnWikiPath'
 import { buildWikiGeneratePrompt } from './utils/buildWikiGeneratePrompt'
 import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
 import { causeRootsFor } from './utils/causeRootsFor'
-import { checkDevinBridgeReceipts } from './utils/checkDevinBridgeReceipts'
+import {
+  checkDevinBridgeReceipts,
+  type DevinBridgeReceiptsAnswer,
+} from './utils/checkDevinBridgeReceipts'
 import {
   claimWikiUpdateMarker,
   type TakenOverWikiReservation,
@@ -1212,6 +1217,11 @@ export function activate(
     )
       throw new Error(DEVIN_SETUP_SERVER_CHANGED_SENTENCE)
   }
+  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved: the folder-change handling clears the saved value and stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). @throws With a retry sentence; the setup keeps what it saved, and the saved value is the folder-change handling's to clear. @example assertDevinSetupWorkspaceStands() */
+  const assertDevinSetupWorkspaceStands = (): void => {
+    if (!setupMatchesCurrentWorkspace())
+      throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
+  }
   /** Re-checks, after an awaited step of a Devin Desktop setup, that its removal has not begun and its checked server still stands; called by {@link setUpDevinChatLocked} after the receipts check and after the commit write. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupStillStands(checkedServer) */
   const assertDevinSetupStillStands = (server: Running): void => {
     assertDevinSetupAvailable()
@@ -1448,20 +1458,26 @@ export function activate(
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
       // Success only when the bridge's own check stands for the descriptor just marked, and that descriptor names the checked server, its workspace and host, carries the mark and this setup's installation.
-      const refusal = devinSetupRefusalSentence(
-        await checkDevinBridgeReceipts(checkedServer.descriptorPath, {
+      // A check that has not answered within its bound is no answer: the setup takes itself back instead of waiting on a read that never settles.
+      let receiptsAnswer: DevinBridgeReceiptsAnswer = { answer: 'no-answer' }
+      await settledWithin(
+        checkDevinBridgeReceipts(checkedServer.descriptorPath, {
           instanceId: checkedServer.endpoint.descriptor.instanceId,
           url: checkedServer.endpoint.descriptor.url,
           workspace: setupWorkspace,
           pid: process.pid,
           installationId: checkedInstallationId,
           requiresDevinChat: true,
+        }).then((answer) => {
+          receiptsAnswer = answer
         }),
+        DEVIN_SETUP_FINAL_CHECK_MS,
       )
+      const refusal = devinSetupRefusalSentence(receiptsAnswer)
       if (refusal) throw new Error(refusal)
       // The receipts read awaited: a removal, a Stop or a folder change in that gap ends the setup.
       assertDevinSetupStillStands(checkedServer)
-      // The commit write is the last step that can fail the setup and nothing is checked after it: a change after it is a later event (a stopped server starts again when the window loads, another window's removal unmarks this one at its next sync), so there is no rollback after the commit and no half-committed value.
+      // The commit write is the last step that can fail the setup and nothing is checked after it: a change after it is a later event (a stopped server starts again when the window loads, another window's removal unmarks this one at its next sync), so there is no rollback after the commit and no half-committed value; only a changed workspace folder, which clears the saved value, is reported once the commit is saved.
       await context.workspaceState.update('codebook.aiChatSetup', {
         workspace: setupWorkspace,
       })
@@ -1482,6 +1498,8 @@ export function activate(
       if (sentence !== thrownMessage(error)) throw new Error(sentence)
       throw error
     }
+    // The commit write awaited: a folder change in that gap is no success, and nothing is rolled back for it.
+    assertDevinSetupWorkspaceStands()
     return {
       cleanupFailure: entryWrite.cleanupFailure,
       disabled: entryWrite.disabled,
