@@ -168,6 +168,8 @@ async function devinWindow(
     skillReceiptMode?: number
     /** How many of the first reads of the setup receipts get no answer (descriptor exhaustion), as `null`. */
     receiptReadsWithoutAnswer?: number
+    /** Whether every read of the setup receipts never settles, as a read stuck on a failing disk. */
+    receiptReadsHang?: boolean
     failFirstInstallationRead?: boolean
     removalDeletesReceipt?: boolean
   } = {},
@@ -553,6 +555,9 @@ async function devinWindow(
       // Reads the real records; an armed hold makes the next read wait after it read, as a removal that lands in between would find it.
       './utils/readStandingDevinInstallationId': {
         readStandingDevinInstallationId: async (storageRoot: string) => {
+          // A read that never returns.
+          if (options.receiptReadsHang)
+            return new Promise<never>(() => undefined)
           // A read that gets no answer, as under descriptor exhaustion.
           if ((options.receiptReadsWithoutAnswer ?? 0) > 0) {
             options.receiptReadsWithoutAnswer =
@@ -1717,6 +1722,62 @@ test('a Devin Desktop window whose first receipt read at server start gets no an
     // Assert
     assert.equal(await window.readDescriptorField(), true)
     assert.equal(await window.readDescriptorInstallation(), 'installation-test')
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a read that never returns at server start does not keep the descriptor from being published: the descriptor appears, unmarked, within the read budget (Cycle 0145 final-range F7); fails_when=the start waits on the first read inside the descriptor queue, so no descriptor is published and a later stop cannot remove it; no_claim=a read that settles after the deadline (it changes nothing, but the test does not observe it)
+test('a Devin Desktop window whose receipt read never returns at server start publishes an unmarked descriptor within the budget', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadsHang: true,
+  })
+  try {
+    // Act
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    // Assert
+    assert.equal(await window.readDescriptorField(), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a failed re-run of a valid setup whose rollback sync gets one read without an answer keeps the earlier mark and the server's token (Cycle 0145 final-range F12); fails_when=the sync turns the missing answer into not set up, removes the mark and rotates the token, and nothing marks again when the receipts read; no_claim=a receipt observed removed (it unmarks at once, the rotation test above)
+test('a failed Devin setup re-run whose rollback sync reads no answer once keeps the earlier setup marked with the same token', async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    realServer: true,
+    savedSetup: true,
+    entryWrite: 'current',
+    skillManaged: false,
+  }
+  let tokenBefore: string | undefined
+  options.onSkillCheck = async (): Promise<void> => {
+    // The restarted server is marked; the next read of the receipts (the rollback's sync) gets no answer once.
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    tokenBefore = JSON.parse(
+      await readFile(await window.descriptorPath(), 'utf8'),
+    ).token
+    options.receiptReadsWithoutAnswer = 1
+    throw new Error('Injected skill check failure')
+  }
+  const window = await devinWindow(context, options)
+  try {
+    // Act
+    await window.commands.get('codebook.setupAiChat')!().catch(() => undefined)
+    const descriptorFile = await window.descriptorPath()
+    const tokenAfter = JSON.parse(await readFile(descriptorFile, 'utf8')).token
+    // Assert
+    assert.equal(await window.readDescriptorField(), true)
+    assert.equal(typeof tokenBefore, 'string')
+    assert.equal(tokenAfter, tokenBefore)
   } finally {
     await window.loaded.deactivate()
   }

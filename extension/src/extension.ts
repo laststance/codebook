@@ -444,16 +444,33 @@ export function activate(
       ? { devinChat: true, devinSetupInstallation: installationId }
       : {}
   }
-  /** The mark fields for a server that starts now: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS} for at most {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; after the budget it is published unmarked, as a setup that does not stand. @example { ...(await devinChatFieldAtStart()) } */
+  /** The mark fields for a server that starts now, and for the sync of a rollback: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, and a read that settles later changes nothing. An observed removal answers at once. Called by {@link startServer}'s start and by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
   const devinChatFieldAtStart = async (): Promise<DevinChatFields> => {
     const deadline = Date.now() + DEVIN_MARK_READ_RETRY_BUDGET_MS
-    let field = await readDevinChatField()
-    // Only a read with no answer is asked again, and only within the budget.
-    while (field === undefined && Date.now() < deadline) {
-      await delay(DEVIN_MARK_READ_RETRY_DELAY_MS)
-      field = await readDevinChatField()
+    const readUntilAnswered = async (): Promise<
+      DevinChatFields | undefined
+    > => {
+      let field = await readDevinChatField()
+      // Only a read with no answer is asked again, and only within the budget.
+      while (field === undefined && Date.now() < deadline) {
+        await delay(DEVIN_MARK_READ_RETRY_DELAY_MS)
+        field = await readDevinChatField()
+      }
+      return field
     }
-    return field ?? {}
+    const stopWaiting = new AbortController()
+    const expiry = delay(DEVIN_MARK_READ_RETRY_BUDGET_MS, undefined, {
+      signal: stopWaiting.signal,
+    }).then(
+      () => undefined,
+      () => undefined,
+    )
+    try {
+      return (await Promise.race([readUntilAnswered(), expiry])) ?? {}
+    } finally {
+      // The answer came first: the timer must not keep the process alive.
+      stopWaiting.abort()
+    }
   }
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
@@ -1299,7 +1316,8 @@ export function activate(
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
-      const field = await devinChatField()
+      // A read that gets no answer is asked again like at server start, so one moment of exhaustion does not take the mark of a setup that stands.
+      const field = await devinChatFieldAtStart()
       const isMarked = field.devinChat === true
       // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
       isDevinChatMarked &&= isMarked
