@@ -165,7 +165,7 @@ test(
   },
 )
 
-// protects=a missing skill receipt, an uninstalled one and an entry receipt without an installation id each stop the mark; fails_when=any of them still marks the window; no_claim=unreadable files
+// Value: protects=a missing skill receipt, an uninstalled one and an entry receipt without an installation id each stop the mark; fails_when=any of them still marks the window; no_claim=unreadable files
 test('a missing skill receipt, an uninstalled one and an entry receipt without an id give no installation id', async (context) => {
   // Arrange
   const missing = await arrangeStorage(context)
@@ -190,7 +190,10 @@ test('a missing skill receipt, an uninstalled one and an entry receipt without a
   )
   // Act
   const answers = await Promise.all(
-    [missing, uninstalled, withoutId].map(readStandingDevinInstallationId),
+    // Each storage root alone: the array index is no read gate.
+    [missing, uninstalled, withoutId].map((storage) =>
+      readStandingDevinInstallationId(storage),
+    ),
   )
   // Assert
   assert.deepEqual(answers, [undefined, undefined, undefined])
