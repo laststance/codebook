@@ -164,11 +164,24 @@ export async function runCursorMcpBridge(
   let active = await connectUpstream(firstHandshakeMs)
   let reconnecting: Promise<void> | undefined,
     closed = false
+  // Every refusal check that is still running (each bounded by its caller's own deadline); a stdin close drains them before `onClosed`, so the refusal line and its exit code are out first.
+  const refusals = new Set<Promise<void>>()
   // Runs the refusal check of the Devin Desktop bridge: a setup that is gone ends the bridge; a standing setup, or a check that cannot answer, leaves it running.
-  const endIfSetupGone = async (): Promise<void> => {
-    if (!onRefused) return
-    const stands = await onRefused().catch(() => true)
-    if (!stands) shutdownThenNotify()
+  const endIfSetupGone = (): Promise<void> => {
+    if (!onRefused) return Promise.resolve()
+    const handling = onRefused()
+      .catch(() => true)
+      .then((stands) => {
+        // The end path must not drain the set it belongs to: it would wait for itself.
+        if (!stands) shutdownThenNotify(false)
+      })
+    refusals.add(handling)
+    return handling.finally(() => refusals.delete(handling))
+  }
+  // Runs the refusal handling for a refused request (HTTP 401 or 403), then fails that request with the original error.
+  const failAfterRefusal = async (error: unknown): Promise<never> => {
+    if (isRefusal(error)) await endIfSetupGone()
+    throw error
   }
   const forward = async <Value>(
     request: (client: Client) => Promise<Value>,
@@ -178,17 +191,19 @@ export async function runCursorMcpBridge(
       return await request(previous.client)
     } catch (error) {
       // A refusal ends the bridge when its setup is gone; the request itself still fails and is not sent again.
-      if (isRefusal(error)) await endIfSetupGone()
+      if (isRefusal(error)) await failAfterRefusal(error)
       // The local server rejects an expired session before dispatch, so this exact 404 is safe to retry once.
       if (!isUnknownSession(error)) throw error
       if (active === previous) {
         reconnecting ??= (async () => {
           // A setup removed elsewhere must not get a new session: end the bridge instead.
           if (beforeUpstream && !(await beforeUpstream())) {
-            shutdownThenNotify()
-            throw new Error('Codebook setup was removed.')
+            shutdownThenNotify(false)
+            // True for a removed setup and a replaced one alike; the refusal line on stderr names which.
+            throw new Error('Codebook setup changed; this bridge has ended.')
           }
-          const next = await connectUpstream()
+          // A refused handshake runs the same refusal handling as a refused request.
+          const next = await connectUpstream().catch(failAfterRefusal)
           if (closed) {
             await closeUpstream(next)
             throw new Error('Codebook Cursor MCP bridge has closed.')
@@ -200,7 +215,8 @@ export async function runCursorMcpBridge(
         })
         await reconnecting
       } else if (reconnecting) await reconnecting
-      return request(active.client)
+      // Only the 404 above authorizes this one replay; a refusal of it is handled like any other and is not replayed.
+      return request(active.client).catch(failAfterRefusal)
     }
   }
   const capabilities = active.client.getServerCapabilities()
@@ -275,12 +291,14 @@ export async function runCursorMcpBridge(
   // Runs the cleanup once, then tells the caller it is complete (never before).
   // One shared promise: stdin EOF during a reconnect check and the check's own refusal both reach it, and `onClosed` must run once.
   let notifying: Promise<void> | undefined
-  const shutdownThenNotify = (): void => {
-    notifying ??= shutdown()
+  // `drainRefusals` is false only on the refusal's own end path, which is itself one of the drained promises.
+  const shutdownThenNotify = (drainRefusals = true): void => {
+    notifying ??= Promise.allSettled(drainRefusals ? [...refusals] : [])
+      .then(shutdown)
       .catch(() => undefined)
       .then(() => onClosed?.())
   }
-  stdio.onclose = shutdownThenNotify
+  stdio.onclose = (): void => shutdownThenNotify()
   try {
     await server.connect(stdio)
   } catch (error) {
@@ -288,11 +306,12 @@ export async function runCursorMcpBridge(
     throw error
   }
   // The SDK stdio transport does not close itself on stdin EOF, so release the HTTP session explicitly.
-  process.stdin.once('end', shutdownThenNotify)
+  process.stdin.once('end', (): void => shutdownThenNotify())
   const stopForSignal = (): void => {
     void shutdown().then(
       () => {
-        process.exitCode = 0
+        // A refusal's exit code 1 stays; only an unset code becomes 0.
+        process.exitCode ??= 0
       },
       () => {
         process.exitCode = 1

@@ -205,6 +205,8 @@ function forward(
   port: number,
   incoming: IncomingMessage,
   outgoing: ServerResponse,
+  /** The request body when the caller already consumed the stream. */
+  body?: Buffer,
 ): void {
   const upstream = request(
     {
@@ -220,7 +222,8 @@ function forward(
       answer.pipe(outgoing)
     },
   )
-  incoming.pipe(upstream)
+  if (body) upstream.end(body)
+  else incoming.pipe(upstream)
 }
 
 /** Starts the bridge entry as Devin Desktop does and connects an MCP client to it. */
@@ -2533,7 +2536,14 @@ interface ConnectedBridge {
   /** The initialize requests and the other requests that reached the proxy since the bridge connected. */
   counts: { initializes: number; others: number }
   /** The status the proxy answers to every request instead of forwarding it; `undefined` forwards. */
-  proxy: { refuseWith: number | undefined }
+  proxy: {
+    refuseWith: number | undefined
+    /** Called with the JSON-RPC method of every request and the count of initializes seen since the bridge connected; resolves the status to answer instead of forwarding it, `undefined` forwards. It may change the disk first. */
+    decide?: (
+      method: string,
+      initializesSoFar: number,
+    ) => Promise<number | undefined>
+  }
   readStderr: () => string
   /** Resolves with the exit code once the process ended. */
   exited: Promise<number | null>
@@ -2545,6 +2555,12 @@ interface ConnectedBridge {
   handshake: () => void
   /** Asks `tools/list` as request `id`. */
   askToolsList: (id: number) => void
+  /** Signals the bridge process (SIGUSR2) so a preload given to {@link startConnectedBridge} starts its work. */
+  arm: () => void
+  /** Closes the bridge's stdin, the way Devin Desktop ends a bridge. */
+  closeStdin: () => void
+  /** Sends a signal to the bridge process. */
+  signal: (name: NodeJS.Signals) => void
 }
 
 /**
@@ -2595,7 +2611,24 @@ async function startConnectedBridge(
       outgoing.end()
       return
     }
-    forward(upstreamPort, incoming, outgoing)
+    const { decide } = proxy
+    if (!decide) {
+      forward(upstreamPort, incoming, outgoing)
+      return
+    }
+    // A request the test decides on is read whole first, so its method is known before it is forwarded or refused.
+    incoming.on('end', () => {
+      const body = Buffer.concat(chunks)
+      const method = /"method":"([^"]+)"/.exec(body.toString('utf8'))?.[1]
+      void decide(method ?? '', counts.initializes).then((status) => {
+        if (status === undefined) {
+          forward(upstreamPort, incoming, outgoing, body)
+          return
+        }
+        outgoing.writeHead(status)
+        outgoing.end()
+      })
+    })
   })
   await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
     ...endpoint.descriptor,
@@ -2675,6 +2708,15 @@ async function startConnectedBridge(
     },
     askToolsList: (id): void => {
       send({ jsonrpc: '2.0', id, method: 'tools/list', params: {} })
+    },
+    arm: (): void => {
+      child.kill('SIGUSR2')
+    },
+    closeStdin: (): void => {
+      child.stdin?.end()
+    },
+    signal: (name): void => {
+      child.kill(name)
     },
   }
 }
@@ -2866,7 +2908,8 @@ test(
         },
       },
     })
-    const checks: Array<() => Promise<boolean>> = []
+    const reconnectChecks: Array<() => Promise<boolean>> = [],
+      refusedChecks: Array<() => Promise<boolean>> = []
     const answers = ['stands', 'removed']
     const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
       resolve(__dirname, '../devinMcpBridge.js'),
@@ -2883,8 +2926,10 @@ test(
             _header: unknown,
             _onClosed: unknown,
             beforeUpstream: () => Promise<boolean>,
+            onRefused: () => Promise<boolean>,
           ) => {
-            checks.push(beforeUpstream)
+            reconnectChecks.push(beforeUpstream)
+            refusedChecks.push(onRefused)
             return Promise.resolve()
           },
         },
@@ -2897,17 +2942,19 @@ test(
       { WINDSURF_EXT_HOST_PID: String(process.pid) },
       { timeoutMs: 2_000, intervalMs: 20 },
     )
-    const check = checks[0]!
+    const reconnectCheck = reconnectChecks[0]!,
+      refusedCheck = refusedChecks[0]!
     lines.length = 0
     // Act
-    const first = check()
+    const first = reconnectCheck()
     await waitUntil(
       () => (lines.length === 1 ? true : undefined),
       'the refusal line being written',
       5_000,
     )
     let isSecondSettled = false
-    const second = check().then((value) => {
+    // The refusal hook is a different function the bridge passes beside the reconnect hook; both must share one check.
+    const second = refusedCheck().then((value) => {
       isSecondSettled = true
       return value
     })
@@ -2974,6 +3021,149 @@ test(
         ),
       true,
     )
+  },
+)
+
+// protects=a Devin bridge ending with the not-set-up line when the server refuses the reconnect handshake (403) after an expired session, not staying up for a removed setup (Cycle 0145 /ship pass 1, p1/outside-voice#7); fails_when=only the first forwarded request runs the refusal check, so a 403 on the new session's initialize reaches the caller with no check and no exit; no_claim=the 403 of a first request (the test above)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose reconnect handshake is refused with 403 after the setup was removed ends with the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    // The receipts are removed only when the new session's initialize arrives, after the reconnect check passed.
+    bridge.proxy.decide = async (method) => {
+      if (method !== 'initialize') return undefined
+      await writeSetupReceipts(bridge.root, { installed: false }, false)
+      return 403
+    }
+    bridge.handshake()
+    await bridge.expireSession()
+    // Act
+    bridge.askToolsList(1)
+    const exitCode = await Promise.race([
+      bridge.exited,
+      new Promise<string>((done) =>
+        setTimeout(() => done('still running'), 15_000),
+      ),
+    ])
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
+  },
+)
+
+// protects=a Devin bridge ending with the not-set-up line when the single replay after a reconnect is refused with 403 (Cycle 0145 /ship pass 1, p1/outside-voice#7); fails_when=the replay escapes the refusal handling, so the caller gets the 403 and the bridge stays up for a removed setup; no_claim=a refused request being sent a third time (it never is)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose replayed request is refused with 403 after the setup was removed ends with the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    // The reconnect succeeds; the setup is removed while the replay is on its way.
+    bridge.proxy.decide = async (method, initializesSoFar) => {
+      if (method !== 'tools/list' || initializesSoFar === 0) return undefined
+      await writeSetupReceipts(bridge.root, { installed: false }, false)
+      return 403
+    }
+    bridge.handshake()
+    await bridge.expireSession()
+    // Act
+    bridge.askToolsList(1)
+    const exitCode = await Promise.race([
+      bridge.exited,
+      new Promise<string>((done) =>
+        setTimeout(() => done('still running'), 15_000),
+      ),
+    ])
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
+  },
+)
+
+// protects=the refusal line and exit code 1 of a Devin bridge whose stdin closes while its 403 receipt check is still reading (Cycle 0145 /ship pass 1, Codex structured P1 shutdown); fails_when=shutdown waits only for a reconnect, so the process exits 0 before the check wrote its line; no_claim=a refusal after the bridge ended
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose stdin closes while the 403 setup check is reading still ends with exit code 1 and the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // The preload holds the receipt reads that start after it is armed for a moment and says when the first one started.
+    const preload = `const fsPromises = require('node:fs/promises')
+const { writeSync } = require('node:fs')
+const originalOpen = fsPromises.open
+let isArmed = false
+process.on('SIGUSR2', () => { isArmed = true })
+fsPromises.open = async (path, ...rest) => {
+  if (isArmed && String(path).endsWith('receipt.json')) {
+    writeSync(2, 'RECEIPT_READ_HELD\\n')
+    await new Promise((done) => setTimeout(done, 700))
+  }
+  return originalOpen(path, ...rest)
+}
+`
+    const bridge = await startConnectedBridge(context, preload)
+    await writeSetupReceipts(bridge.root, { installed: false }, false)
+    bridge.arm()
+    bridge.proxy.refuseWith = 403
+    bridge.handshake()
+    bridge.askToolsList(1)
+    await waitUntil(
+      () =>
+        bridge.readStderr().includes('RECEIPT_READ_HELD') ? true : undefined,
+      'the receipt check starting to read',
+      10_000,
+      undefined,
+      10,
+    )
+    // Act
+    bridge.closeStdin()
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
+  },
+)
+
+// protects=exit code 1 of a Devin bridge that confirmed a removed setup, when SIGTERM arrives while its refusal line is still being written (Cycle 0145 /ship pass 1, Codex structured P1 signal); fails_when=the signal cleanup sets exit code 0 over the refusal's 1; no_claim=the line reaching Devin Desktop's stderr pipe
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge that gets SIGTERM while its not-set-up line is being written still exits with code 1',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // The preload writes the refusal line at once but calls its write back only after 1.5 s, and says when the line was written.
+    const preload = `const { writeSync } = require('node:fs')
+const originalWrite = process.stderr.write.bind(process.stderr)
+process.stderr.write = (chunk, callback) => {
+  if (!String(chunk).includes('is not set up')) return originalWrite(chunk, callback)
+  writeSync(2, 'REFUSAL_WRITE_HELD\\n')
+  originalWrite(chunk)
+  setTimeout(callback, 1_500)
+  return true
+}
+`
+    const bridge = await startConnectedBridge(context, preload)
+    await writeSetupReceipts(bridge.root, { installed: false }, false)
+    bridge.proxy.refuseWith = 403
+    bridge.handshake()
+    bridge.askToolsList(1)
+    await waitUntil(
+      () =>
+        bridge.readStderr().includes('REFUSAL_WRITE_HELD') ? true : undefined,
+      'the refusal line being written',
+      10_000,
+      undefined,
+      10,
+    )
+    // Act
+    bridge.signal('SIGTERM')
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
   },
 )
 
