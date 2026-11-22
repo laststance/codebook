@@ -1334,9 +1334,10 @@ test('a Devin Desktop setup and removal never show the content of a connection d
     await writeFile(await window.descriptorPath(), 'TOKEN-LIKE-TEXT {')
     // Act
     const setup = window.commands.get('codebook.setupAiChat')!()
+    // The unmark of the rollback fails on the same descriptor, so the rollback says it is incomplete.
     await assert.rejects(setup, {
       message:
-        "Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again.",
+        "Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again. Codebook could not take back everything the setup saved; see Codebook's Output for details.",
     })
     await window.commands.get('codebook.removeManagedDevinSetup')!()
     // Assert

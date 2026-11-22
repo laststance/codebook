@@ -846,6 +846,40 @@ test(
   },
 )
 
+// Value: protects=the Devin bridge marking every request it sends, so the server can refuse them once the window's mark is off (Cycle 0144 task 4); fails_when=a request reaches the server without x-codebook-bridge: devin; no_claim=the server's refusal (serverDevinBridgeGate.test.ts)
+test(
+  'the Devin bridge sends the x-codebook-bridge header on every request',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await makeLiveAgentFolder()
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(dirname(root))
+    })
+    const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+    const markers: Array<string | string[] | undefined> = []
+    const { port } = await listen(context, (incoming, outgoing) => {
+      markers.push(incoming.headers['x-codebook-bridge'])
+      forward(upstreamPort, incoming, outgoing)
+    })
+    await writeDescriptor(root, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    await statusInstanceId(client)
+    // Assert
+    assert.equal(markers.length > 1, true)
+    assert.deepEqual([...new Set(markers)], ['devin'])
+  },
+)
+
 // Value: protects=a Devin window whose Codebook server is restarting when the bridge starts; fails_when=a reset or refused connection drops the descriptor so the bridge exits before the server listens again; why_new=B5 transient refusal, made deterministic (Cycle 0143 /ship pass 2 E6); seam=a listener that resets each connection and counts the resets, replaced by a proxy to a real Codebook endpoint on the same port once the first reset was observed
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(

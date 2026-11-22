@@ -76,6 +76,7 @@ async function releaseHalfOpenSession(
  * @param descriptorPath - The private connection descriptor of the instance.
  * @param connectTimeoutMs - Longest wait for reading the descriptor and the whole connection handshake together (initialize and the initialized notification); the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
  * @param expected - What the Devin Desktop bridge's selection validated; the descriptor read for the connection must still say the same, else nothing is sent. Cursor's bridge passes none.
+ * @param extraHeader - A request header sent on every request to the server, beside the bearer token; the Devin Desktop bridge marks its requests with it ({@link DEVIN_BRIDGE_HEADER_NAME}). Cursor's bridge passes none.
  * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
  * @example await runCursorMcpBridge('/private/current.connection.json')
  */
@@ -83,6 +84,7 @@ export async function runCursorMcpBridge(
   descriptorPath: string,
   connectTimeoutMs?: number,
   expected?: DescriptorExpectation,
+  extraHeader?: { name: string; value: string },
 ): Promise<void> {
   const startedAt = Date.now()
   // The read of the descriptor spends the same startup budget as the handshake.
@@ -101,7 +103,12 @@ export async function runCursorMcpBridge(
       version: EXTENSION_VERSION,
     })
     const http = new StreamableHTTPClientTransport(new URL(descriptor.url), {
-      requestInit: { headers: { Authorization: `Bearer ${descriptor.token}` } },
+      requestInit: {
+        headers: {
+          Authorization: `Bearer ${descriptor.token}`,
+          ...(extraHeader && { [extraHeader.name]: extraHeader.value }),
+        },
+      },
     })
     try {
       await connectWithin(client, http, handshakeMs)

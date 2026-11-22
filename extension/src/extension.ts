@@ -414,6 +414,8 @@ export function activate(
     isDevinHost &&
     setupMatchesCurrentWorkspace() &&
     (await hasDevinSetupReceipts(context.globalStorageUri.fsPath))
+  /** Whether this window's connection descriptor carries the Devin AI chat mark right now: set once the mark is written, cleared before an unmark rewrites the descriptor. The server refuses a request of the Devin bridge while it is `false` ({@link startServer}), so a bridge that connected before a failed setup's rollback stops being served. */
+  let isDevinChatMarked = false
   /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
   const devinChatField = async (): Promise<{
     devinChat?: true
@@ -754,7 +756,11 @@ export function activate(
           repository().openFromAgent(input, signal)
         service.repositoryPublished = (): Promise<void> =>
           repository().published()
-        const startedEndpoint = await startServer(service)
+        const startedEndpoint = await startServer(
+          service,
+          Date.now,
+          () => isDevinChatMarked,
+        )
         endpoint = startedEndpoint
         const descriptorPath = join(
           storageRoot,
@@ -778,6 +784,7 @@ export function activate(
               flag: 'wx',
             },
           )
+          isDevinChatMarked = devinFields.devinChat === true
           const server: Running = {
             endpoint: startedEndpoint,
             environment,
@@ -1219,11 +1226,14 @@ export function activate(
       const target = running
       if (!target) return
       if (enabled && !(await devinSetupStands())) return
+      // An unmark clears the in-memory mark first, so the server refuses the bridge before the file is rewritten.
+      isDevinChatMarked &&= enabled
       await setDescriptorDevinChat(
         target.descriptorPath,
         enabled,
         (await devinChatField()).devinSetupInstallation,
       )
+      isDevinChatMarked ||= enabled
     })
   /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @example await syncDevinChatDescriptor() */
   const syncDevinChatDescriptor = (): Promise<void> =>
@@ -1231,11 +1241,15 @@ export function activate(
       const target = running
       if (!target) return
       const field = await devinChatField()
+      const isMarked = field.devinChat === true
+      // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
+      isDevinChatMarked &&= isMarked
       await setDescriptorDevinChat(
         target.descriptorPath,
-        field.devinChat === true,
+        isMarked,
         field.devinSetupInstallation,
       )
+      isDevinChatMarked ||= isMarked
     })
   /**
    * Takes back what a failed Devin Desktop setup saved: this window's setup goes back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load), the entry is removed only when this setup installed it (an updated or current entry is used by other windows, and a newer setup's generation stays), and the server running now, which may be one started during the setup, gets the mark its restored setup earns.
@@ -1267,8 +1281,9 @@ export function activate(
         )
       })
     // Any server running now may have read the half-saved setup, not only the one the setup checked.
-    // A descriptor that cannot be rewritten (for example an unreadable one) is not something the setup saved, so it does not make the rollback incomplete.
+    // A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the rollback is incomplete; the window's in-memory mark is already off, so the server refuses the Devin bridge meanwhile.
     await syncDevinChatDescriptor().catch((error: unknown) => {
+      isComplete = false
       diagnostics.info(
         `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
       )

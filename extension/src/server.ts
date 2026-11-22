@@ -21,8 +21,10 @@ import {
   SESSION_IDLE_TIMEOUT_MS,
   TOKEN_BYTES,
 } from './constants'
+import { DEVIN_BRIDGE_NOT_SET_UP_SENTENCE } from './devinWindowSentences'
 import { createProtocol } from './protocol'
 import type { StudyService } from './service'
+import { isDevinBridgeRequestRefused } from './utils/isDevinBridgeRequestRefused'
 
 interface Session {
   transport: StreamableHTTPServerTransport
@@ -105,8 +107,18 @@ async function readBody(
   })
 }
 
-/** Hosts authenticated SDK sessions separately from application runs; editor commands own its lifetime. @example const endpoint = await startServer(service) */
-export async function startServer(service: StudyService, now = Date.now) {
+/**
+ * Hosts authenticated SDK sessions separately from application runs; editor commands own its lifetime.
+ * @param service - The study service the sessions talk to.
+ * @param now - The clock; tests replace it.
+ * @param isDevinChatEnabled - Tells whether this window's Devin AI chat mark is on; a request that carries the Devin bridge header is refused with 403 while it says `false`. Left out, no request is refused for its header (Cursor's window, tests).
+ * @example const endpoint = await startServer(service)
+ */
+export async function startServer(
+  service: StudyService,
+  now = Date.now,
+  isDevinChatEnabled?: () => boolean,
+) {
   const token = randomBytes(TOKEN_BYTES).toString('hex')
   const expected = Buffer.from(`Bearer ${token}`)
   const sessions = new Map<string, Session>()
@@ -255,6 +267,18 @@ export async function startServer(service: StudyService, now = Date.now) {
           if (stopping) {
             await session.protocol.close()
             rejectHttp(response, 503, 'Server stopping')
+            return
+          }
+          // Right before dispatch, after the body was read: a Devin bridge request is refused once this window's AI chat mark is off, also one whose body was held open across the unmark.
+          if (
+            isDevinBridgeRequestRefused(request.headers, isDevinChatEnabled)
+          ) {
+            // An initialization of this request reserved the session (it has no id yet): give the slot back.
+            if (!session.transport.sessionId) {
+              pendingSessions.delete(session)
+              await session.protocol.close()
+            }
+            rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
             return
           }
           session.lastSeen = now()

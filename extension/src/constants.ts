@@ -490,6 +490,12 @@ export const DEVIN_CONNECT_FLOOR_MS = 3_000
 export const DEVIN_BRIDGE_CWD_LOOKUP_MS = 1_000
 /** The most working-folder lookups of the Devin Desktop bridge that may be unanswered at once, so a hung mount holds at most two of libuv's four pool threads. */
 export const DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX = 2
+
+/** The request header the Devin Desktop bridge sends on every request, so the server can refuse its requests while this window's AI chat setup is taken back (Cycle 0144 task 4); Cursor's bridge sends none. */
+export const DEVIN_BRIDGE_HEADER_NAME = 'x-codebook-bridge'
+
+/** The value of {@link DEVIN_BRIDGE_HEADER_NAME} the Devin Desktop bridge sends. */
+export const DEVIN_BRIDGE_HEADER_VALUE = 'devin'
 /** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
 export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */

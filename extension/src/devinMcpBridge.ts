@@ -6,6 +6,8 @@ import {
   CONNECTION_DESCRIPTOR_SUFFIX,
   DEVIN_BRIDGE_CWD_LOOKUP_MS,
   DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX,
+  DEVIN_BRIDGE_HEADER_NAME,
+  DEVIN_BRIDGE_HEADER_VALUE,
   DEVIN_CONNECT_FLOOR_MS,
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
 } from './constants'
@@ -509,6 +511,7 @@ async function connectOnce(
       selection.descriptorPath,
       Math.max(DEVIN_CONNECT_FLOOR_MS, deadline - Date.now()),
       expected,
+      { name: DEVIN_BRIDGE_HEADER_NAME, value: DEVIN_BRIDGE_HEADER_VALUE },
     )
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
