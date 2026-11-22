@@ -5,6 +5,7 @@ import {
   mkdtemp,
   realpath,
   symlink,
+  unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -545,6 +546,7 @@ test('the expectation of a selection names its instance, pid, workspace and devi
     pid: 4242,
     workspace,
     devinChat: true,
+    url: 'http://127.0.0.1:1/mcp',
   })
 })
 
@@ -773,9 +775,10 @@ test('the bridge keeps asking a refusing server until it listens again', async (
 })
 
 // Value: protects=a Devin window with two live descriptors of one workspace and pid connecting to the newest at once, with a connection budget that does not shrink to nothing; fails_when=selection waits out the whole selection window for a single descriptor, or the attempt after it gets the 1 ms left of the budget, so a server needing a few hundred milliseconds is never reached; why_new=newest-at-once and the connection floor (Cycle 0143 /ship pass 2 E4); seam=a spawned bridge entry, an older descriptor naming a dead port, a newer one naming a proxy that delays every answer by 400 ms
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(
   'the bridge connects to the newest of two live descriptors through a server that answers slowly',
-  { timeout: 30_000 },
+  { timeout: 30_000, skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
     const harness = await createHarness(),
@@ -868,3 +871,172 @@ test('the bridge drops a descriptor whose server fails and connects to the fresh
   // Assert
   assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
 })
+
+// Value: protects=the bearer token never reaching another local service when the descriptor's port is rewritten after the selection; fails_when=the connection compares only instance, pid, workspace and devinChat, so a descriptor naming a different loopback port receives the token; why_new=Cycle 0143 /ship cycle 3 H1 exact endpoint url; seam=selectDevinDescriptor, a rewrite of the url's port, then runCursorMcpBridge with the selection's expectation against two loopback listeners that count requests
+// Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
+test(
+  'a descriptor whose port is rewritten after its selection never sends a request to either port',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const requestsByPort = new Map<number, number>()
+    const listenCounting = async (): Promise<number> => {
+      const { port } = await listen(context, (incoming, response) => {
+        const localPort = incoming.socket.localPort ?? 0
+        requestsByPort.set(localPort, (requestsByPort.get(localPort) ?? 0) + 1)
+        response.end()
+      })
+      return port
+    }
+    const selectedPort = await listenCounting()
+    const rewrittenPort = await listenCounting()
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${selectedPort}/mcp`,
+    })
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${rewrittenPort}/mcp`,
+    })
+    // Act
+    const outcome = runCursorMcpBridge(
+      selection.descriptorPath,
+      2_000,
+      devinDescriptorExpectation(selection, process.pid, workspace),
+    )
+    // Assert
+    await assert.rejects(outcome, /changed after it was selected/)
+    assert.equal(requestsByPort.get(selectedPort) ?? 0, 0)
+    assert.equal(requestsByPort.get(rewrittenPort) ?? 0, 0)
+  },
+)
+
+// Value: protects=the bridge never reading an unbounded descriptor at connection time; fails_when=the final read takes a file of any size (the scan's size cap alone does not cover the file read for the connection); why_new=Cycle 0143 /ship cycle 3 H2 bounded final read; seam=runCursorMcpBridge on a descriptor padded past the limit that names a loopback listener counting requests
+// Windows reports 0o666 for every file, so the private-file check refuses before the size check this test reaches.
+test(
+  'a descriptor larger than the size cap is refused before any request at connection time',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let requests = 0
+    const { port } = await listen(context, (_request, response) => {
+      requests += 1
+      response.end()
+    })
+    const path = await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${port}/mcp`,
+      padding: 'x'.repeat(70_000),
+    })
+    // Act
+    const outcome = runCursorMcpBridge(path, 2_000)
+    // Assert
+    await assert.rejects(outcome, /larger than 65536 bytes/)
+    assert.equal(requests, 0)
+  },
+)
+
+// Value: protects=the final descriptor read never waiting on a pipe swapped in after the selection; fails_when=the path is opened for reading without O_NONBLOCK and a handle check, so the bridge waits for a writer that never comes; why_new=Cycle 0143 /ship cycle 3 H2 swap after selection; seam=selectDevinDescriptor, the file replaced by a real FIFO, then runCursorMcpBridge
+test(
+  'a named pipe swapped in at the descriptor path after its selection is refused promptly',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const path = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    await unlink(path)
+    await promisify(execFile)('mkfifo', [path])
+    // Act
+    const outcome = runCursorMcpBridge(
+      path,
+      2_000,
+      devinDescriptorExpectation(selection, process.pid, workspace),
+    )
+    // Assert
+    await assert.rejects(outcome, /not a private regular file/)
+  },
+)
+
+// Value: protects=the final descriptor read never following a link swapped in after the selection; fails_when=the path is opened with link following, so a link to another private descriptor's token is read; why_new=Cycle 0143 /ship cycle 3 H2 swap after selection; seam=selectDevinDescriptor, the file replaced by a symlink to a private descriptor elsewhere, then runCursorMcpBridge against a loopback listener counting requests
+test(
+  'a link swapped in at the descriptor path after its selection is refused before any request',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let requests = 0
+    const { port } = await listen(context, (_request, response) => {
+      requests += 1
+      response.end()
+    })
+    const url = `http://127.0.0.1:${port}/mcp`
+    const path = await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url,
+    })
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    const elsewhere = join(agentDir, '..', 'elsewhere')
+    await mkdir(elsewhere)
+    const target = await writeDescriptor(elsewhere, 0, workspace, process.pid, {
+      url,
+    })
+    await unlink(path)
+    await symlink(target, path)
+    // Act
+    const outcome = runCursorMcpBridge(
+      path,
+      2_000,
+      devinDescriptorExpectation(selection, process.pid, workspace),
+    )
+    // Assert
+    await assert.rejects(outcome, /not a private regular file/)
+    assert.equal(requests, 0)
+  },
+)
+
+// Value: protects=the bridge's total time after its startup deadline; fails_when=every remaining matching descriptor gets its own floor-length attempt once the deadline has passed, so three candidates cost three floors; why_new=Cycle 0143 /ship cycle 3 H3 one late attempt in total; seam=runDevinMcpBridge with three descriptors of one window naming a listener that never answers and counts initialize requests
+test(
+  'after the deadline the bridge starts at most one more connection attempt however many descriptors match',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let initializeRequests = 0
+    const { port } = await listen(context, (incoming) => {
+      if (incoming.method === 'POST') initializeRequests += 1
+      // The request is held open on purpose.
+    })
+    for (const index of [0, 1, 2])
+      await writeDescriptor(agentDir, index, workspace, process.pid, {
+        url: `http://127.0.0.1:${port}/mcp`,
+      })
+    // Act
+    const { exitCode } = await runCapturingStderr(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 1_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(initializeRequests, 2)
+  },
+)

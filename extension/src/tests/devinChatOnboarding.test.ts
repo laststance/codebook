@@ -21,6 +21,7 @@ import {
 import type * as ExtensionModule from '../extension'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
+import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
 import { withDevinSetupLock } from '../utils/withDevinSetupLock'
 
@@ -318,7 +319,10 @@ async function devinWindow(
           steps.push('deploy Devin skill')
           // The real deployment leaves its record in the storage.
           await mkdir(join(directory, 'devin-skill'), { recursive: true })
-          await writeFile(join(directory, 'devin-skill/receipt.json'), '{}')
+          await writeFile(
+            join(directory, 'devin-skill/receipt.json'),
+            '{"installed":true}',
+          )
           if (options.holdDeploy) {
             deployEntered()
             await deployHeld
@@ -439,7 +443,10 @@ async function devinWindow(
   }
   if (options.savedSetup && options.skillReceipt !== false) {
     await mkdir(join(directory, 'devin-skill'), { recursive: true })
-    await writeFile(join(directory, 'devin-skill/receipt.json'), '{}')
+    await writeFile(
+      join(directory, 'devin-skill/receipt.json'),
+      '{"installed":true}',
+    )
   }
   loaded.activate({
     extensionPath: directory,
@@ -1407,19 +1414,23 @@ test('a Devin Desktop window whose setup another window removed during the refre
   }
 })
 
-// Value: protects=a connection descriptor is marked for the Devin bridge only while the entry's record is left; fails_when=the descriptor written at the start carries devinChat although another window removed the entry, so the bridge connects for a removed setup; why_new=review finding F4 (Cycle 0143 /ship pass 2, mark decided at the write); seam=the real descriptor file, a saved setup without the entry's record
-test('a Devin Desktop window whose entry record is gone writes an unmarked connection descriptor', async (context) => {
+// Value: protects=a connection descriptor written after another window removed the skill is not marked for the Devin bridge, also when that removal's MCP-entry removal failed and left the entry's record; fails_when=the skill's record left with installed false still counts, so the bridge connects for a removed skill; why_new=review finding I1 (Cycle 0143 /ship cycle 3, installed receipts only); seam=the real descriptor file, the skill's record rewritten as a skill removal leaves it
+test('a Devin Desktop descriptor written after another window removed the skill but kept the entry record is not marked', async (context) => {
   // Arrange
-  const window = await devinWindow(context, {
-    savedSetup: true,
-    entryReceipt: false,
-  })
+  const window = await devinWindow(context, { savedSetup: true })
   try {
-    // Act
     await waitUntil(
       () => window.steps.includes('start server'),
       'the reconnect at activation',
     )
+    // A skill removal leaves its record with installed false.
+    await writeFile(
+      join(window.directory, 'devin-skill/receipt.json'),
+      '{"installed":false}',
+    )
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
     // Assert
     assert.equal(await window.readDescriptorField(), undefined)
   } finally {
@@ -1427,21 +1438,76 @@ test('a Devin Desktop window whose entry record is gone writes an unmarked conne
   }
 })
 
-// Value: protects=a connection descriptor is marked for the Devin bridge only while the skill's record is left; fails_when=the descriptor carries devinChat although the skill's record is gone; why_new=review finding F4 (Cycle 0143 /ship pass 2, both records at the write); seam=the real descriptor file, a saved setup without the skill's record
-test('a Devin Desktop window whose skill record is gone writes an unmarked connection descriptor', async (context) => {
+// Value: protects=a connection descriptor is marked for the Devin bridge only while the entry's record is left; fails_when=the descriptor written at a restart carries devinChat although another window removed the entry, so the bridge connects for a removed setup; why_new=review finding F4 (Cycle 0143 /ship pass 2, mark decided at the write), moved to a restart by finding I2 (the reconnect starts nothing without both records); seam=the real descriptor file, the entry's record deleted after the start
+test('a Devin Desktop descriptor written after another window removed the entry record is not marked', async (context) => {
   // Arrange
-  const window = await devinWindow(context, {
-    savedSetup: true,
-    skillReceipt: false,
-  })
+  const window = await devinWindow(context, { savedSetup: true })
   try {
-    // Act
     await waitUntil(
       () => window.steps.includes('start server'),
       'the reconnect at activation',
     )
+    await rm(join(window.directory, 'devin-mcp/receipt.json'), { force: true })
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
     // Assert
     assert.equal(await window.readDescriptorField(), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=the skill's record counts only while it parses and says installed true; fails_when=a missing, unparsable or uninstalled skill record still reads as a standing setup; why_new=review finding I1 (Cycle 0143 /ship cycle 3); seam=the real records in a temporary storage
+test('a Devin setup stands only while the skill record says installed and the entry record is left', async (context) => {
+  // Arrange
+  const storage = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storage))
+  await mkdir(join(storage, 'devin-skill'), { recursive: true })
+  await mkdir(join(storage, 'devin-mcp'), { recursive: true })
+  await writeFile(join(storage, 'devin-mcp/receipt.json'), '{}')
+  const skillReceipt = join(storage, 'devin-skill/receipt.json')
+  const outcomes: boolean[] = []
+  // Act
+  await writeFile(skillReceipt, '{"installed":true}')
+  outcomes.push(await hasDevinSetupReceipts(storage))
+  await writeFile(skillReceipt, '{"installed":false}')
+  outcomes.push(await hasDevinSetupReceipts(storage))
+  await writeFile(skillReceipt, 'not json')
+  outcomes.push(await hasDevinSetupReceipts(storage))
+  await rm(skillReceipt)
+  outcomes.push(await hasDevinSetupReceipts(storage))
+  // Assert
+  assert.deepEqual(outcomes, [true, false, false, false])
+})
+
+// Value: protects=a reconnect starts no server once a removal finished in another window after the entry refresh answered current; fails_when=only the entry's record is read again, so a skill record taken meanwhile still lets the server start for a removed setup; why_new=review finding I2 (Cycle 0143 /ship cycle 3, both records read before the start); seam=an entry refresh stand-in that removes the skill's record before it answers
+test('a Devin Desktop reconnect starts no server when the skill record disappears after the entry refresh', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    entryRefresh: 'current',
+    afterRefresh: () =>
+      rm(join(storageDirectory, 'devin-skill/receipt.json'), { force: true }),
+  })
+  try {
+    // Act
+    await waitUntil(
+      () =>
+        window.outputLines.includes(
+          "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again.",
+        ),
+      'the removed line in the Output',
+    )
+    // Assert
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'refresh MCP entry',
+    ])
   } finally {
     await window.loaded.deactivate()
   }

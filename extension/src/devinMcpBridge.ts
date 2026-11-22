@@ -26,6 +26,8 @@ export interface DevinDescriptorSelection {
   descriptorPath: string
   instanceId: string
   workspace: string
+  /** The loopback endpoint the descriptor names (no credential): the connection goes to exactly this url. */
+  url: string
   /** Whether Codebook wrote `devinChat: true`: this window's AI chat setup matches the workspace. */
   devinChat: boolean
 }
@@ -85,6 +87,7 @@ async function readCandidate(
       descriptorPath,
       instanceId: parsed.instanceId,
       workspace: parsed.workspace,
+      url: parsed.url,
       devinChat: (raw as { devinChat?: unknown }).devinChat === true,
       pid: owner.pid,
       modifiedAtMs: file.modifiedAtMs,
@@ -145,10 +148,11 @@ async function matchDescriptors(
       first.instanceId.localeCompare(second.instanceId),
   )
   return matches.map(
-    ({ descriptorPath, instanceId, workspace, devinChat }) => ({
+    ({ descriptorPath, instanceId, workspace, url, devinChat }) => ({
       descriptorPath,
       instanceId,
       workspace,
+      url,
       devinChat,
     }),
   )
@@ -245,9 +249,9 @@ function refuse(line: string): void {
  * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
  * @param pid - The extension host process id the selection matched.
  * @param realCwd - The real path of the bridge's working folder, which the selection matched against the descriptor's workspace.
- * @returns The instance id, the pid, the workspace real path and `devinChat: true` (a selection without it is refused before any connection).
+ * @returns The instance id, the pid, the workspace real path, the exact endpoint url and `devinChat: true` (a selection without it is refused before any connection).
  * @example
- * devinDescriptorExpectation(selection, 4242, '/repo') // => { instanceId: '1111…', pid: 4242, workspace: '/repo', devinChat: true }
+ * devinDescriptorExpectation(selection, 4242, '/repo') // => { instanceId: '1111…', pid: 4242, workspace: '/repo', devinChat: true, url: selection.url }
  */
 export function devinDescriptorExpectation(
   selection: DevinDescriptorSelection,
@@ -259,6 +263,7 @@ export function devinDescriptorExpectation(
     pid,
     workspace: realCwd,
     devinChat: true,
+    url: selection.url,
   }
 }
 
@@ -297,13 +302,42 @@ async function connectOnce(
 }
 
 /**
+ * The one recovery line for a bridge that found no instance of its window in time; called by {@link runDevinMcpBridge}.
+ * @param cwd - Working folder of the bridge process.
+ * @returns The sentence, without a line break and without descriptor contents.
+ * @example
+ * notRunningLine('/repo') // => 'Codebook is not running for /repo in this Devin Desktop window. ...'
+ */
+function notRunningLine(cwd: string): string {
+  return `Codebook is not running for ${cwd} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`
+}
+
+/**
+ * Says whether a connection attempt may start now, so the time after the startup deadline is bounded by one attempt however many descriptors match; called by {@link runDevinMcpBridge} before each attempt.
+ * @param deadline - When the startup wait ends (epoch milliseconds).
+ * @param lateAttempt - Whether the one attempt allowed after the deadline was already taken; set here when it is taken now.
+ * @returns `true` before the deadline, and once after it; `false` for any later attempt.
+ * @example
+ * mayStartAttempt(Date.now() - 1, { isSpent: false }) // => true, and the state is now spent
+ */
+function mayStartAttempt(
+  deadline: number,
+  lateAttempt: { isSpent: boolean },
+): boolean {
+  if (Date.now() < deadline) return true
+  if (lateAttempt.isSpent) return false
+  lateAttempt.isSpent = true
+  return true
+}
+
+/**
  * Bridges Devin Desktop's stdio MCP transport to this window's Codebook instance.
  *
  * Started by the bridge entry file from the `mcp_config.json` entry Set Up AI Chat writes.
  *
  * Without a usable `WINDSURF_EXT_HOST_PID` the bridge cannot tell its window from another window of the same folder, so it selects nothing, writes one line and exits 1.
  * A descriptor of this window that lacks `devinChat: true` means AI chat is not set up here: one line, exit 1, at once.
- * Each connection attempt (the whole handshake) is bounded by the remaining startup deadline, but never by less than {@link DEVIN_CONNECT_FLOOR_MS}: the bridge's total time can exceed the 15 s startup window by that floor. The connection reads the descriptor again and refuses it when it is no longer the one selected (see {@link devinDescriptorExpectation}). A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
+ * Each connection attempt (the descriptor read and the whole handshake) is bounded by the remaining startup deadline, but never by less than {@link DEVIN_CONNECT_FLOOR_MS}: the bridge's total time can exceed the 15 s startup window by that floor, and after the deadline at most one more attempt starts in total, however many descriptors remain. The connection reads the descriptor again and refuses it when it is no longer the one selected (see {@link devinDescriptorExpectation}). A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
  *
  * @param agentDir - Folder holding the window instances' connection descriptors.
  * @param cwd - Working folder of the bridge process; the window's workspace.
@@ -325,6 +359,7 @@ export async function runDevinMcpBridge(
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     excludedPaths = new Set<string>(),
     realCwd = await realOrSame(cwd)
+  const lateAttempt = { isSpent: false }
   for (;;) {
     // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.
     const selection = await selectDevinDescriptor(agentDir, cwd, pid, {
@@ -333,15 +368,15 @@ export async function runDevinMcpBridge(
       timeoutMs: Math.max(0, deadline - Date.now()),
     })
     // No match in time: one fixed recovery line, no descriptor contents.
-    if (!selection)
-      return refuse(
-        `Codebook is not running for ${cwd} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
-      )
+    if (!selection) return refuse(notRunningLine(cwd))
     // This window runs Codebook but its AI chat setup is for another folder or missing: nothing to wait for.
     if (!selection.devinChat)
       return refuse(
         `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${cwd}. Run Codebook: Set Up AI Chat here, then reload the window.`,
       )
+    // Once the deadline has passed only one more attempt may start in total, however many descriptors remain.
+    if (!mayStartAttempt(deadline, lateAttempt))
+      return refuse(notRunningLine(cwd))
     const outcome = await connectOnce(
       selection,
       deadline,

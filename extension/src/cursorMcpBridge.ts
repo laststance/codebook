@@ -74,7 +74,7 @@ async function releaseHalfOpenSession(
 /**
  * Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window.
  * @param descriptorPath - The private connection descriptor of the instance.
- * @param connectTimeoutMs - Longest wait for the whole connection handshake (initialize and the initialized notification); the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
+ * @param connectTimeoutMs - Longest wait for reading the descriptor and the whole connection handshake together (initialize and the initialized notification); the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
  * @param expected - What the Devin Desktop bridge's selection validated; the descriptor read for the connection must still say the same, else nothing is sent. Cursor's bridge passes none.
  * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
  * @example await runCursorMcpBridge('/private/current.connection.json')
@@ -84,8 +84,18 @@ export async function runCursorMcpBridge(
   connectTimeoutMs?: number,
   expected?: DescriptorExpectation,
 ): Promise<void> {
-  const descriptor = await readBridgeDescriptor(descriptorPath, expected)
-  const connectUpstream = async () => {
+  const startedAt = Date.now()
+  // The read of the descriptor spends the same startup budget as the handshake.
+  const descriptor = await readBridgeDescriptor(
+    descriptorPath,
+    expected,
+    connectTimeoutMs,
+  )
+  const firstHandshakeMs =
+    connectTimeoutMs === undefined
+      ? undefined
+      : Math.max(1, connectTimeoutMs - (Date.now() - startedAt))
+  const connectUpstream = async (handshakeMs = connectTimeoutMs) => {
     const client = new Client({
       name: 'codebook-cursor-bridge',
       version: EXTENSION_VERSION,
@@ -94,7 +104,7 @@ export async function runCursorMcpBridge(
       requestInit: { headers: { Authorization: `Bearer ${descriptor.token}` } },
     })
     try {
-      await connectWithin(client, http, connectTimeoutMs)
+      await connectWithin(client, http, handshakeMs)
     } catch (error) {
       await releaseHalfOpenSession(http)
       await client.close()
@@ -113,7 +123,7 @@ export async function runCursorMcpBridge(
     }
     await connection.client.close()
   }
-  let active = await connectUpstream()
+  let active = await connectUpstream(firstHandshakeMs)
   let reconnecting: Promise<void> | undefined,
     closed = false
   const forward = async <Value>(

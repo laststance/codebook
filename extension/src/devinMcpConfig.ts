@@ -89,8 +89,8 @@ const pendingSchema = z.object({
   keptName: z.string().optional(),
   keptIno: fileIdSchema.optional(),
   keptSha256: z.string().optional(),
-  /** Absent while a write or removal is in progress (a displaced config goes back when the config name is empty); `completed` once the config was published or removed (a copy that stays is a leftover, never put back). */
-  phase: z.literal('completed').optional(),
+  /** Absent while a write or removal is in progress (a displaced config goes back when the config name is empty); `completed` once the config was published or removed (a copy that stays is a leftover, never put back); `handed` once a copy was named to the learner (a refusal or `cleanupFailure`), which later runs never delete, whatever its bytes. */
+  phase: z.enum(['completed', 'handed']).optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
 type Pending = z.infer<typeof pendingSchema>
@@ -106,6 +106,8 @@ type FileIdentity = {
   mtimeMs: bigint
   /** The permission bits (`mode & 0o777`) the file had when it was read; a replacement keeps only the owner's of them. */
   mode: number
+  /** How many names the inode had when it was read; more than one means another path reaches the same file ({@link assertSingleLink}). */
+  nlink: bigint
 }
 
 type ConfigLook =
@@ -249,6 +251,27 @@ function leftCopyRefusal(
   )
 }
 
+/** The refusal for a removal that found a config at the config name again after it moved the old one aside (an editor saved meanwhile): that config stays untouched and the receipt stays. */
+function savedAgainRefusal({ path, retry }: Context): Error {
+  return refusal(
+    'a config that was saved again while Codebook removed its entry',
+    path,
+    'look at the file',
+    retry,
+  )
+}
+
+/** The refusal for a step that could not write Codebook's own record: nothing was removed, and the receipt stays. */
+function recordFailureRefusal({ path, retry }: Context, cause: unknown): Error {
+  return refusal(
+    'that Codebook could not write its own record of the change, so it changed nothing',
+    path,
+    'make room for that record',
+    retry,
+    cause,
+  )
+}
+
 /** A file that stays beside the config, and what it holds: `previous` is the config as it was before the write or removal, `new` the staged config that was published. */
 type KeptFile = { path: string; holds: 'previous' | 'new' }
 
@@ -332,9 +355,10 @@ function identityOf(status: {
   size: bigint
   mtimeMs: bigint
   mode: bigint
+  nlink: bigint
 }): FileIdentity {
-  const { ino, size, mtimeMs, mode } = status
-  return { ino, size, mtimeMs, mode: Number(mode) & 0o777 }
+  const { ino, size, mtimeMs, mode, nlink } = status
+  return { ino, size, mtimeMs, mode: Number(mode) & 0o777, nlink }
 }
 
 /**
@@ -558,6 +582,24 @@ function assertRewritable(context: Context, look: ConfigLook): void {
     )
 }
 
+/**
+ * Refuses a config that other paths reach too, before anything is moved: replacing or removing the name would leave the other names on a file Codebook no longer keeps current.
+ * @param context - The run.
+ * @param look - What the config looked like.
+ * @throws A {@link refusal} when the inode had more than one name at the read; the file is untouched. Codebook's own staged link is no concern: this runs on the config before the move-aside, after recovery removed any leftover name.
+ * @example
+ * assertSingleLink(context, look)
+ */
+function assertSingleLink(context: Context, look: ConfigLook): void {
+  if (look.kind === 'present' && look.identity.nlink > 1n)
+    throw refusal(
+      'a file that is linked from another path',
+      context.path,
+      'give it one name',
+      context.retry,
+    )
+}
+
 /** Removes the pending record; a failure leaves a record that the next run finds stale. */
 function dropPending(context: Context): Promise<void> {
   return rm(context.pendingPath, { force: true }).catch(() => undefined)
@@ -567,14 +609,40 @@ function dropPending(context: Context): Promise<void> {
  * Rewrites the pending record as completed: the config was already published or removed, so a copy that stays is a leftover and never goes back to the config name ({@link recoverLeftovers}).
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
- * @returns Nothing; a failure to write keeps the record as it was.
+ * @returns `true` when the record says completed; `false` when it could not be written (a full disk): the record stays as it was, and the caller must not rely on it.
  */
-function markCompleted(context: Context, journal: Pending): Promise<void> {
-  return atomicPrivateWrite(
-    context.pendingPath,
-    { ...journal, phase: 'completed' } satisfies Pending,
-    DEVIN_MCP_RECORD_LIMIT_BYTES,
-  ).catch(() => undefined)
+async function markCompleted(
+  context: Context,
+  journal: Pending,
+): Promise<boolean> {
+  try {
+    await atomicPrivateWrite(
+      context.pendingPath,
+      { ...journal, phase: 'completed' } satisfies Pending,
+      DEVIN_MCP_RECORD_LIMIT_BYTES,
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Records that a copy was named to the learner (in a refusal or in `cleanupFailure`), so no later run deletes it, whatever its bytes; the next run reports it once and stops tracking it ({@link recoverLeftovers}).
+ * @param context - The run.
+ * @param journal - The record as it was written before the first move.
+ * @returns Nothing; when the record cannot be written it is dropped instead, so the copy is no longer tracked and stays for good.
+ */
+async function handOver(context: Context, journal: Pending): Promise<void> {
+  try {
+    await atomicPrivateWrite(
+      context.pendingPath,
+      { ...journal, phase: 'handed' } satisfies Pending,
+      DEVIN_MCP_RECORD_LIMIT_BYTES,
+    )
+  } catch {
+    await dropPending(context)
+  }
 }
 
 /** Whether a file was deleted; a failure is an answer here, because the caller names the file that stays. */
@@ -620,7 +688,7 @@ function isExpectedCopy(
 }
 
 /** The displaced copy as it was read through its open handle: the bytes' hash, the inode, and the size and times that a later write to the same file changes. */
-type HeldCopy = {
+export type HeldCopy = {
   handle: FileHandle
   sha256: string
   ino: bigint
@@ -629,13 +697,18 @@ type HeldCopy = {
   ctimeMs: bigint
 }
 
+/** The open displaced copy and the permission bits that very file had before Codebook made it private; only that inode ever gets them back. */
+type DisplacedHandle = { handle: FileHandle; originalMode: number }
+
 /**
  * Opens the displaced copy without following a link and makes it private through that handle, so the copy of the learner's other servers is readable by the owner only while it exists; called right after the move-aside.
  * @param path - The private name the config was moved to.
- * @returns The open handle; undefined when the name holds nothing.
+ * @returns The open handle with the file's own permission bits, read before they were narrowed; undefined when the name holds nothing.
  * @throws When the name holds a link or no readable file, or the mode cannot be set; the handle is closed then.
  */
-async function holdDisplaced(path: string): Promise<FileHandle | undefined> {
+async function holdDisplaced(
+  path: string,
+): Promise<DisplacedHandle | undefined> {
   let handle: FileHandle
   try {
     handle = await openWithoutFollowing(path)
@@ -644,8 +717,12 @@ async function holdDisplaced(path: string): Promise<FileHandle | undefined> {
     throw error
   }
   try {
+    // The mode of this very file, read before it is narrowed, is the only mode a put-back may give back, and only to this inode.
+    const { mode: originalMode } = identityOf(
+      await handle.stat({ bigint: true }),
+    )
     await handle.chmod(PRIVATE_FILE_MODE)
-    return handle
+    return { handle, originalMode }
   } catch (error) {
     await handle.close()
     throw error
@@ -658,7 +735,7 @@ async function holdDisplaced(path: string): Promise<FileHandle | undefined> {
  * @returns The hash, inode, size and times.
  * @throws When the file is no regular file, is larger than {@link DEVIN_MCP_CONFIG_LIMIT_BYTES} or cannot be read.
  */
-async function readHeld(handle: FileHandle): Promise<HeldCopy> {
+export async function readHeld(handle: FileHandle): Promise<HeldCopy> {
   const status = await handle.stat({ bigint: true })
   if (!status.isFile() || status.size > BigInt(DEVIN_MCP_CONFIG_LIMIT_BYTES))
     throw new Error('The kept copy is no regular file of a sane size.')
@@ -668,63 +745,74 @@ async function readHeld(handle: FileHandle): Promise<HeldCopy> {
 }
 
 /**
- * Tells whether a writer that kept the old file open wrote into it after the comparison, by the size and times of the same open file.
+ * Tells whether a writer that kept the old file open wrote into it after the comparison: the size and times of the same open file, and then a hash of its bytes read again through that handle, which catches a same-size write inside one timestamp tick.
+ * Documented limit: a write that lands between this check and the unlink that follows it is not seen; no Node primitive closes that gap, and advisory locks are not honored by editors.
  * @param held - The copy as it was read.
- * @returns `true` when size, modification time or change time differ, or the file cannot be looked at: such a copy is kept, never deleted.
+ * @returns `true` when size, times or bytes differ, or the file cannot be looked at or read: such a copy is kept, never deleted.
  */
-async function didCopyChange(held: HeldCopy): Promise<boolean> {
+export async function didCopyChange(held: HeldCopy): Promise<boolean> {
   try {
     const now = await held.handle.stat({ bigint: true })
-    return (
+    if (
       now.size !== held.size ||
       now.mtimeMs !== held.mtimeMs ||
       now.ctimeMs !== held.ctimeMs
     )
+      return true
+    // Size and times can be equal after a same-size write within one tick: only the bytes tell.
+    const bytes = Buffer.alloc(Number(now.size))
+    const { bytesRead } = await held.handle.read(bytes, 0, bytes.length, 0)
+    return bytesRead !== bytes.length || bytesSha256(bytes) !== held.sha256
   } catch {
     return true
   }
 }
 
+/** What {@link discardDisplaced} did with the displaced copy: `deleted`; `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
+type DiscardOutcome = 'deleted' | 'kept' | 'unrecorded'
+
 /**
  * Deletes the displaced copy after the config was published or removed, unless a writer changed it since the comparison; called by {@link settlePublished} and by the removal.
- * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name.
+ * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) and never deleted by a later run. When the completed record cannot be written nothing is deleted.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
- * @returns `true` when the copy is gone; `false` when it changed or could not be deleted, so it stays.
+ * @returns The {@link DiscardOutcome}.
  */
 async function discardDisplaced(
   context: Context,
   journal: Pending,
   displacedPath: string,
   held: HeldCopy,
-): Promise<boolean> {
-  await markCompleted(context, journal)
-  if (await didCopyChange(held)) return false
-  return didUnlink(displacedPath)
+): Promise<DiscardOutcome> {
+  if (!(await markCompleted(context, journal))) return 'unrecorded'
+  if (await didCopyChange(held)) {
+    await handOver(context, journal)
+    return 'kept'
+  }
+  return (await didUnlink(displacedPath)) ? 'deleted' : 'kept'
 }
 
 /**
- * Gives the config name its file back after the comparison found it is not the file that was read: the original permissions return through the handle, a link never replaces a config that appeared meanwhile, and the displaced name is unlinked.
+ * Gives the config name its file back after the comparison found it is not the file that was read: a link never replaces a config that appeared meanwhile, only then does the file get its own permissions back through its handle, and the displaced name is unlinked. A copy that cannot go back stays private.
  * @param context - The run.
  * @param displacedPath - The private name of the displaced file.
- * @param handle - The handle of that file; undefined when it could not be opened.
- * @param mode - The permission bits the config had when it was read.
+ * @param opened - The handle of that file with the mode it had before it was made private; undefined when it could not be opened.
  * @throws A {@link leftCopyRefusal} naming the displaced file when it cannot go back (a new config stands there, or the link failed).
  */
 async function restoreDisplaced(
   context: Context,
   displacedPath: string,
-  handle: FileHandle | undefined,
-  mode: number,
+  opened: DisplacedHandle | undefined,
 ): Promise<void> {
   try {
-    await handle?.chmod(mode).catch(() => undefined)
     await link(displacedPath, context.path)
   } catch (error) {
     throw leftCopyRefusal(context, displacedPath, error)
   }
+  // The name is back: the same inode gets the mode it had, never another file.
+  await opened?.handle.chmod(opened.originalMode).catch(() => undefined)
   await unlink(displacedPath).catch(() => undefined)
   await dropPending(context)
 }
@@ -776,13 +864,15 @@ type Replacement = {
  * @param context - The run.
  * @param temporary - The staged file.
  * @param config - The inode the config will have.
- * @returns The inode, and the staged name when it could not be unlinked afterwards (its pending record stays then).
+ * @param journal - The record as it was written before the link-in; turns to completed once the config stands.
+ * @returns The inode, and the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config).
  * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); nothing was published.
  */
 async function createConfig(
   context: Context,
   temporary: string,
   config: ConfigNumbers,
+  journal: Pending,
 ): Promise<Published> {
   try {
     context.seam?.afterCheck?.()
@@ -794,7 +884,9 @@ async function createConfig(
     throw codeOf(error) === 'EEXIST' ? changedWhileWorking(context) : error
   }
   context.seam?.afterPublish?.(undefined)
-  const isStagedGone = await didUnlink(temporary)
+  // The config stands: the record says so, and the staged name is only another name of it.
+  const didRecord = await markCompleted(context, journal)
+  const isStagedGone = didRecord && (await didUnlink(temporary))
   return {
     config,
     keptLeft: isStagedGone ? [] : [{ path: temporary, holds: 'new' }],
@@ -830,17 +922,17 @@ async function moveConfigAside(
 /**
  * Puts a displaced file back at the config name after the comparison found it is not the file that was read, and refuses; called by {@link replaceConfig}.
  * @param context - The run.
- * @param replacement - The staged file (unlinked here), the private name and the identity the config had when it was read.
- * @param handle - The handle of the displaced file; undefined when it could not be opened.
- * @throws Always: {@link changedWhileWorking} after the file went back with its original permissions (a link never replaces, and the displaced name is unlinked), or a {@link leftCopyRefusal} naming the displaced file when a new config stands at the config name (it is kept) or the link failed.
+ * @param replacement - The staged file (unlinked here) and the private name.
+ * @param opened - The displaced file's handle and own mode; undefined when it could not be opened.
+ * @throws Always: {@link changedWhileWorking} after the file went back with its own permissions (a link never replaces, and the displaced name is unlinked), or a {@link leftCopyRefusal} naming the displaced file, which stays private, when a new config stands at the config name (it is kept) or the link failed.
  */
 async function putDisplacedBack(
   context: Context,
-  { temporary, displaced, identity }: Replacement,
-  handle: FileHandle | undefined,
+  { temporary, displaced }: Replacement,
+  opened: DisplacedHandle | undefined,
 ): Promise<never> {
   await unlink(temporary).catch(() => undefined)
-  await restoreDisplaced(context, displaced.path, handle, identity.mode)
+  await restoreDisplaced(context, displaced.path, opened)
   throw changedWhileWorking(context)
 }
 
@@ -848,13 +940,13 @@ async function putDisplacedBack(
  * Links the staged file in as the config after a successful comparison; called by {@link replaceConfig}. A link never replaces: a file that a save created after the move-aside stays.
  * @param context - The run.
  * @param replacement - The staged file, the displaced file (whose bytes equal what was read) and the record.
- * @param held - The displaced copy as it was compared.
- * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to completed. Any other link failure puts the displaced file back with its original permissions and rethrows it, or throws a {@link leftCopyRefusal} naming the displaced file when it cannot go back.
+ * @param opened - The displaced copy's handle and own mode.
+ * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy. Any other link failure puts the displaced file back with its own permissions and rethrows it, or throws a {@link leftCopyRefusal} naming the displaced file when it cannot go back.
  */
 async function linkInStaged(
   context: Context,
-  { temporary, displaced, identity, journal }: Replacement,
-  held: HeldCopy,
+  { temporary, displaced, journal }: Replacement,
+  opened: DisplacedHandle | undefined,
 ): Promise<void> {
   try {
     await link(temporary, context.path)
@@ -862,12 +954,12 @@ async function linkInStaged(
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
     if (codeOf(error) === 'EEXIST') {
-      // A save created the config after the move-aside: it is kept, and the displaced copy is never deleted here.
-      await markCompleted(context, journal)
+      // A save created the config after the move-aside: it is kept, and the displaced copy is handed to the learner, never deleted by a later run.
+      await handOver(context, journal)
       throw newConfigRefusal(context, displaced.path)
     }
     // The config name is empty: the displaced file goes back, else it is named.
-    await restoreDisplaced(context, displaced.path, held.handle, identity.mode)
+    await restoreDisplaced(context, displaced.path, opened)
     throw error
   }
 }
@@ -884,16 +976,11 @@ async function settlePublished(
   { temporary, displaced, journal }: Replacement,
   held: HeldCopy,
 ): Promise<KeptFile[]> {
-  const isDisplacedGone = await discardDisplaced(
-    context,
-    journal,
-    displaced.path,
-    held,
-  )
+  const outcome = await discardDisplaced(context, journal, displaced.path, held)
   const isStagedGone = await didUnlink(temporary)
   return [
     ...(isStagedGone ? [] : [{ path: temporary, holds: 'new' as const }]),
-    ...(isDisplacedGone
+    ...(outcome === 'deleted'
       ? []
       : [{ path: displaced.path, holds: 'previous' as const }]),
   ]
@@ -901,7 +988,8 @@ async function settlePublished(
 
 /**
  * Replaces an existing config without ever replacing a file that was not compared: the staged file is complete and flushed, the pending record names it, the probe and the private name, the config is moved aside, the displaced file is opened without following a link and made private, its inode and bytes are compared with what was read through that handle, and only then is the staged file linked in (a link never replaces).
- * A difference puts the displaced file back with its original permissions and refuses. A config that appeared at the name meanwhile is kept, together with the displaced copy, and the refusal names that copy. After a successful publish the displaced copy is deleted only while the same open file still has the size and times it had at the comparison.
+ * A difference puts the displaced file back with its original permissions and refuses. A config that appeared at the name meanwhile is kept, together with the displaced copy, and the refusal names that copy. After a successful publish the displaced copy is deleted only while the same open file still has the size, times and bytes (hash read through the same handle) it had at the comparison; a copy that changed or was named in a refusal is handed to the learner and never deleted by a later run.
+ * Limit of the delete: a write that lands between the final check and the unlink is not seen ({@link didCopyChange}), exactly as a write between the move-aside and the open is not.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
  * @param context - The run.
  * @param replacement - The staged file, the probe name, the private name, the identity the config had when it was read and the record.
@@ -916,15 +1004,16 @@ async function replaceConfig(
 ): Promise<Published> {
   const { displaced } = replacement
   await moveConfigAside(context, replacement)
-  const handle = await holdDisplaced(displaced.path).catch(() => undefined)
+  const opened = await holdDisplaced(displaced.path).catch(() => undefined)
   try {
     context.seam?.afterMoveAside?.(displaced.path)
     // Compared by bytes and by inode through the open file: the file that moved is the one that was read, or it is put back.
-    const held = handle && (await readHeld(handle).catch(() => undefined))
+    const held =
+      opened && (await readHeld(opened.handle).catch(() => undefined))
     if (!held || !isExpectedCopy(held, displaced))
-      return await putDisplacedBack(context, replacement, handle)
+      return await putDisplacedBack(context, replacement, opened)
     context.seam?.afterCompare?.()
-    await linkInStaged(context, replacement, held)
+    await linkInStaged(context, replacement, opened)
     context.seam?.afterPublish?.(displaced.path)
     // From here the config is published; cleanup failures are reported and leave the pending record.
     return {
@@ -932,7 +1021,7 @@ async function replaceConfig(
       keptLeft: await settlePublished(context, replacement, held),
     }
   } finally {
-    await handle?.close()
+    await opened?.handle.close()
   }
 }
 
@@ -1048,7 +1137,7 @@ async function publishRoot(
         },
         config,
       )
-    : createConfig(context, staged.temporary, config)
+    : createConfig(context, staged.temporary, config, journal)
 }
 
 /**
@@ -1106,7 +1195,7 @@ async function deleteConfig(
     await dropPending(context)
     throw error
   }
-  return settleMovedAside(context, moved, journal, look.identity.mode)
+  return settleMovedAside(context, moved, journal)
 }
 
 /**
@@ -1114,7 +1203,6 @@ async function deleteConfig(
  * @param context - The run.
  * @param moved - The private name and the bytes and inode the file must have.
  * @param journal - The record as it was written before the rename.
- * @param mode - The permission bits the config had when it was read.
  * @returns The copy that stays when it could not be deleted.
  * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot go back.
  */
@@ -1122,58 +1210,82 @@ async function settleMovedAside(
   context: Context,
   moved: KeptCopy,
   journal: Pending,
-  mode: number,
 ): Promise<{ keptLeft: KeptFile[] }> {
-  let handle: FileHandle | undefined
+  let opened: DisplacedHandle | undefined
   try {
-    handle = await holdDisplaced(moved.path)
+    opened = await holdDisplaced(moved.path)
   } catch (error) {
     throw leftCopyRefusal(context, moved.path, error)
   }
   try {
     context.seam?.afterMoveAside?.(moved.path)
     // The renamed file is gone: nothing is left to settle.
-    if (!handle) {
+    if (!opened) {
       await dropPending(context)
       return { keptLeft: [] }
     }
-    return await settleHeldRemoval(context, { moved, journal, mode }, handle)
+    return await settleHeldRemoval(context, { moved, journal }, opened)
   } finally {
-    await handle?.close()
+    await opened?.handle.close()
   }
 }
 
 /**
  * Compares the held file with what was read and either deletes it or puts it back; called by {@link settleMovedAside}.
  * @param context - The run.
- * @param removal - The private name and expected bytes and inode, the record and the original permission bits.
- * @param handle - The open file.
+ * @param removal - The private name and expected bytes and inode, and the record.
+ * @param opened - The open file with the mode it had before it was made private.
  * @returns The copy that stays when it changed since the comparison or could not be deleted.
- * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot be read or go back.
+ * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot be read or go back; a {@link recordFailureRefusal} (the config went back) when the completed record cannot be written, so a later recovery never puts a removed config back without its receipt; a {@link savedAgainRefusal} when a config stands at the config name again.
  */
 async function settleHeldRemoval(
   context: Context,
-  removal: { moved: KeptCopy; journal: Pending; mode: number },
-  handle: FileHandle,
+  removal: { moved: KeptCopy; journal: Pending },
+  opened: DisplacedHandle,
 ): Promise<{ keptLeft: KeptFile[] }> {
-  const { moved, journal, mode } = removal
+  const { moved, journal } = removal
   let held: HeldCopy
   try {
-    held = await readHeld(handle)
+    held = await readHeld(opened.handle)
   } catch (error) {
     throw leftCopyRefusal(context, moved.path, error)
   }
   if (!isExpectedCopy(held, moved)) {
     // The file is not the one that was read, whatever its bytes: link it back (never replacing a newer file) and refuse.
-    await restoreDisplaced(context, moved.path, handle, mode)
+    await restoreDisplaced(context, moved.path, opened)
     throw changedWhileWorking(context)
   }
   context.seam?.afterPublish?.(moved.path)
-  if (await discardDisplaced(context, journal, moved.path, held)) {
-    await dropPending(context)
-    return { keptLeft: [] }
+  const outcome = await discardDisplaced(context, journal, moved.path, held)
+  if (outcome === 'unrecorded') {
+    // Without the completed record a later recovery would put the removed config back after the receipt was dropped: put it back now and keep the receipt.
+    await restoreDisplaced(context, moved.path, opened)
+    throw recordFailureRefusal(context, undefined)
   }
-  return { keptLeft: [{ path: moved.path, holds: 'previous' }] }
+  return finishRemoval(context, moved, outcome)
+}
+
+/**
+ * Ends a removal whose old file was compared: a config at the config name again means an editor saved meanwhile, so nothing is reported as removed; called by {@link settleHeldRemoval}.
+ * @param context - The run.
+ * @param moved - The private name of the old file.
+ * @param outcome - What became of the old file ({@link DiscardOutcome}); `unrecorded` never reaches here.
+ * @returns The copy that stays, if any.
+ * @throws A {@link savedAgainRefusal} when a file stands at the config name; the receipt and that file stay as they are.
+ */
+async function finishRemoval(
+  context: Context,
+  moved: KeptCopy,
+  outcome: DiscardOutcome,
+): Promise<{ keptLeft: KeptFile[] }> {
+  const isDeleted = outcome === 'deleted'
+  if (lstatSync(context.path, { throwIfNoEntry: false })) {
+    if (isDeleted) await dropPending(context)
+    throw savedAgainRefusal(context)
+  }
+  if (!isDeleted) return { keptLeft: [{ path: moved.path, holds: 'previous' }] }
+  await dropPending(context)
+  return { keptLeft: [] }
 }
 
 /**
@@ -1321,123 +1433,181 @@ function journalLeftovers(context: Context, pending: Pending): Leftover[] {
   )
 }
 
+/** What {@link lookAtLeftover} found: nothing (the file is gone), the file, or a failure to read it. */
+type LeftoverLook =
+  | { kind: 'gone' }
+  | { kind: 'found'; copy: { sha256: string; ino: bigint } }
+  | { kind: 'unreadable'; cause: unknown }
+
+/** A leftover recovery could not settle, with what stopped it; it stays where it is and is named. */
+type Unsettled = { leftover: Leftover; cause: unknown }
+
 /**
  * Looks at one accepted leftover without following a link and checks its inode against the record.
  * @param context - The run.
  * @param leftover - The accepted leftover.
- * @returns The hash and inode of the file; undefined when it is gone.
- * @throws A {@link leftCopyRefusal} when the file cannot be read; a {@link journalRefusal} when the file has another inode than the record says.
+ * @returns What was found; a file that cannot be read is an answer, so the other leftovers still settle.
+ * @throws A {@link journalRefusal} when the file has another inode than the record says.
  */
 async function lookAtLeftover(
   context: Context,
   leftover: Leftover,
-): Promise<{ sha256: string; ino: bigint } | undefined> {
+): Promise<LeftoverLook> {
   let copy
   try {
     copy = await inspectCopy(leftover.path)
-  } catch (error) {
-    throw leftCopyRefusal(context, leftover.path, error)
+  } catch (cause) {
+    return { kind: 'unreadable', cause }
   }
+  if (!copy) return { kind: 'gone' }
   // A file under a Codebook name that is not the inode Codebook recorded is somebody else's.
-  if (copy && !isSameFileId(leftover.ino, copy.ino))
-    throw journalRefusal(context)
-  return copy
+  if (!isSameFileId(leftover.ino, copy.ino)) throw journalRefusal(context)
+  return { kind: 'found', copy }
 }
 
 /**
  * Recovers what an interrupted run left under the private names its pending record holds; called by {@link inspect} before the config is read.
- * Every name must be a bare name Codebook made beside the config with the inode the record holds, checked for all of them before any is moved, linked or deleted.
+ * Every name must be a bare name Codebook made beside the config with the inode the record holds, checked for all of them before any is moved, linked or deleted. Each leftover is then settled on its own: one that cannot be settled stays and is returned, and the others are still settled.
  * - A displaced config of a write or removal that was still in progress, while the config name is empty: it goes back with a link, which never replaces anything.
  * - A displaced or staged file that holds exactly the bytes the record names: it is Codebook's own leftover and is deleted. After a finished publish or removal (a completed record) it is never put back.
+ * - A staged name that is another link to the config itself: unlinked, whatever the config holds now; the config keeps the inode.
  * - The probe link of the hard-link check: deleted.
- * - Anything else stays, and the refusal names it; for a completed record it is said once and the record is dropped.
+ * - A copy handed to the learner (a handed record): never touched.
+ * - Anything else stays and is returned.
  * @param context - The run.
  * @param pending - The pending record of the interrupted run.
- * @throws A {@link journalRefusal} for a name that is not Codebook's own; a {@link leftCopyRefusal} for a file that cannot be resolved.
+ * @returns The leftovers that stay, in the order of the record.
+ * @throws A {@link journalRefusal} for a name that is not Codebook's own; nothing was touched.
  */
 async function recoverLeftovers(
   context: Context,
   pending: Pending,
-): Promise<void> {
-  const leftovers = journalLeftovers(context, pending)
-  const found: Array<{
-    leftover: Leftover
-    copy: { sha256: string; ino: bigint }
-  }> = []
+): Promise<Unsettled[]> {
+  const looked: Array<{ leftover: Leftover; look: LeftoverLook }> = []
   // Looking first means a bad name or inode stops the run before anything moved.
-  for (const leftover of leftovers) {
-    const copy = await lookAtLeftover(context, leftover)
-    if (copy) found.push({ leftover, copy })
+  for (const leftover of journalLeftovers(context, pending))
+    looked.push({ leftover, look: await lookAtLeftover(context, leftover) })
+  const unsettled: Unsettled[] = []
+  for (const { leftover, look } of looked) {
+    if (look.kind === 'gone') continue
+    try {
+      if (look.kind === 'unreadable') throw look.cause
+      await tidyLeftover(context, leftover, look.copy, pending.phase)
+    } catch (cause) {
+      unsettled.push({ leftover, cause })
+    }
   }
-  for (const { leftover, copy } of found)
-    await settleLeftover(context, pending, leftover, copy)
+  return unsettled
 }
 
 /**
- * Settles one leftover of an interrupted run; called by {@link recoverLeftovers}.
+ * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named.
  * @param context - The run.
- * @param pending - The pending record.
+ * @param phase - The phase of the pending record.
+ * @param reported - The unsettled leftover to name.
+ * @returns The refusal, not thrown yet.
+ */
+function unsettledRefusal(
+  context: Context,
+  phase: Pending['phase'],
+  { leftover, cause }: Unsettled,
+): Error {
+  return phase
+    ? completedLeftRefusal(context, leftover.path, cause)
+    : leftCopyRefusal(context, leftover.path, cause)
+}
+
+/**
+ * Builds the record that stays after a recovery: only the unsettled leftovers' names, inodes and hashes, so the next run retries just those.
+ * @param pending - The record the run read.
+ * @param tracked - The unsettled leftovers that stay tracked; for a finished or handed record the one reported is left out ({@link unsettledRefusal}).
+ * @returns The reduced record; undefined when nothing stays tracked.
+ */
+function retainedRecord(
+  pending: Pending,
+  tracked: Unsettled[],
+): Pending | undefined {
+  if (tracked.length === 0) return undefined
+  const roles = new Set(tracked.map(({ leftover }) => leftover.role))
+  return {
+    targetPath: pending.targetPath,
+    createdFile: false,
+    generation: pending.generation,
+    phase: pending.phase,
+    ...(roles.has('kept') && {
+      keptName: pending.keptName,
+      keptIno: pending.keptIno,
+      keptSha256: pending.keptSha256,
+    }),
+    // The probe's inode is the staged file's.
+    ...((roles.has('staged') || roles.has('probe')) && {
+      stagedIno: pending.stagedIno,
+    }),
+    ...(roles.has('staged') && {
+      stagedName: pending.stagedName,
+      stagedSha256: pending.stagedSha256,
+    }),
+    ...(roles.has('probe') && { probeName: pending.probeName }),
+  }
+}
+
+/** Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay. */
+async function retirePending(
+  context: Context,
+  retained: Pending | undefined,
+): Promise<void> {
+  if (retained) await writeRecord(context.pendingPath, retained)
+  else await rm(context.pendingPath, { force: true })
+}
+
+/**
+ * Puts back or deletes one leftover; called by {@link recoverLeftovers}.
+ * @param context - The run.
  * @param leftover - The accepted leftover.
  * @param copy - What {@link lookAtLeftover} found.
- * @throws A {@link leftCopyRefusal} when the file differs from what Codebook expected or cannot be moved or deleted; it stays. For a completed record the refusal is {@link completedLeftRefusal} and the record is dropped first, so it is said once.
- */
-async function settleLeftover(
-  context: Context,
-  pending: Pending,
-  leftover: Leftover,
-  copy: { sha256: string; ino: bigint },
-): Promise<void> {
-  const isCompleted = pending.phase === 'completed'
-  try {
-    await tidyLeftover(context, leftover, copy.sha256, isCompleted)
-  } catch (error) {
-    if (!isCompleted) throw leftCopyRefusal(context, leftover.path, error)
-    // A leftover of a finished change is reported once; the next run does not track it.
-    await dropPending(context)
-    throw completedLeftRefusal(context, leftover.path, error)
-  }
-}
-
-/**
- * Puts back or deletes one leftover.
- * @param context - The run.
- * @param leftover - The accepted leftover.
- * @param sha256 - The hash of the bytes the file holds now.
- * @param isCompleted - Whether the publish or removal that made the leftover had finished.
- * @throws When the file differs from what Codebook expected or the move or delete fails.
+ * @param phase - The phase of the pending record: absent while the change was in progress.
+ * @throws When the file differs from what Codebook expected, was handed to the learner, or the move or delete fails.
  */
 async function tidyLeftover(
   context: Context,
   { role, path, sha256: expectedSha256 }: Leftover,
-  sha256: string,
-  isCompleted: boolean,
+  copy: { sha256: string; ino: bigint },
+  phase: Pending['phase'],
 ): Promise<void> {
   // The probe is a link to the staged file; its inode was checked.
   if (role === 'probe') return unlink(path)
-  const isConfigAbsent = !lstatSync(context.path, { throwIfNoEntry: false })
-  if (role === 'kept' && !isCompleted && isConfigAbsent) {
+  const config = lstatSync(context.path, {
+    bigint: true,
+    throwIfNoEntry: false,
+  })
+  // The staged name of a published config is only another name of it: drop the name, the config keeps the inode and whatever the learner wrote since.
+  if (role === 'staged' && config?.ino === copy.ino) return unlink(path)
+  if (role === 'kept' && phase === 'handed')
+    throw new Error('The copy was handed to the learner.')
+  if (role === 'kept' && phase === undefined && !config) {
     // An interrupted move-aside: put the file back, even if it is not the bytes that were read.
     await link(path, context.path)
     await unlink(path)
     return
   }
-  if (sha256 !== expectedSha256)
+  if (copy.sha256 !== expectedSha256)
     throw new Error('The leftover file differs from what Codebook expected.')
   await unlink(path)
 }
 
 /**
  * Settles a `pending.json` left by a run that ended before it wrote its receipt.
- * An entry whose `{ command, args, env }` equal the pending hash is adopted (receipt written, pending removed), with `createdFile` kept only when the config still is the staged file; a state that shows the rename never happened (no entry, a removal, the receipted entry) drops the pending record; anything else is refused.
+ * An entry whose `{ command, args, env }` equal the pending hash is adopted (receipt written, pending removed or reduced to the leftovers that stay), with `createdFile` kept only when the config still is the staged file; a state that shows the rename never happened (no entry, a removal, the receipted entry) drops the pending record; anything else is refused.
  * @param context - The run.
  * @param current - The `codebook` entry in the config, if any.
  * @param receipt - The receipt read before.
  * @param pending - The pending record read before; undefined when there is none.
  * @param look - What the config looked like.
+ * @param retained - What stays of the record after recovery ({@link retainedRecord}); undefined when nothing stays.
  * @returns The receipt that now stands.
  * @throws A {@link refusal} when the entry is neither the pending one nor the receipted one.
  * @example
- * const receipt = await settlePending(context, current, await readReceipt(context), pending, look)
+ * const receipt = await settlePending(context, current, await readReceipt(context), pending, look, undefined)
  */
 async function settlePending(
   context: Context,
@@ -1445,6 +1615,7 @@ async function settlePending(
   receipt: Receipt | undefined,
   pending: Pending | undefined,
   look: ConfigLook,
+  retained: Pending | undefined,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
   const isReceipted =
@@ -1456,10 +1627,16 @@ async function settlePending(
     pending.entrySha256 !== undefined &&
     coreHashOf(current) === pending.entrySha256
   )
-    return adoptPending(context, pending, pending.entrySha256, look.identity)
+    return adoptPending(
+      context,
+      pending,
+      pending.entrySha256,
+      look.identity,
+      retained,
+    )
   if (isPendingStale(context, pending, current, receipt)) {
-    // The rename never happened (or this was a removal): the pending record is stale.
-    await rm(context.pendingPath, { force: true })
+    // The rename never happened (or this was a removal): the pending record is stale; the leftovers that stay remain tracked.
+    await retirePending(context, retained)
     return receipt
   }
   throw refusal(
@@ -1499,6 +1676,7 @@ function isPendingStale(
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
  * @param identity - The identity of the config that stands.
+ * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @returns The receipt that was written.
  */
 async function adoptPending(
@@ -1506,6 +1684,7 @@ async function adoptPending(
   pending: Pending,
   entrySha256: string,
   identity: FileIdentity,
+  retained: Pending | undefined,
 ): Promise<Receipt> {
   const adopted: Receipt = {
     schemaVersion: 1,
@@ -1521,7 +1700,7 @@ async function adoptPending(
     config: { ino: recordedFileId(identity.ino) },
   }
   await writeRecord(context.receiptPath, adopted)
-  await rm(context.pendingPath, { force: true })
+  await retirePending(context, retained)
   return adopted
 }
 
@@ -1581,6 +1760,7 @@ async function publishEntry(
   const { entry, entryHash } = context
   if (!entry || !entryHash) return { generation: '' }
   assertRewritable(context, look)
+  assertSingleLink(context, look)
   const createdFile = createdFileFor(look, receipt)
   const generation = randomUUID()
   const root = rootWithEntry(look, entry)
@@ -1607,9 +1787,10 @@ async function publishEntry(
 
 /**
  * Settles a kept copy and a pending record, reads the config and returns what a run decides on.
+ * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that.
  * @param context - The run.
  * @returns The look at the config, its `codebook` entry and the receipt that stands.
- * @throws What {@link recoverLeftovers}, {@link lookAtConfig} and {@link settlePending} throw.
+ * @throws What {@link recoverLeftovers}, {@link lookAtConfig} and {@link settlePending} throw, and a refusal naming the first leftover that could not be settled.
  * @example
  * const { look, current, receipt } = await inspect(context)
  */
@@ -1623,19 +1804,27 @@ async function inspect(context: Context): Promise<{
     pendingSchema,
     context.retry,
   )
-  // A copy an interrupted run kept comes back, or is deleted, or is named in the refusal, before the config is read.
-  if (pending?.targetPath === context.path)
-    await recoverLeftovers(context, pending)
+  // A copy an interrupted run kept comes back, or is deleted, or stays and is named, before the config is read.
+  const unsettled =
+    pending?.targetPath === context.path
+      ? await recoverLeftovers(context, pending)
+      : []
   const look = await lookAtConfig(context)
   const current =
     look.kind === 'present' ? look.servers?.[SERVER_NAME] : undefined
+  // A finished or handed change names its leftover once: the one reported is no longer tracked.
+  const tracked = pending?.phase ? unsettled.slice(1) : unsettled
   const receipt = await settlePending(
     context,
     current,
     await readReceipt(context),
     pending,
     look,
+    pending && retainedRecord(pending, tracked),
   )
+  const [reported] = unsettled
+  if (pending && reported)
+    throw unsettledRefusal(context, pending.phase, reported)
   return { look, current, receipt }
 }
 
@@ -1812,6 +2001,7 @@ async function takeEntryOut(
   const otherServers = Object.fromEntries(
     Object.entries(look.servers ?? {}).filter(([name]) => name !== SERVER_NAME),
   )
+  assertSingleLink(context, look)
   await context.seam?.afterRead?.()
   // The file goes only when Codebook made it, it is still that file and nothing else is in it.
   if (

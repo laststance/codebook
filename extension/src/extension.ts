@@ -1321,11 +1321,8 @@ export function activate(
         `Codebook did not refresh its Devin Desktop skill: ${skillFailure}`,
       )
     const entryStatus = await refreshDevinEntry(storageRoot)
-    // A removal finished in another window meanwhile took the entry's receipt: the entry is not Codebook's any more, and nothing reconnects.
-    if (
-      entryStatus === 'not-managed' &&
-      !(await hasDevinEntryReceipt(storageRoot))
-    ) {
+    // A removal finished in another window meanwhile took a receipt: the setup is not Codebook's any more, and nothing reconnects (both receipts are read right before the server starts).
+    if (!(await hasDevinSetupReceipts(storageRoot))) {
       diagnostics.info(DEVIN_SETUP_REMOVED_LINE)
       return false
     }
