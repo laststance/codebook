@@ -174,7 +174,7 @@ async function devinWindow(
     skillReceiptMode?: number
     /** How many of the first reads of the setup receipts get no answer (descriptor exhaustion), as `null`. */
     receiptReadsWithoutAnswer?: number
-    /** Whether every read of the setup receipts never settles, as a read stuck on a failing disk. */
+    /** Whether every read of the setup receipts waits, as a read stuck on a failing disk, until `releaseHungReceiptReads` or the window's `deactivate` opens its gate, and then answers with no answer (`null`). */
     receiptReadsHang?: boolean
     failFirstInstallationRead?: boolean
     removalDeletesReceipt?: boolean
@@ -236,6 +236,31 @@ async function devinWindow(
   const receiptsHeld = new Promise<void>((resolve) => {
     releaseReceipts = resolve
   })
+  // Every gate's release, opened by the window's `deactivate` before the real one runs, so a test that failed while a stand-in still waits ends instead of hanging the runner.
+  const gateReleases: Array<() => void> = []
+  /**
+   * Makes one gate a stand-in waits at until the test, or the window's `deactivate`, opens it.
+   * @returns `wait`, which a stand-in awaits and which records the moment it was first reached; `release`, which opens the gate; `reachedAtMs`, which reads that moment (`performance.now()`), or `undefined` while no stand-in reached the gate.
+   * @example const gate = createGate(); await gate.wait() // resolves once gate.release() ran
+   */
+  const createGate = () => {
+    let release!: () => void
+    const opened = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    gateReleases.push(release)
+    let firstReachedAtMs: number | undefined
+    return {
+      wait: (): Promise<void> => {
+        firstReachedAtMs ??= performance.now()
+        return opened
+      },
+      release: (): void => release(),
+      reachedAtMs: (): number | undefined => firstReachedAtMs,
+    }
+  }
+  // Every read of the setup receipts waits here while `receiptReadsHang` is set, as a read stuck on a failing disk, and then answers with no answer.
+  const hungReceiptReads = createGate()
   // The folder the window serves now; a test seam changes it as a folder switch would.
   let currentWorkspace = directory
   // The listeners the window registered for a change of the workspace's folders; {@link changeFolder} fires them as the editor does.
@@ -591,9 +616,11 @@ async function devinWindow(
             await delay(delayMs)
             return null
           }
-          // A read that never returns.
-          if (options.receiptReadsHang)
-            return new Promise<never>(() => undefined)
+          // A read that does not return until the test or the window's deactivate opens the gate, and then has no answer.
+          if (options.receiptReadsHang) {
+            await hungReceiptReads.wait()
+            return null
+          }
           // A read that gets no answer, as under descriptor exhaustion.
           if ((options.receiptReadsWithoutAnswer ?? 0) > 0) {
             options.receiptReadsWithoutAnswer =
@@ -749,7 +776,20 @@ async function devinWindow(
     },
   })
   return {
-    loaded,
+    /** The loaded module; its `deactivate` first opens every gate and hold of this window (a hung read, a held step), then runs the real one, so a test's cleanup ends although a regression left a stand-in waiting. */
+    loaded: {
+      ...loaded,
+      deactivate: async (): Promise<void> => {
+        for (const release of gateReleases) release()
+        releaseDeploy()
+        releaseRefresh()
+        releaseRewrite()
+        releaseReceipts()
+        await loaded.deactivate()
+      },
+    },
+    /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
+    releaseHungReceiptReads: hungReceiptReads.release,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
     commands,
