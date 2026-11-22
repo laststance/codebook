@@ -2521,11 +2521,11 @@ async function startConnectedBridge(
 /**
  * Rewrites the connection descriptor of the bridge's window so that it names another installation, keeping everything else (the endpoint and the token the bridge connected with).
  * @param agentDir - The agent folder holding the descriptor.
- * @param installationId - The installation id the descriptor's mark names from now on.
+ * @param installationId - The installation id the descriptor's mark names from now on; none removes the mark.
  */
 async function markDescriptorFor(
   agentDir: string,
-  installationId: string,
+  installationId: string | undefined,
 ): Promise<void> {
   const descriptorPath = join(agentDir, `${IDS[0]}.connection.json`)
   const descriptor = z
@@ -2679,5 +2679,97 @@ test(
       refusal,
       `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
     )
+  },
+)
+
+// protects=a Devin bridge whose window was unmarked (the server answers 403) ending with the not-set-up line instead of failing every request for good (Cycle 0145 task 12); fails_when=the setup check runs only for the 404 Unknown MCP session, so a 403 never reaches it and the bridge stays up; no_claim=Cursor's bridge, which passes no check (cursorMcpBridge tests)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose window was unmarked and whose server answers 403 ends with the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    await markDescriptorFor(bridge.agentDir, undefined)
+    bridge.proxy.refuseWith = 403
+    bridge.handshake()
+    // Act
+    bridge.askToolsList(1)
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(
+      bridge
+        .readStderr()
+        .includes(
+          `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(bridge.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+        ),
+      true,
+    )
+  },
+)
+
+// protects=a Devin bridge whose token was rotated by a take-back (the server answers 401) ending with the not-set-up line; fails_when=a 401 never reaches the setup check, so the bridge stays up and fails every request; no_claim=the take-back itself (the receipts are rewritten by hand)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose setup was removed and whose server answers 401 ends with the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    await writeSetupReceipts(bridge.root, { installed: false }, false)
+    bridge.proxy.refuseWith = 401
+    bridge.handshake()
+    // Act
+    bridge.askToolsList(1)
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(
+      bridge
+        .readStderr()
+        .includes(
+          `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(bridge.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+        ),
+      true,
+    )
+  },
+)
+
+// protects=a refusal of one request (403) not ending a bridge whose setup stands, and its request not being sent twice; fails_when=the bridge ends on any 403, or replays the request after the check; no_claim=what the server's refusal means
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose setup stands fails only the request the server answered 403 and does not send it again',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    bridge.proxy.refuseWith = 403
+    bridge.handshake()
+    // Act
+    bridge.askToolsList(1)
+    const failedRequest = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 1),
+      'the failed answer of the refused request',
+      20_000,
+      undefined,
+      20,
+    )
+    // The server accepts again: a bridge that stayed up answers the next request.
+    bridge.proxy.refuseWith = undefined
+    bridge.askToolsList(2)
+    const nextRequest = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 2),
+      'the answer to the next request',
+      20_000,
+      undefined,
+      20,
+    )
+    // Assert
+    assert.equal('error' in failedRequest, true)
+    assert.equal('result' in nextRequest, true)
+    assert.equal(bridge.readStderr().includes('is not set up'), false)
+    // One request refused, one answered: the refused one was not sent twice.
+    assert.equal(bridge.counts.others, 2)
   },
 )

@@ -889,7 +889,7 @@ function writeRefusalLine(line: string): Promise<void> {
 }
 
 /**
- * Makes the check the bridge runs before it opens a new upstream session after the first one expired; passed by {@link connectOnce} to {@link runCursorMcpBridge}.
+ * Makes the check the bridge runs before it opens a new upstream session after the first one expired, and when the server refuses a request with 401 or 403; passed by {@link connectOnce} to {@link runCursorMcpBridge} as both its `beforeUpstream` and its `onRefused`.
  * A removal in another window never unmarks this window's descriptor, so the receipts are read again against what the bridge connected for. When the setup was removed the not-set-up line is written to stderr; when the descriptor now names another instance, endpoint or installation ({@link replacedLine}) that line is written instead. Either sets the exit code to 1, and the bridge ends instead of reconnecting.
  * @param descriptorPath - The selected descriptor, in the agent folder.
  * @param binding - What the bridge connected for ({@link bindingOfSelection}).
@@ -904,7 +904,9 @@ function setupCheckBeforeReconnect(
   binding: DevinBridgeBinding,
   cwd: string,
 ): () => Promise<boolean> {
-  return async () => {
+  let inFlight: Promise<boolean> | undefined,
+    hasEnded = false
+  async function checkOnce(): Promise<boolean> {
     const receipts = await receiptsAnswerWithin(
       descriptorPath,
       binding,
@@ -915,10 +917,19 @@ function setupCheckBeforeReconnect(
       throw new Error('Codebook setup check did not answer.')
     if (receipts.answer === 'stands') return true
     process.exitCode = 1
+    hasEnded = true
     await writeRefusalLine(
       `${receipts.answer === 'replaced' ? replacedLine(cwd) : notSetUpLine(cwd)}\n`,
     )
     return false
+  }
+  // Requests that fail together share one check, so the refusal line is written once; once the bridge has ended, no later request checks again.
+  return () => {
+    if (hasEnded) return Promise.resolve(false)
+    inFlight ??= checkOnce().finally(() => {
+      inFlight = undefined
+    })
+    return inFlight
   }
 }
 
@@ -957,6 +968,12 @@ async function connectOnce(
     // A descriptor that changed since the selection is scanned again, and no answer is transient; only an observed removal is a setup that does not stand.
     return receipts?.answer === 'removed' ? 'not-set-up' : 'busy'
   }
+  // One check for both hooks, so a refusal and an expired session that happen together share its answer and its line.
+  const setupCheck = setupCheckBeforeReconnect(
+    selection.descriptorPath,
+    binding,
+    cwd,
+  )
   try {
     await runCursorMcpBridge(
       selection.descriptorPath,
@@ -964,7 +981,8 @@ async function connectOnce(
       expected,
       { name: DEVIN_BRIDGE_HEADER_NAME, value: DEVIN_BRIDGE_HEADER_VALUE },
       onClosed,
-      setupCheckBeforeReconnect(selection.descriptorPath, binding, cwd),
+      setupCheck,
+      setupCheck,
     )
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
