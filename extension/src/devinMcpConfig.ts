@@ -803,6 +803,104 @@ export async function refreshManagedDevinMcpEntry(
   })
 }
 
+/** What the removal decides before it changes anything ({@link removalOwnership}): a status that ends it, or the present config and the receipt that owns its `codebook` entry. */
+type RemovalOwnership =
+  | { status: 'superseded' | 'not-managed' | 'changed' }
+  | { look: Extract<ConfigLook, { kind: 'present' }>; receipt: Receipt }
+
+/**
+ * Decides whether the removal may take the `codebook` entry out, before it changes anything; called by {@link removeManagedDevinMcpEntry}.
+ * @param inspected - What {@link inspect} found under the lock.
+ * @param expectedGeneration - The generation a setup that rolls back its own write got from {@link writeManagedDevinMcpEntry}; undefined for the removal command.
+ * @returns
+ * - `superseded`: a newer setup's receipt stands, so a rollback of an older write touches nothing
+ * - `not-managed`: there is no receipt, no file or no entry
+ * - `changed`: the entry differs from the receipt
+ * - otherwise the present config and the receipt that owns its entry
+ * @example
+ * removalOwnership({ look: { kind: 'absent' }, current: undefined, receipt: undefined }, undefined) // => { status: 'not-managed' }
+ */
+function removalOwnership(
+  { look, current, receipt }: Awaited<ReturnType<typeof inspect>>,
+  expectedGeneration: string | undefined,
+): RemovalOwnership {
+  // A newer setup wrote this receipt: its entry is not ours to remove.
+  if (
+    receipt &&
+    expectedGeneration !== undefined &&
+    receipt.generation !== expectedGeneration
+  )
+    return { status: 'superseded' }
+  if (look.kind === 'absent' || !receipt || current === undefined)
+    return { status: 'not-managed' }
+  if (hashOf(current) !== receipt.entrySha256) return { status: 'changed' }
+  return { look, receipt }
+}
+
+/**
+ * Takes Codebook's entry out of a config whose entry it owns: deletes the file when Codebook made it and nothing else is in it, else writes the file back without the entry; called by {@link removeManagedDevinMcpEntry}.
+ * @param path - The config.
+ * @param owned - The present config and the receipt that owns its entry ({@link removalOwnership}).
+ * @param seam - Test hook, see {@link DevinMcpTestSeam}.
+ * @returns `file-removed` when the file went, `removed` when only the entry went.
+ * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot}.
+ * @example
+ * await takeEntryOut(path, owned, undefined) // => 'removed'
+ */
+async function takeEntryOut(
+  path: string,
+  { look, receipt }: Extract<RemovalOwnership, { receipt: Receipt }>,
+  seam: DevinMcpTestSeam | undefined,
+): Promise<'file-removed' | 'removed'> {
+  const otherServers = Object.fromEntries(
+    Object.entries(look.servers ?? {}).filter(([name]) => name !== SERVER_NAME),
+  )
+  await seam?.afterRead?.()
+  // The file goes only when Codebook made it, it is still that file and nothing else is in it.
+  if (
+    createdFileFor(look, receipt) &&
+    Object.keys(otherServers).length === 0 &&
+    Object.keys(look.root).length === 1
+  ) {
+    await deleteConfig(path, look, seam)
+    return 'file-removed'
+  }
+  assertRewritable(path, look)
+  await publishRoot(
+    path,
+    { ...look.root, mcpServers: otherServers },
+    look,
+    seam,
+  )
+  return 'removed'
+}
+
+/**
+ * Drops the receipt of an entry the removal has taken out; called by {@link removeManagedDevinMcpEntry}. The config has already changed, so a receipt that cannot be deleted is reported beside the result instead of thrown.
+ * @param receiptPath - Codebook's receipt of the entry.
+ * @param status - How the removal changed the config.
+ * @param path - The config.
+ * @returns The removal's result, with `cleanupFailure` when the receipt stays.
+ * @example
+ * await dropReceiptAfterRemoval('/private/devin-mcp/receipt.json', 'removed', path) // => { status: 'removed', path }
+ */
+async function dropReceiptAfterRemoval(
+  receiptPath: string,
+  status: 'file-removed' | 'removed',
+  path: string,
+): Promise<DevinMcpRemovalResult> {
+  try {
+    await rm(receiptPath, { force: true })
+  } catch {
+    return {
+      status,
+      path,
+      cleanupFailure: `Codebook could not delete its own record of that entry at ${receiptPath}; delete that record by hand.`,
+    }
+  }
+  return { status, path }
+}
+
 /** What a removal reports: the config change that was made, apart from a failure to delete Codebook's own record afterwards. */
 export type DevinMcpRemovalResult =
   | {
@@ -843,57 +941,18 @@ export async function removeManagedDevinMcpEntry(
     undefined,
     seam,
     async (context) => {
-      const { path } = context
-      const { look, current, receipt } = await inspect(context)
-      // A newer setup wrote this receipt: its entry is not ours to remove.
-      if (
-        receipt &&
-        options.expectedGeneration !== undefined &&
-        receipt.generation !== options.expectedGeneration
+      const ownership = removalOwnership(
+        await inspect(context),
+        options.expectedGeneration,
       )
-        return { status: 'superseded', path }
-      if (look.kind === 'absent' || !receipt || current === undefined) {
-        await rm(context.receiptPath, { force: true })
-        return { status: 'not-managed', path }
+      if ('status' in ownership) {
+        // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
+        if (ownership.status !== 'superseded')
+          await rm(context.receiptPath, { force: true })
+        return { status: ownership.status, path: context.path }
       }
-      if (hashOf(current) !== receipt.entrySha256) {
-        await rm(context.receiptPath, { force: true })
-        return { status: 'changed', path }
-      }
-      const otherServers = Object.fromEntries(
-        Object.entries(look.servers ?? {}).filter(
-          ([name]) => name !== SERVER_NAME,
-        ),
-      )
-      await seam?.afterRead?.()
-      // The file goes only when Codebook made it, it is still that file and nothing else is in it.
-      const isLeftEmpty =
-        createdFileFor(look, receipt) &&
-        Object.keys(otherServers).length === 0 &&
-        Object.keys(look.root).length === 1
-      if (isLeftEmpty) {
-        await deleteConfig(path, look, seam)
-      } else {
-        assertRewritable(path, look)
-        await publishRoot(
-          path,
-          { ...look.root, mcpServers: otherServers },
-          look,
-          seam,
-        )
-      }
-      const status = isLeftEmpty ? 'file-removed' : 'removed'
-      // The config is already changed: a receipt that cannot be deleted is reported beside the result.
-      try {
-        await rm(context.receiptPath, { force: true })
-      } catch {
-        return {
-          status,
-          path,
-          cleanupFailure: `Codebook could not delete its own record of that entry at ${context.receiptPath}; delete that record by hand.`,
-        }
-      }
-      return { status, path }
+      const status = await takeEntryOut(context.path, ownership, seam)
+      return dropReceiptAfterRemoval(context.receiptPath, status, context.path)
     },
   )
 }
