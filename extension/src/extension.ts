@@ -1174,6 +1174,11 @@ export function activate(
     )
       throw new Error(DEVIN_SETUP_SERVER_CHANGED_SENTENCE)
   }
+  /** Re-checks, after an awaited step of a Devin Desktop setup, that its removal has not begun and its checked server still stands; called by {@link setUpDevinChatLocked} after the receipts check and after the commit write. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupStillStands(checkedServer) */
+  const assertDevinSetupStillStands = (server: Running): void => {
+    assertDevinSetupAvailable()
+    assertDevinSetupServerStands(server)
+  }
   /** Builds the one `codebook` server entry of Devin Desktop's user MCP config: this installation's stdio bridge, given the folder of every window's private connection descriptor so that it picks its own window's instance; the entry holds no credential. @example devinMcpEntry('/usr/local/bin/node') // => { command: '/usr/local/bin/node', args: ['<extension>/dist/devinMcpBridge.js', '<storage>/agent'], env: {} } */
   const devinMcpEntry = (nodeExecutable: string): DevinMcpEntry => ({
     command: nodeExecutable,
@@ -1403,10 +1408,14 @@ export function activate(
         await checkDevinBridgeReceipts(checkedServer.descriptorPath),
       )
       if (refusal) throw new Error(refusal)
+      // The receipts read awaited: a removal, a Stop or a folder change in that gap ends the setup.
+      assertDevinSetupStillStands(checkedServer)
       // The last step: a failing commit write rolls back like any other failed step.
       await context.workspaceState.update('codebook.aiChatSetup', {
         workspace: setupWorkspace,
       })
+      // The commit write awaited too: a failure here still rolls back to `previousSetup`.
+      assertDevinSetupStillStands(checkedServer)
       isDevinRunProvisional = false
     } catch (error) {
       // A different Devin Desktop window may have removed the shared skill during the saved setup.
