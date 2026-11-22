@@ -1101,7 +1101,7 @@ export function activate(
         `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const { workspace: setupWorkspace } = running.endpoint.descriptor
-    await writeManagedDevinMcpEntry(
+    const entryWrite = await writeManagedDevinMcpEntry(
       context.globalStorageUri.fsPath,
       devinMcpEntry(nodeExecutable),
     )
@@ -1117,6 +1117,18 @@ export function activate(
     } catch (error) {
       // A different Devin Desktop window may have removed the shared skill during the saved setup.
       await context.workspaceState.update('codebook.aiChatSetup', undefined)
+      // The entry this setup wrote goes too; one that was already there, or a newer setup's (another generation), stays.
+      if (entryWrite.status !== 'current')
+        await removeManagedDevinMcpEntry(
+          context.globalStorageUri.fsPath,
+          undefined,
+          undefined,
+          { expectedGeneration: entryWrite.generation },
+        ).catch((cleanupError: unknown) => {
+          diagnostics.info(
+            `Codebook could not take back the Devin Desktop MCP entry this setup wrote: ${thrownMessage(cleanupError)}`,
+          )
+        })
       throw error
     }
     offerDevinReload('information', aiChatReadyMessage('devin'))

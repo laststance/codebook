@@ -26,7 +26,7 @@ type EntryRefreshStatus = 'refreshed' | 'current' | 'not-managed' | 'changed'
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail.
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -41,6 +41,7 @@ async function devinWindow(
     confirmRemoval?: boolean
     holdRefresh?: boolean
     failSetupClear?: boolean
+    entryWrite?: 'installed' | 'current'
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
@@ -54,7 +55,8 @@ async function devinWindow(
     outputLines: string[] = [],
     executedCommands: string[] = [],
     writtenEntries: DevinEntry[] = [],
-    refreshedEntries: DevinEntry[] = []
+    refreshedEntries: DevinEntry[] = [],
+    entryRemovals: unknown[] = []
   let instance = 0
   // The refresh waits here when a test holds it; `refreshEntered` tells the test it is waiting.
   let releaseRefresh!: () => void, refreshEntered!: () => void
@@ -230,7 +232,11 @@ async function devinWindow(
           steps.push('write MCP entry')
           // The entry comes from the loaded module's own realm; a copy of this realm compares by value.
           writtenEntries.push(structuredClone(entry))
-          return { status: 'installed', path: configPath }
+          return {
+            status: options.entryWrite ?? 'installed',
+            path: configPath,
+            generation: 'generation-of-this-setup',
+          }
         },
         refreshManagedDevinMcpEntry: async (
           _storageRoot: string,
@@ -244,8 +250,14 @@ async function devinWindow(
           }
           return { status: options.entryRefresh ?? 'current', path: configPath }
         },
-        removeManagedDevinMcpEntry: async () => {
+        removeManagedDevinMcpEntry: async (
+          _storageRoot: string,
+          _homeRoot?: string,
+          _seam?: unknown,
+          removalOptions?: unknown,
+        ) => {
           steps.push('remove MCP entry')
+          entryRemovals.push(structuredClone(removalOptions))
           return { status: 'removed', path: configPath }
         },
       },
@@ -296,6 +308,7 @@ async function devinWindow(
     executedCommands,
     writtenEntries,
     refreshedEntries,
+    entryRemovals,
     directory,
     configPath,
     refreshReached,
@@ -572,6 +585,60 @@ test('Remove Devin Desktop Setup removes the MCP entry and shows its notice even
     )
     assert.equal(window.notices.length, 1)
     assert.equal(window.notices[0]!.severity, 'information')
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a setup that loses its skill to another window's removal takes back only the entry it wrote, so no MCP entry is left that no window will serve; fails_when=the entry stays after the final check fails (Devin launches a bridge with no saved setup behind it), or the rollback removes without naming this setup's generation and so could take a newer setup's entry; why_new=review round (CodeRabbit major, an entry left after another window removes the setup); seam=module stand-ins of the skill, config, Node and server
+test('a Devin setup whose skill another window removed takes back the entry it wrote and saves no setup', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { skillManaged: false })
+  try {
+    // Act
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    await assert.rejects(setup, {
+      message:
+        'Devin Desktop skill is missing or was changed: /home/user/.config/devin/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+    })
+    assert.deepEqual(window.steps, [
+      'resolve Node',
+      'deploy Devin skill',
+      'start server',
+      'write MCP entry',
+      'verify Devin skill',
+      'remove MCP entry',
+    ])
+    assert.deepEqual(window.entryRemovals, [
+      { expectedGeneration: 'generation-of-this-setup' },
+    ])
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a failed setup that found Codebook's entry already in place leaves that shared entry for the windows that use it; fails_when=the rollback removes an entry this setup did not write, cutting other Devin Desktop windows off from Codebook; why_new=review round (CodeRabbit major, roll back only this setup's write); seam=module stand-ins of the skill, config, Node and server
+test('a failed Devin setup that found the entry already in place leaves it', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    skillManaged: false,
+    entryWrite: 'current',
+  })
+  try {
+    // Act
+    const setup = window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    await assert.rejects(setup)
+    assert.deepEqual(window.steps, [
+      'resolve Node',
+      'deploy Devin skill',
+      'start server',
+      'write MCP entry',
+      'verify Devin skill',
+    ])
+    assert.deepEqual(window.entryRemovals, [])
   } finally {
     await window.loaded.deactivate()
   }
