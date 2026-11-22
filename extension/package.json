@@ -442,6 +442,10 @@
       ],
       "commandPalette": [
         {
+          "command": "codebook.removeManagedDevinSetup",
+          "when": "codebook.isDevinDesktop"
+        },
+        {
           "command": "codebook.showKeyboardShortcuts"
         },
         {

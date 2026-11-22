@@ -20,10 +20,18 @@ import {
   EXTENSION_VERSION,
 } from './constants'
 import { connectionSchema } from './utils/connectionSchema'
+import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 
-/** Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window. @example await runCursorMcpBridge('/private/current.connection.json') */
+/**
+ * Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window.
+ * @param descriptorPath - The private connection descriptor of the instance.
+ * @param connectTimeoutMs - Longest wait for the server's answer to the first connection; the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
+ * @throws When the descriptor is not private, names a url that is not Codebook's loopback endpoint, the server does not answer in time or refuses the connection.
+ * @example await runCursorMcpBridge('/private/current.connection.json')
+ */
 export async function runCursorMcpBridge(
   descriptorPath: string,
+  connectTimeoutMs?: number,
 ): Promise<void> {
   const identity = await lstat(descriptorPath)
   if (
@@ -37,6 +45,11 @@ export async function runCursorMcpBridge(
   const descriptor = connectionSchema.parse(
     JSON.parse(await readFile(descriptorPath, 'utf8')),
   )
+  // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
+  if (!isLoopbackMcpUrl(descriptor.url))
+    throw new Error(
+      'Codebook connection descriptor is not a loopback endpoint.',
+    )
   const connectUpstream = async () => {
     const client = new Client({
       name: 'codebook-cursor-bridge',
@@ -46,7 +59,12 @@ export async function runCursorMcpBridge(
       requestInit: { headers: { Authorization: `Bearer ${descriptor.token}` } },
     })
     try {
-      await client.connect(http)
+      await client.connect(
+        http,
+        connectTimeoutMs === undefined
+          ? undefined
+          : { timeout: connectTimeoutMs },
+      )
     } catch (error) {
       // Initialize may have allocated a server session before the later initialized notification fails.
       try {

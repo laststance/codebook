@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +13,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod'
 
 import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
+import { runCursorMcpBridge } from '../cursorMcpBridge'
 import { startServer } from '../server'
 
 import { createHarness } from './helpers'
@@ -159,4 +162,38 @@ test('a malformed private descriptor cannot leak credential fragments through Cu
   assert.equal(exitCode, 1)
   assert.match(stderr, /Codebook Cursor MCP bridge could not connect/)
   assert.doesNotMatch(stderr, /PRIVATE_TOKEN_FRAGMENT/)
+})
+
+// Value: protects=the descriptor's bearer token staying on Codebook's own loopback /mcp endpoint in Cursor's bridge too; fails_when=the bridge connects to the url any descriptor names, so a planted descriptor receives the token; why_new=the Devin Desktop bridge shares this transport (Cycle 0143 B1); seam=a loopback listener that counts requests
+test('Cursor stdio bridge sends no request to a descriptor url that is not the loopback /mcp endpoint', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-bridge-url-'))
+  let requests = 0
+  const listener = createServer((_request, response) => {
+    requests += 1
+    response.end()
+  })
+  await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve))
+  context.after(async () => {
+    listener.closeAllConnections()
+    await new Promise<void>((resolve) => listener.close(() => resolve()))
+    await removeTestFolder(directory)
+  })
+  const descriptorPath = join(directory, 'planted.connection.json')
+  await writeFile(
+    descriptorPath,
+    JSON.stringify({
+      url: `http://127.0.0.1:${(listener.address() as AddressInfo).port}/other`,
+      token: 'test-token',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      workspace: directory,
+      apiVersion: '1.0',
+    }),
+    { mode: 0o600 },
+  )
+  // Act
+  const outcome = runCursorMcpBridge(descriptorPath, 2_000)
+  // Assert
+  await assert.rejects(outcome, /not a loopback endpoint/)
+  assert.equal(requests, 0)
 })

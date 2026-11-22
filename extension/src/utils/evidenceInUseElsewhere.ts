@@ -23,7 +23,7 @@ function isPresent(path: string): Promise<boolean> {
 }
 
 /** Says whether an owner record names no machine at all: no host name, no machine id and no pseudonym, as a connection descriptor of a build up to 0.2.28 does. @example namesNoMachine({ pid: 4242 }) // => true */
-export function namesNoMachine(owner: RecordedOwner): boolean {
+function namesNoMachine(owner: RecordedOwner): boolean {
   return [
     owner.hostname,
     owner.machineId,
