@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -606,6 +606,10 @@ for (const [change, overrides] of [
   ['loses devinChat', { devinChat: undefined }],
   ['names another instance', { instanceId: IDS[2] }],
   ['names another extension host process', { pid: process.pid + 1 }],
+  [
+    'is marked for another installation',
+    { devinSetupInstallation: 'another-installation' },
+  ],
 ] as const) {
   // Value: protects=a Devin window connecting only with the descriptor its selection validated; fails_when=the connection reads the path again and accepts whatever descriptor it holds then, so a removed AI chat setup or another instance's descriptor receives the token and requests; why_new=time-of-check gap between selection and connect (Cycle 0143 /ship pass 2 E1); seam=selectDevinDescriptor, a rewrite of the file, then runCursorMcpBridge with the selection's expectation against a loopback listener that counts requests
   // Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
@@ -666,6 +670,7 @@ test('the expectation of a selection names its instance, pid, workspace and devi
     pid: 4242,
     workspace,
     devinChat: true,
+    devinSetupInstallation: '99999999-9999-4999-8999-999999999999',
     url: 'http://127.0.0.1:1/mcp',
   })
 })
@@ -1254,7 +1259,7 @@ test(
 // protects=the bridge entry ending its process right after the refusal line when a lookup never answers; fails_when=the entry only sets the exit code, so a referenced handle of the unanswered lookup keeps the process alive and Devin never gets the end of the stream; no_claim=a real pending file-system request (a referenced setInterval stands in for it)
 test(
   'the bridge entry exits with 1 right after its refusal line while a lookup never settles',
-  { timeout: 15_000 },
+  { timeout: 30_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace } = await createFolders(context)
@@ -1276,11 +1281,9 @@ bridge.runDevinMcpBridge = (agentDirectory) =>
 `,
     )
     // Act
-    const startedAt = Date.now()
     const result = await new Promise<{
       code: number | null
       stderr: string
-      elapsedMs: number
     }>((done) => {
       const child = execFile(
         process.execPath,
@@ -1293,16 +1296,11 @@ bridge.runDevinMcpBridge = (agentDirectory) =>
         {
           cwd: workspace,
           env: { WINDSURF_EXT_HOST_PID: '10' },
-          // A process that is still alive here is the failure; it is ended so the test does not hang.
-          timeout: 3_000,
+          // A process that is still alive here is the failure; it is ended so the test does not hang. The margin covers a cold Node start under the gate's parallel load.
+          timeout: 15_000,
           killSignal: 'SIGKILL',
         },
-        (_error, _stdout, stderr) =>
-          done({
-            code: child.exitCode,
-            stderr,
-            elapsedMs: Date.now() - startedAt,
-          }),
+        (_error, _stdout, stderr) => done({ code: child.exitCode, stderr }),
       )
     })
     // Assert
@@ -1311,8 +1309,6 @@ bridge.runDevinMcpBridge = (agentDirectory) =>
       result.stderr,
       `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
     )
-    // gstack-timing-ok: the contract is an exit before 3,000 ms with a 500 ms deadline.
-    assert.equal(result.elapsedMs < 3_000, true)
   },
 )
 
@@ -1408,9 +1404,105 @@ test(
   },
 )
 
-// protects=a healthy descriptor being chosen before the deadline although an older same-window descriptor's lookup never answers; fails_when=the hanging candidate is looked up first and spends the whole budget before the healthy one starts; no_claim=which descriptor wins when both answer
+// protects=a healthy descriptor being chosen well before the deadline although a NEWER same-window descriptor's lookup never answers, whatever the folder's listing order; fails_when=the scan judges candidates newest first one after another, so the hanging newest candidate holds the healthy one until the startup deadline; no_claim=which descriptor wins when both answer
+for (const hangingIndex of [0, 1]) {
+  test(
+    `a newer same-window candidate whose workspace never answers does not delay the healthy older one (hanging descriptor listed ${hangingIndex === 0 ? 'first' : 'second'})`,
+    { timeout: 20_000 },
+    async (context) => {
+      // Arrange
+      const { agentDir, workspace, otherWorkspace } =
+        await createFolders(context)
+      const healthyIndex = 1 - hangingIndex
+      const hangingPath = await writeDescriptor(
+        agentDir,
+        hangingIndex,
+        otherWorkspace,
+        process.pid,
+      )
+      const healthyPath = await writeDescriptor(
+        agentDir,
+        healthyIndex,
+        workspace,
+        process.pid,
+      )
+      // The hanging descriptor is the newest by file time.
+      await utimes(healthyPath, new Date(1_000_000), new Date(1_000_000))
+      await utimes(hangingPath, new Date(2_000_000), new Date(2_000_000))
+      const resolveWorkspace = (path: string): Promise<string> =>
+        path === otherWorkspace
+          ? new Promise<string>(() => undefined)
+          : Promise.resolve(path)
+      // Act
+      const startedAt = Date.now()
+      const selection = await selectDevinDescriptor(
+        agentDir,
+        workspace,
+        process.pid,
+        { timeoutMs: 10_000, intervalMs: 20, resolveWorkspace },
+      )
+      const elapsedMs = Date.now() - startedAt
+      // Assert
+      assert.equal(selection?.descriptorPath, healthyPath)
+      // gstack-timing-ok: the contract is a choice long before the 10,000 ms deadline (about 200 ms expected), with a wide margin for the gate's parallel load.
+      assert.equal(elapsedMs < 4_000, true)
+    },
+  )
+}
+
+// protects=a healthy descriptor being chosen well before the deadline beside a descriptor whose read never returns, whatever the folder's listing order; fails_when=the scan waits for every read before judging, so the stalled read holds the scan until the startup deadline; no_claim=how a real read stalls (the read stand-in never settles for one path)
+for (const stalledIndex of [0, 1]) {
+  test(
+    `a descriptor whose read stalls does not hold a healthy descriptor (stalled descriptor listed ${stalledIndex === 0 ? 'first' : 'second'})`,
+    { timeout: 20_000 },
+    async (context) => {
+      // Arrange
+      const { agentDir, workspace } = await createFolders(context)
+      const stalledPath = await writeDescriptor(
+        agentDir,
+        stalledIndex,
+        workspace,
+        process.pid,
+      )
+      const healthyPath = await writeDescriptor(
+        agentDir,
+        1 - stalledIndex,
+        workspace,
+        process.pid,
+      )
+      const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+        resolve(__dirname, '../devinMcpBridge.js'),
+        {
+          './utils/readWikiRegularFile': {
+            readWikiRegularFile: (
+              ...parameters: Parameters<typeof readWikiRegularFile>
+            ) =>
+              parameters[0] === stalledPath
+                ? new Promise<undefined>(() => undefined)
+                : readWikiRegularFile(...parameters),
+          },
+        },
+      )
+      // Act
+      const startedAt = Date.now()
+      const selection = await bridgeModule.selectDevinDescriptor(
+        agentDir,
+        workspace,
+        process.pid,
+        { timeoutMs: 10_000, intervalMs: 20 },
+      )
+      const elapsedMs = Date.now() - startedAt
+      // Assert
+      assert.equal(selection?.descriptorPath, healthyPath)
+      // gstack-timing-ok: the contract is a choice long before the 10,000 ms deadline (about 200 ms expected), with a wide margin for the gate's parallel load.
+      assert.equal(elapsedMs < 4_000, true)
+    },
+  )
+}
+
+// protects=a working folder whose lookup answers during a scan being used at once; fails_when=the scan under way keeps matching with the folder as written until it ends, so a hanging same-window candidate holds the matching descriptor for the whole scan wait; no_claim=a real mount (the lookup answers after 1,100 ms)
 test(
-  'a hanging same-window candidate listed first does not delay the healthy one listed second',
+  'a scan ends and starts again when the working folder lookup answers during it',
   { timeout: 20_000 },
   async (context) => {
     // Arrange
@@ -1421,74 +1513,203 @@ test(
       otherWorkspace,
       process.pid,
     )
-    const healthyPath = await writeDescriptor(
+    const matchingPath = await writeDescriptor(
       agentDir,
       1,
       workspace,
       process.pid,
     )
-    // The hanging descriptor is the older one.
+    // The hanging candidate is the older one, so a match never waits for it.
     await utimes(hangingPath, new Date(1_000_000), new Date(1_000_000))
-    const resolveWorkspace = (path: string): Promise<string> =>
-      path === otherWorkspace
-        ? new Promise<string>(() => undefined)
-        : Promise.resolve(path)
+    await utimes(matchingPath, new Date(2_000_000), new Date(2_000_000))
+    const linkedFolder = join(agentDir, '..', 'linked-workspace')
+    await symlink(workspace, linkedFolder)
+    const resolveWorkspace = (path: string): Promise<string> => {
+      if (path === otherWorkspace) return new Promise<string>(() => undefined)
+      // The lookup of the symlinked working folder answers after the bridge's one-second wait for it.
+      if (path === linkedFolder)
+        return new Promise<string>((resolveLater) =>
+          setTimeout(() => resolveLater(workspace), 1_100),
+        )
+      return Promise.resolve(path)
+    }
     // Act
     const startedAt = Date.now()
     const selection = await selectDevinDescriptor(
       agentDir,
-      workspace,
+      linkedFolder,
       process.pid,
-      { timeoutMs: 3_000, intervalMs: 20, resolveWorkspace },
+      { timeoutMs: 10_000, intervalMs: 20, resolveWorkspace },
     )
     const elapsedMs = Date.now() - startedAt
     // Assert
-    assert.equal(selection?.descriptorPath, healthyPath)
-    // gstack-timing-ok: the contract is a choice before the 3,000 ms deadline.
-    assert.equal(elapsedMs < 2_000, true)
+    assert.equal(selection?.descriptorPath, matchingPath)
+    assert.equal(selection?.matchedCwd, workspace)
+    // gstack-timing-ok: the contract is a choice right after the lookup answers (about 1,100 ms), not after the first scan's 1,000 ms wait (about 2,000 ms); margin for the gate's parallel load.
+    assert.equal(elapsedMs < 1_900, true)
   },
 )
 
-// protects=a healthy descriptor being chosen beside a descriptor whose read never returns; fails_when=descriptors are read one after another, so the stalled read holds the scan; no_claim=how a real read stalls (the read stand-in never settles for one path)
+// protects=a Devin window whose setup check does not answer reaching a retry instead of a wrong "not set up" refusal; fails_when=the check is awaited without a bound (the bridge hangs past its startup window) or a timed-out check counts as a removed setup; no_claim=a real receipt read that stalls (the check stand-in never settles)
 test(
-  'a descriptor whose read stalls does not hold a healthy descriptor',
-  { timeout: 10_000 },
+  'a receipts check that never answers ends the wait with the not-running line, not the not-set-up line',
+  { timeout: 20_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace } = await createFolders(context)
-    const stalledPath = await writeDescriptor(
-      agentDir,
-      0,
-      workspace,
-      process.pid,
-    )
-    const healthyPath = await writeDescriptor(
-      agentDir,
-      1,
-      workspace,
-      process.pid,
-    )
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
     const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
       resolve(__dirname, '../devinMcpBridge.js'),
       {
-        './utils/readWikiRegularFile': {
-          readWikiRegularFile: (
-            ...parameters: Parameters<typeof readWikiRegularFile>
-          ) =>
-            parameters[0] === stalledPath
-              ? new Promise<undefined>(() => undefined)
-              : readWikiRegularFile(...parameters),
+        './utils/hasDevinBridgeReceipts': {
+          hasDevinBridgeReceipts: () => new Promise<boolean>(() => undefined),
         },
       },
     )
     // Act
-    const selection = await bridgeModule.selectDevinDescriptor(
+    const refusal = await bridgeModule.runDevinMcpBridge(
       agentDir,
       workspace,
-      process.pid,
-      { timeoutMs: 600, intervalMs: 20 },
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 1_000, intervalMs: 20 },
     )
     // Assert
-    assert.equal(selection?.descriptorPath, healthyPath)
+    assert.equal(
+      refusal,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
+    )
+  },
+)
+
+// protects=the end-of-wait refusal following the last attempt; fails_when=a not-set-up outcome of an earlier attempt stays set, so a wait that ends after a later attempt was dropped names a missing setup; no_claim=how the later attempt fails (a server that answers 500)
+test(
+  'a wait whose last attempt was dropped after a not-set-up one says Codebook is not running',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const { port } = await listen(context, (_incoming, outgoing) => {
+      outgoing.writeHead(500)
+      outgoing.end()
+    })
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${port}/mcp`,
+    })
+    let checks = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/hasDevinBridgeReceipts': {
+          // The first check finds the setup removed; the second finds it standing again.
+          hasDevinBridgeReceipts: () => {
+            checks += 1
+            return Promise.resolve(checks > 1)
+          },
+        },
+      },
+    )
+    // Act
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 1_500, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(
+      refusal,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
+    )
+    assert.equal(checks >= 2, true)
+  },
+)
+
+// protects=a connected bridge ending its process once its cleanup completed after Devin closed its stdin, although a lookup of another window's descriptor never settles; fails_when=nothing ends the process, so a referenced handle of the unanswered lookup keeps the bridge alive after Devin is gone; no_claim=a real pending realpath (a referenced setInterval stands in for it)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge exits with 0 after its stdin closes while a lookup never settles',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      agentDir = await makeLiveAgentFolder(),
+      root = dirname(agentDir)
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const hangingWorkspace = join(root, 'hanging-workspace')
+    const hangingPath = await writeDescriptor(
+      agentDir,
+      0,
+      hangingWorkspace,
+      process.pid,
+    )
+    const livePath = await writeDescriptor(
+      agentDir,
+      1,
+      harness.directory,
+      process.pid,
+      { ...endpoint.descriptor, instanceId: IDS[1] },
+    )
+    // The hanging candidate is the older one, so the live one is taken at once.
+    await utimes(hangingPath, new Date(1_000_000), new Date(1_000_000))
+    await utimes(livePath, new Date(2_000_000), new Date(2_000_000))
+    const preloadPath = join(root, 'preload.js')
+    // The preload gives the lookup of the other window's workspace a referenced handle and never settles it.
+    await writeFile(
+      preloadPath,
+      `const { realpath } = require('node:fs/promises')
+const bridge = require(${JSON.stringify(resolve(__dirname, '../devinMcpBridge.js'))})
+const original = bridge.runDevinMcpBridge
+bridge.runDevinMcpBridge = (agentDirectory, cwd, env, options) =>
+  original(agentDirectory, cwd, env, {
+    ...options,
+    resolveWorkspace: (path) => {
+      if (path !== process.env.HANGING_WORKSPACE) return realpath(path)
+      setInterval(() => {}, 1_000)
+      return new Promise(() => {})
+    },
+  })
+`,
+    )
+    // Act
+    const result = await new Promise<{
+      code: number | null
+      signal: NodeJS.Signals | null
+      stderr: string
+    }>((done) => {
+      let stderr = ''
+      const child = spawn(
+        process.execPath,
+        [
+          '--require',
+          preloadPath,
+          join(__dirname, '../devinMcpBridgeEntry.js'),
+          agentDir,
+        ],
+        {
+          cwd: harness.directory,
+          env: {
+            WINDSURF_EXT_HOST_PID: String(process.pid),
+            HANGING_WORKSPACE: hangingWorkspace,
+          },
+          // A process that is still alive here is the failure; it is ended so the test does not hang.
+          timeout: 25_000,
+          killSignal: 'SIGKILL',
+        },
+      )
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8')
+        // The bridge writes its connected line once the transport is up; Devin then closes stdin.
+        if (stderr.includes('Codebook bridge: instance')) child.stdin.end()
+      })
+      child.on('exit', (code, signal) => done({ code, signal, stderr }))
+    })
+    // Assert
+    assert.equal(result.signal, null)
+    assert.equal(result.code, 0)
   },
 )

@@ -87,8 +87,12 @@ test('a setup after a removal gets a new installation id', async (context) => {
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
+  const newId = await receiptInstallationId(storage)
   assert.match(String(removedId), UUID_PATTERN)
-  assert.notEqual(await receiptInstallationId(storage), removedId)
+  // A missing id would differ from the old one too, so the new one must be a real id first.
+  assert.equal(typeof newId, 'string')
+  assert.match(String(newId), UUID_PATTERN)
+  assert.notEqual(newId, removedId)
 })
 
 test('the activation refresh gives a receipt of an older build an installation id and rewrites only the receipt', async (context) => {
@@ -159,30 +163,35 @@ async function writeMarkedWindow(
   return { agentDir, descriptorPath }
 }
 
-test('the receipts check passes for the installation of the descriptor, also after an update changed the generation', async (context) => {
-  // protects=another window's refresh after an update does not cut this window's bridge; fails_when=the check compares the per-write generation instead of the installation id; no_claim=a removal after the check
-  // Arrange
-  const { storage } = await arrange(context)
-  const { descriptorPath } = await writeMarkedWindow(
-    storage,
-    {
-      skillInstalled: true,
-      mcp: {
-        installed: true,
-        installationId: 'installation-a',
-        generation: 'generation-after-update',
+// Windows reports 0o666 for every file, so the private-file check refuses the descriptor these receipts tests read.
+test(
+  'the receipts check passes for the installation of the descriptor, also after an update changed the generation',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // protects=another window's refresh after an update does not cut this window's bridge; fails_when=the check compares the per-write generation instead of the installation id; no_claim=a removal after the check
+    // Arrange
+    const { storage } = await arrange(context)
+    const { descriptorPath } = await writeMarkedWindow(
+      storage,
+      {
+        skillInstalled: true,
+        mcp: {
+          installed: true,
+          installationId: 'installation-a',
+          generation: 'generation-after-update',
+        },
       },
-    },
-    'http://127.0.0.1:1/mcp',
-    storage,
-  )
+      'http://127.0.0.1:1/mcp',
+      storage,
+    )
 
-  // Act
-  const stands = await hasDevinBridgeReceipts(descriptorPath)
+    // Act
+    const stands = await hasDevinBridgeReceipts(descriptorPath)
 
-  // Assert
-  assert.equal(stands, true)
-})
+    // Assert
+    assert.equal(stands, true)
+  },
+)
 
 /** Starts a loopback listener that counts every request it gets; closed when the test ends. */
 async function countingListener(context: TestContext) {
@@ -226,30 +235,34 @@ const REFUSED_SETUPS: Array<{
 ]
 
 for (const { name, skillInstalled, mcp } of REFUSED_SETUPS)
-  test(`the bridge opens no session when ${name}`, async (context) => {
-    // protects=a bridge never connects for a descriptor whose setup was removed after the window marked it (Cycle 0144 task 1); fails_when=the bridge connects on the descriptor's mark alone, so its first request reaches the server; no_claim=a removal after the bridge's last check
-    // Arrange
-    const { storage } = await arrange(context)
-    const { counter, port } = await countingListener(context)
-    const { agentDir } = await writeMarkedWindow(
-      storage,
-      { skillInstalled, mcp },
-      `http://127.0.0.1:${port}/mcp`,
-      storage,
-    )
-    // Act
-    const refusal = await runDevinMcpBridge(
-      agentDir,
-      storage,
-      { WINDSURF_EXT_HOST_PID: String(process.pid) },
-      { timeoutMs: 400, intervalMs: 20 },
-    )
+  test(
+    `the bridge opens no session when ${name}`,
+    { skip: process.platform === 'win32' },
+    async (context) => {
+      // protects=a bridge never connects for a descriptor whose setup was removed after the window marked it (Cycle 0144 task 1); fails_when=the bridge connects on the descriptor's mark alone, so its first request reaches the server; no_claim=a removal after the bridge's last check
+      // Arrange
+      const { storage } = await arrange(context)
+      const { counter, port } = await countingListener(context)
+      const { agentDir } = await writeMarkedWindow(
+        storage,
+        { skillInstalled, mcp },
+        `http://127.0.0.1:${port}/mcp`,
+        storage,
+      )
+      // Act
+      const refusal = await runDevinMcpBridge(
+        agentDir,
+        storage,
+        { WINDSURF_EXT_HOST_PID: String(process.pid) },
+        { timeoutMs: 2_000, intervalMs: 20 },
+      )
 
-    // Assert
-    assert.equal(counter.requests, 0)
-    assert.equal(
-      refusal,
-      `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${storage}. Run Codebook: Set Up AI Chat here, then reload the window.`,
-    )
-    assert.equal(dirname(agentDir), storage)
-  })
+      // Assert
+      assert.equal(counter.requests, 0)
+      assert.equal(
+        refusal,
+        `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${storage}. Run Codebook: Set Up AI Chat here, then reload the window.`,
+      )
+      assert.equal(dirname(agentDir), storage)
+    },
+  )

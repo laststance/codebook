@@ -5,6 +5,7 @@ import type { z } from 'zod'
 import { connectionSchema } from './connectionSchema'
 import { isLoopbackMcpUrl } from './isLoopbackMcpUrl'
 import { readDescriptorText } from './readDescriptorText'
+import { readMarkedInstallation } from './readMarkedInstallation'
 import { recordedOwnerSchema } from './readRecordedOwner'
 import { realOrSame } from './realOrSame'
 
@@ -17,6 +18,8 @@ export interface DescriptorExpectation {
   workspace: string
   /** Whether Codebook wrote `devinChat: true`. */
   devinChat: boolean
+  /** The installation id the descriptor's `devinSetupInstallation` mark named at selection; a descriptor re-marked for another installation since is refused. Not compared when left out. */
+  devinSetupInstallation?: string
   /** The exact endpoint url the selection validated; a descriptor naming any other url (another port included) is refused before a request. */
   url?: string
 }
@@ -40,6 +43,7 @@ function parseDescriptorText(text: string): {
   descriptor: BridgeDescriptor
   pid: number | undefined
   devinChat: boolean
+  devinSetupInstallation: string | undefined
 } {
   try {
     const raw: unknown = JSON.parse(text)
@@ -48,6 +52,7 @@ function parseDescriptorText(text: string): {
       descriptor: connectionSchema.parse(raw),
       pid: owner.success ? owner.data.pid : undefined,
       devinChat: (raw as { devinChat?: unknown }).devinChat === true,
+      devinSetupInstallation: readMarkedInstallation(raw),
     }
   } catch {
     // The parsers' messages quote the input; the file may hold a token.
@@ -100,6 +105,8 @@ async function changedSinceSelection(
     read.descriptor.instanceId !== expected.instanceId ||
     read.pid !== expected.pid ||
     read.devinChat !== expected.devinChat ||
+    (expected.devinSetupInstallation !== undefined &&
+      read.devinSetupInstallation !== expected.devinSetupInstallation) ||
     (expected.url !== undefined && read.descriptor.url !== expected.url) ||
     (await resolveWorkspace(read.descriptor.workspace)) !== expected.workspace
   )
@@ -125,9 +132,8 @@ export async function readBridgeDescriptor(
 ): Promise<BridgeDescriptor> {
   // The read and every check after it, the workspace's real-path lookup included, spend one startup budget.
   return within(timeoutMs, async () => {
-    const { descriptor, pid, devinChat } = parseDescriptorText(
-      await readDescriptorText(descriptorPath),
-    )
+    const parsed = parseDescriptorText(await readDescriptorText(descriptorPath))
+    const { descriptor } = parsed
     // The token goes only to the url checked here, from the one read the transport uses: a descriptor replaced after a bridge chose it cannot redirect it.
     if (!isLoopbackMcpUrl(descriptor.url))
       throw new Error(
@@ -136,11 +142,7 @@ export async function readBridgeDescriptor(
     // The descriptor read for this connection must still be the one the selection validated, at the exact endpoint it validated.
     if (
       expected &&
-      (await changedSinceSelection(
-        { descriptor, pid, devinChat },
-        expected,
-        resolveWorkspace,
-      ))
+      (await changedSinceSelection(parsed, expected, resolveWorkspace))
     )
       throw new Error(
         'Codebook connection descriptor changed after it was selected.',

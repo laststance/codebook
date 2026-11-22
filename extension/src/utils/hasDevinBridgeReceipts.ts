@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { readDescriptorText } from './readDescriptorText'
 import { readDevinInstallationId } from './readDevinInstallationId'
 import { readInstalledReceipt } from './readInstalledReceipt'
+import { readMarkedInstallation } from './readMarkedInstallation'
 
 /**
  * Reads the installation id a descriptor's mark names.
@@ -16,11 +17,7 @@ async function markedInstallationOf(
 ): Promise<string | undefined> {
   try {
     const raw: unknown = JSON.parse(await readDescriptorText(descriptorPath))
-    const marked =
-      typeof raw === 'object' && raw !== null && 'devinSetupInstallation' in raw
-        ? raw.devinSetupInstallation
-        : undefined
-    return typeof marked === 'string' ? marked : undefined
+    return readMarkedInstallation(raw)
   } catch {
     return undefined
   }

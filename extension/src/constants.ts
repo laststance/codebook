@@ -488,6 +488,10 @@ export const DEVIN_DESCRIPTOR_LIMIT_BYTES = 65_536
 export const DEVIN_CONNECT_FLOOR_MS = 3_000
 /** The longest one lookup of the Devin Desktop bridge's own working folder is waited for in one poll, so a hanging lookup cannot spend the whole startup window; a lookup that timed out is asked again at a later poll. */
 export const DEVIN_BRIDGE_CWD_LOOKUP_MS = 1_000
+/** The longest one scan of the agent folder waits for descriptor reads and judgements before the next poll lists the folder again, so a stalled read or lookup never holds a healthy older match or a descriptor written meanwhile until the startup deadline. */
+export const DEVIN_BRIDGE_SCAN_WAIT_MS = 1_000
+/** How long the Devin Desktop bridge entry waits for its refusal line to be written before it ends the process anyway, so a full stderr pipe cannot keep a refused bridge alive. */
+export const DEVIN_BRIDGE_REFUSAL_EXIT_MS = 1_000
 /** The most working-folder lookups of the Devin Desktop bridge that may be unanswered at once, so a hung mount holds at most two of libuv's four pool threads. */
 export const DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX = 2
 

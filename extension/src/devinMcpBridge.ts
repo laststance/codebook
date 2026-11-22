@@ -8,6 +8,7 @@ import {
   DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX,
   DEVIN_BRIDGE_HEADER_NAME,
   DEVIN_BRIDGE_HEADER_VALUE,
+  DEVIN_BRIDGE_SCAN_WAIT_MS,
   DEVIN_CONNECT_FLOOR_MS,
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
 } from './constants'
@@ -19,6 +20,7 @@ import { hasDevinBridgeReceipts } from './utils/hasDevinBridgeReceipts'
 import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 import { isSameStorageMachine } from './utils/isSameStorageMachine'
 import type { DescriptorExpectation } from './utils/readBridgeDescriptor'
+import { readMarkedInstallation } from './utils/readMarkedInstallation'
 import {
   recordedOwnerSchema,
   type StorageOwnerIdentity,
@@ -35,6 +37,8 @@ export interface DevinDescriptorSelection {
   url: string
   /** Whether Codebook wrote `devinChat: true`: this window's AI chat setup matches the workspace. */
   devinChat: boolean
+  /** The installation id the descriptor's mark names, so the connection can refuse a descriptor re-marked for another installation. */
+  devinSetupInstallation?: string
 }
 
 /** Polling limits of {@link selectDevinDescriptor}; `identity` names the machine and boot by which a descriptor's owner is judged, {@link currentStorageOwner} unless a test names its own. */
@@ -44,6 +48,8 @@ export interface DevinSelectOptions {
   identity?: StorageOwnerIdentity
   /** Descriptor files that did not answer; they are not chosen again. */
   excludedPaths?: ReadonlySet<string>
+  /** Called once the bridge's cleanup has completed after its stdio closed; the entry ends its process there. */
+  onClosed?: () => void
   /** Resolves a workspace to its real path; {@link realOrSame} unless a test names its own (for example one that never answers). */
   resolveWorkspace?: (path: string) => Promise<string>
   /** The lookups still running from earlier selections of one bridge ({@link createDevinSelectState}); a new one when absent. */
@@ -100,6 +106,7 @@ async function readCandidate(
       workspace: parsed.workspace,
       url: parsed.url,
       devinChat: (raw as { devinChat?: unknown }).devinChat === true,
+      devinSetupInstallation: readMarkedInstallation(raw),
       pid: owner.pid,
       modifiedAtMs: file.modifiedAtMs,
     }
@@ -168,6 +175,8 @@ function sharedLookup<Answer>(
 interface WorkingFolderLookups {
   pending: number
   answer: string | undefined
+  /** Called when a lookup answers, so a scan under way can end and match with the new value. */
+  onAnswer: (() => void) | undefined
 }
 
 /** What one bridge remembers across its polls: the lookups still running (descriptor reads and workspace lookups) and those of its working folder. */
@@ -187,7 +196,7 @@ export function createDevinSelectState(): DevinSelectState {
   return {
     reads: new Map(),
     workspaces: new Map(),
-    workingFolder: { pending: 0, answer: undefined },
+    workingFolder: { pending: 0, answer: undefined, onAnswer: undefined },
   }
 }
 
@@ -217,6 +226,7 @@ async function lookUpWorkingFolder(
       .then(
         (real) => {
           lookups.answer = real
+          lookups.onAnswer?.()
         },
         () => undefined,
       )
@@ -266,7 +276,14 @@ async function evaluateCandidate(
   candidate: DevinCandidate,
   scan: ScanContext,
 ): Promise<DevinDescriptorSelection | undefined> {
-  const { descriptorPath, instanceId, workspace, url, devinChat } = candidate
+  const {
+    descriptorPath,
+    instanceId,
+    workspace,
+    url,
+    devinChat,
+    devinSetupInstallation,
+  } = candidate
   try {
     if (
       candidate.pid !== scan.extHostPid ||
@@ -286,7 +303,14 @@ async function evaluateCandidate(
       scan.scanDeadline - Date.now(),
     )
     return realWorkspace === scan.realCwd
-      ? { descriptorPath, instanceId, workspace, url, devinChat }
+      ? {
+          descriptorPath,
+          instanceId,
+          workspace,
+          url,
+          devinChat,
+          devinSetupInstallation,
+        }
       : undefined
   } catch {
     return undefined
@@ -319,56 +343,225 @@ async function startCandidate(
   }
 }
 
+/** One descriptor file of a scan: its order keys once it was read, and the selection once the candidate was judged to be this window's. */
+interface ScanEntry {
+  order: { modifiedAtMs: number; instanceId: string } | undefined
+  selection: DevinDescriptorSelection | undefined
+  isDone: boolean
+}
+
+/** What one scan of the agent folder answers: the newest match, or that the working folder's value changed meanwhile and the folder must be scanned again with it. */
+interface ScanResult {
+  selection: DevinDescriptorSelection | undefined
+  shouldRescan: boolean
+}
+
+/**
+ * Orders candidates newest first by file time, ties by instance id, so the order never depends on the folder's listing order; the comparator of {@link newestMatch} and {@link hasPendingNewer}.
+ * @param first - Order keys of one candidate.
+ * @param second - Order keys of another.
+ * @returns Negative when `first` is the newer candidate.
+ * @example
+ * compareNewestFirst({ modifiedAtMs: 2, instanceId: 'a' }, { modifiedAtMs: 1, instanceId: 'b' }) // => -1
+ */
+function compareNewestFirst(
+  first: NonNullable<ScanEntry['order']>,
+  second: NonNullable<ScanEntry['order']>,
+): number {
+  return (
+    second.modifiedAtMs - first.modifiedAtMs ||
+    first.instanceId.localeCompare(second.instanceId)
+  )
+}
+
+/**
+ * Finds the newest candidate of a scan that has been judged to be this window's; called by {@link awaitNewestMatch} after each change.
+ * @param entries - The scan's entries.
+ * @returns The newest matching entry, or `undefined` when none matched yet.
+ * @example
+ * newestMatch([]) // => undefined
+ */
+function newestMatch(entries: readonly ScanEntry[]): ScanEntry | undefined {
+  let newest: ScanEntry | undefined
+  for (const entry of entries) {
+    if (!entry.selection || !entry.order) continue
+    if (!newest?.order || compareNewestFirst(entry.order, newest.order) < 0)
+      newest = entry
+  }
+  return newest
+}
+
+/**
+ * Says whether an unfinished candidate is or may be newer than `best`: one whose read has not answered (its file time is unknown) or one that is newer; called by {@link awaitNewestMatch} to decide whether a match may be taken now.
+ * @param entries - The scan's entries.
+ * @param best - Order keys of the newest match so far.
+ * @returns `true` when an unfinished candidate is or may be newer than `best`.
+ * @example
+ * hasPendingNewer([{ order: undefined, selection: undefined, isDone: false }], best) // => true
+ */
+function hasPendingNewer(
+  entries: readonly ScanEntry[],
+  best: NonNullable<ScanEntry['order']>,
+): boolean {
+  return entries.some(
+    (entry) =>
+      !entry.isDone &&
+      (!entry.order || compareNewestFirst(entry.order, best) < 0),
+  )
+}
+
+/**
+ * Reads and judges one descriptor file for a scan, recording progress in `entry` and calling `notify` at each step; called by {@link scanDescriptors} for every file at once.
+ * A read or judgement that does not answer before `waitEndsAt` leaves the entry done without a selection; the unfinished lookup stays in the shared state for the next scan.
+ * @param descriptorPath - The `<instanceId>.connection.json` file.
+ * @param scan - What the scan judges by.
+ * @param entry - The entry to fill.
+ * @param notify - Wakes the scan's waiter after each change.
+ * @param waitEndsAt - When the scan stops waiting (epoch milliseconds).
+ * @example
+ * await judgeDescriptorFile(path, scan, entry, notify, Date.now() + 1_000)
+ */
+async function judgeDescriptorFile(
+  descriptorPath: string,
+  scan: ScanContext,
+  entry: ScanEntry,
+  notify: () => void,
+  waitEndsAt: number,
+): Promise<void> {
+  const started = await answerWithin(
+    startCandidate(descriptorPath, scan),
+    waitEndsAt - Date.now(),
+  )
+  if (started) {
+    entry.order = {
+      modifiedAtMs: started.modifiedAtMs,
+      instanceId: started.instanceId,
+    }
+    notify()
+    entry.selection = await answerWithin(started.match, waitEndsAt - Date.now())
+  }
+  entry.isDone = true
+  notify()
+}
+
+/**
+ * Answers a scan that needs no further waiting; called by {@link awaitNewestMatch} before each wait.
+ * @param entries - The scan's entries.
+ * @param realCwd - The working-folder value the scan matches with.
+ * @param folder - The bridge's working-folder lookups.
+ * @returns A rescan when the working folder's lookup answered with another value; the newest match when no unfinished candidate could be newer; no selection when every candidate is done without a match; `undefined` while the scan must still wait.
+ * @example
+ * settledScanResult([], '/repo', { pending: 0, answer: undefined, onAnswer: undefined }) // => { selection: undefined, shouldRescan: false }
+ */
+function settledScanResult(
+  entries: readonly ScanEntry[],
+  realCwd: string,
+  folder: WorkingFolderLookups,
+): ScanResult | undefined {
+  // The working folder answered with another value: this scan matches with a stale one.
+  if (folder.answer !== undefined && folder.answer !== realCwd)
+    return { selection: undefined, shouldRescan: true }
+  const best = newestMatch(entries)
+  if (best?.order && !hasPendingNewer(entries, best.order))
+    return { selection: best.selection, shouldRescan: false }
+  if (!best && entries.every((entry) => entry.isDone))
+    return { selection: undefined, shouldRescan: false }
+  return undefined
+}
+
+/**
+ * Waits for the newest match of a scan: judgements run concurrently and the newest candidate that answered is taken; called by {@link scanDescriptors}.
+ * A match is taken at once when no unfinished candidate could be newer. Once any match exists, unfinished newer candidates are waited for at most {@link WORKSPACE_RESOLVE_FLOOR_MS}. The wait ends at `waitEndsAt` at the latest, and ends early with a rescan when the working folder's lookup answered with another value than the scan matches with.
+ * @param entries - The scan's entries, filled by {@link judgeDescriptorFile}.
+ * @param realCwd - The working-folder value the scan matches with.
+ * @param folder - The bridge's working-folder lookups.
+ * @param waitEndsAt - When the scan stops waiting (epoch milliseconds).
+ * @param waiter - Holds the function that wakes the wait; the scan's `notify` calls it.
+ * @returns The scan's answer.
+ * @example
+ * await awaitNewestMatch(entries, '/repo', folder, Date.now() + 1_000, waiter) // => { selection, shouldRescan: false }
+ */
+async function awaitNewestMatch(
+  entries: readonly ScanEntry[],
+  realCwd: string,
+  folder: WorkingFolderLookups,
+  waitEndsAt: number,
+  waiter: { wake: (() => void) | undefined },
+): Promise<ScanResult> {
+  let firstMatchAt: number | undefined
+  for (;;) {
+    const settled = settledScanResult(entries, realCwd, folder)
+    if (settled) return settled
+    if (newestMatch(entries)) firstMatchAt ??= Date.now()
+    const limit =
+      firstMatchAt === undefined
+        ? waitEndsAt
+        : Math.min(waitEndsAt, firstMatchAt + WORKSPACE_RESOLVE_FLOOR_MS)
+    // No await sits between the checks above and this promise, so no change is missed.
+    const changed = new Promise<true>((resolve) => {
+      waiter.wake = (): void => resolve(true)
+    })
+    const didChange = await answerWithin(changed, limit - Date.now())
+    if (!didChange)
+      return { selection: newestMatch(entries)?.selection, shouldRescan: false }
+  }
+}
+
 /**
  * Finds the newest live descriptor of this window in the agent folder within one scan; called by {@link selectDevinDescriptor} at each poll.
- * One grace per scan: `scanDeadline` is the startup deadline, or {@link WORKSPACE_RESOLVE_FLOOR_MS} after the scan began when the deadline has passed, and no lookup starts after it. Every descriptor is read and judged concurrently under it, so a read or lookup that never answers costs this scan at most that deadline, whatever their number, and never holds a healthy candidate. The candidates that answered are taken newest first by file time, ties by instance id, never by listing order.
+ * The scan waits at most {@link DEVIN_BRIDGE_SCAN_WAIT_MS} (and never past the startup deadline, or {@link WORKSPACE_RESOLVE_FLOOR_MS} after the scan began when the deadline has passed), and no lookup starts after that. Every descriptor is read and judged concurrently ({@link judgeDescriptorFile}), so a read, owner check or lookup that never answers never holds a healthy match: the newest candidate that answered is taken ({@link awaitNewestMatch}), never by listing order. Unfinished reads and lookups stay in the shared state, so the next poll lists the folder again without starting duplicates and sees descriptors written meanwhile.
  * @param agentDir - Folder holding `*.connection.json` descriptors.
  * @param scan - What the scan judges by, without its `scanDeadline`.
  * @param deadline - The startup deadline (epoch milliseconds).
- * @returns The newest match without its token, or `undefined` when none answered in time.
+ * @returns The newest match without its token, or `undefined` when none answered in time; `shouldRescan` when the working folder's value changed during the scan.
  * @example
- * await scanDescriptors('/storage/agent', scan, Date.now() + 15_000) // => the newest selection of this window
+ * await scanDescriptors('/storage/agent', scan, Date.now() + 15_000) // => { selection: <the newest selection of this window>, shouldRescan: false }
  */
 async function scanDescriptors(
   agentDir: string,
   scan: Omit<ScanContext, 'scanDeadline'>,
   deadline: number,
-): Promise<DevinDescriptorSelection | undefined> {
-  const scanDeadline = Math.max(
-      deadline,
-      Date.now() + WORKSPACE_RESOLVE_FLOOR_MS,
+): Promise<ScanResult> {
+  const scanDeadline = Math.min(
+      Math.max(deadline, Date.now() + WORKSPACE_RESOLVE_FLOOR_MS),
+      Date.now() + DEVIN_BRIDGE_SCAN_WAIT_MS,
     ),
-    context = { ...scan, scanDeadline }
-  const names = await answerWithin(
-    readdir(agentDir).then(
-      (listed) =>
-        listed.filter((name) => name.endsWith(CONNECTION_DESCRIPTOR_SUFFIX)),
-      () => [],
-    ),
-    scanDeadline - Date.now(),
-  )
-  const started = await Promise.all(
-    (names ?? []).map((name) =>
-      answerWithin(
-        startCandidate(join(agentDir, name), context),
-        scanDeadline - Date.now(),
+    context = { ...scan, scanDeadline },
+    folder = scan.state.workingFolder,
+    waiter: { wake: (() => void) | undefined } = { wake: undefined },
+    notify = (): void => waiter.wake?.()
+  const names =
+    (await answerWithin(
+      readdir(agentDir).then(
+        (listed) =>
+          listed.filter((name) => name.endsWith(CONNECTION_DESCRIPTOR_SUFFIX)),
+        () => [],
       ),
-    ),
-  )
-  // Newest first, ties by instance id: the order never depends on the folder's listing order.
-  const ordered = started
-    .filter((entry) => entry !== undefined)
-    .sort(
-      (first, second) =>
-        second.modifiedAtMs - first.modifiedAtMs ||
-        first.instanceId.localeCompare(second.instanceId),
+      scanDeadline - Date.now(),
+    )) ?? []
+  const files = names.map((name) => {
+    const entry: ScanEntry = {
+      order: undefined,
+      selection: undefined,
+      isDone: false,
+    }
+    return { path: join(agentDir, name), entry }
+  })
+  const entries = files.map(({ entry }) => entry)
+  folder.onAnswer = notify
+  try {
+    for (const { path, entry } of files)
+      void judgeDescriptorFile(path, context, entry, notify, scanDeadline)
+    return await awaitNewestMatch(
+      entries,
+      scan.realCwd,
+      folder,
+      scanDeadline,
+      waiter,
     )
-  // Judgements run concurrently; taking them in order returns as soon as the newest possible match answered.
-  for (const entry of ordered) {
-    const match = await answerWithin(entry.match, scanDeadline - Date.now())
-    if (match) return match
+  } finally {
+    folder.onAnswer = undefined
   }
-  return undefined
 }
 
 /**
@@ -407,7 +600,7 @@ export async function selectDevinDescriptor(
       deadline,
     )
     // The scan returns the newest live match, so several live ones resolve to the newest without waiting.
-    const match = await scanDescriptors(
+    const scanned = await scanDescriptors(
       agentDir,
       {
         realCwd: matchedCwd,
@@ -419,7 +612,9 @@ export async function selectDevinDescriptor(
       },
       deadline,
     )
-    if (match) return { ...match, matchedCwd }
+    // The working folder answered during the scan: scan again with its value, at once.
+    if (scanned.shouldRescan) continue
+    if (scanned.selection) return { ...scanned.selection, matchedCwd }
     if (Date.now() >= deadline) return undefined
     await sleep(intervalMs)
   }
@@ -478,6 +673,7 @@ export function devinDescriptorExpectation(
     pid,
     workspace: realCwd,
     devinChat: true,
+    devinSetupInstallation: selection.devinSetupInstallation,
     url: selection.url,
   }
 }
@@ -489,8 +685,9 @@ export function devinDescriptorExpectation(
  * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
  * @param deadline - When the startup wait ends (epoch milliseconds).
  * @param expected - What the selection validated ({@link devinDescriptorExpectation}).
- * Before any request it requires the setup receipts of the descriptor's installation ({@link hasDevinBridgeReceipts}); without them it answers `busy` after a pause, as for an unmarked descriptor.
- * @returns `connected` once the transport is up; `busy` after a pause when the server answered 429 or refused or reset the connection and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
+ * @param onClosed - Called once the bridge's cleanup has completed after its stdio closed.
+ * Before any request it requires the setup receipts of the descriptor's installation ({@link hasDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
+ * @returns `connected` once the transport is up; `not-set-up` after a pause when the receipts check answered that the setup does not stand; `busy` after a pause when the receipts check did not answer in time, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
  * @example
  * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'
  */
@@ -498,13 +695,18 @@ async function connectOnce(
   selection: DevinDescriptorSelection,
   deadline: number,
   expected: DescriptorExpectation,
+  onClosed: (() => void) | undefined,
 ): Promise<'connected' | 'busy' | 'dropped' | 'not-set-up'> {
-  // The last check before an MCP session: the setup the descriptor was marked for must still stand. A failed check counts like an unmarked descriptor: the bridge keeps polling until its deadline, then names the missing setup.
-  if (!(await hasDevinBridgeReceipts(selection.descriptorPath))) {
+  // The last check before an MCP session: the setup the descriptor was marked for must still stand. It is bounded like every other wait: a check that does not answer in time is transient, never a missing setup; one that answered and failed counts like an unmarked descriptor, so the bridge keeps polling until its deadline, then names the missing setup.
+  const receiptsStand = await answerWithin(
+    hasDevinBridgeReceipts(selection.descriptorPath).catch(() => false),
+    Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
+  )
+  if (receiptsStand !== true) {
     const remaining = deadline - Date.now()
     if (remaining > 0)
       await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
-    return 'not-set-up'
+    return receiptsStand === undefined ? 'busy' : 'not-set-up'
   }
   try {
     await runCursorMcpBridge(
@@ -512,6 +714,7 @@ async function connectOnce(
       Math.max(DEVIN_CONNECT_FLOOR_MS, deadline - Date.now()),
       expected,
       { name: DEVIN_BRIDGE_HEADER_NAME, value: DEVIN_BRIDGE_HEADER_VALUE },
+      onClosed,
     )
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
@@ -587,7 +790,7 @@ export async function runDevinMcpBridge(
     // One memory for every selection of this bridge: lookups that never answered are not started again beyond two.
     state = createDevinSelectState()
   const lateAttempt = { isSpent: false },
-    // Set once a selected descriptor's setup is found removed: the refusal at the end of the wait then names the missing setup, not a missing Codebook.
+    // True while the last attempt found a selected descriptor's setup removed: the refusal at the end of the wait then names the missing setup, not a missing Codebook.
     wait = { isSetupMissing: false }
   for (;;) {
     // The newest live descriptor is taken at once, so a fresh instance replaces a restarting one.
@@ -608,6 +811,7 @@ export async function runDevinMcpBridge(
       deadline,
       // The connection check compares with the working-folder value the selection matched with, never a second lookup of its own.
       devinDescriptorExpectation(selection, pid, selection.matchedCwd),
+      options.onClosed,
     )
     if (outcome === 'connected') return undefined
     noteConnectOutcome(outcome, selection.descriptorPath, excludedPaths, wait)
@@ -616,11 +820,11 @@ export async function runDevinMcpBridge(
 
 /**
  * Records what a failed connection attempt means for the rest of the wait; called by {@link runDevinMcpBridge} after each {@link connectOnce} that did not connect.
- * A dropped descriptor is not selected again; a descriptor whose setup was removed makes the final refusal name the missing setup.
+ * A dropped descriptor is not selected again. `wait.isSetupMissing` follows the last outcome: set by `not-set-up`, cleared by any other, so a wait that ends after a later attempt was dropped or busy says Codebook is not running.
  * @param outcome - The attempt's outcome.
  * @param descriptorPath - The attempted descriptor.
  * @param excludedPaths - The descriptors the selection skips from now on.
- * @param wait - The wait's state; `isSetupMissing` is set for `not-set-up`.
+ * @param wait - The wait's state; `isSetupMissing` is whether the last outcome was `not-set-up`.
  * @example noteConnectOutcome('dropped', '/storage/agent/a.connection.json', excludedPaths, wait) // excludedPaths now holds that path
  */
 function noteConnectOutcome(
@@ -630,7 +834,7 @@ function noteConnectOutcome(
   wait: { isSetupMissing: boolean },
 ): void {
   if (outcome === 'dropped') excludedPaths.add(descriptorPath)
-  if (outcome === 'not-set-up') wait.isSetupMissing = true
+  wait.isSetupMissing = outcome === 'not-set-up'
 }
 
 /**
