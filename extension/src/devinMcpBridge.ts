@@ -12,6 +12,7 @@ import {
   DEVIN_BRIDGE_HEADER_NAME,
   DEVIN_BRIDGE_HEADER_VALUE,
   DEVIN_BRIDGE_RECONNECT_CHECK_MS,
+  DEVIN_BRIDGE_REFUSAL_EXIT_MS,
   DEVIN_BRIDGE_SCAN_WAIT_MS,
   DEVIN_CONNECT_FLOOR_MS,
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
@@ -786,6 +787,23 @@ function receiptsStandWithin(
 }
 
 /**
+ * Writes the not-set-up line to stderr and resolves once the write completed or {@link DEVIN_BRIDGE_REFUSAL_EXIT_MS} passed; called by {@link setupCheckBeforeReconnect} so the bridge's cleanup and exit cannot drop the line.
+ * @param line - The full line, with its line break.
+ * @returns Resolves after the write callback, or after the bound when a full stderr pipe never calls it back.
+ * @example
+ * await writeNotSetUpLine('Codebook is running ...\n')
+ */
+function writeNotSetUpLine(line: string): Promise<void> {
+  return new Promise((done) => {
+    const timer = setTimeout(done, DEVIN_BRIDGE_REFUSAL_EXIT_MS)
+    process.stderr.write(line, () => {
+      clearTimeout(timer)
+      done()
+    })
+  })
+}
+
+/**
  * Makes the check the bridge runs before it opens a new upstream session after the first one expired; passed by {@link connectOnce} to {@link runCursorMcpBridge}.
  * A removal in another window never unmarks this window's descriptor, so the receipts are read again: when the setup no longer stands the not-set-up line is written to stderr and the exit code is set to 1, and the bridge ends instead of reconnecting.
  * @param descriptorPath - The selected descriptor, in the agent folder.
@@ -807,8 +825,8 @@ function setupCheckBeforeReconnect(
     if (stands === undefined)
       throw new Error('Codebook setup check did not answer in time.')
     if (!stands) {
-      process.stderr.write(`${notSetUpLine(cwd)}\n`)
       process.exitCode = 1
+      await writeNotSetUpLine(`${notSetUpLine(cwd)}\n`)
     }
     return stands
   }

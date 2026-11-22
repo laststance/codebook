@@ -1221,13 +1221,19 @@ export function activate(
   /** Clears this window's saved Devin Desktop setup. @example await clearSavedDevinSetup() */
   const clearSavedDevinSetup = (): Promise<boolean> =>
     saveDevinSetupAs(undefined, 'clear')
-  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), and marks only while the setup stands ({@link devinSetupStands}). @example await markDevinChatDescriptor(true) */
-  const markDevinChatDescriptor = (enabled: boolean): Promise<void> =>
+  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), and marks only while the setup stands ({@link devinSetupStands}). @param checkedInstallationId - The installation id an explicit setup read just before queueing this mark; the mark carries it without reading the receipt again, so a receipt that became unreadable meanwhile cannot leave a mark without its id. Other callers leave it out. @example await markDevinChatDescriptor(true) */
+  const markDevinChatDescriptor = (
+    enabled: boolean,
+    checkedInstallationId?: string,
+  ): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
       // One read decides the guard, the file's id and the in-memory mark: a removal between two reads cannot leave a mark without its id.
-      const field = await devinChatField()
+      const field: Awaited<ReturnType<typeof devinChatField>> =
+        checkedInstallationId
+          ? { devinChat: true, devinSetupInstallation: checkedInstallationId }
+          : await devinChatField()
       if (enabled && field.devinChat !== true) return
       // An unmark clears the in-memory mark first, so the server refuses the bridge before the file is rewritten.
       isDevinChatMarked &&= enabled
@@ -1357,14 +1363,17 @@ export function activate(
         context.globalStorageUri.fsPath,
       )
       // A window marked without a readable installation id would be refused by the bridge, and the offered reload could not connect.
-      if (!(await readDevinInstallationId(context.globalStorageUri.fsPath)))
+      const checkedInstallationId = await readDevinInstallationId(
+        context.globalStorageUri.fsPath,
+      )
+      if (!checkedInstallationId)
         throw new Error(
           devinReceiptUnreadableSentence(
             join(context.globalStorageUri.fsPath, 'devin-mcp', 'receipt.json'),
           ),
         )
       // The descriptor of a server started before this setup carries no mark yet.
-      await markDevinChatDescriptor(true)
+      await markDevinChatDescriptor(true, checkedInstallationId)
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
     } catch (error) {

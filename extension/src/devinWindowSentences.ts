@@ -48,4 +48,4 @@ export const DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE =
  * @example devinReceiptUnreadableSentence('/storage/devin-mcp/receipt.json') // => 'Codebook could not read the installation id in /storage/devin-mcp/receipt.json, …'
  */
 export const devinReceiptUnreadableSentence = (receiptPath: string): string =>
-  `Codebook could not read the installation id in ${receiptPath}, so Devin Local could not connect. Make that file readable only by you (mode 600), or delete it, then run Codebook: Set Up AI Chat again.`
+  `Codebook could not read the installation id in ${receiptPath}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`

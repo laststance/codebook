@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFile, spawn } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -39,6 +39,7 @@ import {
   runDevinMcpBridge,
   selectDevinDescriptor,
 } from '../devinMcpBridge'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
@@ -242,6 +243,34 @@ async function connectThroughBridge(
   })
   await client.connect(transport, { timeout: 10_000 })
   return client
+}
+
+/**
+ * Watches a started bridge process for its connected line; used by the tests that spawn the bridge entry.
+ * @param child - The bridge process, started with a piped stderr.
+ * @returns `connected` resolves once the connected line was printed and rejects, with the stderr read to its end, when the process fails to start or ends first; `readStderr` returns what stderr held so far.
+ */
+function watchConnectedLine(child: ChildProcess): {
+  connected: Promise<void>
+  readStderr: () => string
+} {
+  let stderr = ''
+  const connected = new Promise<void>((done, fail) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+      if (stderr.includes('Codebook bridge: instance')) done()
+    })
+    child.once('error', (error) => fail(error))
+    // close, not exit: stderr was read to its end by then.
+    child.once('close', (code) =>
+      fail(
+        new Error(
+          `The bridge ended with code ${code} before its connected line. stderr: ${stderr}`,
+        ),
+      ),
+    )
+  })
+  return { connected, readStderr: () => stderr }
 }
 
 /** Reads the instance id the connected Codebook answers in its status. */
@@ -1759,13 +1788,7 @@ test(
         killSignal: 'SIGKILL',
       },
     )
-    let stderr = ''
-    const connected = new Promise<void>((done) => {
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8')
-        if (stderr.includes('Codebook bridge: instance')) done()
-      })
-    })
+    const { connected, readStderr } = watchConnectedLine(child)
     const exited = new Promise<number | null>((done) => {
       child.on('exit', (code) => done(code))
     })
@@ -1793,13 +1816,175 @@ test(
     // Assert
     assert.equal(exitCode, 1)
     assert.equal(
-      stderr.includes(
+      readStderr().includes(
         `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(harness.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
       ),
       true,
     )
     // Only the bridge's own first handshake reached the server.
     assert.equal(initializeRequests, 1)
+  },
+)
+
+/**
+ * Starts the bridge entry with a preload against a server whose session the test expires, then sends the requests that make the bridge reinitialize.
+ * @param context - The test context; its cleanup removes the folders and the servers.
+ * @param preloadSource - Source of the preload that wraps the bridge's reconnect check and its close callback.
+ * @param setupRemoved - Whether the setup receipts are rewritten as removed before the session expires.
+ * @returns The bridge process and its stderr watcher.
+ */
+async function startBridgeWithExpiredSession(
+  context: { after: (callback: () => Promise<void>) => void },
+  preloadSource: string,
+  setupRemoved: boolean,
+): Promise<{
+  child: ChildProcess
+  watcher: ReturnType<typeof watchConnectedLine>
+}> {
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now),
+    agentDir = await makeLiveAgentFolder(),
+    root = dirname(agentDir)
+  context.after(async () => {
+    await endpoint.close()
+    await harness.close()
+    await removeTestFolder(root)
+  })
+  await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
+    ...endpoint.descriptor,
+    instanceId: IDS[0],
+  })
+  const preloadPath = join(root, 'preload.js')
+  await writeFile(preloadPath, preloadSource)
+  const child = spawn(
+    process.execPath,
+    [
+      '--require',
+      preloadPath,
+      join(__dirname, '../devinMcpBridgeEntry.js'),
+      agentDir,
+    ],
+    {
+      cwd: harness.directory,
+      env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      // A process that is still alive here is the failure; it is ended so the test does not hang.
+      timeout: 25_000,
+      killSignal: 'SIGKILL',
+    },
+  )
+  const watcher = watchConnectedLine(child)
+  await watcher.connected
+  if (setupRemoved) await writeSetupReceipts(root, { installed: false }, false)
+  now = SESSION_IDLE_TIMEOUT_MS + 1
+  await endpoint.expire()
+  const send = (message: object): void => {
+    child.stdin?.write(`${JSON.stringify(message)}\n`)
+  }
+  send({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'devin-bridge-test', version: '1.0' },
+    },
+  })
+  send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+  return { child, watcher }
+}
+
+const CURSOR_BRIDGE_MODULE_PATH = JSON.stringify(
+  resolve(__dirname, '../cursorMcpBridge.js'),
+)
+
+// protects=the bridge's close callback running exactly once when Devin closes stdin while the reconnect check still runs and the check then refuses; fails_when=stdin EOF and the refusal each start their own cleanup notice, so the callback (which ends the entry's process) runs twice; no_claim=the real receipts read (the preload's check answers false after 800 ms)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a bridge whose stdin closes during a reconnect check that then refuses calls its close callback once',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const preload = `const { writeSync } = require('node:fs')
+const bridge = require(${CURSOR_BRIDGE_MODULE_PATH})
+const original = bridge.runCursorMcpBridge
+let closedCalls = 0
+bridge.runCursorMcpBridge = (descriptorPath, timeoutMs, expected, header) =>
+  original(descriptorPath, timeoutMs, expected, header,
+    () => {
+      closedCalls += 1
+      // The callback only counts; the preload ends the process after a wait that would show a second call.
+      if (closedCalls === 1) setTimeout(() => { writeSync(2, 'CLOSED_CALLS ' + closedCalls + '\\n'); process.exit(0) }, 2_000)
+    },
+    async () => {
+      writeSync(2, 'CHECK_STARTED\\n')
+      await new Promise((done) => setTimeout(done, 800))
+      return false
+    })
+`
+    const { child, watcher } = await startBridgeWithExpiredSession(
+      context,
+      preload,
+      false,
+    )
+    // Act
+    // Devin closes stdin as soon as the reconnect check started.
+    await waitUntil(
+      () => watcher.readStderr().includes('CHECK_STARTED'),
+      'the reconnect check to start',
+      10_000,
+      undefined,
+      20,
+    )
+    child.stdin?.end()
+    await new Promise((done) => child.once('close', done))
+    // Assert
+    assert.equal(watcher.readStderr().includes('CLOSED_CALLS 1\n'), true)
+  },
+)
+
+// protects=the not-set-up line of a refused reconnection being written before the bridge's close callback ends the process; fails_when=the check queues the line and returns without waiting for the write, so the callback (process.exit in the entry) can run before the write completed; no_claim=a real full stderr pipe (the preload delays the write's callback by 500 ms while the bytes go out at once, so the loss itself cannot show, only the order)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose setup was removed ends only after the not-set-up line write completed',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const preload = `const { writeSync } = require('node:fs')
+const bridge = require(${CURSOR_BRIDGE_MODULE_PATH})
+const originalWrite = process.stderr.write.bind(process.stderr)
+process.stderr.write = (chunk, callback) => {
+  if (!String(chunk).includes('is not set up')) return originalWrite(chunk, callback)
+  // The bytes go out at once; only the completion callback is late.
+  originalWrite(chunk)
+  setTimeout(() => { writeSync(2, 'WRITE_COMPLETED\\n'); callback?.() }, 500)
+  return true
+}
+const original = bridge.runCursorMcpBridge
+bridge.runCursorMcpBridge = (descriptorPath, timeoutMs, expected, header, onClosed, before) =>
+  original(descriptorPath, timeoutMs, expected, header,
+    () => { writeSync(2, 'CLOSE_CALLBACK\\n'); onClosed?.() },
+    before)
+`
+    const { watcher, child } = await startBridgeWithExpiredSession(
+      context,
+      preload,
+      true,
+    )
+    // Act
+    const exitCode = await new Promise<number | null>((done) =>
+      child.once('close', (code) => done(code)),
+    )
+    // Assert
+    const stderr = watcher.readStderr()
+    assert.equal(exitCode, 1)
+    assert.equal(stderr.includes('WRITE_COMPLETED'), true)
+    assert.equal(
+      stderr.indexOf('WRITE_COMPLETED') < stderr.indexOf('CLOSE_CALLBACK'),
+      true,
+    )
   },
 )
 
@@ -1819,9 +2004,13 @@ test(
       await harness.close()
       await removeTestFolder(root)
     })
-    // The proxy accepts the DELETE and never answers it.
+    // The proxy records the DELETE, accepts it and never answers it.
+    let deleteRequests = 0
     const { port } = await listen(context, (incoming, outgoing) => {
-      if (incoming.method === 'DELETE') return
+      if (incoming.method === 'DELETE') {
+        deleteRequests += 1
+        return
+      }
       forward(Number(new URL(endpoint.descriptor.url).port), incoming, outgoing)
     })
     await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
@@ -1858,6 +2047,8 @@ test(
     // Assert
     assert.equal(result.signal, null)
     assert.equal(result.code, 0)
+    // The bridge did send the DELETE the server then never answered.
+    assert.equal(deleteRequests, 1)
     // gstack-timing-ok: the contract is an exit within the cleanup bound (1,000 ms) plus the start, with a wide margin for the gate's parallel load.
     assert.equal(elapsedMs < 15_000, true)
   },

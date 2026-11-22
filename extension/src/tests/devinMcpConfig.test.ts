@@ -1852,6 +1852,8 @@ test('Recovery adopts a published entry and settles each leftover on its own whe
     keptSha256: sha256('bytes Codebook expected'),
     // The displaced original stays tracked, so its record keeps the staged inode that tells a published file from a newer save.
     stagedIno: configIno,
+    // The staged hash stays too: the inode alone cannot tell the published file from an in-place edit.
+    stagedSha256: sha256(configBytes),
   })
 })
 
@@ -2691,10 +2693,42 @@ test('A setup after a first setup whose rollback was cut short gets the original
   const result = await writeManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
-  assert.equal(result.status, 'current')
+  assert.equal(result.status, 'installed')
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
   })
+  assert.equal(
+    existsSync(join(storage, 'devin-mcp', 'pending.json.rollback')),
+    false,
+  )
+})
+
+test('A refresh after a first setup whose rollback was cut short takes the entry out instead of turning the failed setup into an installed one', async (context) => {
+  // protects=a failed first setup is never adopted as installed after its rollback was cut short; fails_when=a receipt is written or the entry stays in the config; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback (second move-aside) and seam.afterPublish makes the receipt unwritable
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
   assert.equal(
     existsSync(join(storage, 'devin-mcp', 'pending.json.rollback')),
     false,
@@ -2985,6 +3019,29 @@ test('A second name of the config is kept when the config was replaced right bef
   assert.equal(readFileSync(configPath, 'utf8'), '{"another config":1}\n')
 })
 
+test('A second name of the config is kept when only that name was replaced after the config was checked', async (context) => {
+  // protects=the same-inode branch checks the leftover name last, so a swap of that name after the config check is not deleted; fails_when=the swapped-in file is deleted or the refusal omits its path; no_claim=the syscall gap after the last look; seam=seam.beforeLeftoverCheck swaps the leftover name while the config name is checked
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  linkSync(keptPath, configPath)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path === configPath) swapFile(keptPath, '{"swapped":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped":true}\n')
+})
+
 test('A put-back keeps the displaced name when the config was replaced after the link and before the displaced name is unlinked', async (context) => {
   // protects=the put-back unlinks the displaced name only while the config name still shows the linked file; fails_when=the displaced copy is deleted although the config changed; no_claim=the syscall gap after the last look; seam=seam.beforeLeftoverCheck swaps the config name
   // Arrange
@@ -3135,6 +3192,35 @@ test('A displaced original that could not be read in the first recovery is hande
     return true
   })
   assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A config rewritten in place after a crashed publish keeps the displaced original and names it', async (context) => {
+  // protects=an editor's in-place rewrite that keeps the published inode is not taken for the published file, so the only copy of the earlier servers survives; fails_when=the displaced original is deleted or not named; no_claim=what the editor wrote; seam=seam.afterPublish ends the run, then the config is rewritten in place
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalBytes)
+  let displacedPath = ''
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (path) => {
+      displacedPath = path ?? ''
+      throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  const publishedIno = (await stat(configPath)).ino
+  // The same file, written in place: the inode stays, the bytes change.
+  writeFileSync(configPath, '{"mcpServers":{"beta":{"command":"b"}}}\n')
+  assert.equal((await stat(configPath)).ino, publishedIno)
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(displacedPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(displacedPath, 'utf8'), originalBytes)
 })
 
 test('A leftover that disappears during the final read is not deleted when another file appears at its name', async (context) => {

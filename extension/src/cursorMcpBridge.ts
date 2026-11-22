@@ -239,8 +239,10 @@ export async function runCursorMcpBridge(
       }
     })())
   // Runs the cleanup once, then tells the caller it is complete (never before).
+  // One shared promise: stdin EOF during a reconnect check and the check's own refusal both reach it, and `onClosed` must run once.
+  let notifying: Promise<void> | undefined
   const shutdownThenNotify = (): void => {
-    void shutdown()
+    notifying ??= shutdown()
       .catch(() => undefined)
       .then(() => onClosed?.())
   }

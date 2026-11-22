@@ -178,6 +178,19 @@ export async function startServer(
   let origin = '',
     stopping = false,
     inFlight = 0
+  // Compares against the token current now: a rotation committed while a body was read changes the answer.
+  const hasCurrentToken = (authorization: string | undefined): boolean => {
+    const supplied = Buffer.from(authorization ?? '')
+    return (
+      supplied.length === expected.length && timingSafeEqual(supplied, expected)
+    )
+  }
+  const rejectUnauthorized = (response: ServerResponse): void =>
+    rejectHttp(
+      response,
+      401,
+      'Unauthorized. Copy the current connection from the editor after restart.',
+    )
   // HTTP session close -> release transport. Only service.shutdown() releases application runs.
   const server = createServer(
     {
@@ -188,16 +201,8 @@ export async function startServer(
     },
     (request, response) => {
       void (async () => {
-        const supplied = Buffer.from(request.headers.authorization ?? '')
-        if (
-          supplied.length !== expected.length ||
-          !timingSafeEqual(supplied, expected)
-        ) {
-          rejectHttp(
-            response,
-            401,
-            'Unauthorized. Copy the current connection from the editor after restart.',
-          )
+        if (!hasCurrentToken(request.headers.authorization)) {
+          rejectUnauthorized(response)
           return
         }
         if (
@@ -234,6 +239,11 @@ export async function startServer(
               : undefined
           if (stopping) {
             rejectHttp(response, 503, 'Server stopping')
+            return
+          }
+          // A token committed during the body read (a rolled-back setup) refuses this request before any session is reserved.
+          if (!hasCurrentToken(request.headers.authorization)) {
+            rejectUnauthorized(response)
             return
           }
           const sessionId = request.headers['mcp-session-id']
@@ -315,6 +325,15 @@ export async function startServer(
           }
           // Right before dispatch, after the body was read: a Devin bridge request is refused once this window's AI chat mark is off, also one whose body was held open across the unmark.
           const isInitialization = pendingSessions.has(session)
+          // Re-checked with no await up to the dispatch: a rotation committed while the transport connected must not let the old token through.
+          if (!hasCurrentToken(request.headers.authorization)) {
+            if (isInitialization) {
+              pendingSessions.delete(session)
+              await session.protocol.close()
+            }
+            rejectUnauthorized(response)
+            return
+          }
           if (
             isDevinBridgeRequestRefused(
               request.headers,
@@ -341,8 +360,8 @@ export async function startServer(
             }
             const replaced = room
             admittedSessions.add(session)
-            // Best effort close: no client can reach it any more, and its failed close must not refuse the new client.
-            await replaced?.protocol.close().catch(() => undefined)
+            // Best effort close, not awaited: no client can reach it any more, its failed close must not refuse the new client, and an await here would let the final checks go stale before dispatch.
+            void replaced?.protocol.close().catch(() => undefined)
           }
           session.lastSeen = now()
           session.active += 1

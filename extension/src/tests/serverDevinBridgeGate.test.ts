@@ -7,6 +7,7 @@ import {
   DEVIN_BRIDGE_HEADER_VALUE,
   MAX_SESSIONS,
 } from '../constants'
+import * as protocolModule from '../protocol'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
@@ -160,13 +161,20 @@ test('a Devin bridge request whose body is held open across the unmark is refuse
 test('refused Devin initializations give back the session slots they reserved', async (context) => {
   // protects=a refused initialization does not use up the server's session slots; fails_when=each refused initialize keeps its reserved slot, so later clients get 429 after MAX_SESSIONS refusals; no_claim=sessions of clients that are served
   // Arrange
-  const { endpoint, mark } = await startGatedServer(context, false)
+  let isGateOpen = false
+  // The early gate (odd call) lets the request reserve a session; the dispatch-time gate (even call) refuses it, unless the gate was opened.
+  let gateCalls = 0
+  const { endpoint } = await startGatedServer(
+    context,
+    true,
+    () => isGateOpen || (gateCalls += 1) % 2 === 1,
+  )
 
   // Act
   const refusals: number[] = []
   for (let attempt = 0; attempt <= MAX_SESSIONS; attempt += 1)
     refusals.push((await post(endpoint, INITIALIZE, DEVIN_HEADERS)).status)
-  mark.isOn = true
+  isGateOpen = true
   const afterwards = await post(endpoint, INITIALIZE, DEVIN_HEADERS)
 
   // Assert
@@ -301,4 +309,100 @@ test('a rotated token refuses a client that holds the old one with 401 and serve
   assert.equal(endpoint.descriptor.token, newToken)
   assert.equal(withOldToken.status, 401)
   assert.equal(withNewToken.status, 200)
+})
+
+test('a request holding the old token whose body is still being read when the token is rotated is refused with 401, while the new token is served', async (context) => {
+  // protects=the bearer token is compared again after the body was read, so a rotation committed during the read stops a bridge of an earlier build (Cycle 0144 CR10); fails_when=the authorization result of the request start is kept and the held request is served after the rotation; no_claim=requests that start after the rotation
+  // Arrange
+  const { endpoint, mark } = await startGatedServer(context, true)
+  const url = new URL(endpoint.descriptor.url)
+  const oldToken = endpoint.descriptor.token
+  const status = new Promise<number>((resolve, reject) => {
+    const held = request(
+      {
+        host: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${oldToken}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'content-length': Buffer.byteLength(INITIALIZE),
+        },
+      },
+      (answer) => {
+        answer.resume()
+        resolve(answer.statusCode ?? 0)
+      },
+    )
+    held.on('error', reject)
+    // The first half of the body goes out; once the server has received it the rotation is committed; then the rest.
+    held.write(INITIALIZE.slice(0, 10))
+    const chunksBefore = mark.bodyChunks
+    void waitUntil(
+      () => mark.bodyChunks > chunksBefore,
+      'the server to receive the first chunk of the body',
+    ).then(() => {
+      endpoint.prepareTokenRotation().commit()
+      held.end(INITIALIZE.slice(10))
+    }, reject)
+  })
+
+  // Act
+  const heldStatus = await status
+  const withNewToken = await post(endpoint, INITIALIZE, {})
+
+  // Assert
+  assert.equal(heldStatus, 401)
+  assert.equal(withNewToken.status, 200)
+})
+
+test('a Devin initialization that replaces an idle session is dispatched without waiting for the replaced session to finish closing', async (context) => {
+  // protects=no await sits between the final authorization checks and the dispatch, so a mark turned off during the replaced session's close cannot be overtaken by a dispatch that passed the gate earlier (Cycle 0144 CR13); fails_when=the initialization waits for the replaced session's close before it is dispatched; no_claim=when the replaced session finishes closing
+  // Arrange
+  let releaseClose!: () => void
+  const closeReleased = new Promise<void>((resolve) => {
+    releaseClose = resolve
+  })
+  const createProtocol = protocolModule.createProtocol
+  let created = 0
+  context.mock.method(
+    protocolModule,
+    'createProtocol',
+    (service: Parameters<typeof createProtocol>[0]) => {
+      const protocol = createProtocol(service)
+      if (created === 0) {
+        const close = protocol.close.bind(protocol)
+        protocol.close = async (): Promise<void> => {
+          await closeReleased
+          await close()
+        }
+      }
+      created += 1
+      return protocol
+    },
+  )
+  context.after(releaseClose)
+  const { endpoint } = await startGatedServer(context, true)
+  for (let slot = 0; slot < MAX_SESSIONS; slot += 1)
+    await post(endpoint, INITIALIZE, {})
+
+  // Act
+  let answeredStatus: number | undefined
+  const initializing = post(endpoint, INITIALIZE, DEVIN_HEADERS).then(
+    (answer) => {
+      answeredStatus = answer.status
+    },
+  )
+  await waitUntil(
+    () => answeredStatus !== undefined,
+    'the Devin initialization to be answered while the replaced close is held',
+    5_000,
+  )
+  releaseClose()
+  await initializing
+
+  // Assert
+  assert.equal(answeredStatus, 200)
 })

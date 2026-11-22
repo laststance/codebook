@@ -24,6 +24,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer as startRealServer } from '../server'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
+import { readDevinInstallationId } from '../utils/readDevinInstallationId'
 import { setDescriptorDevinChat } from '../utils/setDescriptorDevinChat'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
 import { withDevinSetupLock } from '../utils/withDevinSetupLock'
@@ -124,7 +125,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -157,6 +158,7 @@ async function devinWindow(
     failEntryRemoval?: boolean
     realServer?: boolean
     failDescriptorUnmark?: boolean
+    afterInstallationRead?: () => Promise<void>
   } = {},
 ) {
   const directory =
@@ -344,12 +346,9 @@ async function devinWindow(
               now,
               isDevinChatEnabled,
             )
-            // The window's setup names the workspace it opened, not the harness's repository.
-            return Object.create(realEndpoint, {
-              descriptor: {
-                value: { ...realEndpoint.descriptor, workspace: directory },
-              },
-            })
+            // The window's setup names the workspace it opened, not the harness's repository; the same descriptor object stays shared, so a token rotation reaches the window's copy too.
+            realEndpoint.descriptor.workspace = directory
+            return realEndpoint
           }
           return {
             listening: true,
@@ -536,6 +535,18 @@ async function devinWindow(
             await receiptsHeld
           }
           return stands
+        },
+      },
+      // Reads the real receipt; `afterInstallationRead` runs once, right after the first read answered, as a receipt that becomes unreadable between the setup's check and its mark write.
+      './utils/readDevinInstallationId': {
+        readDevinInstallationId: async (storageRoot: string) => {
+          const installationId = await readDevinInstallationId(storageRoot)
+          const afterRead = options.afterInstallationRead
+          if (afterRead) {
+            options.afterInstallationRead = undefined
+            await afterRead()
+          }
+          return installationId
         },
       },
       './utils/resolveExternalNodeExecutable': {
@@ -1337,9 +1348,40 @@ test(
       // Assert
       assert.equal(
         setupOutcome,
-        `Codebook could not read the installation id in ${join(window.directory, 'devin-mcp', 'receipt.json')}, so Devin Local could not connect. Make that file readable only by you (mode 600), or delete it, then run Codebook: Set Up AI Chat again.`,
+        `Codebook could not read the installation id in ${join(window.directory, 'devin-mcp', 'receipt.json')}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`,
       )
       assert.equal(await window.readDescriptorField(), undefined)
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=Set Up AI Chat never reports success with a descriptor mark that lacks the installation id it checked, even when the receipt becomes unreadable right after the check (Cycle 0144 CR12) / fails_when=the queued mark reads the receipt again, finds it unreadable and writes devinChat without the id (or nothing) while setup resolves / no_claim=the activation reconnect and the rollback sync, which keep reading the receipt; seam=afterInstallationRead makes the receipt mode 0644 after the check
+test(
+  'Devin Desktop setup writes the installation id it checked into the mark although the receipt becomes unreadable right after the check',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, {
+      afterInstallationRead: async (): Promise<void> => {
+        await chmod(join(window.directory, 'devin-mcp', 'receipt.json'), 0o644)
+      },
+    })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.deepEqual(
+        [setupOutcome, await window.readDescriptorInstallation()],
+        ['resolved', 'installation-test'],
+      )
     } finally {
       await window.loaded.deactivate()
     }

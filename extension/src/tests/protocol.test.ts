@@ -605,10 +605,8 @@ test('two clients that initialize at the same moment while eight sessions are id
 // Cycle 0144 F14: protects=a client that was answered between a ninth initialize starting and its dispatch keeps its session, because a picked session is never left routable while its eviction is pending; fails_when=the pick marks the least recently seen session at connect time, answers a request for it, and the eviction then closes it under that answer; no_claim=which idle session is replaced when none was seen during the hold
 test('a session that answers while a ninth client is still connecting is not the one the ninth client replaces', async (context) => {
   // Arrange: the ninth client's protocol connect is held until the first session was asked once.
-  let enterNinthConnect!: () => void, releaseNinthConnect!: () => void
-  const ninthConnectEntered = new Promise<void>((resolve) => {
-    enterNinthConnect = resolve
-  })
+  let ninthConnectEntered = false,
+    releaseNinthConnect!: () => void
   const ninthConnectReleased = new Promise<void>((resolve) => {
     releaseNinthConnect = resolve
   })
@@ -618,7 +616,7 @@ test('a session that answers while a ninth client is still connecting is not the
     protocol.connect = async (
       ...args: Parameters<typeof connectProtocol>
     ): Promise<void> => {
-      enterNinthConnect()
+      ninthConnectEntered = true
       await ninthConnectReleased
       await connectProtocol(...args)
     }
@@ -636,7 +634,16 @@ test('a session that answers while a ninth client is still connecting is not the
     now = 8_000
     // Act
     const ninthConnecting = connect(endpoint.descriptor)
-    await ninthConnectEntered
+    // A ninth connection refused before protocol.connect ends the wait with its failure instead of hanging.
+    let ninthFailure: unknown
+    ninthConnecting.catch((error: unknown) => {
+      ninthFailure = error
+    })
+    await waitUntil(
+      () => ninthConnectEntered || ninthFailure !== undefined,
+      'the ninth client to reach protocol.connect or fail',
+    )
+    assert.equal(ninthFailure, undefined)
     const answeredDuringConnect = await sessionAnswer(original[0]!)
     now = 9_000
     releaseNinthConnect()
@@ -665,11 +672,17 @@ test('a session that answers while a ninth client is still connecting is not the
 
 // Cycle 0144 F14: protects=live sessions never exceed eight when two clients initialize while the first replaced session is still closing; fails_when=the replaced session still counts as a free slot while its close runs, so the tenth client is admitted without replacing anyone; no_claim=the order the two replacements finish
 test('ten clients connecting at once while eight are idle leave exactly eight sessions answering', async (context) => {
-  // Arrange: every close is slow, so evictions overlap the next initialization.
-  adjustProtocols(context, (protocol) => {
+  // Arrange: the first replaced session's close is held until the second replacement started, so the evictions overlap.
+  let releaseFirstClose!: () => void
+  const firstCloseReleased = new Promise<void>((resolve) => {
+    releaseFirstClose = resolve
+  })
+  const closeStarted = new Set<number>()
+  adjustProtocols(context, (protocol, index) => {
     const close = protocol.close.bind(protocol)
     protocol.close = async (): Promise<void> => {
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      closeStarted.add(index)
+      if (index === 0) await firstCloseReleased
       await close()
     }
   })
@@ -685,10 +698,16 @@ test('ten clients connecting at once while eight are idle leave exactly eight se
     const original = [...connections]
     now = 8_000
     // Act
-    const newcomers = await Promise.all([
+    const connecting = Promise.all([
       connect(endpoint.descriptor),
       connect(endpoint.descriptor),
     ])
+    await waitUntil(
+      () => closeStarted.has(0) && closeStarted.has(1),
+      'both replaced sessions to start closing',
+    )
+    releaseFirstClose()
+    const newcomers = await connecting
     connections.push(...newcomers)
     // Assert
     const answers = await Promise.all(
@@ -700,6 +719,7 @@ test('ten clients connecting at once while eight are idle leave exactly eight se
       'unknown session',
     ])
   } finally {
+    releaseFirstClose()
     await Promise.allSettled(
       connections.map((connection) => connection.close()),
     )
