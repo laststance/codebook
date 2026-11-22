@@ -2139,6 +2139,31 @@ function currentEntryOf(look: ConfigLook): unknown {
 }
 
 /**
+ * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
+ * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
+ * @param context - The run.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then.
+ * @example
+ * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
+ */
+async function settleRollbackJournal(context: Context): Promise<void> {
+  const rollbackContext = rollbackContextOf(context)
+  const pending = await readRecord(
+    rollbackContext.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  )
+  // No rollback was cut short, or the journal belongs to another config, which this run does not settle.
+  if (pending?.targetPath !== context.path) return
+  const unsettled = await recoverLeftovers(rollbackContext, pending)
+  const tracked = pending.phase ? unsettled.slice(1) : unsettled
+  await retirePending(rollbackContext, retainedRecord(pending, tracked))
+  const [reported] = unsettled
+  if (reported) throw unsettledRefusal(rollbackContext, pending.phase, reported)
+}
+
+/**
  * Settles a kept copy and a pending record, reads the config and returns what a run decides on.
  * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that.
  * @param context - The run.
@@ -2152,6 +2177,8 @@ async function inspect(context: Context): Promise<{
   current: unknown
   receipt: Receipt | undefined
 }> {
+  // A rollback cut short comes first: its original may be the only copy of the learner's other servers.
+  await settleRollbackJournal(context)
   const pending = await readRecord(
     context.pendingPath,
     pendingSchema,

@@ -2619,3 +2619,35 @@ test('Set Up AI Chat and the activation refresh leave disabled out while the cod
   assert.equal('disabled' in current, false)
   assert.equal('disabled' in refreshed, false)
 })
+
+test('A setup after a first setup whose rollback was cut short gets the original config back and adds its entry to it', async (context) => {
+  // protects=the learner's other servers survive a process that ended during the rollback of a failed first setup; fails_when=the next setup creates a config holding only codebook; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback (second move-aside) and seam.afterPublish makes the receipt unwritable
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  assert.equal(existsSync(configPath), false)
+  rmSync(receiptPath, { recursive: true })
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'current')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(
+    existsSync(join(storage, 'devin-mcp', 'pending.json.rollback')),
+    false,
+  )
+})
