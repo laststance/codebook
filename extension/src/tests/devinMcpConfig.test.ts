@@ -2132,6 +2132,38 @@ test('A retry after a removal that took the entry out but could not record it re
   assert.equal(existsSync(join(storage, 'devin-mcp', 'receipt.json')), false)
 })
 
+test('A retry after a removal that could not record its completion still reports removed when another window refreshed in between', async (context) => {
+  // protects: the removal retry still offers Reload Window although another window's refresh ran between the removal and the retry / fails_when: the refresh retires the unrecorded removal's record, so the retry answers not-managed and no reload is offered / no_claim: the refresh's own result; the failing record write is simulated by a folder standing where pending.json is
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let pendingBytes = ''
+  await assert.rejects(
+    removeManagedDevinMcpEntry(storage, home, {
+      afterPublish: () => {
+        pendingBytes = readFileSync(pendingPath, 'utf8')
+        rmSync(pendingPath, { force: true })
+        mkdirSync(pendingPath)
+      },
+    }),
+    /could not write its own record/,
+  )
+  // The record's room is back, as the refusal asked.
+  rmSync(pendingPath, { recursive: true })
+  writeFileSync(pendingPath, pendingBytes)
+
+  // Act
+  const otherWindow = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(otherWindow, { status: 'not-managed', path: configPath })
+  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  assert.equal(existsSync(pendingPath), false)
+})
+
 test('Recovery puts a displaced file with another inode but the recorded bytes back when the config name is still empty and deletes nothing', async (context) => {
   // Value: protects=a displaced file that still holds the recorded bytes is not lost when its inode changed and the run ended before the comparison; fails_when=the file with another inode but the recorded bytes is deleted, left aside or refused while the config name is empty; why_new=recovery refused every file whose inode differed from the record; seam=hand-written pending record whose recorded inode is not the file's, with no config at the config name
   // Arrange

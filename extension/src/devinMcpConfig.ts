@@ -1784,8 +1784,22 @@ async function putBackDisplaced(
 }
 
 /**
+ * Tells whether a pending record is that of a removal of this config that took the entry out and never recorded its completion; called by {@link settlePending}.
+ * @param context - The run.
+ * @param pending - The pending record.
+ * @returns `true` for a record of this config with no entry hash (a removal) and no phase.
+ */
+function isUnrecordedRemoval(context: Context, pending: Pending): boolean {
+  return (
+    pending.targetPath === context.path &&
+    pending.entrySha256 === undefined &&
+    pending.phase === undefined
+  )
+}
+
+/**
  * Settles a `pending.json` left by a run that ended before it wrote its receipt.
- * An entry whose `{ command, args, env }` equal the pending hash is adopted (receipt written, pending removed or reduced to the leftovers that stay), with `createdFile` kept only when the config still is the staged file; a state that shows the rename never happened (no entry, a removal, the receipted entry) drops the pending record; anything else is refused.
+ * An entry whose `{ command, args, env }` equal the pending hash is adopted (receipt written, pending removed or reduced to the leftovers that stay), with `createdFile` kept only when the config still is the staged file; a state that shows the rename never happened (no entry, a removal, the receipted entry) drops the pending record, except the record of an unrecorded removal whose entry is gone, which stays for {@link removeManagedDevinMcpEntry}; anything else is refused.
  * @param context - The run.
  * @param current - The `codebook` entry in the config, if any.
  * @param receipt - The receipt read before.
@@ -1806,6 +1820,13 @@ async function settlePending(
   retained: Pending | undefined,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
+  // The record of a removal that took the entry out (a receipt stands, the entry is gone) is what a removal retry reads to answer `removed`: another window's inspection leaves it in place, and the retry or a new setup's own record replaces it.
+  if (
+    receipt !== undefined &&
+    current === undefined &&
+    isUnrecordedRemoval(context, pending)
+  )
+    return receipt
   const isReceipted =
     receipt !== undefined && receipt.generation === pending.generation
   if (
@@ -2428,11 +2449,7 @@ async function hasUnrecordedRemoval(context: Context): Promise<boolean> {
     context.retry,
     context.seam,
   )
-  return (
-    pending?.targetPath === context.path &&
-    pending.entrySha256 === undefined &&
-    pending.phase === undefined
-  )
+  return pending !== undefined && isUnrecordedRemoval(context, pending)
 }
 
 /**
@@ -2462,6 +2479,8 @@ export async function removeManagedDevinMcpEntry(
       // Read before inspect retires it: an earlier removal that took the entry out and left its record unwritten.
       const wasUnrecorded = await hasUnrecordedRemoval(context)
       const inspected = await inspect(context)
+      // The retry has read the record; it ends it now ({@link inspect} leaves an unrecorded removal's record for this read).
+      if (wasUnrecorded) await dropPending(context)
       const ownership = removalOwnership(inspected, options.expectedGeneration)
       if ('status' in ownership) {
         // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
