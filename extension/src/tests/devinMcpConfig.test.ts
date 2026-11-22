@@ -3485,6 +3485,47 @@ test('A displaced original is kept and named when an editor rewrites the publish
   assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
 })
 
+test('A displaced original is kept and named when a writer rewrites it with the same length while the published config is read again', async (context) => {
+  // protects=the displaced copy's content is the last async read before the unlink, so a same-length rewrite during the config's re-read is not deleted; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite in the syscall gap after the last hash; seam=seam.afterStat rewrites the displaced copy in place with the same length during the config's re-read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const changedBytes = '{"mcpServers":{"alpha":{"command":"b"}}}\n'
+  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  await writeConfig(configPath, publishedBytes)
+  await writeFile(keptPath, originalBytes)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(publishedBytes),
+  })
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === keptPath) keptReadCount += 1
+      // Recovery's first look and its hash before the delete read the copy first; the rewrite lands in the config read that follows them.
+      if (path === configPath && keptReadCount >= 2)
+        writeFileSync(keptPath, changedBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), changedBytes)
+})
+
 test('A leftover that disappears during the final read is not deleted when another file appears at its name', async (context) => {
   // protects=the delete path never unlinks a name whose file differs from the one that was hashed; fails_when=the final recheck passes on the handle's own inode and the file that appeared at the name is deleted; no_claim=the gap between the last look and the unlink; seam=seam.afterStat removes the leftover and writes another file at its name during the second read
   // Arrange

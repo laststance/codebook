@@ -1733,7 +1733,7 @@ function configChangedError(context: Context, leftoverPath: string): Error {
 /**
  * Throws unless the config name still shows the published staged file (inode and bytes); called by {@link tidyLeftover} after the last read of a displaced original and before it is unlinked.
  * The bytes are read again because an editor can rewrite the published file in place and keep its inode.
- * Limit: a change between this read and the unlink is not seen.
+ * Limit: the read is async, so {@link tidyLeftover} hashes the displaced copy again after it and checks only synchronously from there; a change between that last hash and the unlink syscalls is not seen (no Node primitive unlinks by inode or content).
  * @param context - The run.
  * @param pending - The pending record; its staged hash names the published bytes.
  * @param ino - The published inode.
@@ -1935,19 +1935,35 @@ async function tidyLeftover(
     throw new Error('The leftover file differs from what Codebook expected.')
   assertLeftoverStill(context, path, copy)
   // Same-size overwrites keep inode and size: hash the file again right before deleting it.
-  const lastLook = await inspectCopy(path, context.seam)
+  let lastLook = await inspectCopy(path, context.seam)
   // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
   if (!lastLook) return
-  if (lastLook.sha256 !== expectedSha256 || lastLook.ino !== copy.ino)
-    throw new Error(
-      `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook left it untouched.`,
-    )
-  // A save by rename or in place may have changed the published config since the first look: the config name is checked first and the displaced name last, right before the unlink.
-  if (publishedIno !== undefined)
+  assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
+  if (publishedIno !== undefined) {
+    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it, and that read is the last async step.
     await assertConfigStillPublished(context, pending, publishedIno, path)
+    lastLook = await inspectCopy(path, context.seam)
+    if (!lastLook) return
+    assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
+    // Only synchronous looks follow: the config name first, the displaced name last.
+    assertConfigStill(context, publishedIno, path)
+  }
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file.
   assertLeftoverStill(context, path, lastLook)
   await unlink(path)
+}
+
+/** Throws when a displaced copy's last read shows other bytes or another inode than the ones Codebook checked; the copy stays untouched. */
+function assertLeftoverHoldsChecked(
+  path: string,
+  look: InspectedCopy,
+  ino: bigint,
+  expectedSha256: string,
+): void {
+  if (look.sha256 !== expectedSha256 || look.ino !== ino)
+    throw new Error(
+      `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook left it untouched.`,
+    )
 }
 
 /**
