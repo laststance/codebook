@@ -2275,6 +2275,63 @@ test('A first setup whose receipt cannot be written removes only its own entry f
   assert.deepEqual(await leftoversBeside(configPath), [])
 })
 
+test('A first setup whose receipt cannot be written keeps the setup record and names the copy a save changed', async (context) => {
+  // protects: the proof that the published entry is Codebook's and a handed copy's location survive a failed first setup / fails_when: the setup record is overwritten by the rollback, or the refusal omits the copy's path / no_claim: a crash in the middle of the rollback
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let copyPath = ''
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      // An editor that still holds the old file open saves into it.
+      appendFileSync(copyPath, ' ')
+      mkdirSync(receiptPath, { recursive: true })
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(copyPath.length > 0)
+    assert.ok(error.message.includes(copyPath), error.message)
+    assert.match(error.message, /took that entry out again/)
+    return true
+  })
+  assert.equal(existsSync(copyPath), true)
+  const pending = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  assert.equal(typeof pending.entrySha256, 'string')
+  assert.equal(pending.phase, 'handed')
+})
+
+test('A first setup whose receipt cannot be written leaves a config that was saved again with the same entry unchanged', async (context) => {
+  // protects: a file Codebook did not publish is never edited by the rollback / fails_when: a new config with the same codebook entry but another inode loses that entry or the refusal does not say it was left unchanged / no_claim: a save with different bytes
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let savedText = ''
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      // An editor saves the same bytes atomically: a new inode holds the same entry.
+      savedText = readFileSync(configPath, 'utf8')
+      const replacement = `${configPath}.editor`
+      writeFileSync(replacement, savedText)
+      renameSync(replacement, configPath)
+      mkdirSync(receiptPath, { recursive: true })
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, /left that file unchanged/)
+  assert.equal(readFileSync(configPath, 'utf8'), savedText)
+  assert.equal(JSON.parse(savedText).mcpServers.codebook.command, ENTRY.command)
+})
+
 test('Set Up AI Chat puts the moved-aside config back with its own mode and refuses when another link to it appeared after the read', async (context) => {
   // Value: protects=a config that got a second name after Codebook read it is neither narrowed in mode nor replaced; fails_when=the mode is narrowed before the link count is rechecked or the new file is linked in beside the second name; why_new=the link count was read once, before the move-aside; seam=seam.afterCheck links the config, seam.afterMoveAside reads the moved file's mode
   if (process.platform === 'win32') {

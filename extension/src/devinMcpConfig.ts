@@ -1927,38 +1927,96 @@ function disabledFlagOf(entry: unknown): { disabled?: true } {
 /** What a write reports about the entry it published. */
 type PublishedEntry = { generation: string; cleanupFailure?: string }
 
+/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone) or `not-taken-out` (it could not be taken out); `keptLeft` holds the copies the rollback itself left. */
+type RollbackResult = {
+  outcome: 'took-out' | 'replaced-config' | 'not-taken-out'
+  keptLeft: KeptFile[]
+}
+
+/**
+ * Takes the entry out of the config file a first setup published, never of another file; called by {@link takeOutUnrecordedEntry}.
+ * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
+ * @param context - The run.
+ * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
+ * @returns The {@link RollbackResult}; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged.
+ * @throws The refusals of {@link takeEntryOut}; the caller turns them into `not-taken-out`.
+ */
+async function rollBackPublishedEntry(
+  context: Context,
+  written: Receipt,
+): Promise<RollbackResult> {
+  const look = await lookAtConfig(context)
+  if (
+    look.kind !== 'present' ||
+    !ownsEntry(look.servers?.[SERVER_NAME], written)
+  )
+    return { outcome: 'not-taken-out', keptLeft: [] }
+  // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
+  if (!isSameFileId(written.config.ino, look.identity.ino))
+    return { outcome: 'replaced-config', keptLeft: [] }
+  const { keptLeft } = await takeEntryOut(rollbackContextOf(context), {
+    look,
+    receipt: written,
+  })
+  return { outcome: 'took-out', keptLeft }
+}
+
+/** The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads. */
+function rollbackContextOf(context: Context): Context {
+  return { ...context, pendingPath: `${context.pendingPath}.rollback` }
+}
+
+/**
+ * Builds the sentence about the copies of the learner's previous config that stay after a failed first setup.
+ * @param keptLeft - The files the publish left, with what they hold.
+ * @returns An empty string when nothing stays, else a sentence naming each copy.
+ * @example
+ * keptCopiesSentence([]) // => ''
+ */
+function keptCopiesSentence(keptLeft: KeptFile[]): string {
+  return keptLeft
+    .filter(({ holds }) => holds === 'previous')
+    .map(
+      ({ path }) =>
+        ` Codebook also kept ${keptCopyPhrase(path)}; delete that copy when you no longer need it.`,
+    )
+    .join('')
+}
+
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
- * Only the entry of this write goes: the config is read again and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays.
+ * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
- * @returns The error to reject with, in one sentence: whether the entry was taken out again, and the way out.
+ * @param keptLeft - The copies the publish left; one that stays is named in the error.
+ * @returns The error to reject with: whether the entry was taken out again, and the way out.
  */
 async function takeOutUnrecordedEntry(
   context: Context,
   written: Receipt,
   cause: unknown,
+  keptLeft: KeptFile[],
 ): Promise<Error> {
   const { path, retry } = context
-  let didTakeOut = false
+  let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
   try {
-    const look = await lookAtConfig(context)
-    if (
-      look.kind === 'present' &&
-      ownsEntry(look.servers?.[SERVER_NAME], written)
-    ) {
-      await takeEntryOut(context, { look, receipt: written })
-      didTakeOut = true
-    }
+    result = await rollBackPublishedEntry(context, written)
   } catch {
     // The rejection below says the entry may still stand.
   }
-  const outcome = didTakeOut
-    ? 'so it took that entry out again and changed nothing else'
-    : `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`
+  const { outcome } = result
+  const keptCopies = [...keptLeft, ...result.keptLeft]
+  // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left.
+  if (outcome === 'took-out' && keptCopies.length === 0)
+    await dropPending(context)
+  const sentence = {
+    'took-out': 'so it took that entry out again and changed nothing else',
+    'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
+    'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
+  }[outcome]
   return new Error(
-    `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${outcome}; make room for that record, ${retry}.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}; make room for that record, ${retry}.${keptCopiesSentence(keptCopies)}`,
     { cause },
   )
 }
@@ -2006,7 +2064,7 @@ async function publishEntry(
   } catch (cause) {
     // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
     if (receipt) throw cause
-    throw await takeOutUnrecordedEntry(context, written, cause)
+    throw await takeOutUnrecordedEntry(context, written, cause, keptLeft)
   }
   // A record that names a copy that stays is kept, so the next run settles that copy.
   if (keptLeft.length === 0) await dropPending(context)
