@@ -11,6 +11,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'readme.md',
   'dist/extension.js',
   'dist/cursorMcpBridge.js',
+  'dist/devinMcpBridge.js',
   'dist/wikiPageWorker.js',
   'dist/viteLauncher.js',
   'dist/build.json',

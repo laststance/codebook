@@ -3,6 +3,7 @@
   "entry": [
     "src/extension.ts",
     "src/cursorMcpBridgeEntry.ts",
+    "src/devinMcpBridgeEntry.ts",
     "src/nativeRepositoryBootstrap.ts",
     "src/nativeNodeTestBootstrap.ts",
     "src/viteLauncher.ts",

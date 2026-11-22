@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import {
@@ -6,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -95,9 +97,9 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.138')
+  assert.equal(checked.extension.version, '0.2.139')
   assert.equal(checked.extension.apiVersion, '1.45')
-  assert.equal(checked.entries, 34)
+  assert.equal(checked.entries, 35)
   assert.equal(receipt.dependencies.length, 16)
   assert.deepEqual(
     original.get('extension/skills/codebook/SKILL.md'),
@@ -188,6 +190,40 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   assert.deepEqual(
     original.get('extension/src/assets/learning.svg'),
     await readFile(join(repository, 'extension/src/assets/learning.svg')),
+  )
+})
+
+// Value: protects=Devin Desktop's MCP entry, which starts dist/devinMcpBridge.js of the installed VSIX; fails_when=the VSIX lacks the bridge, or the bundled bridge exits without its fixed recovery line when no Codebook instance matches; why_new=Cycle 0143 task 3 (Devin bridge); seam=the real VSIX's bridge file run as a Node process in a temp folder; no_claim=a real Devin Desktop window or a connected instance
+test('the packaged Devin bridge exits 1 with the recovery line when no Codebook instance matches', async () => {
+  // Arrange
+  const bridge = original.get('extension/dist/devinMcpBridge.js')
+  assert.ok(bridge, 'The VSIX holds extension/dist/devinMcpBridge.js.')
+  const unpacked = await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-')),
+    agentDirectory = join(unpacked, 'agent'),
+    workspace = join(await realpath(unpacked), 'workspace'),
+    bridgePath = join(unpacked, 'devinMcpBridge.js')
+  await mkdir(agentDirectory)
+  await mkdir(workspace)
+  await writeFile(bridgePath, bridge)
+  // Act
+  const result = await new Promise((resolve) =>
+    execFile(
+      process.execPath,
+      [bridgePath, agentDirectory],
+      {
+        cwd: workspace,
+        env: { PATH: process.env.PATH, WINDSURF_EXT_HOST_PID: '1' },
+        timeout: 60_000,
+      },
+      (error, stdout, stderr) => resolve({ error, stdout, stderr }),
+    ),
+  )
+  await rm(unpacked, { recursive: true, force: true })
+  // Assert
+  assert.equal(result.error?.code, 1)
+  assert.equal(
+    result.stderr.trim(),
+    `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
   )
 })
 

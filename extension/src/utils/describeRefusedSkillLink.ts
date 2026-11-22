@@ -7,21 +7,23 @@ export const ALLOW_LINKS_THEN_SET_UP_AGAIN = `Check that this folder allows new 
  * Words the refusal of the hard link that puts Codebook's new Cursor skill in place; called by {@link deployCursorSkill} when the file system refuses that link, and by the README's test, which compares the README's quotation with it.
  * @param targetPath - The managed skill path.
  * @param code - The file system's code for the refused link (`EPERM` on Linux and `ENOTSUP` on macOS for a file system without hard links, for example).
- * @param keptPreviousSkillPath - Where Codebook's previous skill stands when an update had moved it away before the link; left out when nothing was moved.
+ * @param keptPreviousSkillPath - Where Codebook's previous skill stands when an update had moved it away before the link; `undefined` when nothing was moved.
+ * @param hostLabel - The editor the skill is for, as the sentence names it (`Cursor` or `Devin Desktop`); required, so that no caller names Cursor in another editor's sentence by default.
  * @returns
  * - Nothing was moved: the sentence that no existing file was changed
  * - The previous skill was moved away: the sentence that names where it is kept and how to go on using it
  * Each ends with {@link ALLOW_LINKS_THEN_SET_UP_AGAIN}.
  * @example
- * describeRefusedSkillLink('/home/user/.cursor/skills/codebook/SKILL.md', 'EPERM')
+ * describeRefusedSkillLink('/home/user/.cursor/skills/codebook/SKILL.md', 'EPERM', undefined, 'Cursor')
  * // => "Cursor skill could not be installed: the file system refused to put Codebook's new file in place as /home/user/.cursor/skills/codebook/SKILL.md (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again."
  */
 export function describeRefusedSkillLink(
   targetPath: string,
   code: string,
-  keptPreviousSkillPath?: string,
+  keptPreviousSkillPath: string | undefined,
+  hostLabel: string,
 ): string {
-  const refused = `Cursor skill could not be installed: the file system refused to put Codebook's new file in place as ${targetPath} (${code}).`
+  const refused = `${hostLabel} skill could not be installed: the file system refused to put Codebook's new file in place as ${targetPath} (${code}).`
   const state =
     keptPreviousSkillPath === undefined
       ? 'No existing file was changed.'

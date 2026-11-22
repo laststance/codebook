@@ -62,17 +62,41 @@ import {
   REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
   NODE_SERVER_SHUTDOWN_GRACE_MS,
+  DEVIN_REMOVAL_ACTION,
+  DEVIN_REMOVAL_QUESTION,
+  DEVIN_SETUP_REMOVED_LINE,
+  RELOAD_WINDOW_ACTION,
+  RELOAD_WINDOW_COMMAND,
+  SET_CONTEXT_COMMAND,
 } from './constants'
 import {
   deployCursorSkill,
+  deployDevinSkill,
   removeManagedCursorSkill,
+  removeManagedDevinSkill,
   verifyManagedCursorSkill,
+  verifyManagedDevinSkill,
 } from './cursorSkillDeployment'
 import {
   readDeepWikiManifest,
   startDeepWikiReader,
   type DeepWikiReader,
 } from './deepWikiReader'
+import {
+  refreshManagedDevinMcpEntry,
+  removeManagedDevinMcpEntry,
+  writeManagedDevinMcpEntry,
+  type DevinMcpEntry,
+} from './devinMcpConfig'
+import {
+  DEVIN_ENTRY_MISSING_LINE,
+  DEVIN_REFRESH_NODE_FAILURE_LINE,
+  DEVIN_SERVER_RESTARTED_SENTENCE,
+  DEVIN_SETUP_NODE_FAILURE_SENTENCE,
+  DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
+  DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
+  DEVIN_SETUP_STORAGE_DIRECTORY,
+} from './devinWindowSentences'
 import { createEnvironment, requireWorkspace } from './environment'
 import { learningItemSchema } from './identitySchemas'
 import {
@@ -91,7 +115,10 @@ import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace, type UnsavedStudyArchive } from './studyWorkspace'
 import { agentExitOf, type WikiAgentExit } from './utils/agentExitOf'
-import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
+import {
+  aiChatReadyMessage,
+  devinEntryRefreshedMessage,
+} from './utils/aiChatReadyMessage'
 import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
@@ -133,6 +160,11 @@ import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { describeWikiGenerateConfirmation } from './utils/describeWikiGenerateConfirmation'
 import { describeWikiSkillStepEnd } from './utils/describeWikiSkillStepEnd'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
+import {
+  devinEntryRemovalOf,
+  devinRemovalNotice,
+} from './utils/devinRemovalNotice'
+import { devinWindowRefusal } from './utils/devinWindowRefusal'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
 import { findGeneratedWikiProblem } from './utils/findGeneratedWikiProblem'
@@ -149,9 +181,12 @@ import {
   formatCodebookDiagnostic,
   type CodebookDiagnostic,
 } from './utils/formatCodebookDiagnostic'
+import { hasDevinEntryReceipt } from './utils/hasDevinEntryReceipt'
+import { hasDevinSetupReceipts } from './utils/hasDevinSetupReceipts'
 import { hasWikiPublishEndedWait } from './utils/hasWikiPublishEndedWait'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import type { WikiLeftover } from './utils/isAcknowledgedWikiLeftover'
+import { isDevinDesktop } from './utils/isDevinDesktop'
 import { isWikiManifestOf } from './utils/isWikiManifestOf'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
@@ -176,6 +211,7 @@ import { requestCursorWikiText } from './utils/requestCursorWikiText'
 import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
+import { retryWhileStorageLockHeld } from './utils/retryWhileStorageLockHeld'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import { runUnderAbortSignal } from './utils/runUnderAbortSignal'
 import { sanitizeCause } from './utils/sanitizeCause'
@@ -183,6 +219,7 @@ import {
   wikiLastRunSchema,
   type WikiLastRun,
 } from './utils/selectActiveWikiCandidate'
+import { setDescriptorDevinChat } from './utils/setDescriptorDevinChat'
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
 import { showWikiChatWatchStatus } from './utils/showWikiChatWatchStatus'
@@ -215,6 +252,7 @@ import {
   type WikiUpdateOutput,
 } from './utils/wikiUpdateRun'
 import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
+import { withDevinSetupLock } from './utils/withDevinSetupLock'
 
 let stopExtension: (() => Promise<void>) | undefined
 
@@ -242,11 +280,19 @@ export function activate(
   useEditorMachineId(vscode.env?.machineId, vscode.env?.remoteName)
   // The read of this process's start (a spawned query on macOS and Windows) begins now and is kept, so the first storage lock does not wait for it.
   void currentStorageOwner().catch(() => undefined)
+  /** What {@link writeManagedDevinMcpEntry} answers; `disabled` is set when the entry that stays carries `"disabled": true`, which Devin's Customize writes when the server is toggled off. */
+  type DevinEntryWrite = Awaited<
+    ReturnType<typeof writeManagedDevinMcpEntry>
+  > & {
+    disabled?: true
+  }
   type Running = {
     endpoint: Awaited<ReturnType<typeof startServer>>
     environment: Awaited<ReturnType<typeof createEnvironment>>
     descriptorPath: string
     service: StudyService
+    /** Whether the descriptor was written with the `devinChat` mark ({@link devinChatField}); a later unmark by a removal does not change it. */
+    devinChat: boolean
   }
   let starting: Promise<Running> | undefined,
     running: Running | undefined,
@@ -257,6 +303,12 @@ export function activate(
   let cursorSetup: Promise<void> | undefined,
     cursorRemoval: Promise<void> | undefined,
     cursorRemoving = false
+  let devinSetup: Promise<void> | undefined,
+    devinRemoval: Promise<void> | undefined,
+    devinRemoving = false
+  let hasStoppedServer = false
+  /** The last descriptor change or removal queued by {@link inDescriptorQueue}; it never rejects. */
+  let descriptorQueue: Promise<unknown> = Promise.resolve()
   let notifyMcpDefinitions: () => void = () => {}
   let savedSessionInstall: InstalledSavedSessions | undefined
   /** Shows every non-modal notification of this window through {@link showPlainNotice}, so no outside text in it becomes a link; `actions` are its buttons and the pressed one is returned. @example void showNotice('error', `Codebook could not open DeepWiki: ${String(error)}`) */
@@ -327,6 +379,22 @@ export function activate(
     }).catch(() => undefined)
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
+  // Only Devin Desktop's AI chat setup tells it apart; every other path treats it as VS Code (Cycle 0143, decision D3).
+  const isDevinHost = isDevinDesktop(vscode.env)
+  // The Command Palette shows the Devin removal only while this key is true; every other editor leaves the key unset, which reads as false.
+  const setDevinDesktopContext = (): void => {
+    if (!isDevinHost) return
+    void Promise.resolve()
+      .then(() =>
+        vscode.commands.executeCommand(
+          SET_CONTEXT_COMMAND,
+          'codebook.isDevinDesktop',
+          isDevinHost,
+        ),
+      )
+      .catch(() => undefined)
+  }
+  setDevinDesktopContext()
   /** The editor host as the LLM Wiki code names it ({@link WikiUpdateHost}). */
   const wikiHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
   const setupMatchesCurrentWorkspace = () => {
@@ -340,6 +408,14 @@ export function activate(
       return false
     }
   }
+  /** Says whether this Devin Desktop window's setup stands at this moment: it matches the workspace, and the records of both the skill and the entry are left (another window's removal may have taken them since). @example if (await devinSetupStands()) mark() */
+  const devinSetupStands = async (): Promise<boolean> =>
+    isDevinHost &&
+    setupMatchesCurrentWorkspace() &&
+    (await hasDevinSetupReceipts(context.globalStorageUri.fsPath))
+  /** The field a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands, so the Devin bridge connects only in windows where Set Up AI Chat ran; empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true } in a set-up Devin Desktop window */
+  const devinChatField = async (): Promise<{ devinChat?: true }> =>
+    (await devinSetupStands()) ? { devinChat: true } : {}
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -611,6 +687,8 @@ export function activate(
         "Codebook server was not started: a stop was asked for while the start waited for the workspace's folders to change. Run Codebook: Start Agent Server to start it.",
       )
   }
+  /** Says whether `server` is the instance this window now runs; read through a function so a start that published its server in the descriptor queue sees the later value of `running`, not the one it narrowed earlier. @example if (!isRunningServer(server)) throw new Error('stopped') */
+  const isRunningServer = (server: Running): boolean => running === server
   const start = async () => {
     // A start asked for while the readers are replaced waits for the reader that will live; nothing is awaited otherwise, so a stop that follows a start at once still finds it.
     if (replacingReaders) await awaitReplacedReaders()
@@ -665,25 +743,41 @@ export function activate(
           repository().openFromAgent(input, signal)
         service.repositoryPublished = (): Promise<void> =>
           repository().published()
-        endpoint = await startServer(service)
+        const startedEndpoint = await startServer(service)
+        endpoint = startedEndpoint
         const descriptorPath = join(
           storageRoot,
           `${service.instanceId}${CONNECTION_DESCRIPTOR_SUFFIX}`,
         )
-        // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
-        await writeFile(
-          descriptorPath,
-          JSON.stringify({
-            ...endpoint.descriptor,
-            pid: process.pid,
-            ...(await currentStorageOwner()),
-          }),
-          {
-            mode: PRIVATE_FILE_MODE,
-            flag: 'wx',
-          },
-        )
-        return { endpoint, environment, descriptorPath, service }
+        const startedService = service
+        // The mark decision, the write and the publication of the running target share the queue of the removal's unmark: a removal that comes first leaves the decision unmarked, and one that comes later finds the target and unmarks it.
+        return await inDescriptorQueue(async (): Promise<Running> => {
+          const devinFields = await devinChatField()
+          // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
+          await writeFile(
+            descriptorPath,
+            JSON.stringify({
+              ...startedEndpoint.descriptor,
+              pid: process.pid,
+              ...(await currentStorageOwner()),
+              ...devinFields,
+            }),
+            {
+              mode: PRIVATE_FILE_MODE,
+              flag: 'wx',
+            },
+          )
+          const server: Running = {
+            endpoint: startedEndpoint,
+            environment,
+            descriptorPath,
+            service: startedService,
+            devinChat: devinFields.devinChat === true,
+          }
+          // A stop that is under way owns the instance through `starting`; the checks after the wait refuse it.
+          if (!stopping && startedEndpoint.listening) running = server
+          return server
+        })
       } catch (error) {
         try {
           if (endpoint) await endpoint.close()
@@ -702,13 +796,12 @@ export function activate(
         throw new Error(
           'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
         )
-      running = server
       // A normal Stop then Start must restore an already configured Cursor chat connection.
       if (isCursorHost && setupMatchesCurrentWorkspace()) {
         try {
           await registerCursorConnection()
         } catch (error) {
-          if (!stopping && !cursorRemoving && running === server)
+          if (!stopping && !cursorRemoving && isRunningServer(server))
             void showNotice(
               'warning',
               noticeWithSetupStep(
@@ -719,20 +812,30 @@ export function activate(
             )
         }
       }
-      if (running !== server || stopping || !server.endpoint.listening)
+      if (!isRunningServer(server) || stopping || !server.endpoint.listening)
         throw new Error(
           'Codebook server stopped while starting its chat connection. Run Codebook: Start Agent Server to start it.',
         )
       notifyMcpDefinitions()
+      offerReloadAfterServerRestart(server)
       return server.descriptorPath
     } finally {
       if (starting === attempt) starting = undefined
     }
   }
+  /** Runs one change of a connection descriptor after every one queued before it: the Devin rewrite of {@link markDevinChatDescriptor} and the removal at a stop, so a stop between a rewrite's read and its write can never be followed by a write that brings the stopped instance's descriptor back. @example await inDescriptorQueue(async () => unlink(path)) */
+  const inDescriptorQueue = <Value>(
+    task: () => Promise<Value>,
+  ): Promise<Value> => {
+    const result = descriptorQueue.then(task)
+    descriptorQueue = result.catch(() => {})
+    return result
+  }
   const stop = async (): Promise<void> => {
     const attempt = (stopping ??= (async () => {
       const target = running ?? (await starting?.catch(() => undefined))
       if (!target) return
+      hasStoppedServer = true
       let finalizationError: unknown
       try {
         await target.endpoint.close()
@@ -751,12 +854,14 @@ export function activate(
         vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
         registeredCursorServer = undefined
       }
-      // This unique descriptor belongs only to the stopped instance, never to another window.
-      await unlink(target.descriptorPath).catch((error) => {
-        if (error.code !== 'ENOENT') throw error
+      // This unique descriptor belongs only to the stopped instance, never to another window; queued after any rewrite of it, and the instance counts as stopped inside the queue.
+      await inDescriptorQueue(async () => {
+        await unlink(target.descriptorPath).catch((error) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+        target.environment.dispose()
+        if (running === target) running = undefined
       })
-      target.environment.dispose()
-      if (running === target) running = undefined
       notifyMcpDefinitions()
       if (finalizationError) throw finalizationError
     })())
@@ -1024,10 +1129,367 @@ export function activate(
       }
     }
     notifyMcpDefinitions()
-    void showNotice('information', aiChatReadyMessage(isCursorHost))
+    void showNotice(
+      'information',
+      aiChatReadyMessage(isCursorHost ? 'cursor' : 'vscode'),
+    )
+  }
+  /** Refuses a Devin Desktop setup once its removal begins, also when an awaited deployment or server start resumes. @example assertDevinSetupAvailable() */
+  const assertDevinSetupAvailable = (): void => {
+    if (devinRemoving)
+      throw new Error(
+        `Codebook Devin Desktop setup was removed while starting. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
+      )
+  }
+  /** Refuses a Devin Desktop setup whose checked server stopped, was replaced or no longer serves the setup's workspace (Stop Agent Server, a folder change) while the entry was written and the descriptor marked. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupServerStands(server) */
+  const assertDevinSetupServerStands = (server: Running): void => {
+    if (
+      running !== server ||
+      stopping ||
+      !server.endpoint.listening ||
+      !setupMatchesCurrentWorkspace()
+    )
+      throw new Error(DEVIN_SETUP_SERVER_CHANGED_SENTENCE)
+  }
+  /** Builds the one `codebook` server entry of Devin Desktop's user MCP config: this installation's stdio bridge, given the folder of every window's private connection descriptor so that it picks its own window's instance; the entry holds no credential. @example devinMcpEntry('/usr/local/bin/node') // => { command: '/usr/local/bin/node', args: ['<extension>/dist/devinMcpBridge.js', '<storage>/agent'], env: {} } */
+  const devinMcpEntry = (nodeExecutable: string): DevinMcpEntry => ({
+    command: nodeExecutable,
+    args: [
+      join(context.extensionPath, 'dist/devinMcpBridge.js'),
+      join(context.globalStorageUri.fsPath, AGENT_STORAGE_DIRECTORY),
+    ],
+    env: {},
+  })
+  /** Shows a Devin Desktop notice whose Reload Window button reloads this window, because Devin Local loads its MCP servers only when a window loads; not awaited, so a setup or removal ends without waiting for the learner. @example offerDevinReload('information', devinEntryRefreshedMessage(false)) */
+  const offerDevinReload = (
+    severity: NoticeSeverity,
+    message: string,
+  ): void => {
+    void showNotice(severity, message, RELOAD_WINDOW_ACTION).then((choice) => {
+      if (choice === RELOAD_WINDOW_ACTION)
+        void vscode.commands.executeCommand(RELOAD_WINDOW_COMMAND)
+    })
+  }
+  /** Offers the Reload Window button when this Devin Desktop window's agent server started again after a Stop Agent Server: the bridge Devin Local started at the window load kept the stopped server's endpoint; not offered at the first start of the window, or when the new instance's descriptor carries no `devinChat` mark (a window without chat setup, or a setup whose records are gone). @param server - The instance that just started. @example offerReloadAfterServerRestart(server) */
+  const offerReloadAfterServerRestart = (server: Running): void => {
+    if (!hasStoppedServer || !isDevinHost || devinRemoving || !server.devinChat)
+      return
+    hasStoppedServer = false
+    offerDevinReload('information', DEVIN_SERVER_RESTARTED_SENTENCE)
+  }
+  /** Runs one Devin Desktop setup or removal alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so a removal never lands between another window's skill deployment and entry write. @example await underDevinLock(() => removeDevinSetupLocked()) */
+  const underDevinLock = <Value>(
+    operation: () => Promise<Value>,
+  ): Promise<Value> =>
+    withDevinSetupLock(
+      join(context.globalStorageUri.fsPath, DEVIN_SETUP_STORAGE_DIRECTORY),
+      operation,
+    )
+  /** Puts this window's saved Devin Desktop setup back to `value` (cleared when it is undefined); a failed write only goes to the Output, so the rollback or removal that called it goes on. @returns Whether the write succeeded. @example await saveDevinSetupAs(undefined, 'clear') */
+  const saveDevinSetupAs = async (
+    value: unknown,
+    action: 'clear' | 'restore',
+  ): Promise<boolean> =>
+    await context.workspaceState.update('codebook.aiChatSetup', value).then(
+      () => true,
+      (error: unknown) => {
+        diagnostics.info(
+          `Codebook could not ${action} this window's saved Devin Desktop setup: ${thrownMessage(error)}`,
+        )
+        return false
+      },
+    )
+  /** Clears this window's saved Devin Desktop setup. @example await clearSavedDevinSetup() */
+  const clearSavedDevinSetup = (): Promise<boolean> =>
+    saveDevinSetupAs(undefined, 'clear')
+  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), and marks only while the setup stands ({@link devinSetupStands}). @example await markDevinChatDescriptor(true) */
+  const markDevinChatDescriptor = (enabled: boolean): Promise<void> =>
+    inDescriptorQueue(async () => {
+      const target = running
+      if (!target) return
+      if (enabled && !(await devinSetupStands())) return
+      await setDescriptorDevinChat(target.descriptorPath, enabled)
+    })
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @example await syncDevinChatDescriptor() */
+  const syncDevinChatDescriptor = (): Promise<void> =>
+    inDescriptorQueue(async () => {
+      const target = running
+      if (!target) return
+      await setDescriptorDevinChat(
+        target.descriptorPath,
+        await devinSetupStands(),
+      )
+    })
+  /**
+   * Takes back what a failed Devin Desktop setup saved: this window's setup goes back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load), the entry is removed only when this setup installed it (an updated or current entry is used by other windows, and a newer setup's generation stays), and the server running now, which may be one started during the setup, gets the mark its restored setup earns.
+   * Called by {@link setUpDevinChatLocked} when a step after the entry write fails.
+   * @param entryWrite - What the setup's entry write answered.
+   * @param previousSetup - The saved setup from before the run.
+   * @returns Whether the saved setup and the entry were taken back; each failure went to the Output.
+   * @example
+   * const isComplete = await rollBackDevinSetup({ status: 'installed', generation: 'g1' }, undefined)
+   */
+  const rollBackDevinSetup = async (
+    entryWrite: {
+      status: 'installed' | 'updated' | 'current'
+      generation: string
+    },
+    previousSetup: unknown,
+  ): Promise<boolean> => {
+    let isComplete = await saveDevinSetupAs(previousSetup, 'restore')
+    if (entryWrite.status === 'installed')
+      await removeManagedDevinMcpEntry(
+        context.globalStorageUri.fsPath,
+        undefined,
+        undefined,
+        { expectedGeneration: entryWrite.generation },
+      ).catch((cleanupError: unknown) => {
+        isComplete = false
+        diagnostics.info(
+          `Codebook could not take back the Devin Desktop MCP entry this setup wrote: ${thrownMessage(cleanupError)}`,
+        )
+      })
+    // Any server running now may have read the half-saved setup, not only the one the setup checked.
+    // A descriptor that cannot be rewritten (for example an unreadable one) is not something the setup saved, so it does not make the rollback incomplete.
+    await syncDevinChatDescriptor().catch((error: unknown) => {
+      diagnostics.info(
+        `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
+      )
+    })
+    return isComplete
+  }
+  /** The steps of one Devin Desktop setup, run under {@link underDevinLock}: skill, server, entry, saved setup, a final skill check and the descriptor mark, with a rollback when a step after the entry write fails. @returns The sentence of a kept copy of Devin's config that could not be deleted, when the entry write names one, and `disabled` when the entry stays turned off in Devin's Customize. @example const { cleanupFailure } = await setUpDevinChatLocked() */
+  const setUpDevinChatLocked = async (): Promise<{
+    cleanupFailure?: string
+    disabled?: true
+  }> => {
+    // The failure's own text can carry the executable's stderr; the learner gets a fixed sentence.
+    const nodeExecutable = await resolveExternalNodeExecutable(
+      vscode.workspace
+        .getConfiguration('codebook')
+        .get<string>('nodeExecutable', 'node'),
+    ).catch(() => {
+      throw new Error(DEVIN_SETUP_NODE_FAILURE_SENTENCE)
+    })
+    assertDevinSetupAvailable()
+    await deployDevinSkill(
+      context.extensionPath,
+      context.globalStorageUri.fsPath,
+    )
+    assertDevinSetupAvailable()
+    await start()
+    assertDevinSetupAvailable()
+    if (!running)
+      throw new Error(
+        `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
+      )
+    const checkedServer = running
+    const { workspace: setupWorkspace } = checkedServer.endpoint.descriptor
+    const entryWrite: DevinEntryWrite = await writeManagedDevinMcpEntry(
+      context.globalStorageUri.fsPath,
+      devinMcpEntry(nodeExecutable),
+    )
+    // A re-run that fails puts this value back instead of clearing it.
+    const previousSetup = context.workspaceState.get('codebook.aiChatSetup')
+    try {
+      await context.workspaceState.update('codebook.aiChatSetup', {
+        workspace: setupWorkspace,
+      })
+      assertDevinSetupAvailable()
+      await verifyManagedDevinSkill(
+        context.extensionPath,
+        context.globalStorageUri.fsPath,
+      )
+      // The descriptor of a server started before this setup carries no mark yet.
+      await markDevinChatDescriptor(true)
+      // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
+      assertDevinSetupServerStands(checkedServer)
+    } catch (error) {
+      // A different Devin Desktop window may have removed the shared skill during the saved setup.
+      const isRolledBack = await rollBackDevinSetup(entryWrite, previousSetup)
+      // A rollback that failed in part says where its reasons are.
+      if (!isRolledBack)
+        throw new Error(
+          `${thrownMessage(error)} ${DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE}`,
+        )
+      throw error
+    }
+    return {
+      cleanupFailure: entryWrite.cleanupFailure,
+      disabled: entryWrite.disabled,
+    }
+  }
+  /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. @example await performDevinSetup() */
+  const performDevinSetup = async (): Promise<void> => {
+    const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
+    if (refusal) throw new Error(refusal)
+    requireWorkspace()
+    const { cleanupFailure, disabled } =
+      await underDevinLock(setUpDevinChatLocked)
+    // A kept copy of the previous config holds other servers' settings, so the notice names it.
+    offerDevinReload(
+      'information',
+      [
+        aiChatReadyMessage('devin', { devinEntryDisabled: Boolean(disabled) }),
+        cleanupFailure,
+      ]
+        .filter((sentence) => sentence !== undefined)
+        .join(' '),
+    )
+  }
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
+  const refreshDevinEntry = async (
+    storageRoot: string,
+  ): Promise<{
+    status:
+      | Awaited<ReturnType<typeof refreshManagedDevinMcpEntry>>['status']
+      | 'refused'
+    disabled: boolean
+  }> => {
+    let nodeExecutable: string
+    try {
+      nodeExecutable = await resolveExternalNodeExecutable(
+        vscode.workspace
+          .getConfiguration('codebook')
+          .get<string>('nodeExecutable', 'node'),
+      )
+    } catch {
+      // The failure's own text can carry paths and process output; the Output gets a fixed line.
+      diagnostics.info(DEVIN_REFRESH_NODE_FAILURE_LINE)
+      return { status: 'refused', disabled: false }
+    }
+    try {
+      // Windows opened together may hold the entry's lock one after the other.
+      const refresh = await retryWhileStorageLockHeld(() =>
+        refreshManagedDevinMcpEntry(storageRoot, devinMcpEntry(nodeExecutable)),
+      )
+      // An entry edited after setup stays as the learner left it; the bridge it names may still connect.
+      if (refresh.status === 'changed')
+        diagnostics.info(
+          `Codebook left the codebook entry in ${refresh.path} as it is: it was edited after setup.`,
+        )
+      // A kept copy of the previous config holds other servers' settings and must not go unreported.
+      if (refresh.cleanupFailure) diagnostics.info(refresh.cleanupFailure)
+      return { status: refresh.status, disabled: Boolean(refresh.disabled) }
+    } catch (error) {
+      diagnostics.info(
+        `Codebook did not refresh its Devin Desktop MCP entry: ${thrownMessage(error)}`,
+      )
+      return { status: 'refused', disabled: false }
+    }
+  }
+  /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. The setup counts as removed when the skill check fails and the entry's receipt is gone, decided before Node or the config is read. @returns `false` when the window is refused or the setup was removed, so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
+  const refreshDevinSetup = async (): Promise<boolean> => {
+    // Windows and remote windows have no Devin Desktop setup yet, so a saved setup there reconnects nothing.
+    const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
+    if (refusal) {
+      diagnostics.info(refusal)
+      return false
+    }
+    const storageRoot = context.globalStorageUri.fsPath
+    const skillFailure = await verifyManagedDevinSkill(
+      context.extensionPath,
+      storageRoot,
+    ).then(
+      (): string | undefined => undefined,
+      (error: unknown) => thrownMessage(error),
+    )
+    // Neither receipt left: the setup was removed, and only Set Up AI Chat creates the files again.
+    if (
+      skillFailure !== undefined &&
+      !(await hasDevinEntryReceipt(storageRoot))
+    ) {
+      diagnostics.info(DEVIN_SETUP_REMOVED_LINE)
+      return false
+    }
+    if (skillFailure !== undefined)
+      diagnostics.info(
+        `Codebook did not refresh its Devin Desktop skill: ${skillFailure}`,
+      )
+    const { status: entryStatus, disabled: entryDisabled } =
+      await refreshDevinEntry(storageRoot)
+    // A removal finished in another window meanwhile took a receipt: the setup is not Codebook's any more, and nothing reconnects (both receipts are read right before the server starts).
+    if (!(await hasDevinSetupReceipts(storageRoot))) {
+      diagnostics.info(DEVIN_SETUP_REMOVED_LINE)
+      return false
+    }
+    // Both receipts stand but the config holds no entry of Codebook's (the learner deleted the file): nothing is there for Devin Local to connect to, and only Set Up AI Chat writes it again.
+    if (entryStatus === 'not-managed') {
+      diagnostics.info(DEVIN_ENTRY_MISSING_LINE)
+      return false
+    }
+    // Devin Local runs the entry it read when the window loaded, so the updated one needs a reload; an entry turned off in Customize needs turning on first.
+    if (entryStatus === 'refreshed')
+      offerDevinReload('information', devinEntryRefreshedMessage(entryDisabled))
+    return true
+  }
+  /** The steps of one Devin Desktop removal, run under {@link underDevinLock}: the skill, then the entry, then this window's saved setup and descriptor mark. @returns The notice the removal ends with. @example const notice = await removeDevinSetupLocked() */
+  const removeDevinSetupLocked = async (): Promise<
+    ReturnType<typeof devinRemovalNotice>
+  > => {
+    const storageRoot = context.globalStorageUri.fsPath
+    // A skill refusal (edited or replaced after setup) ends the removal before the entry, as Cursor's removal does.
+    const skillRemoval = (await removeManagedDevinSkill(storageRoot)).status
+    // A refused entry (an unreadable config, a removal journal of another file) keeps the config as it is, and the warning says so.
+    const entryRemoval = await removeManagedDevinMcpEntry(storageRoot).catch(
+      (error: unknown) => devinEntryRemovalOf(error, thrownMessage),
+    )
+    // The saved setup is cleared after the entry, and a failed write of it only goes to the Output: the next window then reconnects nothing (its refresh finds no receipt).
+    await clearSavedDevinSetup()
+    await markDevinChatDescriptor(false).catch((error: unknown) => {
+      diagnostics.info(
+        `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
+      )
+    })
+    return devinRemovalNotice(skillRemoval, entryRemoval)
+  }
+  /** Removes Codebook's Devin Desktop skill and entry after the learner confirms; called by Codebook: Remove Devin Desktop Setup. @example await removeDevinSetup() */
+  const removeDevinSetup = async (): Promise<void> => {
+    if (!isDevinHost)
+      throw new Error('This command is available in Devin Desktop only.')
+    // Windows and remote windows have no Devin Desktop setup yet, so there is nothing of Codebook's to remove.
+    const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
+    if (refusal) throw new Error(refusal)
+    if (devinRemoval) return devinRemoval
+    const choice = await vscode.window.showWarningMessage(
+      DEVIN_REMOVAL_QUESTION,
+      { modal: true },
+      DEVIN_REMOVAL_ACTION,
+    )
+    if (choice !== DEVIN_REMOVAL_ACTION) return
+    if (devinRemoval) return devinRemoval
+    const attempt = (async () => {
+      devinRemoving = true
+      try {
+        // A setup still running would write the skill and the entry again after they are removed.
+        await devinSetup?.catch(() => {})
+        const notice = await underDevinLock(removeDevinSetupLocked)
+        if (notice.reload) offerDevinReload(notice.severity, notice.text)
+        else void showNotice(notice.severity, notice.text)
+      } finally {
+        devinRemoving = false
+      }
+    })()
+    devinRemoval = attempt
+    try {
+      await attempt
+    } finally {
+      if (devinRemoval === attempt) devinRemoval = undefined
+    }
+  }
+  /** Coalesces overlapping Devin Desktop setup commands so its removal can await the whole deployment and saved state. @example await setupDevinChat() */
+  const setupDevinChat = (): Promise<void> => {
+    assertDevinSetupAvailable()
+    if (devinSetup) return devinSetup
+    const tracked = performDevinSetup().finally(() => {
+      if (devinSetup === tracked) devinSetup = undefined
+    })
+    devinSetup = tracked
+    return tracked
   }
   /** Coalesces overlapping Cursor setup commands so removal can await the whole deployment and saved state. @example await setupAiChat() */
   const setupAiChat = (): Promise<void> => {
+    if (isDevinHost) return setupDevinChat()
     if (!isCursorHost) return performSetupAiChat()
     assertCursorSetupAvailable()
     if (cursorSetup) return cursorSetup
@@ -3001,6 +3463,7 @@ export function activate(
         throw new Error('This command is available in Cursor only.')
       await setupAiChat()
     }),
+    registerCommand('codebook.removeManagedDevinSetup', removeDevinSetup),
     registerCommand(SHOW_KEYBOARD_SHORTCUTS_COMMAND, () =>
       showKeyboardShortcuts(vscode, process.platform),
     ),
@@ -3410,6 +3873,11 @@ export function activate(
           context.extensionPath,
           context.globalStorageUri.fsPath,
         )
+      // Devin Local starts the bridge its config names when the window loads; a removed setup reconnects nothing.
+      if (isDevinHost && !(await refreshDevinSetup())) return
+      // A removal confirmed while the refresh ran clears the saved setup (or is clearing it): nothing is started for it.
+      if (isDevinHost && (devinRemoving || !setupMatchesCurrentWorkspace()))
+        return
       await start()
       notifyMcpDefinitions()
     })().catch((error) => {

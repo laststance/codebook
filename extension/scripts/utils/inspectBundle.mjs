@@ -8,8 +8,8 @@ import { COMPILED_DIRECTORIES } from './packageConstants.mjs'
 /** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */
 export async function inspectBundle(metafile, repository, capturedInputs) {
   const outputs = Object.values(metafile.outputs)
-  // Four entries: the extension host bundle, the Cursor MCP bridge, the Wiki page worker and the Vite launcher.
-  if (outputs.length < 1 || outputs.length > 4)
+  // Five entries: the extension host bundle, the Cursor and Devin MCP bridges, the Wiki page worker and the Vite launcher.
+  if (outputs.length < 1 || outputs.length > 5)
     throw new Error('Unexpected JavaScript bundle count.')
   const imports = outputs.flatMap((output) => output.imports)
   const externals = [...new Set(imports.map((value) => value.path))].sort()
@@ -27,6 +27,13 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
       output.imports.some((value) => !isBuiltin(value.path))
     )
       throw new Error('Cursor MCP bridge contains an editor-only import.')
+  // The standalone Devin bridge runs in Node as well, with no editor module.
+  for (const [path, output] of Object.entries(metafile.outputs))
+    if (
+      basename(path) === 'devinMcpBridge.js' &&
+      output.imports.some((value) => !isBuiltin(value.path))
+    )
+      throw new Error('Devin MCP bridge contains an editor-only import.')
   // The Wiki page worker runs on a worker thread, where the extension host's vscode module does not exist either.
   for (const [path, output] of Object.entries(metafile.outputs))
     if (

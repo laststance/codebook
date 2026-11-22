@@ -133,3 +133,65 @@ test('a failing rename rejects and keeps the existing bytes', async (context) =>
   )
   assert.deepEqual(await filesystem.readdir(directory), ['data.json'])
 })
+
+// protects=a mode a caller names never gives group or other access; fails_when=a 0o644 mode publishes a group-readable file; no_claim=the umask of the process
+test('a mode with group and other bits publishes the file with the owner bits only', async (context) => {
+  if (process.platform === 'win32') {
+    context.skip('permission bits are not enforced on Windows')
+    return
+  }
+  // Arrange
+  const directory = await folderWithOldFile(context)
+  const { atomicPrivateBytes } = await loadWriter({})
+
+  // Act
+  await atomicPrivateBytes(
+    join(directory, 'data.json'),
+    'new',
+    undefined,
+    undefined,
+    0o644,
+  )
+
+  // Assert
+  assert.equal(
+    (await filesystem.stat(join(directory, 'data.json'))).mode & 0o777,
+    0o600,
+  )
+})
+
+// protects=the named mode is applied only after the bytes were written and flushed, so a mode without write access never gets in the way of the write; fails_when=chmod runs before writeFile; no_claim=the final mode of a published file
+test('a named mode is applied after the bytes were written and flushed', async (context) => {
+  // Arrange
+  const directory = await folderWithOldFile(context)
+  const steps: string[] = []
+  const { atomicPrivateBytes } = await loadWriter({
+    open: async (...openArguments: Parameters<typeof filesystem.open>) => {
+      const handle = await filesystem.open(...openArguments)
+      for (const step of ['chmod', 'writeFile', 'sync'] as const) {
+        const original = handle[step].bind(handle) as (
+          ...stepArguments: unknown[]
+        ) => Promise<void>
+        Object.defineProperty(handle, step, {
+          value: async (...stepArguments: unknown[]) => {
+            steps.push(step)
+            return original(...stepArguments)
+          },
+        })
+      }
+      return handle
+    },
+  })
+
+  // Act
+  await atomicPrivateBytes(
+    join(directory, 'data.json'),
+    'new',
+    undefined,
+    undefined,
+    0o400,
+  )
+
+  // Assert
+  assert.deepEqual(steps, ['writeFile', 'sync', 'chmod'])
+})

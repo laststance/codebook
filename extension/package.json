@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.138",
+  "version": "0.2.139",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -91,6 +91,10 @@
       {
         "command": "codebook.restoreManagedCursorSkill",
         "title": "Codebook: Restore Managed Cursor Skill"
+      },
+      {
+        "command": "codebook.removeManagedDevinSetup",
+        "title": "Codebook: Remove Devin Desktop Setup"
       },
       {
         "command": "codebook.openStudyWorkspace",
@@ -437,6 +441,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "codebook.removeManagedDevinSetup",
+          "when": "codebook.isDevinDesktop"
+        },
         {
           "command": "codebook.showKeyboardShortcuts"
         },

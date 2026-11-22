@@ -8,6 +8,7 @@ import { PRIVATE_FILE_MODE } from '../constants'
  * @param path - The file to replace.
  * @param bytes - The complete new content.
  * @param beforePublish - Called synchronously after the bytes are flushed and just before the rename; throwing cancels the publication and leaves the existing file unchanged.
+ * @param mode - The permission bits the published file gets, cut to the owner's bits (`mode & 0o600`): never group or other access. The private mode when absent. Applied with `fchmod` after the bytes were written and flushed and just before the rename, so the process's umask does not narrow it and a mode without write access never gets in the way of the write.
  * @param afterPublish - Called synchronously in the tick the rename resolved, before the temporary file's cleanup is awaited, so a caller learns of the publication without waiting on that cleanup.
  * @throws When the temporary file cannot be written or renamed, or `beforePublish` throws; the existing file is then unchanged. A failure of the temporary file's cleanup after a successful rename is ignored: the file is published, and no copy can remain, because the rename moved the temporary name's bytes to `path`, so the name the failed cleanup concerns no longer exists.
  * @example
@@ -18,6 +19,7 @@ export async function atomicPrivateBytes(
   bytes: string | Buffer,
   beforePublish?: () => void,
   afterPublish?: () => void,
+  mode?: number,
 ): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`
   const handle = await open(temporary, 'wx', PRIVATE_FILE_MODE)
@@ -26,6 +28,8 @@ export async function atomicPrivateBytes(
     try {
       await handle.writeFile(bytes)
       await handle.sync()
+      // Only a caller that names a mode changes the private default, and never beyond the owner's bits.
+      if (mode !== undefined) await handle.chmod(mode & PRIVATE_FILE_MODE)
     } finally {
       await handle.close()
     }

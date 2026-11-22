@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.138'
+export const EXTENSION_VERSION = '0.2.139'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -478,10 +478,24 @@ export const CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS = 100
 export const CURSOR_MCP_STAGED_CONFIG_GRACE_MS = 60_000
 export const CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS = 120_000
 export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
+/** The largest receipt or pending record of the Devin Desktop MCP entry ({@link writeManagedDevinMcpEntry}) that is written. */
+export const DEVIN_MCP_RECORD_LIMIT_BYTES = 16_384
+/** The largest Devin Desktop MCP config (`~/.config/devin/mcp_config.json`) that Codebook reads; a larger file is refused before it is read, because a real config of a few servers is a few kilobytes. */
+export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
+/** The largest connection descriptor (`<instanceId>.connection.json`) the Devin Desktop bridge reads; a real one is a few hundred bytes, so a larger file is skipped before it is parsed. */
+export const DEVIN_DESCRIPTOR_LIMIT_BYTES = 65_536
+/** The least time the Devin Desktop bridge gives one connection attempt, also when the 15 s selection window has nearly passed: a server that needs a moment to answer still connects, so the bridge's total time can exceed that window by this floor. */
+export const DEVIN_CONNECT_FLOOR_MS = 3_000
+/** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
+export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
 export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
 /** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */
 export const CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS = 100
+/** How often a Devin Desktop setup or removal checks the setup lock while another window holds it; with the pause below and its random share, a wait of about ten seconds (seven to fourteen) before the refusal. */
+export const DEVIN_SETUP_LOCK_WAIT_ATTEMPTS = 70
+/** How long a Devin Desktop setup or removal waits before it checks the setup lock again, before the random share that keeps windows opened together out of step. */
+export const DEVIN_SETUP_LOCK_RETRY_DELAY_MS = 100
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
 export const HTTP_ENVELOPE_LIMIT_BYTES = 65_536
 export const HTTP_BODY_LIMIT_BYTES =
@@ -1491,6 +1505,27 @@ export const WIKI_SKILL_STEP_REMOVAL_END = 'skill-removal'
 /** What Codebook says when Remove Managed Cursor Skill meets a Cursor skill step of this window that is still running after the grace, so a late deploy could write the skill again; nothing is removed (Cycle 0056 RT3-C). */
 export const WIKI_SKILL_REMOVAL_STEP_RUNNING_SENTENCE =
   'Codebook did not remove the managed Cursor skill: a Cursor skill step of this window is still running and could write the skill again. Reload the window (Developer: Reload Window) to end it, then run Codebook: Remove Managed Cursor Skill again.'
+/** The button of the notices that ask for a reload in Devin Desktop, whose Devin Local loads its MCP servers only when a window loads (Cycle 0142, observation O6). */
+export const RELOAD_WINDOW_ACTION = 'Reload Window'
+/** The editor command the {@link RELOAD_WINDOW_ACTION} button runs. */
+export const RELOAD_WINDOW_COMMAND = 'workbench.action.reloadWindow'
+/** What Set Up AI Chat answers in a Windows Devin Desktop window, where Devin's skill folder and the editor itself are unchecked (Cycle 0143, decision D6). */
+export const DEVIN_WINDOWS_UNSUPPORTED_SENTENCE =
+  'Devin Desktop setup on Windows is not supported yet.'
+/** What a Devin Desktop window says after it brought Codebook's MCP entry to this installation (an update moved the bridge, or the configured Node changed): Devin Local runs the new entry only after a reload. */
+export const DEVIN_ENTRY_REFRESHED_SENTENCE =
+  'Codebook updated its MCP server entry for Devin Local to this installation. Reload this window so Devin Local starts the updated server.'
+/** What a Devin Desktop window says after it brought Codebook's MCP entry to this installation while Devin's Customize keeps the entry turned off: a reload alone starts no server for it. */
+export const DEVIN_ENTRY_REFRESHED_DISABLED_SENTENCE =
+  "Codebook updated its MCP server entry for Devin Local to this installation, but the codebook server is turned off in Devin's Customize. Turn it on there, then reload this window so Devin Local starts the updated server."
+/** The Output line of a Devin Desktop window whose setup was removed (from another window): it reconnects nothing and writes no file until Set Up AI Chat runs again. */
+export const DEVIN_SETUP_REMOVED_LINE =
+  "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again."
+/** The modal question of Remove Devin Desktop Setup: the skill and the MCP config are shared by every Devin Desktop window of this user. */
+export const DEVIN_REMOVAL_QUESTION =
+  "Remove the Codebook-owned Devin Desktop skill and Codebook's entry in Devin's MCP config? Every Devin Desktop window of this user shares them."
+/** The confirming button of {@link DEVIN_REMOVAL_QUESTION}. */
+export const DEVIN_REMOVAL_ACTION = 'Remove Devin setup'
 /** The longest any run of any kind and host can last ({@link longestWikiRunMs}): a VS Code generation's chat opening plus its bound. A marker file whose kind cannot be read counts this long, never the update's shorter bound. Written from the raw bounds here because the helpers that name each bound read this module; `wikiRunBoundMs.test.ts` pins it against {@link longestWikiRunMs} over every kind and host, so a changed bound that this list misses fails there. */
 export const LONGEST_WIKI_RUN_MS = Math.max(
   WIKI_GENERATE_TIMEOUT_MS,

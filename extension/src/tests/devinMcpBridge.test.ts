@@ -1,0 +1,1181 @@
+import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  symlink,
+  unlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
+import {
+  createServer,
+  request,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http'
+import {
+  createServer as createNetServer,
+  type AddressInfo,
+  type Server as NetServer,
+} from 'node:net'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { test } from 'node:test'
+import { promisify } from 'node:util'
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { z } from 'zod'
+
+import { runCursorMcpBridge } from '../cursorMcpBridge'
+import type * as DevinMcpBridgeModule from '../devinMcpBridge'
+import {
+  devinDescriptorExpectation,
+  runDevinMcpBridge,
+  selectDevinDescriptor,
+} from '../devinMcpBridge'
+import { startServer } from '../server'
+import { currentStorageOwner } from '../utils/currentStorageOwner'
+
+import { createHarness } from './helpers'
+import { loadModule } from './utils/loadModule'
+import { removeTestFolder } from './utils/removeTestFolder'
+import { startOfKilledWindow } from './utils/startOfKilledWindow'
+
+const FAST = { timeoutMs: 300, intervalMs: 20 }
+const IDS = [
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
+  '33333333-3333-4333-8333-333333333333',
+]
+
+/** Makes an agent folder and workspace folders that are removed when the test ends. */
+async function createFolders(context: {
+  after: (callback: () => Promise<void>) => void
+}) {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-')),
+  )
+  context.after(() => removeTestFolder(root))
+  const agentDir = join(root, 'agent'),
+    workspace = join(root, 'workspace'),
+    otherWorkspace = join(root, 'other')
+  await mkdir(agentDir)
+  await mkdir(workspace)
+  await mkdir(otherWorkspace)
+  return { agentDir, workspace, otherWorkspace }
+}
+
+/**
+ * Writes one descriptor with fake values that names this machine as its owner; `overrides` replace any field.
+ * The default descriptor is the one a Devin Desktop window with AI chat set up writes: a loopback url and `devinChat: true`.
+ */
+async function writeDescriptor(
+  agentDir: string,
+  index: number,
+  workspace: string,
+  pid: number,
+  overrides: Record<string, unknown> = {},
+): Promise<string> {
+  const path = join(agentDir, `${IDS[index]}.connection.json`)
+  await writeFile(
+    path,
+    JSON.stringify({
+      url: 'http://127.0.0.1:1/mcp',
+      token: 'fake-test-value',
+      instanceId: IDS[index],
+      workspace,
+      apiVersion: '1.0',
+      pid,
+      ...(await currentStorageOwner()),
+      devinChat: true,
+      ...overrides,
+    }),
+    { mode: 0o600 },
+  )
+  return path
+}
+
+/** Runs the bridge in this process and returns what it wrote to stderr, its exit code and how long it took. */
+async function runCapturingStderr(
+  agentDir: string,
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  options: { timeoutMs?: number; intervalMs?: number },
+) {
+  const lines: string[] = [],
+    originalWrite = process.stderr.write.bind(process.stderr),
+    originalExitCode = process.exitCode
+  process.stderr.write = (chunk: string) => {
+    lines.push(chunk)
+    return true
+  }
+  let exitCode: typeof process.exitCode
+  try {
+    await runDevinMcpBridge(agentDir, workspace, env, options)
+    exitCode = process.exitCode
+  } finally {
+    process.stderr.write = originalWrite
+    process.exitCode = originalExitCode
+  }
+  return { lines, exitCode }
+}
+
+/** Starts a loopback HTTP server that is closed, with its open connections, when the test ends. */
+async function listen(
+  context: { after: (callback: () => Promise<void>) => void },
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<{ server: Server; port: number }> {
+  const server = createServer(handler)
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  context.after(
+    () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections()
+        server.close(() => resolve())
+      }),
+  )
+  return { server, port: (server.address() as AddressInfo).port }
+}
+
+/** Forwards one request to the loopback port of a real Codebook endpoint. */
+function forward(
+  port: number,
+  incoming: IncomingMessage,
+  outgoing: ServerResponse,
+): void {
+  const upstream = request(
+    {
+      host: '127.0.0.1',
+      port,
+      path: incoming.url,
+      method: incoming.method,
+      // The real endpoint answers only its own host name.
+      headers: { ...incoming.headers, host: `127.0.0.1:${port}` },
+    },
+    (answer) => {
+      outgoing.writeHead(answer.statusCode ?? 502, answer.headers)
+      answer.pipe(outgoing)
+    },
+  )
+  incoming.pipe(upstream)
+}
+
+/** Starts the bridge entry as Devin Desktop does and connects an MCP client to it. */
+async function connectThroughBridge(
+  root: string,
+  cwd: string,
+  context: { after: (callback: () => Promise<void>) => void },
+): Promise<Client> {
+  const client = new Client({ name: 'devin-bridge-test', version: '1.0' })
+  context.after(() => client.close())
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(__dirname, '../devinMcpBridgeEntry.js'), root],
+    cwd,
+    env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+    stderr: 'pipe',
+  })
+  await client.connect(transport, { timeout: 10_000 })
+  return client
+}
+
+/** Reads the instance id the connected Codebook answers in its status. */
+async function statusInstanceId(client: Client): Promise<string> {
+  const status = await client.callTool({
+    name: 'codebook_status',
+    arguments: {},
+  })
+  return z
+    .object({ data: z.object({ instanceId: z.string() }) })
+    .parse(status.structuredContent).data.instanceId
+}
+
+// Value: protects=the Devin bridge connecting to its own window's instance among several; fails_when=the selection takes the first descriptor instead of the one with this workspace and extension host pid; no_claim=a real MCP connection
+test('the bridge selects the descriptor of this workspace and extension host among several', async (context) => {
+  // Arrange
+  const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, otherWorkspace, process.pid)
+  await writeDescriptor(agentDir, 1, workspace, process.pid + 1)
+  const expected = await writeDescriptor(agentDir, 2, workspace, process.pid)
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  // Assert
+  assert.equal(selection?.descriptorPath, expected)
+  assert.equal(selection.instanceId, IDS[2])
+  assert.equal(selection.workspace, workspace)
+})
+
+// Value: protects=two Devin windows on different folders never sharing a Codebook instance; fails_when=a descriptor of another workspace is selected; no_claim=symlinked workspaces
+test('the bridge ignores a descriptor of another workspace', async (context) => {
+  // Arrange
+  const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, otherWorkspace, process.pid)
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  // Assert
+  assert.equal(selection, undefined)
+})
+
+// Value: protects=two windows of one folder keeping their own instances; fails_when=a descriptor of another extension host pid is selected; no_claim=pid reuse
+test('the bridge ignores a descriptor of another extension host process', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid + 1)
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  // Assert
+  assert.equal(selection, undefined)
+})
+
+// protects: this window's connection when another window's stale descriptor points at a mount that never answers / fails_when: selection resolves every descriptor's workspace before judging its pid, so the hanging lookup stalls past the deadline / no_claim: a real MCP connection
+test(
+  'a stale descriptor of another window on a hanging mount does not stall this window selection',
+  { timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+    const ownPath = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    await writeDescriptor(agentDir, 1, otherWorkspace, process.pid + 1)
+    const resolvedPaths: string[] = []
+    const resolveWorkspace = (path: string): Promise<string> => {
+      resolvedPaths.push(path)
+      // The other window's mount never answers.
+      if (path === otherWorkspace) return new Promise<string>(() => undefined)
+      return Promise.resolve(path)
+    }
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { ...FAST, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, ownPath)
+    assert.deepEqual(resolvedPaths, [workspace, workspace])
+  },
+)
+
+// protects: the startup deadline of selection against a same-window descriptor whose workspace never answers / fails_when: the lookup is not bounded by the remaining budget, so the newer hanging descriptor blocks the healthy one / no_claim: which descriptor wins when both answer
+test(
+  'a same-window descriptor whose workspace never answers is skipped for the healthy one',
+  { timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 1, otherWorkspace, process.pid)
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+    )
+    const resolveWorkspace = (path: string): Promise<string> =>
+      path === otherWorkspace
+        ? new Promise<string>(() => undefined)
+        : Promise.resolve(path)
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 600, intervalMs: 20, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, healthyPath)
+  },
+)
+
+// Value: protects=a bridge started before Codebook finishes activating; fails_when=selection gives up at the first look instead of polling; no_claim=the default 15 s limit
+test('the bridge finds a descriptor written 600 ms after it started', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  const late = new Promise<string>((resolve) =>
+    setTimeout(
+      () => resolve(writeDescriptor(agentDir, 0, workspace, process.pid)),
+      600,
+    ),
+  )
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    { timeoutMs: 3_000, intervalMs: 50 },
+  )
+  // Assert
+  assert.equal(selection?.descriptorPath, await late)
+})
+
+// Value: protects=the fixed recovery message and failing exit of a bridge with no instance; fails_when=the line changes, the exit code stays 0, or more than one line is written; no_claim=the 15 s default wait
+test('the bridge reports the recovery line and exit code 1 when no instance matches', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  // Act
+  const { lines, exitCode } = await runCapturingStderr(
+    agentDir,
+    workspace,
+    { WINDSURF_EXT_HOST_PID: '10' },
+    FAST,
+  )
+  // Assert
+  assert.equal(exitCode, 1)
+  assert.deepEqual(lines, [
+    `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
+  ])
+})
+
+// Value: protects=a Devin window never talking to another window's Codebook of the same folder; fails_when=a bridge without WINDSURF_EXT_HOST_PID still connects to the one workspace match instead of refusing; no_claim=the 15 s default wait
+test('without a window identity the bridge refuses with that line', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid)
+  // Act
+  const { lines, exitCode } = await runCapturingStderr(
+    agentDir,
+    workspace,
+    {},
+    FAST,
+  )
+  // Assert
+  assert.equal(exitCode, 1)
+  assert.deepEqual(lines, [
+    'Codebook cannot tell which Devin Desktop window started this bridge: WINDSURF_EXT_HOST_PID is not set. Reload the window; if this stays, Devin Desktop changed how it starts MCP servers.\n',
+  ])
+})
+
+// Value: protects=a Devin window connecting to its own fresh instance, not to the descriptor a crashed window left under the same extension host pid; fails_when=the first descriptor of the workspace and pid is taken without asking whether its owner still runs, so the bridge connects to a dead url; why_new=pid reuse after a crash or reboot; seam=this machine's identity (the stale descriptor names this running process with an earlier start)
+test('the bridge skips the descriptor of a crashed window and waits for the fresh one', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    processStart: startOfKilledWindow(),
+  })
+  const fresh = new Promise<string>((resolve) =>
+    setTimeout(
+      () => resolve(writeDescriptor(agentDir, 1, workspace, process.pid)),
+      100,
+    ),
+  )
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    { timeoutMs: 3_000, intervalMs: 20 },
+  )
+  // Assert
+  assert.equal(selection?.descriptorPath, await fresh)
+  assert.equal(selection.instanceId, IDS[1])
+})
+
+// Value: protects=the three launches of one window choosing the same instance; fails_when=several live descriptors of one workspace and pid resolve by the folder's listing order instead of by newest file time; why_new=a known pid used to return the first match; seam=none (file times set with utimes)
+test('the bridge resolves two live descriptors of one window to the newest one whatever the creation order', async (context) => {
+  // Arrange: two folders with the same two descriptors; the newer file time sits on the first in one folder and on the second in the other.
+  const newestIsFirst = await createFolders(context),
+    newestIsSecond = await createFolders(context)
+  const picked: string[] = []
+  for (const [folders, isFirstNewer] of [
+    [newestIsFirst, true],
+    [newestIsSecond, false],
+  ] as const) {
+    const { agentDir, workspace } = folders
+    const firstPath = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const secondPath = await writeDescriptor(
+      agentDir,
+      1,
+      workspace,
+      process.pid,
+    )
+    const newer = new Date(2_000_000),
+      older = new Date(1_000_000)
+    await utimes(
+      firstPath,
+      isFirstNewer ? newer : older,
+      isFirstNewer ? newer : older,
+    )
+    await utimes(
+      secondPath,
+      isFirstNewer ? older : newer,
+      isFirstNewer ? older : newer,
+    )
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    picked.push(selection?.instanceId ?? 'none')
+  }
+  // Assert
+  assert.deepEqual(picked, [IDS[0], IDS[1]])
+})
+
+/** Builds the url a descriptor names from its parts, so each test names the one part that differs. */
+function descriptorUrl(scheme: string, host: string, path: string): string {
+  return `${scheme}://${host}:4100${path}`
+}
+
+for (const url of [
+  descriptorUrl('http', 'example.com', '/mcp'),
+  descriptorUrl('https', '127.0.0.1', '/mcp'),
+  descriptorUrl('http', '127.0.0.1', '/other'),
+  descriptorUrl('http', 'user@127.0.0.1', '/mcp'),
+  descriptorUrl('http', 'localhost.example.com', '/mcp'),
+]) {
+  // Value: protects=the descriptor's bearer token staying on this machine's Codebook endpoint; fails_when=a descriptor whose url is not http on a loopback host with the path /mcp is selected, so the bridge would send its token to that url; why_new=a planted or edited descriptor in a shared agent folder; seam=none
+  test(`the bridge never selects a descriptor whose url is ${url}`, async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 0, workspace, process.pid, { url })
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    // Assert
+    assert.equal(selection, undefined)
+  })
+}
+
+for (const url of [
+  descriptorUrl('http', 'localhost', '/mcp'),
+  descriptorUrl('http', '[::1]', '/mcp'),
+]) {
+  // Value: protects=a Devin window whose Codebook listens on another loopback spelling still connecting; fails_when=the loopback check accepts 127.0.0.1 only; why_new=B1's loopback allowlist; seam=none
+  test(`the bridge selects a descriptor whose url is ${url}`, async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const expected = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+      { url },
+    )
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, expected)
+  })
+}
+
+// Value: protects=the descriptor's bearer token never reaching a listener a descriptor of this window names outside Codebook's /mcp path; fails_when=the bridge connects to that url; why_new=B1 end to end through the running bridge; seam=a loopback listener that counts requests
+test('the bridge sends nothing to a loopback listener whose path is not /mcp', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  let requests = 0
+  const { port } = await listen(context, (_request, response) => {
+    requests += 1
+    response.end()
+  })
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    url: `http://127.0.0.1:${port}/other`,
+  })
+  // Act
+  const { exitCode } = await runCapturingStderr(
+    agentDir,
+    workspace,
+    { WINDSURF_EXT_HOST_PID: String(process.pid) },
+    FAST,
+  )
+  // Assert
+  assert.equal(exitCode, 1)
+  assert.equal(requests, 0)
+})
+
+// Value: protects=the descriptor's bearer token never reaching a url a descriptor was swapped to after the bridge selected it; fails_when=the transport reopens the selected path and connects to whatever url it holds then; why_new=Codex P1 time-of-check gap between selection and connect (Cycle 0143 B1); seam=selectDevinDescriptor, a rewrite of the file, then runCursorMcpBridge on the selected path against a loopback listener that counts requests
+// Windows reports 0o666 for every file, so the private-file check refuses before the url check this test reaches.
+test(
+  'a descriptor swapped to another url after its selection never receives the token',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let requests = 0
+    const { port } = await listen(context, (_request, response) => {
+      requests += 1
+      response.end()
+    })
+    await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${port}/other`,
+    })
+    // Act
+    const outcome = runCursorMcpBridge(selection.descriptorPath, 2_000)
+    // Assert
+    await assert.rejects(outcome, /not a loopback endpoint/)
+    assert.equal(requests, 0)
+  },
+)
+
+for (const [change, overrides] of [
+  ['loses devinChat', { devinChat: undefined }],
+  ['names another instance', { instanceId: IDS[2] }],
+  ['names another extension host process', { pid: process.pid + 1 }],
+] as const) {
+  // Value: protects=a Devin window connecting only with the descriptor its selection validated; fails_when=the connection reads the path again and accepts whatever descriptor it holds then, so a removed AI chat setup or another instance's descriptor receives the token and requests; why_new=time-of-check gap between selection and connect (Cycle 0143 /ship pass 2 E1); seam=selectDevinDescriptor, a rewrite of the file, then runCursorMcpBridge with the selection's expectation against a loopback listener that counts requests
+  // Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
+  test(
+    `a descriptor that ${change} after its selection never receives a request`,
+    { skip: process.platform === 'win32' },
+    async (context) => {
+      // Arrange
+      const { agentDir, workspace } = await createFolders(context)
+      let requests = 0
+      const { port } = await listen(context, (_request, response) => {
+        requests += 1
+        response.end()
+      })
+      const url = `http://127.0.0.1:${port}/mcp`
+      await writeDescriptor(agentDir, 0, workspace, process.pid, { url })
+      const selection = await selectDevinDescriptor(
+        agentDir,
+        workspace,
+        process.pid,
+        FAST,
+      )
+      assert.ok(selection)
+      await writeDescriptor(agentDir, 0, workspace, process.pid, {
+        url,
+        ...overrides,
+      })
+      // Act
+      const outcome = runCursorMcpBridge(
+        selection.descriptorPath,
+        2_000,
+        devinDescriptorExpectation(selection, process.pid, workspace),
+      )
+      // Assert
+      await assert.rejects(outcome, /changed after it was selected/)
+      assert.equal(requests, 0)
+    },
+  )
+}
+
+// Value: protects=the Devin bridge naming exactly what its selection matched to the shared connection; fails_when=the expectation drops the instance id, the extension host pid, the workspace real path or devinChat, so a descriptor of another window passes the second read; why_new=the expectation is the only link between selection and connection (Cycle 0143 /ship pass 2 E1); seam=none
+test('the expectation of a selection names its instance, pid, workspace and devinChat', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 1, workspace, process.pid)
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  assert.ok(selection)
+  // Act
+  const expectation = devinDescriptorExpectation(selection, 4242, workspace)
+  // Assert
+  assert.deepEqual(expectation, {
+    instanceId: IDS[1],
+    pid: 4242,
+    workspace,
+    devinChat: true,
+    url: 'http://127.0.0.1:1/mcp',
+  })
+})
+
+// Value: protects=the descriptor scan never blocking Devin's launch on a named pipe an agent folder can hold; fails_when=the descriptor is opened for reading without checking it is a regular file, so the scan waits for a writer forever; why_new=B2 hostile file in a shared agent folder; seam=a real FIFO made with mkfifo
+test(
+  'a named pipe in the agent folder does not block the scan',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    await promisify(execFile)('mkfifo', [
+      join(agentDir, `${IDS[0]}.connection.json`),
+    ])
+    const expected = await writeDescriptor(agentDir, 1, workspace, process.pid)
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, expected)
+  },
+)
+
+// Value: protects=the bridge never reading a descriptor through a link; fails_when=a link named like a descriptor is followed to a file elsewhere; why_new=B2 link planted in a shared agent folder; seam=a real symlink
+test(
+  'a link named like a descriptor is skipped',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const target = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const linkDir = join(agentDir, '..', 'linked')
+    await mkdir(linkDir)
+    await symlink(target, join(linkDir, `${IDS[1]}.connection.json`))
+    // Act
+    const selection = await selectDevinDescriptor(
+      linkDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    // Assert
+    assert.equal(selection, undefined)
+  },
+)
+
+// Value: protects=the descriptor scan reading only a few hundred bytes per file; fails_when=a descriptor larger than 65536 bytes is parsed; why_new=B2 size cap before parsing; seam=a valid descriptor padded with an extra field
+test('a descriptor larger than the size cap is skipped', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    padding: 'x'.repeat(70_000),
+  })
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  // Assert
+  assert.equal(selection, undefined)
+})
+
+// Value: protects=a shared home folder never leading the bridge to another computer's Codebook; fails_when=a descriptor naming another machine as its owner is selected; why_new=B3 foreign owner; seam=a descriptor with another host name and boot
+test('the bridge skips a descriptor whose owner is another machine', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    hostname: 'another-workstation',
+    machineId: undefined,
+    machineKey: undefined,
+    hostKey: undefined,
+    boot: { id: 'another-boot' },
+    processStart: undefined,
+  })
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  // Assert
+  assert.equal(selection, undefined)
+})
+
+// Value: protects=a descriptor that names no machine never being taken for this machine's; fails_when=a descriptor without any owner field is selected; why_new=B3 unknown owner; seam=a descriptor of a build that records the process id alone
+test('the bridge skips a descriptor that names no machine', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    hostname: undefined,
+    machineId: undefined,
+    machineKey: undefined,
+    hostKey: undefined,
+    boot: undefined,
+    processStart: undefined,
+  })
+  // Act
+  const selection = await selectDevinDescriptor(
+    agentDir,
+    workspace,
+    process.pid,
+    FAST,
+  )
+  // Assert
+  assert.equal(selection, undefined)
+})
+
+// Value: protects=the startup deadline of a bridge whose server accepts a connection and never answers; fails_when=the first connection waits for the SDK's 60 s request timeout instead of the remaining startup budget; why_new=B4 unbounded connect; seam=a loopback listener that never answers
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge gives up on a server that never answers within its startup deadline',
+  { skip: process.platform === 'win32', timeout: 15_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let initializeRequests = 0
+    const { port } = await listen(context, (incoming) => {
+      if (incoming.method === 'POST') initializeRequests += 1
+      // The request is held open on purpose.
+    })
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${port}/mcp`,
+    })
+    // Act
+    const { exitCode } = await runCapturingStderr(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 1_500, intervalMs: 20 },
+    )
+    // Assert
+    // The server was reached, so exit code 1 is the deadline and not a refusal before any request.
+    assert.equal(initializeRequests >= 1, true)
+    assert.equal(exitCode, 1)
+  },
+)
+
+// Value: protects=a Devin window reaching Codebook while the server's sessions are full for a moment (three bridges start at window load); fails_when=an HTTP 429 drops the descriptor instead of asking the same one again; why_new=B5 transient 429; seam=a loopback proxy that answers 429 twice, then forwards to a real Codebook endpoint
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge asks again after an HTTP 429 and connects',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+    let answers = 0
+    const { port } = await listen(context, (incoming, outgoing) => {
+      answers += 1
+      if (answers <= 2) {
+        outgoing.writeHead(429)
+        outgoing.end()
+      } else forward(upstreamPort, incoming, outgoing)
+    })
+    await writeDescriptor(root, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+  },
+)
+
+// Value: protects=a Devin window whose Codebook server is restarting when the bridge starts; fails_when=a reset or refused connection drops the descriptor so the bridge exits before the server listens again; why_new=B5 transient refusal, made deterministic (Cycle 0143 /ship pass 2 E6); seam=a listener that resets each connection and counts the resets, replaced by a proxy to a real Codebook endpoint on the same port once the first reset was observed
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge keeps asking a refusing server until it listens again',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+    const server = createServer((incoming, outgoing) =>
+      forward(upstreamPort, incoming, outgoing),
+    )
+    context.after(
+      () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections()
+          server.close(() => resolve())
+        }),
+    )
+    // The port is held by a listener that resets every connection; the first observed reset swaps the forwarding server in.
+    let resets = 0,
+      listening: Promise<void> = Promise.resolve()
+    const resetter: NetServer = createNetServer((socket) => {
+      // The reset follows the first bytes of the request: a reset straight after accept makes Node's socket setup throw in the bridge process.
+      socket.once('data', () => {
+        resets += 1
+        socket.resetAndDestroy()
+        if (resets === 1)
+          listening = new Promise<void>((resolve) =>
+            resetter.close(() => server.listen(port, '127.0.0.1', resolve)),
+          )
+      })
+    })
+    await new Promise<void>((resolve) =>
+      resetter.listen(0, '127.0.0.1', resolve),
+    )
+    context.after(
+      () => new Promise<void>((resolve) => resetter.close(() => resolve())),
+    )
+    const port = (resetter.address() as AddressInfo).port
+    await writeDescriptor(root, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    await listening
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+    assert.ok(resets >= 1)
+  },
+)
+
+// Value: protects=a Devin window with two live descriptors of one workspace and pid connecting to the newest at once, with a connection budget that does not shrink to nothing; fails_when=selection waits out the whole selection window for a single descriptor, or the attempt after it gets the 1 ms left of the budget, so a server needing a few hundred milliseconds is never reached; why_new=newest-at-once and the connection floor (Cycle 0143 /ship pass 2 E4); seam=a spawned bridge entry, an older descriptor naming a dead port, a newer one naming a proxy that delays every answer by 400 ms
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge connects to the newest of two live descriptors through a server that answers slowly',
+  { timeout: 30_000, skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+    const { port } = await listen(context, (incoming, outgoing) => {
+      setTimeout(() => forward(upstreamPort, incoming, outgoing), 400)
+    })
+    const writeLive = (index: number, url: string): Promise<string> =>
+      writeDescriptor(root, index, harness.directory, process.pid, {
+        ...endpoint.descriptor,
+        url,
+        instanceId: IDS[index],
+      })
+    const olderPath = await writeLive(0, 'http://127.0.0.1:1/mcp')
+    const newerPath = await writeLive(1, `http://127.0.0.1:${port}/mcp`)
+    await utimes(olderPath, new Date(1_000_000), new Date(1_000_000))
+    await utimes(newerPath, new Date(2_000_000), new Date(2_000_000))
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+  },
+)
+
+// Value: protects=a Devin window without a matching AI chat setup being told so at once; fails_when=a descriptor of this workspace and pid without devinChat true is connected to, or the bridge waits out its deadline, or writes another line; why_new=B6 the descriptor's devinChat field; seam=a loopback listener that counts requests
+test('the bridge refuses with the setup line when the descriptor lacks devinChat', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  let requests = 0
+  const { port } = await listen(context, (_request, response) => {
+    requests += 1
+    response.end()
+  })
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    url: `http://127.0.0.1:${port}/mcp`,
+    devinChat: undefined,
+  })
+  // Act
+  const { lines, exitCode } = await runCapturingStderr(
+    agentDir,
+    workspace,
+    { WINDSURF_EXT_HOST_PID: String(process.pid) },
+    { timeoutMs: 5_000, intervalMs: 20 },
+  )
+  // Assert
+  assert.equal(exitCode, 1)
+  assert.deepEqual(lines, [
+    `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${workspace}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+  ])
+  assert.equal(requests, 0)
+})
+
+// Value: protects=a Devin window whose first matching descriptor fails with a server error still reaching its fresh instance within the startup wait; fails_when=the entry exits at the first failed connection instead of dropping that descriptor and polling on; why_new=a stale descriptor that passes the liveness check; seam=a spawned bridge entry, a loopback listener answering 500 whose first request publishes the fresh descriptor, and a real Codebook endpoint
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'the bridge drops a descriptor whose server fails and connects to the fresh one published after its first attempt',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      root = await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+      )
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    const writeLive = (index: number, url: string): Promise<string> =>
+      writeDescriptor(root, index, harness.directory, process.pid, {
+        ...endpoint.descriptor,
+        url,
+        instanceId: IDS[index],
+      })
+    // The failing instance publishes the fresh one when the bridge first asks it, so the order never depends on a delay.
+    const { port } = await listen(context, (_request, response) => {
+      response.writeHead(500)
+      response.end()
+      void writeLive(1, endpoint.descriptor.url)
+    })
+    await writeLive(0, `http://127.0.0.1:${port}/mcp`)
+    // Act
+    const client = await connectThroughBridge(root, harness.directory, context)
+    // Assert
+    assert.equal(await statusInstanceId(client), endpoint.descriptor.instanceId)
+  },
+)
+
+// Value: protects=the bearer token never reaching another local service when the descriptor's port is rewritten after the selection; fails_when=the connection compares only instance, pid, workspace and devinChat, so a descriptor naming a different loopback port receives the token; why_new=Cycle 0143 /ship cycle 3 H1 exact endpoint url; seam=selectDevinDescriptor, a rewrite of the url's port, then runCursorMcpBridge with the selection's expectation against two loopback listeners that count requests
+// Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
+test(
+  'a descriptor whose port is rewritten after its selection never sends a request to either port',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const requestsByPort = new Map<number, number>()
+    const listenCounting = async (): Promise<number> => {
+      const { port } = await listen(context, (incoming, response) => {
+        const localPort = incoming.socket.localPort ?? 0
+        requestsByPort.set(localPort, (requestsByPort.get(localPort) ?? 0) + 1)
+        response.end()
+      })
+      return port
+    }
+    const selectedPort = await listenCounting()
+    const rewrittenPort = await listenCounting()
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${selectedPort}/mcp`,
+    })
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${rewrittenPort}/mcp`,
+    })
+    // Act
+    const outcome = runCursorMcpBridge(
+      selection.descriptorPath,
+      2_000,
+      devinDescriptorExpectation(selection, process.pid, workspace),
+    )
+    // Assert
+    await assert.rejects(outcome, /changed after it was selected/)
+    assert.equal(requestsByPort.get(selectedPort) ?? 0, 0)
+    assert.equal(requestsByPort.get(rewrittenPort) ?? 0, 0)
+  },
+)
+
+// Value: protects=the bridge never reading an unbounded descriptor at connection time; fails_when=the final read takes a file of any size (the scan's size cap alone does not cover the file read for the connection); why_new=Cycle 0143 /ship cycle 3 H2 bounded final read; seam=runCursorMcpBridge on a descriptor padded past the limit that names a loopback listener counting requests
+// Windows reports 0o666 for every file, so the private-file check refuses before the size check this test reaches.
+test(
+  'a descriptor larger than the size cap is refused before any request at connection time',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let requests = 0
+    const { port } = await listen(context, (_request, response) => {
+      requests += 1
+      response.end()
+    })
+    const path = await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${port}/mcp`,
+      padding: 'x'.repeat(70_000),
+    })
+    // Act
+    const outcome = runCursorMcpBridge(path, 2_000)
+    // Assert
+    await assert.rejects(outcome, /larger than 65536 bytes/)
+    assert.equal(requests, 0)
+  },
+)
+
+// Value: protects=the final descriptor read never waiting on a pipe swapped in after the selection; fails_when=the path is opened for reading without O_NONBLOCK and a handle check, so the bridge waits for a writer that never comes; why_new=Cycle 0143 /ship cycle 3 H2 swap after selection; seam=selectDevinDescriptor, the file replaced by a real FIFO, then runCursorMcpBridge
+test(
+  'a named pipe swapped in at the descriptor path after its selection is refused promptly',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const path = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    await unlink(path)
+    await promisify(execFile)('mkfifo', [path])
+    // Act
+    const outcome = runCursorMcpBridge(
+      path,
+      2_000,
+      devinDescriptorExpectation(selection, process.pid, workspace),
+    )
+    // Assert
+    await assert.rejects(outcome, /not a private regular file/)
+  },
+)
+
+// Value: protects=the final descriptor read never following a link swapped in after the selection; fails_when=the path is opened with link following, so a link to another private descriptor's token is read; why_new=Cycle 0143 /ship cycle 3 H2 swap after selection; seam=selectDevinDescriptor, the file replaced by a symlink to a private descriptor elsewhere, then runCursorMcpBridge against a loopback listener counting requests
+test(
+  'a link swapped in at the descriptor path after its selection is refused before any request',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let requests = 0
+    const { port } = await listen(context, (_request, response) => {
+      requests += 1
+      response.end()
+    })
+    const url = `http://127.0.0.1:${port}/mcp`
+    const path = await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url,
+    })
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      FAST,
+    )
+    assert.ok(selection)
+    const elsewhere = join(agentDir, '..', 'elsewhere')
+    await mkdir(elsewhere)
+    const target = await writeDescriptor(elsewhere, 0, workspace, process.pid, {
+      url,
+    })
+    await unlink(path)
+    await symlink(target, path)
+    // Act
+    const outcome = runCursorMcpBridge(
+      path,
+      2_000,
+      devinDescriptorExpectation(selection, process.pid, workspace),
+    )
+    // Assert
+    await assert.rejects(outcome, /not a private regular file/)
+    assert.equal(requests, 0)
+  },
+)
+
+// Value: protects=the bridge's total time after its startup deadline; fails_when=every remaining matching descriptor gets its own floor-length attempt once the deadline has passed, so three candidates cost three floors; why_new=Cycle 0143 /ship cycle 3 H3 one late attempt in total; seam=runDevinMcpBridge with three descriptors of one window naming a listener that never answers and records when each initialize request arrives
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'after the deadline the bridge starts at most one more connection attempt however many descriptors match',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const startupMs = 2_000,
+      arrivals: number[] = []
+    const { port } = await listen(context, (incoming) => {
+      if (incoming.method === 'POST') arrivals.push(Date.now())
+      // The request is held open on purpose.
+    })
+    for (const index of [0, 1, 2])
+      await writeDescriptor(agentDir, index, workspace, process.pid, {
+        url: `http://127.0.0.1:${port}/mcp`,
+      })
+    // Act
+    const startedAt = Date.now()
+    const { exitCode } = await runCapturingStderr(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: startupMs, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(arrivals.length, 2)
+    const firstArrival = arrivals[0] ?? Number.NaN,
+      secondArrival = arrivals[1] ?? Number.NaN
+    // The bridge's deadline lies at least startupMs after the test started, so the first attempt began before it. gstack-timing-ok: the contract is attempt start times against the deadline.
+    assert.equal(firstArrival - startedAt < startupMs, true)
+    // The deadline lies at most startupMs after the first attempt began, and the second attempt waited out the first one's floor: it began after the deadline. gstack-timing-ok: the contract is attempt start times against the deadline.
+    assert.equal(secondArrival - firstArrival >= startupMs, true)
+  },
+)
+
+// protects: the bridge's own lookup of its working folder spends the startup window, so a mount that never answers cannot hold the bridge before its first selection / fails_when: the bridge awaits the working folder's real path without a bound, so it neither selects nor refuses while the mount hangs / no_claim: how a real mount stops answering
+test(
+  'the bridge refuses within its startup window when its working folder never answers',
+  { timeout: 5_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/realOrSame': {
+          realOrSame: (path: string) =>
+            path === workspace
+              ? new Promise<string>(() => {})
+              : Promise.resolve(path),
+        },
+      },
+    )
+    const lines: string[] = [],
+      originalWrite = process.stderr.write.bind(process.stderr),
+      originalExitCode = process.exitCode
+    process.stderr.write = (chunk: string) => {
+      lines.push(chunk)
+      return true
+    }
+    let exitCode: typeof process.exitCode
+    // Act
+    try {
+      await bridgeModule.runDevinMcpBridge(
+        agentDir,
+        workspace,
+        { WINDSURF_EXT_HOST_PID: String(process.pid) },
+        { timeoutMs: 300, intervalMs: 20 },
+      )
+      exitCode = process.exitCode
+    } finally {
+      process.stderr.write = originalWrite
+      process.exitCode = originalExitCode
+    }
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.deepEqual(lines, [
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
+    ])
+  },
+)

@@ -85,6 +85,7 @@ export async function buildPackage(
         entryPoints: {
           extension: 'extension/dist/extension.js',
           cursorMcpBridge: 'extension/dist/cursorMcpBridgeEntry.js',
+          devinMcpBridge: 'extension/dist/devinMcpBridgeEntry.js',
           // The Wiki reader prepares each page on a worker thread, which loads this file beside the extension's bundle.
           wikiPageWorker: 'extension/dist/wikiPageWorker.js',
           // The Vite adapter spawns the app's dev server through this launcher, which sits beside the extension's bundle.
@@ -151,6 +152,7 @@ export async function buildPackage(
       for (const name of [
         'extension',
         'cursorMcpBridge',
+        'devinMcpBridge',
         'wikiPageWorker',
         'viteLauncher',
       ]) {
