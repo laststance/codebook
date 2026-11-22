@@ -712,8 +712,14 @@ function didUnlink(path: string): Promise<boolean> {
   )
 }
 
-/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode and the size a later look must still see. */
-type InspectedCopy = { sha256: string; ino: bigint; size: bigint }
+/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode, and the size and times (nanoseconds) a later look must still see; an in-place write that keeps inode and size changes the times. */
+type InspectedCopy = {
+  sha256: string
+  ino: bigint
+  size: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
+}
 
 /**
  * Reads a file Codebook keeps a copy in, without following a link.
@@ -744,7 +750,13 @@ async function inspectCopy(
       () => seam?.afterStat?.(path),
     )
     if (!bytes) throw unsaneCopyError()
-    return { sha256: bytesSha256(bytes), ino: status.ino, size: status.size }
+    return {
+      sha256: bytesSha256(bytes),
+      ino: status.ino,
+      size: status.size,
+      mtimeNs: status.mtimeNs,
+      ctimeNs: status.ctimeNs,
+    }
   } finally {
     await file.close()
   }
@@ -1667,12 +1679,20 @@ function isEmptyOrSameFile(configPath: string, copyIno: bigint): boolean {
   return !config || config.ino === copyIno
 }
 
+/** What a later synchronous look must still see at a name: the inode, and when given the size and the times of the last read, so an in-place write that keeps the inode is seen ({@link isLeftoverStill}). */
+type LeftoverLookback = {
+  ino: bigint
+  size?: bigint
+  mtimeNs?: bigint
+  ctimeNs?: bigint
+}
+
 /**
  * Tells whether a leftover's name still shows the file that was checked; called right before each link and unlink of a leftover ({@link tidyLeftover}, {@link putBackDisplaced}, {@link discardDisplaced}), because a sync tool may swap another file in between the first look and the call.
  * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode.
  * @param context - The run; its seam is called around the look.
  * @param path - The leftover's name.
- * @param checked - The inode that was checked and, when the call deletes bytes, the size that was read; a put-back passes no size, because it accepts a recorded file whatever its bytes.
+ * @param checked - The inode that was checked and, when the call deletes bytes, the size (and times) that were read; a put-back passes no size, because it accepts a recorded file whatever its bytes.
  * @returns `true` when the name shows that inode (and size); `false` when it is gone or shows another file.
  * @example
  * if (!isLeftoverStill(context, keptPath, { ino: 42n })) return 'kept'
@@ -1680,14 +1700,16 @@ function isEmptyOrSameFile(configPath: string, copyIno: bigint): boolean {
 function isLeftoverStill(
   context: Context,
   path: string,
-  checked: { ino: bigint; size?: bigint },
+  checked: LeftoverLookback,
 ): boolean {
   context.seam?.beforeLeftoverCheck?.(path)
   const now = lstatSync(path, { bigint: true, throwIfNoEntry: false })
   const isStill =
     now !== undefined &&
     checked.ino === now.ino &&
-    (checked.size === undefined || checked.size === now.size)
+    (checked.size === undefined || checked.size === now.size) &&
+    (checked.mtimeNs === undefined || checked.mtimeNs === now.mtimeNs) &&
+    (checked.ctimeNs === undefined || checked.ctimeNs === now.ctimeNs)
   if (isStill) context.seam?.afterLeftoverCheck?.(path)
   return isStill
 }
@@ -1696,7 +1718,7 @@ function isLeftoverStill(
 function assertLeftoverStill(
   context: Context,
   path: string,
-  checked: { ino: bigint; size?: bigint },
+  checked: LeftoverLookback,
 ): void {
   if (!isLeftoverStill(context, path, checked))
     throw new Error(
@@ -1738,6 +1760,7 @@ function configChangedError(context: Context, leftoverPath: string): Error {
  * @param pending - The pending record; its staged hash names the published bytes.
  * @param ino - The published inode.
  * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
+ * @returns The config as it was read, so the caller can require its size and times unchanged right before the unlink (an in-place rewrite keeps the inode).
  * @throws An error naming `leftoverPath` when the config name shows another inode or other bytes, or is gone.
  * @example
  * await assertConfigStillPublished(context, pending, 42n, keptPath)
@@ -1747,11 +1770,12 @@ async function assertConfigStillPublished(
   pending: Pending,
   ino: bigint,
   leftoverPath: string,
-): Promise<void> {
+): Promise<InspectedCopy> {
   assertConfigStill(context, ino, leftoverPath)
   const config = await inspectCopy(context.path, context.seam)
   if (!config || config.ino !== ino || config.sha256 !== pending.stagedSha256)
     throw configChangedError(context, leftoverPath)
+  return config
 }
 
 /** The error for a put-back whose link produced another inode than the checked one and whose names Codebook cannot attribute: both names stay as they are. */
@@ -1926,14 +1950,15 @@ async function tidyLeftover(
       path,
       phase,
       !config,
-      isSameFileId(expectedIno, copy.ino) || copy.sha256 === expectedSha256,
+      proofOfRecordedCopy(expectedIno, copy, expectedSha256),
+      expectedSha256,
       copy,
     ))
   )
     return
   if (copy.sha256 !== expectedSha256)
     throw new Error('The leftover file differs from what Codebook expected.')
-  assertLeftoverStill(context, path, copy)
+  assertLeftoverStill(context, path, { ino: copy.ino, size: copy.size })
   // Same-size overwrites keep inode and size: hash the file again right before deleting it.
   let lastLook = await inspectCopy(path, context.seam)
   // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
@@ -1941,16 +1966,57 @@ async function tidyLeftover(
   assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
   if (publishedIno !== undefined) {
     // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it, and that read is the last async step.
-    await assertConfigStillPublished(context, pending, publishedIno, path)
+    const publishedLook = await assertConfigStillPublished(
+      context,
+      pending,
+      publishedIno,
+      path,
+    )
     lastLook = await inspectCopy(path, context.seam)
     if (!lastLook) return
     assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
-    // Only synchronous looks follow: the config name first, the displaced name last.
-    assertConfigStill(context, publishedIno, path)
+    // Only synchronous looks follow: the config name first, the displaced name last. The config must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode.
+    assertConfigUnchangedSince(context, publishedLook, path)
   }
-  // The hash came from the open handle; the unlink acts on the name, which must still show that same file.
+  // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
   assertLeftoverStill(context, path, lastLook)
   await unlink(path)
+}
+
+/**
+ * Tells what shows that a displaced file is the one the record names; called by {@link tidyLeftover} before a put-back.
+ * @param recordedIno - The inode the record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @param recordedSha256 - The hash the record holds.
+ * @returns `inode` for the recorded inode, `bytes` for another inode with the recorded bytes, undefined for neither.
+ * @example
+ * proofOfRecordedCopy(recordedIno, copy, recordedSha256) // => 'bytes' after a sync tool replaced the file with the same bytes
+ */
+function proofOfRecordedCopy(
+  recordedIno: RecordedFileId,
+  copy: InspectedCopy,
+  recordedSha256: string | undefined,
+): 'inode' | 'bytes' | undefined {
+  if (isSameFileId(recordedIno, copy.ino)) return 'inode'
+  return copy.sha256 === recordedSha256 ? 'bytes' : undefined
+}
+
+/**
+ * Throws when the config name no longer shows the inode, size and times it had when it was read; called by {@link tidyLeftover} as a synchronous look right before the displaced name is unlinked, because an in-place rewrite keeps the inode.
+ * Limit: a write after this look is not seen.
+ * @param context - The run.
+ * @param look - The config as {@link assertConfigStillPublished} read it.
+ * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
+ * @throws An error naming `leftoverPath` when the config changed.
+ */
+function assertConfigUnchangedSince(
+  context: Context,
+  look: InspectedCopy,
+  leftoverPath: string,
+): void {
+  const { ino, size, mtimeNs, ctimeNs } = look
+  if (!isLeftoverStill(context, context.path, { ino, size, mtimeNs, ctimeNs }))
+    throw configChangedError(context, leftoverPath)
 }
 
 /** Throws when a displaced copy's last read shows other bytes or another inode than the ones Codebook checked; the copy stays untouched. */
@@ -2013,7 +2079,8 @@ async function keepOriginalUnlessPublished(
  * @param path - The displaced name.
  * @param phase - The phase of the pending record.
  * @param isConfigAbsent - Whether nothing stands at the config name.
- * @param isRecordedFile - Whether the displaced file still has the recorded inode or the recorded bytes; a file with neither is never published.
+ * @param proof - What shows the displaced file is the recorded one: `inode` (the recorded inode) or `bytes` (another inode whose bytes equal the recorded hash); undefined when neither, and such a file is never published. When only the bytes prove it, the file is hashed again right before the link, its name is looked at synchronously with the size and times of that hash, and the file at the config name is hashed once more after the link: an in-place write in between is refused and nothing stays published from it.
+ * @param expectedSha256 - The recorded hash of the displaced file.
  * @param copy - What {@link lookAtLeftover} found; its inode is the one that may be linked.
  * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
  * @throws When the link or unlink fails, the name no longer shows the checked file, or the link produced another file.
@@ -2023,11 +2090,18 @@ async function putBackDisplaced(
   path: string,
   phase: Pending['phase'],
   isConfigAbsent: boolean,
-  isRecordedFile: boolean,
+  proof: 'inode' | 'bytes' | undefined,
+  expectedSha256: string | undefined,
   copy: InspectedCopy,
 ): Promise<boolean> {
-  if (phase !== undefined || !isConfigAbsent || !isRecordedFile) return false
-  assertLeftoverStill(context, path, { ino: copy.ino })
+  if (phase !== undefined || !isConfigAbsent || proof === undefined)
+    return false
+  // The bytes were the only proof: hash again, so the sync look right before the link ties the name to what this read saw.
+  const lastLook =
+    proof === 'bytes'
+      ? await rehashBeforeLink(context, path, copy.ino, expectedSha256)
+      : { ino: copy.ino }
+  assertLeftoverStill(context, path, lastLook)
   await link(path, context.path)
   const linked = lstatSync(context.path, {
     bigint: true,
@@ -2035,11 +2109,66 @@ async function putBackDisplaced(
   })
   if (!linked || copy.ino !== linked.ino)
     await undoForeignLink(context, path, linked?.ino)
+  if (proof === 'bytes')
+    await assertLinkedBytes(context, path, copy.ino, expectedSha256)
   // The config name is checked first and the displaced name last, right before the unlink: only the syscall gap after that last look remains.
   assertConfigStill(context, copy.ino, path)
   assertLeftoverStill(context, path, { ino: copy.ino })
   await unlink(path)
   return true
+}
+
+/**
+ * Hashes a displaced file again right before a put-back that rests on its bytes alone; called by {@link putBackDisplaced}.
+ * @param context - The run.
+ * @param path - The displaced name.
+ * @param ino - The inode the first look found.
+ * @param expectedSha256 - The recorded hash.
+ * @returns The inode, size and times of this read, which the synchronous look before the link must still see.
+ * @throws When the file is gone, has another inode or no longer holds the recorded bytes (a writer changed it in place after the first hash); nothing is linked.
+ */
+async function rehashBeforeLink(
+  context: Context,
+  path: string,
+  ino: bigint,
+  expectedSha256: string | undefined,
+): Promise<LeftoverLookback> {
+  const again = await inspectCopy(path, context.seam)
+  if (!again || again.ino !== ino || again.sha256 !== expectedSha256)
+    throw new Error(
+      `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook did not put it back.`,
+    )
+  return {
+    ino: again.ino,
+    size: again.size,
+    mtimeNs: again.mtimeNs,
+    ctimeNs: again.ctimeNs,
+  }
+}
+
+/**
+ * Checks the file that a put-back just linked to the config name: its inode and bytes must still be the checked ones before the private name is retired; called by {@link putBackDisplaced}.
+ * A file that changed in the gap between the last look and the link stays at the private name only: the config name is unlinked again, while it still shows that inode.
+ * Limit: a write after this read is not seen.
+ * @param context - The run.
+ * @param path - The displaced name; it stays.
+ * @param ino - The linked inode.
+ * @param expectedSha256 - The recorded hash.
+ * @throws When the config name shows other bytes or another inode; it names `path`.
+ */
+async function assertLinkedBytes(
+  context: Context,
+  path: string,
+  ino: bigint,
+  expectedSha256: string | undefined,
+): Promise<void> {
+  const published = await inspectCopy(context.path, context.seam)
+  if (published?.ino === ino && published.sha256 === expectedSha256) return
+  if (isLeftoverStill(context, context.path, { ino }))
+    await unlink(context.path).catch(() => undefined)
+  throw new Error(
+    `The private file at ${path} changed while Codebook put it back (another program wrote to it just now), so Codebook took the config name away again and left that file untouched.`,
+  )
 }
 
 /**

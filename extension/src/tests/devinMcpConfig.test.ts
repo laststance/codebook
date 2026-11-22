@@ -11,6 +11,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import {
@@ -2227,6 +2228,84 @@ test('Recovery puts a displaced file with another inode but the recorded bytes b
   })
 })
 
+test('Recovery publishes nothing from a displaced file whose bytes were rewritten in place after they matched the record, and names it', async (context) => {
+  // protects=a displaced file that matched the record by its bytes alone is not linked to the config name after a writer changed it in place; fails_when=the rewritten bytes become the config or the file is not named; no_claim=a write in the syscall gap after the last look; seam=seam.beforeLeftoverCheck rewrites the file in place with the same size before the look that precedes the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const recordedBytes = '{"theme":"dark"}\n'
+  const rewrittenBytes = '{"theme":"evil"}\n'
+  await writeFile(keptPath, recordedBytes)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(recordedBytes),
+  })
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      // The same file, written in place with the same size: the inode stays.
+      writeFileSync(keptPath, rewrittenBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), rewrittenBytes)
+})
+
+test('Recovery takes the config name away again when the displaced file was rewritten in place in the gap before its link, and names the file', async (context) => {
+  // protects=the file linked to the config name is verified (inode and bytes) before the private name is retired, so changed bytes never stay published; fails_when=the rewritten bytes stay at the config name or the private name is deleted; no_claim=a write after the verification read; seam=seam.afterLeftoverCheck rewrites the file in place with the same size right after the last look before the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const recordedBytes = '{"theme":"dark"}\n'
+  const rewrittenBytes = '{"theme":"evil"}\n'
+  await writeFile(keptPath, recordedBytes)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(recordedBytes),
+  })
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      // The same file, written in place with the same size: the inode stays.
+      writeFileSync(keptPath, rewrittenBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), rewrittenBytes)
+})
+
 test('Recovery leaves the config name empty and names a displaced file with another inode and other bytes than the record', async (context) => {
   // protects: a different server definition never becomes Devin's live config after a sync tool replaced the displaced copy / fails_when: a displaced file with neither the recorded inode nor the recorded bytes is linked to the config name / no_claim: the file's permissions, a standing config
   // Arrange
@@ -3469,6 +3548,54 @@ test('A displaced original is kept and named when an editor rewrites the publish
       keptReadCount += 1
       // The first read is recovery's own look; the rewrite lands during the last one.
       if (keptReadCount === 2)
+        writeFileSync(
+          configPath,
+          publishedBytes.replace('codebook', 'codebooX'),
+        )
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal((await stat(configPath)).ino, publishedIno)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test("A displaced original is kept and named when an editor rewrites the published config in place with the same size during the displaced copy's last read", async (context) => {
+  // protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that lands during the displaced copy's final read, after the config was hashed; fails_when=the displaced original is deleted because the final look checks the config's inode alone; no_claim=a rewrite in the syscall gap after the last synchronous look; seam=seam.afterStat rewrites the config in place with other bytes of the same size during the third read of the displaced original
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  await writeConfig(configPath, publishedBytes)
+  // An old modification time keeps the rewrite visible on a file system with coarse timestamps.
+  utimesSync(configPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeFile(keptPath, originalBytes)
+  const publishedIno = (await stat(configPath)).ino
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: publishedIno,
+    stagedSha256: sha256(publishedBytes),
+  })
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      // Reads 1 and 2 are recovery's looks; read 3 follows the config's hash.
+      if (keptReadCount === 3)
         writeFileSync(
           configPath,
           publishedBytes.replace('codebook', 'codebooX'),
