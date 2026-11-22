@@ -839,7 +839,7 @@ export function devinDescriptorExpectation(
  * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
  * @returns The instance id, the endpoint url and the installation id the selection validated.
  * @example
- * bindingOfSelection(selection) // => { instanceId: '1111…', url: 'http://127.0.0.1:4100/mcp', installationId: 'f3b1c0de-…' }
+ * bindingOfSelection(selection) // => { instanceId: '1111…', url: selection.url, installationId: 'f3b1c0de-…' }
  */
 function bindingOfSelection(
   selection: DevinDescriptorSelection,
