@@ -102,6 +102,8 @@ const pendingSchema = z.object({
   keptSha256: z.string().optional(),
   /** Absent while a write or removal is in progress (a displaced config goes back when the config name is empty); `completed` once the config was published or removed (a copy that stays is a leftover, never put back); `handed` once a copy was named to the learner (a refusal or `cleanupFailure`), which later runs never delete, whatever its bytes. */
   phase: z.enum(['completed', 'handed']).optional(),
+  /** Set once a cut-short rollback of this publish was settled ({@link settleRollbackJournal}): the entry it published must be taken back ({@link finishCutShortSetup}), never adopted ({@link settlePending}). It lives here, not in the rollback's journal, because the take-back writes (and may delete) its own journal at that path. Gone once the take-back ended; an older build drops it. */
+  takeBack: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
 type Pending = z.infer<typeof pendingSchema>
@@ -2089,6 +2091,11 @@ async function settlePending(
   retained: Pending | undefined,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
+  // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
+  if (pending.takeBack) {
+    await retirePending(context, retained)
+    return receipt
+  }
   // The record of a removal that took the entry out (a receipt stands, the entry is gone) is what a removal retry reads to answer `removed`: another window's inspection leaves it in place, and the retry or a new setup's own record replaces it.
   if (
     receipt !== undefined &&
@@ -2474,13 +2481,13 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one.
  * @param context - The run.
- * @returns `true` when a journal of this config was settled (a rollback was cut short), so {@link inspect} finishes the take-back instead of adopting the setup's publish record; `false` when there was none.
  * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then.
  * @example
- * await settleRollbackJournal(context) // => true; the original config is back at its path when a rollback was cut short
+ * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
-async function settleRollbackJournal(context: Context): Promise<boolean> {
+async function settleRollbackJournal(context: Context): Promise<void> {
   const rollbackContext = rollbackContextOf(context)
   const pending = await readRecord(
     rollbackContext.pendingPath,
@@ -2489,10 +2496,11 @@ async function settleRollbackJournal(context: Context): Promise<boolean> {
     context.seam,
   )
   // No rollback was cut short, or the journal belongs to another config, which this run does not settle.
-  if (pending?.targetPath !== context.path) return false
+  if (pending?.targetPath !== context.path) return
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
+  await markTakeBackOwed(context)
   await retirePending(
     rollbackContext,
     retainedRecord(
@@ -2502,7 +2510,24 @@ async function settleRollbackJournal(context: Context): Promise<boolean> {
   )
   const [reported] = unsettled
   if (reported) throw unsettledRefusal(rollbackContext, pending.phase, reported)
-  return true
+}
+
+/**
+ * Records in this config's publish record that its entry must be taken back, before {@link settleRollbackJournal} retires the journal that proves the rollback was cut short; so a run that fails later still finds the intent.
+ * @param context - The run.
+ * @example
+ * await markTakeBackOwed(context) // pending.json now holds takeBack: true
+ */
+async function markTakeBackOwed(context: Context): Promise<void> {
+  const publish = await readRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  )
+  // No publish record, or one of another config: nothing of this config to take back.
+  if (publish?.targetPath !== context.path || publish.takeBack) return
+  await writeRecord(context.pendingPath, { ...publish, takeBack: true })
 }
 
 /**
@@ -2577,7 +2602,7 @@ async function inspect(context: Context): Promise<{
   receipt: Receipt | undefined
 }> {
   // A rollback cut short comes first: its original may be the only copy of the learner's other servers.
-  const didSettleRollback = await settleRollbackJournal(context)
+  await settleRollbackJournal(context)
   const pending = await readRecord(
     context.pendingPath,
     pendingSchema,
@@ -2599,10 +2624,9 @@ async function inspect(context: Context): Promise<{
     )
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
-  const afterTakeBack =
-    didSettleRollback && pending
-      ? await finishCutShortSetup(context, pending, stored, retained, look)
-      : undefined
+  const afterTakeBack = pending?.takeBack
+    ? await finishCutShortSetup(context, pending, stored, retained, look)
+    : undefined
   if (afterTakeBack) look = afterTakeBack
   const current = currentEntryOf(look)
   const receipt = await settlePending(

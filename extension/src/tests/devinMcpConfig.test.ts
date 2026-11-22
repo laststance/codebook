@@ -2735,6 +2735,74 @@ test('A refresh after a first setup whose rollback was cut short takes the entry
   )
 })
 
+test('A refresh that fails after settling a cut-short rollback does not let the next refresh turn the failed setup into an installed one', async (context) => {
+  // protects=the take-back of a failed first setup survives a run that failed after the journal was settled; fails_when=the second refresh writes a receipt or leaves the entry in the config; no_claim=the wording of the first refusal; seam=seam.afterMoveAside ends the rollback, seam.afterPublish makes the receipt unwritable, a directory at the receipt path makes its read fail
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  // The first retry settles the journal, then fails reading the receipt (a directory stands there).
+  await assert.rejects(refreshManagedDevinMcpEntry(storage, ENTRY, home))
+  rmSync(receiptPath, { recursive: true })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('A refresh whose take-back of a cut-short setup cannot start refuses, and the next refresh still takes the entry back', async (context) => {
+  // protects=a failed take-back keeps the intent in the publish record until it ends; fails_when=the second refresh adopts the entry (receipt written) or the record keeps takeBack after the take-back ended; no_claim=the wording of the refusal; seam=seam.afterCheck fails the take-back's move-aside, which is before the config moves
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  await assert.rejects(
+    refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: () => {
+        throw new Error('probe failed')
+      },
+    }),
+  )
+  const recordAfterFailure = JSON.parse(readFileSync(pendingPath, 'utf8'))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(recordAfterFailure.takeBack, true)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(pendingPath), false)
+})
+
 test('A refresh after a cut-short rollback never asks to remove the entry by hand when the config cannot be read again', async (context) => {
   // protects=the take-back of a cut-short setup asks for a removal by hand only after it confirmed the entry as its own; fails_when=the refusal says by hand after the config became unreadable or a receipt is written; no_claim=what the link's target holds; seam=seam.afterStat swaps the config for a link during the take-back's first read
   if (process.platform === 'win32') {
