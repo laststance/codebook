@@ -18,7 +18,11 @@ import {
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
 } from './constants'
 import { runCursorMcpBridge } from './cursorMcpBridge'
-import { checkDevinBridgeReceipts } from './utils/checkDevinBridgeReceipts'
+import {
+  checkDevinBridgeReceipts,
+  type DevinBridgeBinding,
+  type DevinBridgeReceiptsAnswer,
+} from './utils/checkDevinBridgeReceipts'
 import { connectionSchema } from './utils/connectionSchema'
 import { currentStorageOwner } from './utils/currentStorageOwner'
 import { isDescriptorOwnerGone } from './utils/evidenceInUseElsewhere'
@@ -829,34 +833,52 @@ export function devinDescriptorExpectation(
 }
 
 /**
+ * Names what the bridge connected for, so its receipts check can tell a setup that was removed from one that was replaced; called by {@link connectOnce} for the first check and for every later one.
+ * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
+ * @returns The instance id, the endpoint url and the installation id the selection validated.
+ * @example
+ * bindingOfSelection(selection) // => { instanceId: '1111…', url: 'http://127.0.0.1:4100/mcp', installationId: 'f3b1c0de-…' }
+ */
+function bindingOfSelection(
+  selection: DevinDescriptorSelection,
+): DevinBridgeBinding {
+  return {
+    instanceId: selection.instanceId,
+    url: selection.url,
+    installationId: selection.devinSetupInstallation,
+  }
+}
+
+/**
  * Runs the receipts check of {@link checkDevinBridgeReceipts} within a time budget; called by {@link connectOnce} before the first connection and by {@link setupCheckBeforeReconnect} before each later one.
  * @param descriptorPath - The selected descriptor, in the agent folder.
+ * @param binding - What the bridge connected for ({@link bindingOfSelection}).
  * @param budgetMs - Longest wait for the check.
- * @returns `true` when the setup stands, `false` when the check answered that it does not, `undefined` when it did not answer in time.
+ * @returns The check's answer; `undefined` when it did not answer in time; `no-answer` when the check itself threw.
  * @example
- * await receiptsStandWithin('/storage/agent/x.connection.json', 3_000) // => true
+ * await receiptsAnswerWithin('/storage/agent/x.connection.json', binding, 3_000) // => { answer: 'stands' }
  */
-function receiptsStandWithin(
+function receiptsAnswerWithin(
   descriptorPath: string,
+  binding: DevinBridgeBinding,
   budgetMs: number,
-): Promise<boolean | undefined> {
+): Promise<DevinBridgeReceiptsAnswer | undefined> {
   return answerWithin(
-    checkDevinBridgeReceipts(descriptorPath).then(
-      (receipts) => receipts.answer === 'stands',
-      () => false,
+    checkDevinBridgeReceipts(descriptorPath, binding).catch(
+      (): DevinBridgeReceiptsAnswer => ({ answer: 'no-answer' }),
     ),
     budgetMs,
   )
 }
 
 /**
- * Writes the not-set-up line to stderr and resolves once the write completed or {@link DEVIN_BRIDGE_REFUSAL_EXIT_MS} passed; called by {@link setupCheckBeforeReconnect} so the bridge's cleanup and exit cannot drop the line.
- * @param line - The full line, with its line break.
+ * Writes a refusal line to stderr and resolves once the write completed or {@link DEVIN_BRIDGE_REFUSAL_EXIT_MS} passed; called by {@link setupCheckBeforeReconnect} so the bridge's cleanup and exit cannot drop the line.
+ * @param line - The full line ({@link notSetUpLine} or {@link replacedLine}), with its line break.
  * @returns Resolves after the write callback, or after the bound when a full stderr pipe never calls it back.
  * @example
- * await writeNotSetUpLine('Codebook is running ...\n')
+ * await writeRefusalLine('Codebook is running ...\n')
  */
-function writeNotSetUpLine(line: string): Promise<void> {
+function writeRefusalLine(line: string): Promise<void> {
   return new Promise((done) => {
     const timer = setTimeout(done, DEVIN_BRIDGE_REFUSAL_EXIT_MS)
     process.stderr.write(line, () => {
@@ -868,30 +890,34 @@ function writeNotSetUpLine(line: string): Promise<void> {
 
 /**
  * Makes the check the bridge runs before it opens a new upstream session after the first one expired; passed by {@link connectOnce} to {@link runCursorMcpBridge}.
- * A removal in another window never unmarks this window's descriptor, so the receipts are read again: when the setup no longer stands the not-set-up line is written to stderr and the exit code is set to 1, and the bridge ends instead of reconnecting.
+ * A removal in another window never unmarks this window's descriptor, so the receipts are read again against what the bridge connected for. When the setup was removed the not-set-up line is written to stderr; when the descriptor now names another instance, endpoint or installation ({@link replacedLine}) that line is written instead. Either sets the exit code to 1, and the bridge ends instead of reconnecting.
  * @param descriptorPath - The selected descriptor, in the agent folder.
+ * @param binding - What the bridge connected for ({@link bindingOfSelection}).
  * @param cwd - The bridge's working folder, named by the refusal line.
  * @returns A check resolving `true` when the setup stands and `false` after it wrote the refusal.
  * @throws From the returned check, when the receipts read does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS}: that request fails and the bridge stays up for the next one.
  * @example
- * await setupCheckBeforeReconnect('/storage/agent/x.connection.json', '/repo')() // => false once the setup was removed
+ * await setupCheckBeforeReconnect('/storage/agent/x.connection.json', binding, '/repo')() // => false once the setup was removed
  */
 function setupCheckBeforeReconnect(
   descriptorPath: string,
+  binding: DevinBridgeBinding,
   cwd: string,
 ): () => Promise<boolean> {
   return async () => {
-    const stands = await receiptsStandWithin(
+    const receipts = await receiptsAnswerWithin(
       descriptorPath,
+      binding,
       DEVIN_BRIDGE_RECONNECT_CHECK_MS,
     )
-    if (stands === undefined)
+    if (receipts === undefined)
       throw new Error('Codebook setup check did not answer in time.')
-    if (!stands) {
-      process.exitCode = 1
-      await writeNotSetUpLine(`${notSetUpLine(cwd)}\n`)
-    }
-    return stands
+    if (receipts.answer === 'stands') return true
+    process.exitCode = 1
+    await writeRefusalLine(
+      `${receipts.answer === 'replaced' ? replacedLine(cwd) : notSetUpLine(cwd)}\n`,
+    )
+    return false
   }
 }
 
@@ -917,15 +943,20 @@ async function connectOnce(
   cwd: string,
 ): Promise<'connected' | 'busy' | 'dropped' | 'not-set-up'> {
   // The last check before an MCP session: the setup the descriptor was marked for must still stand. It is bounded like every other wait: a check that does not answer in time is transient, never a missing setup; one that answered and failed counts like an unmarked descriptor, so the bridge keeps polling until its deadline, then names the missing setup.
-  const receiptsStand = await receiptsStandWithin(
+  const binding = bindingOfSelection(selection)
+  const receipts = await receiptsAnswerWithin(
     selection.descriptorPath,
+    binding,
     Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
   )
-  if (receiptsStand !== true) {
+  if (receipts?.answer !== 'stands') {
     const remaining = deadline - Date.now()
     if (remaining > 0)
       await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
-    return receiptsStand === undefined ? 'busy' : 'not-set-up'
+    // A descriptor that changed since the selection is scanned again; no answer is transient; any other answer is a setup that does not stand.
+    return receipts === undefined || receipts.answer === 'replaced'
+      ? 'busy'
+      : 'not-set-up'
   }
   try {
     await runCursorMcpBridge(
@@ -934,7 +965,7 @@ async function connectOnce(
       expected,
       { name: DEVIN_BRIDGE_HEADER_NAME, value: DEVIN_BRIDGE_HEADER_VALUE },
       onClosed,
-      setupCheckBeforeReconnect(selection.descriptorPath, cwd),
+      setupCheckBeforeReconnect(selection.descriptorPath, binding, cwd),
     )
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
@@ -946,6 +977,16 @@ async function connectOnce(
     await sleep(Math.min(TRANSIENT_RETRY_PAUSE_MS, remaining))
     return 'busy'
   }
+}
+
+/**
+ * The refusal for a connected bridge whose window's setup was replaced by another installation after it connected; written by {@link setupCheckBeforeReconnect}, which then ends the bridge with exit code 1.
+ * @param cwd - The bridge's working folder, as Devin Desktop started it.
+ * @returns One fixed recovery sentence without descriptor contents; it does not say that AI chat is not set up.
+ * @example replacedLine('/repo') // => "Codebook's AI chat setup for /repo changed in this Devin Desktop window after this bridge connected. Reload the window."
+ */
+function replacedLine(cwd: string): string {
+  return `Codebook's AI chat setup for ${cwd} changed in this Devin Desktop window after this bridge connected. Reload the window.`
 }
 
 /**

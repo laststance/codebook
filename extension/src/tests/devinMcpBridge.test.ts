@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   realpath,
   symlink,
   unlink,
@@ -2375,5 +2376,223 @@ test(
     // Assert
     assert.equal(selection?.descriptorPath, newestPath)
     assert.equal(mostOpen, 16)
+  },
+)
+
+/** A connected Devin bridge process behind a proxy the test controls, as {@link startConnectedBridge} starts it. */
+interface ConnectedBridge {
+  /** The global storage folder, the parent of the agent folder. */
+  root: string
+  agentDir: string
+  /** The folder of the window's workspace, the bridge's working folder. */
+  directory: string
+  /** The initialize requests and the other requests that reached the proxy since the bridge connected. */
+  counts: { initializes: number; others: number }
+  /** The status the proxy answers to every request instead of forwarding it; `undefined` forwards. */
+  proxy: { refuseWith: number | undefined }
+  readStderr: () => string
+  /** Resolves with the exit code once the process ended. */
+  exited: Promise<number | null>
+  /** The JSON-RPC messages the bridge wrote to stdout so far. */
+  readMessages: () => Array<{ id?: number }>
+  /** Makes the server forget the bridge's session, so that its next request answers 404 `Unknown MCP session`. */
+  expireSession: () => Promise<void>
+  /** Does the MCP handshake a client makes (request 0 `initialize`, then `initialized`). */
+  handshake: () => void
+  /** Asks `tools/list` as request `id`. */
+  askToolsList: (id: number) => void
+}
+
+/**
+ * Starts the Devin bridge entry against a real Codebook server behind a counting proxy and waits for its connected line; the arrange step of the reconnect tests.
+ * @param context - The test context; its cleanup removes the folders and the servers.
+ * @param preloadSource - Source of a preload script run in the bridge process; none when left out.
+ * @returns The running bridge with the controls of {@link ConnectedBridge}.
+ */
+async function startConnectedBridge(
+  context: { after: (callback: () => Promise<void>) => void },
+  preloadSource?: string,
+): Promise<ConnectedBridge> {
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now),
+    agentDir = await makeLiveAgentFolder(),
+    root = dirname(agentDir)
+  context.after(async () => {
+    await endpoint.close()
+    await harness.close()
+    await removeTestFolder(root)
+  })
+  const counts = { initializes: 0, others: 0 },
+    proxy: ConnectedBridge['proxy'] = { refuseWith: undefined }
+  const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
+  const { port } = await listen(context, (incoming, outgoing) => {
+    incoming.on('data', (chunk: Buffer) => {
+      if (chunk.toString('utf8').includes('"method":"initialize"'))
+        counts.initializes += 1
+      else if (incoming.method === 'POST') counts.others += 1
+    })
+    if (proxy.refuseWith !== undefined) {
+      outgoing.writeHead(proxy.refuseWith)
+      outgoing.end()
+      return
+    }
+    forward(upstreamPort, incoming, outgoing)
+  })
+  await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
+    ...endpoint.descriptor,
+    url: `http://127.0.0.1:${port}/mcp`,
+    instanceId: IDS[0],
+  })
+  const preloadArguments: string[] = []
+  if (preloadSource !== undefined) {
+    const preloadPath = join(root, 'preload.js')
+    await writeFile(preloadPath, preloadSource)
+    preloadArguments.push('--require', preloadPath)
+  }
+  const child = spawn(
+    process.execPath,
+    [
+      ...preloadArguments,
+      join(__dirname, '../devinMcpBridgeEntry.js'),
+      agentDir,
+    ],
+    {
+      cwd: harness.directory,
+      env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      // A process that is still alive here is the failure; it is ended so the test does not hang.
+      timeout: 25_000,
+      killSignal: 'SIGKILL',
+    },
+  )
+  const watcher = watchConnectedLine(child)
+  const exited = new Promise<number | null>((done) => {
+    child.on('exit', (code) => done(code))
+  })
+  let stdout = ''
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8')
+  })
+  await watcher.connected
+  // The connection's own handshake is not counted.
+  counts.initializes = 0
+  counts.others = 0
+  const send = (message: object): void => {
+    child.stdin?.write(`${JSON.stringify(message)}\n`)
+  }
+  return {
+    root,
+    agentDir,
+    directory: harness.directory,
+    counts,
+    proxy,
+    readStderr: watcher.readStderr,
+    exited,
+    readMessages: () =>
+      stdout
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .map((line) =>
+          z.looseObject({ id: z.number().optional() }).parse(JSON.parse(line)),
+        ),
+    expireSession: async (): Promise<void> => {
+      now = SESSION_IDLE_TIMEOUT_MS + 1
+      await endpoint.expire()
+    },
+    handshake: (): void => {
+      send({
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'devin-bridge-test', version: '1.0' },
+        },
+      })
+      send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    },
+    askToolsList: (id): void => {
+      send({ jsonrpc: '2.0', id, method: 'tools/list', params: {} })
+    },
+  }
+}
+
+/**
+ * Rewrites the connection descriptor of the bridge's window so that it names another installation, keeping everything else (the endpoint and the token the bridge connected with).
+ * @param agentDir - The agent folder holding the descriptor.
+ * @param installationId - The installation id the descriptor's mark names from now on.
+ */
+async function markDescriptorFor(
+  agentDir: string,
+  installationId: string,
+): Promise<void> {
+  const descriptorPath = join(agentDir, `${IDS[0]}.connection.json`)
+  const descriptor = z
+    .looseObject({})
+    .parse(JSON.parse(await readFile(descriptorPath, 'utf8')))
+  await writeFile(
+    descriptorPath,
+    JSON.stringify({ ...descriptor, devinSetupInstallation: installationId }),
+    { mode: 0o600 },
+  )
+}
+
+const REPLACING_INSTALLATION_ID = '88888888-8888-4888-8888-888888888888'
+
+// protects=a connected bridge never opening a session with its old endpoint once the window's setup moved to another installation (Cycle 0145 task 5); fails_when=the reconnect check asks about the descriptor as it is now, so installation B's records pass while the bridge reconnects with installation A's endpoint and token; no_claim=the removal of a setup (the not-set-up test above)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose session expired after the window was set up again for another installation ends with the replaced line and opens no new session',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    await markDescriptorFor(bridge.agentDir, REPLACING_INSTALLATION_ID)
+    await writeSetupReceipts(bridge.root, {
+      installationId: REPLACING_INSTALLATION_ID,
+    })
+    // Act
+    bridge.handshake()
+    await bridge.expireSession()
+    bridge.askToolsList(1)
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(
+      bridge
+        .readStderr()
+        .includes(
+          `Codebook's AI chat setup for ${await realpath(bridge.directory)} changed in this Devin Desktop window after this bridge connected. Reload the window.\n`,
+        ),
+      true,
+    )
+    assert.equal(bridge.readStderr().includes('is not set up'), false)
+    assert.equal(bridge.counts.initializes, 0)
+  },
+)
+
+// protects=a connected bridge still reconnecting when its setup stands after the session expired; fails_when=the bound check refuses a descriptor that still names the instance, endpoint and installation the bridge connected for; no_claim=the answer of a changed setup (the test above)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose session expired while its setup still stands opens a new session and answers',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context)
+    // Act
+    bridge.handshake()
+    await bridge.expireSession()
+    bridge.askToolsList(1)
+    const answer = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 1),
+      'the answer to tools/list after the reconnection',
+      20_000,
+      undefined,
+      20,
+    )
+    // Assert
+    assert.equal('result' in answer, true)
+    assert.equal(bridge.counts.initializes, 1)
   },
 )
