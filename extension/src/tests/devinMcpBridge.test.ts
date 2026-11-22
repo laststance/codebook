@@ -52,6 +52,8 @@ import {
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
 import { createHarness } from './helpers'
+import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
+import { defer } from './utils/defer'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
@@ -3541,17 +3543,24 @@ interface ConnectedBridge {
   agentDir: string
   /** The folder of the window's workspace, the bridge's working folder. */
   directory: string
-  /** The initialize requests and the other requests that reached the proxy since the bridge connected. */
-  counts: { initializes: number; others: number }
+  /** The initialize requests and the other requests that reached the proxy since the bridge connected, and the `tools/list` requests per session id. */
+  counts: {
+    initializes: number
+    others: number
+    toolsListBySession: Record<string, number>
+  }
   /** The status the proxy answers to every request instead of forwarding it; `undefined` forwards. */
   proxy: {
     refuseWith: number | undefined
-    /** Called with the JSON-RPC method of every request (empty for a request without one), the count of initializes seen since the bridge connected and the HTTP method (`DELETE` for the session release); resolves the status to answer instead of forwarding it, `undefined` forwards. It may change the disk first. */
+    /** Called with the JSON-RPC method of every request (empty for a request without one), the count of initializes seen since the bridge connected, the HTTP method (`DELETE` for the session release), the request's `mcp-session-id`, whether the bridge already closed the request's connection, and the response; resolves the status to answer instead of forwarding it, `undefined` forwards, `answered` when it wrote (or holds) the response itself. It may change the disk first. */
     decide?: (
       method: string,
       initializesSoFar: number,
       httpMethod: string,
-    ) => Promise<number | undefined>
+      sessionId: string | undefined,
+      isClientGone: () => boolean,
+      outgoing: ServerResponse,
+    ) => Promise<number | 'answered' | undefined>
   }
   readStderr: () => string
   /** Resolves with the exit code once the process ended. */
@@ -3601,19 +3610,32 @@ async function startConnectedBridge(
     await harness.close()
     await removeTestFolder(root)
   })
-  const counts = { initializes: 0, others: 0 },
+  const counts: ConnectedBridge['counts'] = {
+      initializes: 0,
+      others: 0,
+      toolsListBySession: {},
+    },
     proxy: ConnectedBridge['proxy'] = { refuseWith: undefined }
   const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
   const { port } = await listen(context, (incoming, outgoing) => {
+    const sessionHeader = incoming.headers['mcp-session-id'],
+      sessionId = typeof sessionHeader === 'string' ? sessionHeader : undefined
+    let isClientGone = false
+    outgoing.once('close', () => {
+      isClientGone = !outgoing.writableFinished
+    })
     // The request is classified once, on its whole body: one request can arrive in several data events.
     const chunks: Buffer[] = []
     incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
     incoming.on('end', () => {
-      if (
-        Buffer.concat(chunks).toString('utf8').includes('"method":"initialize"')
-      )
-        counts.initializes += 1
+      const body = Buffer.concat(chunks).toString('utf8')
+      if (body.includes('"method":"initialize"')) counts.initializes += 1
       else if (incoming.method === 'POST') counts.others += 1
+      if (body.includes('"method":"tools/list"')) {
+        const key = sessionId ?? 'none'
+        counts.toolsListBySession[key] =
+          (counts.toolsListBySession[key] ?? 0) + 1
+      }
     })
     if (proxy.refuseWith !== undefined) {
       outgoing.writeHead(proxy.refuseWith)
@@ -3629,16 +3651,22 @@ async function startConnectedBridge(
     incoming.on('end', () => {
       const body = Buffer.concat(chunks)
       const method = /"method":"([^"]+)"/.exec(body.toString('utf8'))?.[1]
-      void decide(method ?? '', counts.initializes, incoming.method ?? '').then(
-        (status) => {
-          if (status === undefined) {
-            forward(upstreamPort, incoming, outgoing, body)
-            return
-          }
-          outgoing.writeHead(status)
-          outgoing.end()
-        },
-      )
+      void decide(
+        method ?? '',
+        counts.initializes,
+        incoming.method ?? '',
+        sessionId,
+        () => isClientGone,
+        outgoing,
+      ).then((status) => {
+        if (status === 'answered') return
+        if (status === undefined) {
+          forward(upstreamPort, incoming, outgoing, body)
+          return
+        }
+        outgoing.writeHead(status)
+        outgoing.end()
+      })
     })
   })
   await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
@@ -3681,6 +3709,7 @@ async function startConnectedBridge(
   // The connection's own handshake is not counted.
   counts.initializes = 0
   counts.others = 0
+  counts.toolsListBySession = {}
   const send = (message: object): void => {
     child.stdin?.write(`${JSON.stringify(message)}\n`)
   }
@@ -4362,6 +4391,453 @@ test(
     assert.equal(exitCode, 1)
     assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
     assert.equal(bridge.counts.initializes, 0)
+  },
+)
+
+/**
+ * Source of a preload that holds every setup receipts read of the bridge, once the test armed it (SIGUSR2), until the bridge's stop itself, and marks on stderr when a read is held (`RECEIPT_READ_HELD`), when the stop came (`STOP_SEEN <end|SIGTERM|SIGINT>`) and what the reconnect check answered (`SETUP_CHECK_ANSWERED <true|false>`, `SETUP_CHECK_FAILED`).
+ * Its stop listeners are registered before the bridge's, so a held read continues only after the bridge's own handler ran in the same emit. They also keep a signalled process alive by themselves: only the bridge's own shutdown ends it.
+ */
+const HOLD_RECEIPTS_UNTIL_STOP_PRELOAD = `const fsPromises = require('node:fs/promises')
+const { writeSync } = require('node:fs')
+const cursorBridge = require(${CURSOR_BRIDGE_MODULE_PATH})
+const originalOpen = fsPromises.open
+let isArmed = false
+process.on('SIGUSR2', () => { isArmed = true })
+const stopped = new Promise((done) => {
+  const stopOn = (name) => () => { writeSync(2, 'STOP_SEEN ' + name + '\\n'); done() }
+  process.stdin.once('end', stopOn('end'))
+  process.once('SIGTERM', stopOn('SIGTERM'))
+  process.once('SIGINT', stopOn('SIGINT'))
+})
+fsPromises.open = async (path, ...rest) => {
+  if (isArmed && String(path).endsWith('receipt.json')) {
+    writeSync(2, 'RECEIPT_READ_HELD\\n')
+    await stopped
+  }
+  return originalOpen(path, ...rest)
+}
+const original = cursorBridge.runCursorMcpBridge
+cursorBridge.runCursorMcpBridge = (descriptorPath, timeoutMs, expected, header, onClosed, beforeUpstream, onRefused) =>
+  original(descriptorPath, timeoutMs, expected, header, onClosed,
+    () => beforeUpstream().then(
+      (stands) => { writeSync(2, 'SETUP_CHECK_ANSWERED ' + stands + '\\n'); return stands },
+      (error) => { writeSync(2, 'SETUP_CHECK_FAILED\\n'); throw error }),
+    onRefused)
+`
+
+/** Source of a preload that gives the bridge entry a 60 s startup budget, so the handshake of a reconnect may last far longer than any stop test waits; the entry's `onClosed` is kept. */
+const LONG_STARTUP_BUDGET_PRELOAD = `const bridge = require(${JSON.stringify(resolve(__dirname, '../devinMcpBridge.js'))})
+const original = bridge.runDevinMcpBridge
+bridge.runDevinMcpBridge = (agentDirectory, cwd, env, options) =>
+  original(agentDirectory, cwd, env, { ...options, timeoutMs: 60_000 })
+`
+
+/** How often `part` occurs in `text`, so a test can require a line exactly once. */
+function occurrencesOf(text: string, part: string): number {
+  return text.split(part).length - 1
+}
+
+// Value: protects=no new session for a Devin client that has gone, when stdin closes while the reconnect check reads a setup that stands (Cycle 0146 task 7); fails_when=the check that stands after the end of input still lets the replacement initialize reach the server; no_claim=a removed setup (the 404-during-release tests above), a signal (the guards below)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose stdin closes while its reconnect setup check is reading opens no new session',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(
+      context,
+      HOLD_RECEIPTS_UNTIL_STOP_PRELOAD,
+    )
+    bridge.arm()
+    bridge.handshake()
+    await bridge.expireSession()
+    bridge.askToolsList(1)
+    await waitUntil(
+      () => bridge.readStderr().includes('RECEIPT_READ_HELD'),
+      'the reconnect check reading the receipts',
+      10_000,
+      undefined,
+      10,
+    )
+    // Act
+    bridge.closeStdin()
+    const exitCode = await bridge.exited
+    // Assert
+    // The held check answered that the setup stands, after the stop: a check that timed out before it would prove nothing.
+    assert.match(
+      bridge.readStderr(),
+      /STOP_SEEN end\n[\s\S]*SETUP_CHECK_ANSWERED true\n/,
+    )
+    assert.equal(exitCode, 0)
+    assert.equal(bridge.counts.initializes, 0)
+  },
+)
+
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  // Value: protects=the bridge's own signal handler stopping a Devin bridge whose reconnect check is reading, with no new session (Cycle 0146 task 7 guard; Codex review of v3 for SIGINT); fails_when=the bridge's handler for this signal is gone (the preload's own listener keeps the process alive, so only the bridge's shutdown ends it with code 0) or the check that stands then opens a session; no_claim=end of input (the test above), a removed setup (the guards below)
+  // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+  test(
+    `a connected bridge that gets ${signal} while its reconnect setup check is reading opens no new session and exits with code 0`,
+    { skip: process.platform === 'win32', timeout: 40_000 },
+    async (context) => {
+      // Arrange
+      const bridge = await startConnectedBridge(
+        context,
+        HOLD_RECEIPTS_UNTIL_STOP_PRELOAD,
+      )
+      bridge.arm()
+      bridge.handshake()
+      await bridge.expireSession()
+      bridge.askToolsList(1)
+      await waitUntil(
+        () => bridge.readStderr().includes('RECEIPT_READ_HELD'),
+        'the reconnect check reading the receipts',
+        10_000,
+        undefined,
+        10,
+      )
+      // Act
+      bridge.signal(signal)
+      const exitCode = await bridge.exited
+      // Assert
+      assert.match(
+        bridge.readStderr(),
+        new RegExp(
+          `STOP_SEEN ${signal}\\n[\\s\\S]*SETUP_CHECK_ANSWERED true\\n`,
+        ),
+      )
+      assert.equal(exitCode, 0)
+      assert.equal(bridge.counts.initializes, 0)
+    },
+  )
+}
+
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  for (const check of ['403 refusal', 'reconnect setup'] as const) {
+    // Value: protects=the whole not-set-up line, written once, and exit code 1 of a Devin bridge signalled while a setup check reads a removed setup (Cycle 0146 task 7 guard: the stop's abort keeps this order); fails_when=the signal's cleanup ends the process before the check, or writes the line twice; no_claim=the bridge's own handler for the signal (the preload's listener keeps the process alive, the standing-setup tests above prove the handler)
+    // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+    test(
+      `a connected bridge that gets ${signal} while its ${check} check is reading still writes the whole not-set-up line once and exits with code 1`,
+      { skip: process.platform === 'win32', timeout: 40_000 },
+      async (context) => {
+        // Arrange
+        const bridge = await startConnectedBridge(
+          context,
+          HOLD_RECEIPTS_UNTIL_STOP_PRELOAD,
+        )
+        await writeSetupReceipts(bridge.root, { installed: false }, false)
+        bridge.arm()
+        if (check === '403 refusal') bridge.proxy.refuseWith = 403
+        bridge.handshake()
+        if (check === 'reconnect setup') await bridge.expireSession()
+        bridge.askToolsList(1)
+        await waitUntil(
+          () => bridge.readStderr().includes('RECEIPT_READ_HELD'),
+          'the setup check reading the receipts',
+          10_000,
+          undefined,
+          10,
+        )
+        // Act
+        bridge.signal(signal)
+        const exitCode = await bridge.exited
+        // Assert
+        assert.equal(exitCode, 1)
+        assert.equal(
+          occurrencesOf(
+            bridge.readStderr(),
+            `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(bridge.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+          ),
+          1,
+        )
+        assert.equal(bridge.counts.initializes, 0)
+      },
+    )
+  }
+}
+
+for (const [setup, title] of [
+  [
+    'stands',
+    'a connected bridge whose requests got 404 while it released its old session after the reconnect replays nothing on the new session once stdin closed',
+  ],
+  [
+    'was removed',
+    'a connected bridge whose setup was removed while it released its old session after the reconnect replays nothing once stdin closed and ends with the not-set-up line once',
+  ],
+] as const) {
+  // Value: protects=no replay reaching the server after Devin closed the bridge, for requests that waited for a reconnect, and the not-set-up line of a setup removed meanwhile (Cycle 0146 task 7; Codex reviews of v2 F2 and of v3); fails_when=a waiting request is sent again on the new session after stdin closed, or the stop suppresses that replay without a setup check, so a removed setup ends with exit code 0 and no line; no_claim=a replay before the stop (still sent)
+  // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+  test(
+    title,
+    { skip: process.platform === 'win32', timeout: 40_000 },
+    async (context) => {
+      // Arrange
+      const bridge = await startConnectedBridge(
+        context,
+        bridgeStopMarksPreload(),
+      )
+      const heldToolsLists: Array<() => void> = [],
+        oldRelease = defer<void>()
+      let oldSessionId: string | undefined,
+        heldRelease: { isClientGone: () => boolean } | undefined
+      bridge.proxy.decide = async (
+        method,
+        initializesSoFar,
+        httpMethod,
+        sessionId,
+        isClientGone,
+      ) => {
+        if (method === 'tools/list' && initializesSoFar === 0) {
+          oldSessionId = sessionId
+          const held = defer<void>()
+          heldToolsLists.push(held.resolve)
+          await held.promise
+          return undefined
+        }
+        if (httpMethod === 'DELETE' && sessionId === oldSessionId) {
+          heldRelease = { isClientGone }
+          await oldRelease.promise
+        }
+        return undefined
+      }
+      bridge.handshake()
+      bridge.askToolsList(1)
+      bridge.askToolsList(2)
+      await waitUntil(
+        () => heldToolsLists.length === 2,
+        'both requests held on the old session',
+        10_000,
+        undefined,
+        5,
+      )
+      // The server forgets the session, so both held requests are answered 404 Unknown MCP session when they are forwarded.
+      await bridge.expireSession()
+      // Act
+      // The first 404 opens the new session; the reconnect then waits at the release of the old one.
+      heldToolsLists[0]!()
+      const release = await waitUntil(
+        () => heldRelease,
+        'the release of the old session',
+        10_000,
+        undefined,
+        5,
+      )
+      if (setup === 'was removed')
+        await writeSetupReceipts(bridge.root, { installed: false }, false)
+      // The second 404 arrives while the old session is released, so its request waits for the reconnect.
+      heldToolsLists[1]!()
+      await waitUntil(
+        () => bridge.readStderr().includes('UNKNOWN_SESSION_REJECTED 2\n'),
+        'the second request waiting for the reconnect',
+        10_000,
+        undefined,
+        5,
+      )
+      bridge.closeStdin()
+      await waitUntil(
+        () => bridge.readStderr().includes('STDIN_END_SEEN\n'),
+        'the bridge seeing the end of its input',
+        10_000,
+        undefined,
+        5,
+      )
+      const wasReleasePending = !release.isClientGone()
+      oldRelease.resolve()
+      const exitCode = await bridge.exited
+      // Assert
+      // The release was still pending after stdin closed, so both requests were still waiting for the reconnect then.
+      assert.equal(wasReleasePending, true)
+      assert.equal(exitCode, setup === 'was removed' ? 1 : 0)
+      assert.deepEqual(bridge.counts.toolsListBySession, {
+        [oldSessionId ?? 'none']: 2,
+      })
+      assert.equal(bridge.counts.initializes, 1)
+      assert.equal(
+        occurrencesOf(
+          bridge.readStderr(),
+          `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(bridge.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+        ),
+        setup === 'was removed' ? 1 : 0,
+      )
+    },
+  )
+}
+
+for (const stop of ['stdin closes', 'it gets SIGTERM'] as const) {
+  // Value: protects=a prompt end of a Devin bridge whose client has gone, also while the replacement session's initialize is unanswered (Cycle 0146 task 7; Codex review of v2 F6); fails_when=the stop waits for the replacement handshake, whose budget is the bridge's remaining startup time (60 s here); no_claim=the release of a replacement session the server named (Cursor bridge tests)
+  // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+  test(
+    `a connected bridge ends within 8 seconds when ${stop} while its replacement initialize is unanswered`,
+    { skip: process.platform === 'win32', timeout: 40_000 },
+    async (context) => {
+      // Arrange
+      const bridge = await startConnectedBridge(
+        context,
+        LONG_STARTUP_BUDGET_PRELOAD,
+      )
+      const initializeHeld = defer<void>(),
+        releasedSessions: string[] = []
+      let oldSessionId: string | undefined
+      bridge.proxy.decide = async (
+        method,
+        initializesSoFar,
+        httpMethod,
+        sessionId,
+      ) => {
+        if (method === 'tools/list') oldSessionId = sessionId
+        if (httpMethod === 'DELETE') releasedSessions.push(sessionId ?? 'none')
+        if (method !== 'initialize' || initializesSoFar !== 1) return undefined
+        initializeHeld.resolve()
+        // Never answered.
+        return new Promise<undefined>(() => undefined)
+      }
+      bridge.handshake()
+      await bridge.expireSession()
+      bridge.askToolsList(1)
+      await initializeHeld.promise
+      // Act
+      if (stop === 'stdin closes') bridge.closeStdin()
+      else bridge.signal('SIGTERM')
+      const exitCode = await Promise.race([
+        bridge.exited,
+        new Promise<string>((done) =>
+          setTimeout(() => done('still running'), 8_000),
+        ),
+      ])
+      // Assert
+      assert.equal(exitCode, 0)
+      assert.deepEqual(releasedSessions, [oldSessionId ?? 'none'])
+      assert.equal(bridge.counts.initializes, 1)
+    },
+  )
+}
+
+for (const [change, stop, title] of [
+  [
+    'removed',
+    'stdin closes',
+    'a connected bridge whose stdin closes while its replacement initialize waits, after the setup was removed, ends with the not-set-up line once and exit code 1',
+  ],
+  [
+    'replaced',
+    'stdin closes',
+    'a connected bridge whose stdin closes while its replacement initialize waits, after the setup was replaced, ends with the replaced line once and exit code 1',
+  ],
+  [
+    'removed',
+    'it gets SIGTERM',
+    'a connected bridge that gets SIGTERM while its replacement initialize waits, after the setup was removed, ends with the not-set-up line once and exit code 1',
+  ],
+] as const) {
+  // Value: protects=the refusal line and exit code 1 of a Devin bridge whose replacement handshake a stop cut short after the setup was removed or replaced (Cycle 0146 task 7; Codex review of v2 F1); fails_when=a stop during the handshake ends the bridge with exit code 0 and no line, because the cut handshake is no refusal and no check runs; no_claim=a server 401 or 403 (the reconnect-handshake refusal test above)
+  // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+  test(
+    title,
+    { skip: process.platform === 'win32', timeout: 40_000 },
+    async (context) => {
+      // Arrange
+      const bridge = await startConnectedBridge(context)
+      const initializeHeld = defer<void>()
+      bridge.proxy.decide = async (method, initializesSoFar) => {
+        if (method !== 'initialize' || initializesSoFar !== 1) return undefined
+        // The setup changes after the reconnect check passed, while the new session's initialize waits.
+        if (change === 'replaced') {
+          await markDescriptorFor(bridge.agentDir, REPLACING_INSTALLATION_ID)
+          await writeSetupReceipts(bridge.root, {
+            installationId: REPLACING_INSTALLATION_ID,
+          })
+        } else
+          await writeSetupReceipts(bridge.root, { installed: false }, false)
+        initializeHeld.resolve()
+        // Never answered.
+        return new Promise<undefined>(() => undefined)
+      }
+      bridge.handshake()
+      await bridge.expireSession()
+      bridge.askToolsList(1)
+      await initializeHeld.promise
+      // Act
+      if (stop === 'stdin closes') bridge.closeStdin()
+      else bridge.signal('SIGTERM')
+      const exitCode = await Promise.race([
+        bridge.exited,
+        new Promise<string>((done) =>
+          setTimeout(() => done('still running'), 15_000),
+        ),
+      ])
+      // Assert
+      const directory = await realpath(bridge.directory)
+      assert.equal(exitCode, 1)
+      assert.equal(
+        occurrencesOf(
+          bridge.readStderr(),
+          change === 'replaced'
+            ? `Codebook's AI chat setup for ${directory} changed in this Devin Desktop window after this bridge connected. Reload the window.\n`
+            : `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${directory}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+        ),
+        1,
+      )
+      assert.equal(
+        bridge.readStderr().includes('is not set up'),
+        change === 'removed',
+      )
+      assert.equal(bridge.counts.initializes, 1)
+    },
+  )
+}
+
+// Value: protects=the not-set-up line and exit code 1 of a Devin bridge whose replayed request was being refused (403 headers in, body still arriving) when Devin closed it, after its setup was removed (Cycle 0146 task 7, Codex review of v3); fails_when=the final close turns that request into 'Connection closed', so no refusal check runs and the bridge exits 0 without the line; no_claim=a 403 whose answer was read before the close (the 403-during-release test above)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose replayed request is being refused when stdin closes, after its setup was removed, still ends with the not-set-up line once and exit code 1',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(context, bridgeStopMarksPreload())
+    bridge.proxy.decide = async (
+      method,
+      initializesSoFar,
+      _httpMethod,
+      _sessionId,
+      _isClientGone,
+      outgoing,
+    ) => {
+      if (method !== 'tools/list' || initializesSoFar === 0) return undefined
+      await writeSetupReceipts(bridge.root, { installed: false }, false)
+      // The refusal's headers go out at once; its body never comes.
+      outgoing.writeHead(403, { 'content-type': 'text/plain' })
+      outgoing.flushHeaders()
+      return 'answered'
+    }
+    bridge.handshake()
+    await bridge.expireSession()
+    bridge.askToolsList(1)
+    await waitUntil(
+      () => bridge.readStderr().includes('REFUSAL_HEADERS_SEEN\n'),
+      'the bridge holding the headers of the refused replay',
+      10_000,
+      undefined,
+      5,
+    )
+    // Act
+    bridge.closeStdin()
+    const exitCode = await Promise.race([
+      bridge.exited,
+      new Promise<string>((done) =>
+        setTimeout(() => done('still running'), 15_000),
+      ),
+    ])
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(
+      occurrencesOf(
+        bridge.readStderr(),
+        `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(bridge.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+      ),
+      1,
+    )
   },
 )
 

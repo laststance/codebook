@@ -1,7 +1,7 @@
 /**
  * Runs a step that cannot be cancelled and ends the wait for it the moment an abort signal fires.
  * Why: the managed Cursor skill's verify and deploy run with the start's marker claimed; Stop LLM Wiki Run and a bound must end the start at once, without waiting for a step that may hang (Cycle 0056 task 13).
- * Trigger: the extension wraps the skill step in it; tests wrap stand-ins.
+ * Trigger: the extension wraps the skill step in it; {@link runCursorMcpBridge} runs every upstream handshake under the bridge's shutdown signal, so a bridge whose client has gone stops waiting for a replacement session; tests wrap stand-ins.
  * @param step - Starts the work; it is called once, and not at all when the signal has fired already.
  * @param signal - Ends the wait when it fires.
  * @returns What the step resolved with, when it settled before the signal.
