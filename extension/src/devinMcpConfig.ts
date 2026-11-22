@@ -2167,7 +2167,7 @@ async function rehashBeforeLink(
  * @param path - The displaced name; it stays.
  * @param ino - The linked inode.
  * @param expectedSha256 - The recorded hash.
- * @throws When the config name shows other bytes or another inode; it names `path`.
+ * @throws When the read fails (an I/O error, the size limit) or the config name shows other bytes or another inode; it names `path`. The config name is taken away only while both names still show the linked inode; otherwise both stay and the error says so.
  */
 async function assertLinkedBytes(
   context: Context,
@@ -2175,12 +2175,22 @@ async function assertLinkedBytes(
   ino: bigint,
   expectedSha256: string | undefined,
 ): Promise<void> {
-  const published = await inspectCopy(context.path, context.seam)
+  // Any failure of this read (an I/O error, a file past the size limit) is as unverified as a hash mismatch and takes the same undo.
+  const published = await inspectCopy(context.path, context.seam).catch(
+    () => undefined,
+  )
   if (published?.ino === ino && published.sha256 === expectedSha256) return
-  if (isLeftoverStill(context, context.path, { ino }))
-    await unlink(context.path).catch(() => undefined)
+  // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so.
+  if (
+    !isLeftoverStill(context, context.path, { ino }) ||
+    !isLeftoverStill(context, path, { ino })
+  )
+    throw new Error(
+      `The private file at ${path} could not be checked after Codebook put it back, and the names no longer show the file Codebook linked, so Codebook could not take the config name away again and left both names as they are; ${context.path} may hold a file Codebook did not verify.`,
+    )
+  await unlink(context.path).catch(() => undefined)
   throw new Error(
-    `The private file at ${path} changed while Codebook put it back (another program wrote to it just now), so Codebook took the config name away again and left that file untouched.`,
+    `The private file at ${path} changed or could not be read while Codebook put it back (another program wrote to it just now), so Codebook took the config name away again and left that file untouched.`,
   )
 }
 

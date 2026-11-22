@@ -2306,6 +2306,44 @@ test('Recovery takes the config name away again when the displaced file was rewr
   assert.equal(readFileSync(keptPath, 'utf8'), rewrittenBytes)
 })
 
+test('Recovery takes the config name away again when the displaced file grew past the size limit in the gap before its link, and names the file', async (context) => {
+  // protects=a failing post-link verification (the size limit, not a hash mismatch) takes the same undo, so an unverified file never stays published; fails_when=the grown file stays at the config name or the refusal omits the displaced name; no_claim=what a later recovery does with the kept file; seam=seam.afterLeftoverCheck appends past the limit right after the last look before the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const recordedBytes = '{"theme":"dark"}\n'
+  await writeFile(keptPath, recordedBytes)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(recordedBytes),
+  })
+  let isGrown = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isGrown) return
+      isGrown = true
+      // The same file, appended in place past the 1 MiB limit: the inode stays.
+      appendFileSync(keptPath, ' '.repeat(1_048_576))
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(keptPath), true)
+})
+
 // protects=a removal that finds the entry in the config but no receipt answers that the entry stays, apart from an entry that is absent; fails_when=both read as plain not-managed, so a rollback reports no leftover for an orphaned entry and the retry it advises refuses that entry; no_claim=the rollback line's words
 test('a removal whose receipt is gone but whose entry is still in the config says the entry stays, and one with no config says nothing stays', async (context) => {
   // Arrange
