@@ -12,7 +12,7 @@ import {
   DEVIN_BRIDGE_HEADER_NAME,
   DEVIN_BRIDGE_HEADER_VALUE,
   DEVIN_BRIDGE_RECONNECT_CHECK_MS,
-  DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX,
+  DEVIN_BRIDGE_RECONNECT_CHECKS_HANGING_MAX,
   DEVIN_BRIDGE_REFUSAL_EXIT_MS,
   DEVIN_BRIDGE_SCAN_WAIT_MS,
   DEVIN_CONNECT_FLOOR_MS,
@@ -354,10 +354,10 @@ async function resolveWorkspaceForScan(
   workspace: string,
   scan: ScanContext,
 ): Promise<string | undefined> {
+  // An ended scan neither joins a lookup nor takes a kept answer: its wait would never be given back.
+  if (!scan.isActive) return undefined
   const { state, takenLateAnswers } = scan
-  const late = scan.isActive
-    ? state.lateWorkspaceAnswers.get(workspace)
-    : undefined
+  const late = state.lateWorkspaceAnswers.get(workspace)
   if (late !== undefined) {
     // The next scan takes the kept answer, once; its other candidates read it from the scan.
     state.lateWorkspaceAnswers.delete(workspace)
@@ -386,7 +386,7 @@ async function resolveWorkspaceForScan(
   try {
     return (await answerWithin(lookup, scan.scanDeadline - Date.now()))?.path
   } finally {
-    // An ended scan already gave its waits back when it ended.
+    // A scan that ended while this candidate waited already gave its waits back when it ended.
     if (scan.isActive) adjustWaiting(scan, workspace, -1)
   }
 }
@@ -948,7 +948,7 @@ function writeRefusalLine(line: string): Promise<void> {
  * @param binding - What the bridge connected for ({@link bindingOfSelection}).
  * @param cwd - The bridge's working folder, named by the refusal line.
  * @returns A check resolving `true` when the setup stands and `false` after it wrote the refusal.
- * @throws From the returned check, when {@link DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX} reads already hang unanswered, when the receipts check does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS} or answers `no-answer` (a read failed without telling whether the setup stands): that request fails, no line is written and the bridge stays up for the next one.
+ * @throws From the returned check, when {@link DEVIN_BRIDGE_RECONNECT_CHECKS_HANGING_MAX} check (three file reads) already hangs unanswered, when the receipts check does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS} or answers `no-answer` (a read failed without telling whether the setup stands): that request fails, no line is written and the bridge stays up for the next one.
  * @example
  * await setupCheckBeforeReconnect('/storage/agent/x.connection.json', binding, '/repo')() // => false once the setup was removed
  */
@@ -960,17 +960,17 @@ function setupCheckBeforeReconnect(
   // The timed answer of the receipts read still within its deadline: every request that arrives before the deadline waits on this one result, so a stalled read is started once and costs one timer, however many requests wait on it. After the deadline the answer is dropped, so the next request reads afresh.
   let timedRead: Promise<DevinBridgeReceiptsAnswer | undefined> | undefined,
     ending: Promise<boolean> | undefined,
-    // Raw reads that have not settled: a read cannot be cancelled, so only this many hang at once before a request fails without starting another.
-    outstandingReads = 0
+    // Receipts checks that have not settled (three file reads each): reads cannot be cancelled, so only this many hang at once before a request fails without starting another.
+    hangingChecks = 0
   function startTimedRead(): Promise<DevinBridgeReceiptsAnswer | undefined> {
-    if (outstandingReads >= DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX)
+    if (hangingChecks >= DEVIN_BRIDGE_RECONNECT_CHECKS_HANGING_MAX)
       throw new Error('Codebook setup check did not answer.')
-    outstandingReads += 1
+    hangingChecks += 1
     const read = checkDevinBridgeReceipts(descriptorPath, binding).catch(
       (): DevinBridgeReceiptsAnswer => ({ answer: 'no-answer' }),
     )
     void read.finally(() => {
-      outstandingReads -= 1
+      hangingChecks -= 1
     })
     const timed = answerWithin(read, DEVIN_BRIDGE_RECONNECT_CHECK_MS)
     // The read is shared only until its deadline; a later request starts a new one.

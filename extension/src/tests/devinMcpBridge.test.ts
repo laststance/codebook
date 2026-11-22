@@ -43,6 +43,7 @@ import {
 } from '../devinMcpBridge'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import type { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { readBridgeDescriptor } from '../utils/readBridgeDescriptor'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
@@ -1832,6 +1833,90 @@ test(
   },
 )
 
+// protects=a late real path still being kept for the next scan after a candidate's owner check returned when its scan had already ended (Cycle 0145 last-round review, CodeRabbit final-range G1, Codex structured review, Codex outside voice 9); fails_when=the ended scan's candidate joins the pending lookup and counts as a waiter nothing gives back, so the answer that arrives later is dropped; no_claim=a real mount (stand-ins for the slow lookup and the slow owner check, both released by the test)
+test(
+  'a late real path is still kept after a candidate of an ended scan finished its owner check meanwhile',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const slowFolder = join(agentDir, '..', 'slow-workspace')
+    await writeDescriptor(agentDir, 0, slowFolder, process.pid)
+    const stalledPath = await writeDescriptor(
+      agentDir,
+      1,
+      slowFolder,
+      process.pid,
+    )
+    let isOwnerCheckAnswered = false
+    let releaseSlowLookup = (): void => undefined,
+      releaseOwnerCheck = (): void => undefined
+    const slowGate = new Promise<void>((resolveLater) => {
+      releaseSlowLookup = resolveLater
+    })
+    const ownerCheckGate = new Promise<void>((resolveLater) => {
+      releaseOwnerCheck = resolveLater
+    })
+    const resolveWorkspace = (path: string): Promise<string> =>
+      path === slowFolder
+        ? slowGate.then(() => workspace)
+        : Promise.resolve(path)
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/evidenceInUseElsewhere': {
+          // One candidate's owner check stalls until the test releases it, after its scan ended.
+          isDescriptorOwnerGone: (descriptorPath: string) =>
+            descriptorPath === stalledPath
+              ? ownerCheckGate.then(() => {
+                  isOwnerCheckAnswered = true
+                  return false
+                })
+              : Promise.resolve(false),
+        },
+      },
+    )
+    const state = bridgeModule.createDevinSelectState()
+    const options = {
+      timeoutMs: 1_100,
+      intervalMs: 20,
+      resolveWorkspace,
+      state,
+    }
+    const first = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    await waitUntil(
+      () => state.waitingScans.get(slowFolder) === 0,
+      "the first selection's scan giving up its wait",
+      5_000,
+    )
+    // Act
+    // The ended scan's candidate finishes its owner check while the slow lookup is still pending.
+    releaseOwnerCheck()
+    await waitUntil(
+      () => isOwnerCheckAnswered,
+      "the stalled candidate's owner check answering",
+      5_000,
+    )
+    // The candidate's remaining steps up to its workspace step are microtasks, which all run before this macrotask.
+    await new Promise((resolveLater) => setImmediate(resolveLater))
+    releaseSlowLookup()
+    await waitUntil(
+      () => state.lateWorkspaceAnswers.get(slowFolder),
+      'the late real path being kept for the next scan',
+      5_000,
+    )
+    // Assert
+    assert.equal(first, undefined)
+    assert.equal(state.lateWorkspaceAnswers.get(slowFolder), workspace)
+    assert.equal(state.waitingScans.get(slowFolder), 0)
+  },
+)
+
 // protects=a late real path being kept when the scan that waited for it already returned with an older match (Cycle 0145 final-range review, CodeRabbit final-range F6); fails_when=the ended scan still counts as waiting, so the answer is dropped and the next scan starts the slow lookup again and misses the newer candidate; no_claim=a real mount (the slow lookup is a stand-in released by the test)
 test(
   'a real path that answers after its scan returned with an older match is kept for the next selection',
@@ -2070,6 +2155,11 @@ test(
       devinSetupInstallation: INSTALLATION_ID,
     })
     await writeSetupReceipts(storageRoot, { installationId: INSTALLATION_ID })
+    // The replaced-path refusal sets this process's exit code; restore it so the test file does not end with exit code 1.
+    const originalExitCode = process.exitCode
+    context.after(() => {
+      process.exitCode = originalExitCode
+    })
     const standsForOtherInstallation = await seen[0]?.beforeUpstream?.()
     // Assert
     assert.equal(refusal, undefined)
@@ -2224,16 +2314,34 @@ test(
   },
 )
 
-// protects=receipt reads of a stalled disk not piling up, at most two hanging at once (Cycle 0145 /ship pass 1, FX6 item 3; revised by CodeRabbit final-range F4: a timed-out read is no longer shared, so the bound counts the reads still hanging); fails_when=each request that times out leaves its read running and the next request starts another without a bound; no_claim=how long a real stalled read takes to settle
+// protects=receipt reads of a stalled disk not piling up: one timed-out check holds three file reads and a request that comes while it hangs fails at once without starting any (Cycle 0145 /ship pass 1, FX6 item 3; CodeRabbit final-range F4; Codex last-round O5); fails_when=a second hanging check is allowed, so two checks hold six file reads, more than libuv's four pool threads; no_claim=how long a real stalled read takes to settle
 test(
-  'requests that time out one after another on a stalled disk start at most two receipts reads',
+  'requests that time out one after another on a stalled disk start only three file reads',
   { timeout: 30_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace } = await createFolders(context)
     await writeDescriptor(agentDir, 0, workspace, process.pid)
-    let reads = 0
+    let fileReads = 0,
+      checks = 0
     const seen: SeenConnection[] = []
+    // The real receipts check, whose three reads stall at the file-read boundary and are counted there.
+    const realCheck = await loadModule<{
+      checkDevinBridgeReceipts: typeof checkDevinBridgeReceipts
+    }>(resolve(__dirname, '../utils/checkDevinBridgeReceipts.js'), {
+      './readPrivateJsonState': {
+        readPrivateJsonState: () => {
+          fileReads += 1
+          return new Promise<never>(() => undefined)
+        },
+      },
+      './readReceiptState': {
+        readReceiptState: () => {
+          fileReads += 1
+          return new Promise<never>(() => undefined)
+        },
+      },
+    })
     const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
       resolve(__dirname, '../devinMcpBridge.js'),
       {
@@ -2252,12 +2360,14 @@ test(
           },
         },
         './utils/checkDevinBridgeReceipts': {
-          // The first read is the connection's own check and stands; every later read stalls.
-          checkDevinBridgeReceipts: () => {
-            reads += 1
-            return reads === 1
+          // The first check is the connection's own and stands; every later one reads the stalled disk.
+          checkDevinBridgeReceipts: (
+            ...parameters: Parameters<typeof checkDevinBridgeReceipts>
+          ) => {
+            checks += 1
+            return checks === 1
               ? Promise.resolve({ answer: 'stands' })
-              : new Promise<never>(() => undefined)
+              : realCheck.checkDevinBridgeReceipts(...parameters)
           },
         },
       },
@@ -2285,8 +2395,8 @@ test(
       'Codebook setup check did not answer.',
       'Codebook setup check did not answer.',
     ])
-    // The connection's own check plus two hanging reads; the third request fails at once without a read.
-    assert.equal(reads, 3)
+    // Only the first request's check reads: its three file reads hang; the second and third requests fail at once without a read.
+    assert.equal(fileReads, 3)
   },
 )
 
@@ -2567,6 +2677,7 @@ bridge.runDevinMcpBridge = (agentDirectory, cwd, env, options) =>
     resolveWorkspace: (path) => {
       if (path !== process.env.HANGING_WORKSPACE) return realpath(path)
       setInterval(() => {}, 1_000)
+      process.stderr.write('HANGING-READ-STARTED\\n')
       return new Promise(() => {})
     },
   })
@@ -2600,8 +2711,12 @@ bridge.runDevinMcpBridge = (agentDirectory, cwd, env, options) =>
       )
       child.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString('utf8')
-        // The bridge writes its connected line once the transport is up; Devin then closes stdin.
-        if (stderr.includes('Codebook bridge: instance')) child.stdin.end()
+        // Devin closes stdin once the transport is up and the hanging read of the other window's workspace has started, so the exit is held only by that read's referenced handle.
+        if (
+          stderr.includes('Codebook bridge: instance') &&
+          stderr.includes('HANGING-READ-STARTED')
+        )
+          child.stdin.end()
       })
       child.on('exit', (code, signal) => done({ code, signal, stderr }))
     })
@@ -3039,10 +3154,13 @@ test(
           ) => {
             open += 1
             mostOpen = Math.max(mostOpen, open)
-            // A pause keeps the read open long enough for the others to start.
-            await new Promise<void>((done) => setTimeout(done, 30))
-            open -= 1
-            return readWikiRegularFile(...parameters)
+            try {
+              // A pause keeps the read open long enough for the others to start; the count drops only when the real read ends.
+              await new Promise<void>((done) => setTimeout(done, 30))
+              return await readWikiRegularFile(...parameters)
+            } finally {
+              open -= 1
+            }
           },
         },
       },
@@ -3072,10 +3190,11 @@ interface ConnectedBridge {
   /** The status the proxy answers to every request instead of forwarding it; `undefined` forwards. */
   proxy: {
     refuseWith: number | undefined
-    /** Called with the JSON-RPC method of every request and the count of initializes seen since the bridge connected; resolves the status to answer instead of forwarding it, `undefined` forwards. It may change the disk first. */
+    /** Called with the JSON-RPC method of every request (empty for a request without one), the count of initializes seen since the bridge connected and the HTTP method (`DELETE` for the session release); resolves the status to answer instead of forwarding it, `undefined` forwards. It may change the disk first. */
     decide?: (
       method: string,
       initializesSoFar: number,
+      httpMethod: string,
     ) => Promise<number | undefined>
   }
   readStderr: () => string
@@ -3154,14 +3273,16 @@ async function startConnectedBridge(
     incoming.on('end', () => {
       const body = Buffer.concat(chunks)
       const method = /"method":"([^"]+)"/.exec(body.toString('utf8'))?.[1]
-      void decide(method ?? '', counts.initializes).then((status) => {
-        if (status === undefined) {
-          forward(upstreamPort, incoming, outgoing, body)
-          return
-        }
-        outgoing.writeHead(status)
-        outgoing.end()
-      })
+      void decide(method ?? '', counts.initializes, incoming.method ?? '').then(
+        (status) => {
+          if (status === undefined) {
+            forward(upstreamPort, incoming, outgoing, body)
+            return
+          }
+          outgoing.writeHead(status)
+          outgoing.end()
+        },
+      )
     })
   })
   await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
@@ -3388,14 +3509,14 @@ fsPromises.open = (path, ...rest) => {
   },
 )
 
-// protects=a connected bridge reconnecting on the request after one whose receipts read hung (Cycle 0145 final-range review, CodeRabbit final-range F4); fails_when=the timed-out read stays shared until the raw read settles, so every later request gets the same stale timeout and the bridge never reconnects; no_claim=how many hung reads may be outstanding (a unit of the bound)
+// protects=a connected bridge reconnecting on a later request once the read that hung settled (Cycle 0145 final-range review, CodeRabbit final-range F4; revised by Codex last-round O5: while a timed-out check still hangs, a request fails at once); fails_when=the timed-out read stays shared until the raw read settles, so every later request gets the same stale timeout and the bridge never reconnects, or the hung check is never given back after it settled; no_claim=how many file reads a hung check holds (the stalled-disk test)
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
-  'a connected bridge whose reconnect check hung once fails that request, then reconnects on the next request',
+  'a connected bridge whose reconnect check hung fails requests meanwhile, then reconnects once the read settled',
   { skip: process.platform === 'win32', timeout: 40_000 },
   async (context) => {
     // Arrange
-    // The preload never settles the first open of the MCP receipt after the test created its flag file, the way a stalled mount would.
+    // The preload holds the first open of the MCP receipt after the test created its flag file, the way a stalled mount would, until the test arms it (SIGUSR2).
     const preload = `const fsPromises = require('node:fs/promises')
 const { existsSync, unlinkSync } = require('node:fs')
 const { dirname, join } = require('node:path')
@@ -3406,7 +3527,7 @@ fsPromises.open = (path, ...rest) => {
     const flagPath = join(dirname(dirname(receiptPath)), 'hang-receipt-once')
     if (existsSync(flagPath)) {
       unlinkSync(flagPath)
-      return new Promise(() => {})
+      return new Promise((release) => process.once('SIGUSR2', release)).then(() => originalOpen(path, ...rest))
     }
   }
   return originalOpen(path, ...rest)
@@ -3425,16 +3546,40 @@ fsPromises.open = (path, ...rest) => {
       undefined,
       20,
     )
+    // The read still hangs: this request fails at once without a new read.
     bridge.askToolsList(2)
-    const nextRequest = await waitUntil(
+    const requestWhileHung = await waitUntil(
       () => bridge.readMessages().find((message) => message.id === 2),
-      'the answer to the request after the hung read',
+      'the answer to the request while the read still hangs',
       20_000,
       undefined,
       20,
     )
+    bridge.arm()
+    // Each attempt asks once and reports its answer; a request that comes before the released read settled fails and the next attempt asks again.
+    let nextId = 3
+    const nextRequest = await waitUntil(
+      async () => {
+        const id = nextId
+        nextId += 1
+        bridge.askToolsList(id)
+        const answer = await waitUntil(
+          () => bridge.readMessages().find((message) => message.id === id),
+          `the answer to request ${id}`,
+          20_000,
+          undefined,
+          20,
+        )
+        return 'result' in answer ? answer : undefined
+      },
+      'a request reconnecting once the hung read settled',
+      20_000,
+      undefined,
+      50,
+    )
     // Assert
     assert.equal('error' in failedRequest, true)
+    assert.equal('error' in requestWhileHung, true)
     assert.equal('result' in nextRequest, true)
     assert.equal(bridge.readStderr().includes('is not set up'), false)
     assert.equal(bridge.counts.initializes, 1)
@@ -3737,21 +3882,26 @@ fsPromises.open = async (path, ...rest) => {
     const bridge = await startConnectedBridge(context, preload)
     await writeSetupReceipts(bridge.root, { installed: false }, false)
     bridge.arm()
-    // The proxy holds the tools/list request and the session DELETE (method '') until the test says; the DELETE is then forwarded.
+    // The proxy holds the tools/list request until the test says and tells when it holds it; the session release is recognised by its HTTP DELETE, which is then forwarded.
     let releaseToolsList: () => void = () => undefined,
+      markToolsListHeld: () => void = () => undefined,
       markDeleteSeen: () => void = () => undefined
-    const toolsListHeld = new Promise<void>((done) => {
+    const toolsListRelease = new Promise<void>((done) => {
       releaseToolsList = done
+    })
+    const toolsListHeld = new Promise<void>((done) => {
+      markToolsListHeld = done
     })
     const deleteSeen = new Promise<void>((done) => {
       markDeleteSeen = done
     })
-    bridge.proxy.decide = async (method) => {
+    bridge.proxy.decide = async (method, _initializes, httpMethod) => {
       if (method === 'tools/list') {
-        await toolsListHeld
+        markToolsListHeld()
+        await toolsListRelease
         return 403
       }
-      if (method === '') {
+      if (httpMethod === 'DELETE') {
         markDeleteSeen()
         await new Promise((done) => setTimeout(done, 300))
       }
@@ -3759,7 +3909,8 @@ fsPromises.open = async (path, ...rest) => {
     }
     bridge.handshake()
     bridge.askToolsList(1)
-    await new Promise((done) => setTimeout(done, 300))
+    // stdin closes only after the proxy holds the request, so the 403 can only arrive during the release.
+    await toolsListHeld
     // Act
     bridge.closeStdin()
     await deleteSeen
@@ -3768,6 +3919,93 @@ fsPromises.open = async (path, ...rest) => {
     // Assert
     assert.equal(exitCode, 1)
     assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
+  },
+)
+
+/**
+ * Starts a connected bridge whose `tools/list` is held at the proxy, expires the session, closes stdin and releases the request during the session release, so the server answers it 404 `Unknown MCP session` after shutdown began.
+ * @param context - The test context that cleans the bridge up.
+ * @param isSetupRemoved - Whether the setup receipts are removed just before the held request is released.
+ * @returns The bridge, after the proxy held the request, stdin closed and the session DELETE reached the proxy.
+ */
+async function startBridgeWith404DuringRelease(
+  context: Parameters<typeof startConnectedBridge>[0],
+  isSetupRemoved: boolean,
+): Promise<ConnectedBridge> {
+  const bridge = await startConnectedBridge(context)
+  let releaseToolsList: () => void = () => undefined,
+    markToolsListHeld: () => void = () => undefined,
+    markDeleteSeen: () => void = () => undefined
+  const toolsListRelease = new Promise<void>((done) => {
+    releaseToolsList = done
+  })
+  const toolsListHeld = new Promise<void>((done) => {
+    markToolsListHeld = done
+  })
+  const deleteSeen = new Promise<void>((done) => {
+    markDeleteSeen = done
+  })
+  bridge.proxy.decide = async (method, _initializes, httpMethod) => {
+    if (method === 'tools/list') {
+      markToolsListHeld()
+      await toolsListRelease
+    }
+    if (httpMethod === 'DELETE') {
+      markDeleteSeen()
+      // The release is forwarded only after the bridge answered the held request, so the 404 is handled while the release is still pending.
+      await waitUntil(
+        () => bridge.readMessages().find((message) => message.id === 1),
+        'the answer to the held request',
+        20_000,
+        undefined,
+        10,
+      )
+    }
+    return undefined
+  }
+  bridge.handshake()
+  bridge.askToolsList(1)
+  await toolsListHeld
+  // The server forgets the session, so the held request is answered 404 Unknown MCP session when it is forwarded.
+  await bridge.expireSession()
+  bridge.closeStdin()
+  await deleteSeen
+  if (isSetupRemoved)
+    await writeSetupReceipts(bridge.root, { installed: false }, false)
+  releaseToolsList()
+  return bridge
+}
+
+// protects=a Devin bridge opening no new session once its shutdown began (Cycle 0145 last-round review, Codex structured review cursorMcpBridge.ts); fails_when=a request answered 404 Unknown MCP session while the session is released starts a reconnect, so the setup check passes and a new initialize reaches the server after stdin closed; no_claim=the setup removal path (next test)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose request gets 404 during the session release after stdin closed opens no new session',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // Act
+    const bridge = await startBridgeWith404DuringRelease(context, false)
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(bridge.counts.initializes, 0)
+  },
+)
+
+// protects=the not-set-up line and exit code 1 of a Devin bridge whose request gets 404 during the session release after stdin closed while the setup was removed (Cycle 0145 last-round review, Codex structured review cursorMcpBridge.ts); fails_when=the reconnect's setup check is not drained before the bridge ends, so the process exits 0 before the line; no_claim=a standing setup (previous test)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose request gets 404 during the session release after stdin closed and whose setup was removed still ends with exit code 1 and the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // Act
+    const bridge = await startBridgeWith404DuringRelease(context, true)
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
+    assert.equal(bridge.counts.initializes, 0)
   },
 )
 

@@ -494,8 +494,8 @@ export const DEVIN_BRIDGE_SCAN_WAIT_MS = 1_000
 export const DEVIN_BRIDGE_REFUSAL_EXIT_MS = 1_000
 /** Longest wait for the receipts check the Devin Desktop bridge runs before it opens a new upstream session after the first one expired. */
 export const DEVIN_BRIDGE_RECONNECT_CHECK_MS = 3_000
-/** How many receipts reads of one bridge may hang unanswered at once; beyond it a reconnect request fails without starting another read, so a stalled file system holds at most this many of libuv's four pool threads. */
-export const DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX = 2
+/** How many receipts checks of one bridge may hang past their deadline at once; each check starts three file reads (the descriptor and the two receipts), so one hanging check holds three of libuv's four pool threads. While one hangs, a reconnect request fails at once without starting any read. */
+export const DEVIN_BRIDGE_RECONNECT_CHECKS_HANGING_MAX = 1
 /** Longest wait for the receipts check a Devin Desktop setup runs on the descriptor it marked, before it reports success; a check that has not answered by then counts as no answer, so a hanging receipt read takes the setup back instead of holding it (and a removal queued behind it) forever. */
 export const DEVIN_SETUP_FINAL_CHECK_MS = 3_000
 /** Most descriptor files the Devin Desktop bridge reads at once, so a folder of many never exhausts the process's file descriptors. */

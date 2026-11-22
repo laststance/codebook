@@ -183,6 +183,43 @@ export async function runCursorMcpBridge(
     if (isRefusal(error)) await endIfSetupGone()
     throw error
   }
+  // Runs the reconnect's setup check (the Devin Desktop bridge passes one) and lists it with the refusal checks, so a stdin close that arrives meanwhile waits for its refusal line and exit code before `onClosed`.
+  const setupStands = (): Promise<boolean> => {
+    if (!beforeUpstream) return Promise.resolve(true)
+    const checking = beforeUpstream()
+    const tracked = checking.then(
+      () => undefined,
+      () => undefined,
+    )
+    refusals.add(tracked)
+    void tracked.finally(() => refusals.delete(tracked))
+    return checking
+  }
+  // Fails a request that would open a session after shutdown began: no replacement session outlives the bridge.
+  const refuseIfClosed = (): void => {
+    if (closed) throw new Error('Codebook Cursor MCP bridge has closed.')
+  }
+  // Opens the replacement for an expired session and releases the old one; run by the first request that got the exact 404.
+  const openReplacement = async (
+    previous: Awaited<ReturnType<typeof connectUpstream>>,
+  ): Promise<void> => {
+    // A setup removed elsewhere must not get a new session: end the bridge instead.
+    if (!(await setupStands())) {
+      shutdownThenNotify(false)
+      // True for a removed setup and a replaced one alike; the refusal line on stderr names which.
+      throw new Error('Codebook setup changed; this bridge has ended.')
+    }
+    // Shutdown may have begun during the check (or while the old session was released).
+    refuseIfClosed()
+    // A refused handshake runs the same refusal handling as a refused request.
+    const next = await connectUpstream().catch(failAfterRefusal)
+    if (closed) {
+      await closeUpstream(next)
+      throw new Error('Codebook Cursor MCP bridge has closed.')
+    }
+    active = next
+    await closeUpstream(previous)
+  }
   const forward = async <Value>(
     request: (client: Client) => Promise<Value>,
   ): Promise<Value> => {
@@ -195,22 +232,7 @@ export async function runCursorMcpBridge(
       // The local server rejects an expired session before dispatch, so this exact 404 is safe to retry once.
       if (!isUnknownSession(error)) throw error
       if (active === previous) {
-        reconnecting ??= (async () => {
-          // A setup removed elsewhere must not get a new session: end the bridge instead.
-          if (beforeUpstream && !(await beforeUpstream())) {
-            shutdownThenNotify(false)
-            // True for a removed setup and a replaced one alike; the refusal line on stderr names which.
-            throw new Error('Codebook setup changed; this bridge has ended.')
-          }
-          // A refused handshake runs the same refusal handling as a refused request.
-          const next = await connectUpstream().catch(failAfterRefusal)
-          if (closed) {
-            await closeUpstream(next)
-            throw new Error('Codebook Cursor MCP bridge has closed.')
-          }
-          active = next
-          await closeUpstream(previous)
-        })().finally(() => {
+        reconnecting ??= openReplacement(previous).finally(() => {
           reconnecting = undefined
         })
         await reconnecting
