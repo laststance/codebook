@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.140'
+export const EXTENSION_VERSION = '0.2.141'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -494,6 +494,10 @@ export const DEVIN_BRIDGE_SCAN_WAIT_MS = 1_000
 export const DEVIN_BRIDGE_REFUSAL_EXIT_MS = 1_000
 /** Longest wait for the receipts check the Devin Desktop bridge runs before it opens a new upstream session after the first one expired. */
 export const DEVIN_BRIDGE_RECONNECT_CHECK_MS = 3_000
+/** How many receipts checks of one bridge may hang past their deadline at once; each check starts three file reads (the descriptor and the two receipts), so one hanging check holds three of libuv's four pool threads. While one hangs, a reconnect request fails at once without starting any read. */
+export const DEVIN_BRIDGE_RECONNECT_CHECKS_HANGING_MAX = 1
+/** Longest wait for the receipts check a Devin Desktop setup runs on the descriptor it marked, before it reports success; a check that has not answered by then counts as no answer, so a hanging receipt read takes the setup back instead of holding it (and a removal queued behind it) forever. */
+export const DEVIN_SETUP_FINAL_CHECK_MS = 3_000
 /** Most descriptor files the Devin Desktop bridge reads at once, so a folder of many never exhausts the process's file descriptors. */
 export const DEVIN_BRIDGE_DESCRIPTOR_READS_MAX = 16
 /** How many times the bridge opens a descriptor again after the process ran out of file descriptors. */
@@ -518,6 +522,10 @@ export const CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS = 100
 export const DEVIN_SETUP_LOCK_WAIT_ATTEMPTS = 70
 /** How long a Devin Desktop setup or removal waits before it checks the setup lock again, before the random share that keeps windows opened together out of step. */
 export const DEVIN_SETUP_LOCK_RETRY_DELAY_MS = 100
+/** How long a Devin Desktop window's server start waits before it reads the setup receipts again after a read that could not look (descriptor exhaustion, `EIO`), so a moment of exhaustion does not leave the descriptor unmarked for the whole run. */
+export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
+/** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */
+export const DEVIN_MARK_READ_RETRY_BUDGET_MS = 5_000
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
 export const HTTP_ENVELOPE_LIMIT_BYTES = 65_536
 export const HTTP_BODY_LIMIT_BYTES =

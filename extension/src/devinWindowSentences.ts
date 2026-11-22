@@ -33,6 +33,14 @@ export const DEVIN_ENTRY_MISSING_LINE =
 export const DEVIN_SETUP_SERVER_CHANGED_SENTENCE =
   'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup did not complete. Run Codebook: Set Up AI Chat again.'
 
+/** What a Devin Desktop setup answers when the window's workspace folder changed while the setup saved its final value: the setup did not complete for the folder now open. */
+export const DEVIN_SETUP_FOLDER_CHANGED_SENTENCE =
+  'The workspace folder changed while Devin Desktop setup was finishing, so the setup did not complete for this folder. Run Codebook: Set Up AI Chat again.'
+
+/** What a Devin Desktop setup answers when its final check finds that the connection descriptor does not name the server the setup checked: a restart of the same server would reuse that descriptor, so the learner is asked to stop it first. */
+export const DEVIN_SETUP_DESCRIPTOR_REPLACED_SENTENCE =
+  'The Devin Desktop setup changed while this setup ran; run Codebook: Stop Agent Server, then Codebook: Set Up AI Chat again.'
+
 /** What the server answers (HTTP 403) to a Devin Desktop bridge request while this window's AI chat mark is off, for example after a failed setup took it back; read by Devin's MCP log, not by the learner. */
 export const DEVIN_BRIDGE_NOT_SET_UP_SENTENCE =
   'Codebook AI chat for Devin Desktop is not set up in this window. Run Codebook: Set Up AI Chat, then reload the window.'
@@ -49,3 +57,20 @@ export const DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE =
  */
 export const devinReceiptUnreadableSentence = (receiptPath: string): string =>
   `Codebook could not read the installation id in ${receiptPath}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`
+
+/**
+ * What the Devin Desktop setup answers when one of Codebook's records cannot be used because others can read it or this user may not (a backup restored with another mode): the bridge would refuse the window and the offered reload could not connect.
+ * @param receiptPath - The `receipt.json` of the skill or of the MCP entry, as the check names it.
+ * @returns One sentence that names the file to repair.
+ * @example devinReceiptPermissionSentence('/storage/devin-skill/receipt.json') // => 'Codebook could not use its record at /storage/devin-skill/receipt.json, …'
+ */
+export const devinReceiptPermissionSentence = (receiptPath: string): string =>
+  `Codebook could not use its record at ${receiptPath}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`
+
+/** What the Devin Desktop setup answers when one of its records was removed, replaced or changed while the setup ran. */
+export const DEVIN_SETUP_CHANGED_MEANWHILE_SENTENCE =
+  'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.'
+
+/** What the Devin Desktop setup answers when its records could not be read at all (no verified permission problem, so no mode repair is offered). */
+export const DEVIN_SETUP_RECORDS_UNREADABLE_SENTENCE =
+  'Codebook could not read its setup records just now; run Codebook: Set Up AI Chat again.'

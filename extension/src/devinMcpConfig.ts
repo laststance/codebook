@@ -102,13 +102,19 @@ const pendingSchema = z.object({
   keptSha256: z.string().optional(),
   /** Absent while a write or removal is in progress (a displaced config goes back when the config name is empty); `completed` once the config was published or removed (a copy that stays is a leftover, never put back); `handed` once a copy was named to the learner (a refusal or `cleanupFailure`), which later runs never delete, whatever its bytes. */
   phase: z.enum(['completed', 'handed']).optional(),
+  /** Set once a cut-short rollback of this publish was settled ({@link settleRollbackJournal}): the entry it published must be taken back ({@link finishCutShortSetup}), never adopted ({@link settlePending}). It lives here, not in the rollback's journal, because the take-back writes (and may delete) its own journal at that path. Gone once the take-back ended; an older build drops it. */
+  takeBack: z.boolean().optional(),
+  /** Only in a rollback's own journal ({@link rollbackContextOf}): the generation of the publish whose entry that rollback was taking out. {@link settleRollbackJournal} marks a publish record for take-back only when it carries this generation, so a journal left by one installation never marks another's pending publish. */
+  publishGeneration: z.string().optional(),
+  /** Set by a first setup (no receipt stood) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
+  firstSetup: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
 type Pending = z.infer<typeof pendingSchema>
 /** What a run knows about a pending record before the file is staged. */
 type PendingHead = Pick<
   Pending,
-  'entrySha256' | 'createdFile' | 'generation' | 'installationId'
+  'entrySha256' | 'createdFile' | 'generation' | 'installationId' | 'firstSetup'
 >
 /** A parsed JSON object; its own keys, `__proto__` included, are kept as parsed. */
 type JsonObject = Record<string, unknown>
@@ -147,6 +153,8 @@ type Context = {
   seam: DevinMcpTestSeam | undefined
   /** The command a refusal asks the learner to run again: the setup's or the removal's. */
   retry: string
+  /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
+  rollbackOf?: string
 }
 
 /** A copy of the config that Codebook keeps for a moment, and what it must hold. */
@@ -710,8 +718,14 @@ function didUnlink(path: string): Promise<boolean> {
   )
 }
 
-/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode and the size a later look must still see. */
-type InspectedCopy = { sha256: string; ino: bigint; size: bigint }
+/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode, and the size and times (nanoseconds) a later look must still see; an in-place write that keeps inode and size changes the times. */
+type InspectedCopy = {
+  sha256: string
+  ino: bigint
+  size: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
+}
 
 /**
  * Reads a file Codebook keeps a copy in, without following a link.
@@ -742,7 +756,13 @@ async function inspectCopy(
       () => seam?.afterStat?.(path),
     )
     if (!bytes) throw unsaneCopyError()
-    return { sha256: bytesSha256(bytes), ino: status.ino, size: status.size }
+    return {
+      sha256: bytesSha256(bytes),
+      ino: status.ino,
+      size: status.size,
+      mtimeNs: status.mtimeNs,
+      ctimeNs: status.ctimeNs,
+    }
   } finally {
     await file.close()
   }
@@ -1219,6 +1239,9 @@ function journalOf(
 ): Pending {
   return {
     ...head,
+    ...(context.rollbackOf !== undefined && {
+      publishGeneration: context.rollbackOf,
+    }),
     targetPath: context.path,
     stagedIno: recordedFileId(staged.ino),
     stagedName: basename(staged.temporary),
@@ -1337,6 +1360,9 @@ async function deleteConfig(
     targetPath: context.path,
     createdFile: false,
     generation,
+    ...(context.rollbackOf !== undefined && {
+      publishGeneration: context.rollbackOf,
+    }),
     keptName: basename(moved.path),
     keptIno: recordedFileId(moved.ino),
     keptSha256: moved.sha256,
@@ -1665,12 +1691,20 @@ function isEmptyOrSameFile(configPath: string, copyIno: bigint): boolean {
   return !config || config.ino === copyIno
 }
 
+/** What a later synchronous look must still see at a name: the inode, and when given the size and the times of the last read, so an in-place write that keeps the inode is seen ({@link isLeftoverStill}). */
+type LeftoverLookback = {
+  ino: bigint
+  size?: bigint
+  mtimeNs?: bigint
+  ctimeNs?: bigint
+}
+
 /**
  * Tells whether a leftover's name still shows the file that was checked; called right before each link and unlink of a leftover ({@link tidyLeftover}, {@link putBackDisplaced}, {@link discardDisplaced}), because a sync tool may swap another file in between the first look and the call.
  * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode.
  * @param context - The run; its seam is called around the look.
  * @param path - The leftover's name.
- * @param checked - The inode that was checked and, when the call deletes bytes, the size that was read; a put-back passes no size, because it accepts a recorded file whatever its bytes.
+ * @param checked - The inode that was checked and, when the call deletes bytes, the size (and times) that were read; a put-back passes no size, because it accepts a recorded file whatever its bytes.
  * @returns `true` when the name shows that inode (and size); `false` when it is gone or shows another file.
  * @example
  * if (!isLeftoverStill(context, keptPath, { ino: 42n })) return 'kept'
@@ -1678,14 +1712,16 @@ function isEmptyOrSameFile(configPath: string, copyIno: bigint): boolean {
 function isLeftoverStill(
   context: Context,
   path: string,
-  checked: { ino: bigint; size?: bigint },
+  checked: LeftoverLookback,
 ): boolean {
   context.seam?.beforeLeftoverCheck?.(path)
   const now = lstatSync(path, { bigint: true, throwIfNoEntry: false })
   const isStill =
     now !== undefined &&
     checked.ino === now.ino &&
-    (checked.size === undefined || checked.size === now.size)
+    (checked.size === undefined || checked.size === now.size) &&
+    (checked.mtimeNs === undefined || checked.mtimeNs === now.mtimeNs) &&
+    (checked.ctimeNs === undefined || checked.ctimeNs === now.ctimeNs)
   if (isStill) context.seam?.afterLeftoverCheck?.(path)
   return isStill
 }
@@ -1694,7 +1730,7 @@ function isLeftoverStill(
 function assertLeftoverStill(
   context: Context,
   path: string,
-  checked: { ino: bigint; size?: bigint },
+  checked: LeftoverLookback,
 ): void {
   if (!isLeftoverStill(context, path, checked))
     throw new Error(
@@ -1718,9 +1754,40 @@ function assertConfigStill(
   leftoverPath: string,
 ): void {
   if (!isLeftoverStill(context, context.path, { ino }))
-    throw new Error(
-      `The config at ${context.path} changed just now, so Codebook kept the private file at ${leftoverPath} untouched.`,
-    )
+    throw configChangedError(context, leftoverPath)
+}
+
+/** The refusal for a config name that changed while a leftover was about to be unlinked: the leftover stays and is named. */
+function configChangedError(context: Context, leftoverPath: string): Error {
+  return new Error(
+    `The config at ${context.path} changed just now, so Codebook kept the private file at ${leftoverPath} untouched.`,
+  )
+}
+
+/**
+ * Throws unless the config name still shows the published staged file (inode and bytes); called by {@link tidyLeftover} after the last read of a displaced original and before it is unlinked.
+ * The bytes are read again because an editor can rewrite the published file in place and keep its inode.
+ * Limit: the read is async, so {@link tidyLeftover} hashes the displaced copy again after it and checks only synchronously from there; a change between that last hash and the unlink syscalls is not seen (no Node primitive unlinks by inode or content).
+ * @param context - The run.
+ * @param pending - The pending record; its staged hash names the published bytes.
+ * @param ino - The published inode.
+ * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
+ * @returns The config as it was read, so the caller can require its size and times unchanged right before the unlink (an in-place rewrite keeps the inode).
+ * @throws An error naming `leftoverPath` when the config name shows another inode or other bytes, or is gone.
+ * @example
+ * await assertConfigStillPublished(context, pending, 42n, keptPath)
+ */
+async function assertConfigStillPublished(
+  context: Context,
+  pending: Pending,
+  ino: bigint,
+  leftoverPath: string,
+): Promise<InspectedCopy> {
+  assertConfigStill(context, ino, leftoverPath)
+  const config = await inspectCopy(context.path, context.seam)
+  if (!config || config.ino !== ino || config.sha256 !== pending.stagedSha256)
+    throw configChangedError(context, leftoverPath)
+  return config
 }
 
 /** The error for a put-back whose link produced another inode than the checked one and whose names Codebook cannot attribute: both names stay as they are. */
@@ -1732,6 +1799,27 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
+
+/**
+ * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of the move-it-back advice.
+ * `isHanded` is set when the config name may hold a file Codebook did not verify: the record then turns to handed, so no later run deletes the displaced name on the strength of a shared inode.
+ */
+class PutBackCheckError extends Error {
+  constructor(
+    message: string,
+    readonly isHanded: boolean,
+  ) {
+    super(message)
+  }
+}
+
+/** Tells whether a recovery failure hands the copy to the learner ({@link HandedCopyError}, or a {@link PutBackCheckError} that left an unverified file at the config name). */
+function isHandedCause(cause: unknown): boolean {
+  return (
+    cause instanceof HandedCopyError ||
+    (cause instanceof PutBackCheckError && cause.isHanded)
+  )
+}
 
 /** The refusal for a displaced file that has another inode than the record says while a config stands at the config name: it may be a newer save of the learner's, so nothing is moved or deleted and the record stays. */
 function otherInodeRefusal(
@@ -1778,7 +1866,7 @@ async function recoverLeftovers(
       unsettled.push({
         leftover,
         cause,
-        ...(cause instanceof HandedCopyError && { isHandedOver: true }),
+        ...(isHandedCause(cause) && { isHandedOver: true }),
       })
     }
   }
@@ -1797,6 +1885,8 @@ function unsettledRefusal(
   phase: Pending['phase'],
   { leftover, cause, isHandedOver }: Unsettled,
 ): Error {
+  // The put-back check's own text names both paths and the state; the move-back advice would lose a new save.
+  if (cause instanceof PutBackCheckError) return cause
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
@@ -1820,6 +1910,9 @@ function retainedRecord(
     createdFile: false,
     generation: pending.generation,
     phase: pending.phase,
+    ...(pending.publishGeneration !== undefined && {
+      publishGeneration: pending.publishGeneration,
+    }),
     ...(roles.has('kept') && {
       keptName: pending.keptName,
       keptIno: pending.keptIno,
@@ -1883,8 +1976,11 @@ async function tidyLeftover(
     return unlink(path)
   }
   // A displaced original of an unfinished change while another config stands at the config name (an editor saved after the move-aside): it may be the only copy of the learner's other servers, so it is handed over and named, never deleted. The published staged file's inode means the change did finish, so that copy is Codebook's own leftover.
-  if (role === 'kept' && phase === undefined && config)
-    await keepOriginalUnlessPublished(context, pending, config.ino)
+  // When the check returns, the config is the published staged file: its inode is checked again right before the unlink.
+  const publishedIno =
+    role === 'kept' && phase === undefined && config ? config.ino : undefined
+  if (publishedIno !== undefined)
+    await keepOriginalUnlessPublished(context, pending, publishedIno)
   if (
     role === 'kept' &&
     (await putBackDisplaced(
@@ -1892,25 +1988,86 @@ async function tidyLeftover(
       path,
       phase,
       !config,
-      isSameFileId(expectedIno, copy.ino) || copy.sha256 === expectedSha256,
+      proofOfRecordedCopy(expectedIno, copy, expectedSha256),
+      expectedSha256,
       copy,
     ))
   )
     return
   if (copy.sha256 !== expectedSha256)
     throw new Error('The leftover file differs from what Codebook expected.')
-  assertLeftoverStill(context, path, copy)
+  assertLeftoverStill(context, path, { ino: copy.ino, size: copy.size })
   // Same-size overwrites keep inode and size: hash the file again right before deleting it.
-  const lastLook = await inspectCopy(path, context.seam)
+  let lastLook = await inspectCopy(path, context.seam)
   // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
   if (!lastLook) return
-  if (lastLook.sha256 !== expectedSha256 || lastLook.ino !== copy.ino)
+  assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
+  if (publishedIno !== undefined) {
+    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it, and that read is the last async step.
+    const publishedLook = await assertConfigStillPublished(
+      context,
+      pending,
+      publishedIno,
+      path,
+    )
+    lastLook = await inspectCopy(path, context.seam)
+    if (!lastLook) return
+    assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
+    // Only synchronous looks follow: the config name first, the displaced name last. The config must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode.
+    assertConfigUnchangedSince(context, publishedLook, path)
+  }
+  // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
+  assertLeftoverStill(context, path, lastLook)
+  await unlink(path)
+}
+
+/**
+ * Tells what shows that a displaced file is the one the record names; called by {@link tidyLeftover} before a put-back.
+ * @param recordedIno - The inode the record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @param recordedSha256 - The hash the record holds.
+ * @returns `inode` for the recorded inode, `bytes` for another inode with the recorded bytes, undefined for neither.
+ * @example
+ * proofOfRecordedCopy(recordedIno, copy, recordedSha256) // => 'bytes' after a sync tool replaced the file with the same bytes
+ */
+function proofOfRecordedCopy(
+  recordedIno: RecordedFileId,
+  copy: InspectedCopy,
+  recordedSha256: string | undefined,
+): 'inode' | 'bytes' | undefined {
+  if (isSameFileId(recordedIno, copy.ino)) return 'inode'
+  return copy.sha256 === recordedSha256 ? 'bytes' : undefined
+}
+
+/**
+ * Throws when the config name no longer shows the inode, size and times it had when it was read; called by {@link tidyLeftover} as a synchronous look right before the displaced name is unlinked, because an in-place rewrite keeps the inode.
+ * Limit: a write after this look is not seen.
+ * @param context - The run.
+ * @param look - The config as {@link assertConfigStillPublished} read it.
+ * @param leftoverPath - The displaced name about to be unlinked; kept and named when the check fails.
+ * @throws An error naming `leftoverPath` when the config changed.
+ */
+function assertConfigUnchangedSince(
+  context: Context,
+  look: InspectedCopy,
+  leftoverPath: string,
+): void {
+  const { ino, size, mtimeNs, ctimeNs } = look
+  if (!isLeftoverStill(context, context.path, { ino, size, mtimeNs, ctimeNs }))
+    throw configChangedError(context, leftoverPath)
+}
+
+/** Throws when a displaced copy's last read shows other bytes or another inode than the ones Codebook checked; the copy stays untouched. */
+function assertLeftoverHoldsChecked(
+  path: string,
+  look: InspectedCopy,
+  ino: bigint,
+  expectedSha256: string,
+): void {
+  if (look.sha256 !== expectedSha256 || look.ino !== ino)
     throw new Error(
       `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook left it untouched.`,
     )
-  // The hash came from the open handle; the unlink acts on the name, which must still show that same file.
-  assertLeftoverStill(context, path, lastLook)
-  await unlink(path)
 }
 
 /**
@@ -1960,7 +2117,8 @@ async function keepOriginalUnlessPublished(
  * @param path - The displaced name.
  * @param phase - The phase of the pending record.
  * @param isConfigAbsent - Whether nothing stands at the config name.
- * @param isRecordedFile - Whether the displaced file still has the recorded inode or the recorded bytes; a file with neither is never published.
+ * @param proof - What shows the displaced file is the recorded one: `inode` (the recorded inode) or `bytes` (another inode whose bytes equal the recorded hash); undefined when neither, and such a file is never published. When only the bytes prove it, the file is hashed again right before the link, its name is looked at synchronously with the size and times of that hash, and the file at the config name is hashed once more after the link: an in-place write in between is refused and nothing stays published from it.
+ * @param expectedSha256 - The recorded hash of the displaced file.
  * @param copy - What {@link lookAtLeftover} found; its inode is the one that may be linked.
  * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
  * @throws When the link or unlink fails, the name no longer shows the checked file, or the link produced another file.
@@ -1970,11 +2128,18 @@ async function putBackDisplaced(
   path: string,
   phase: Pending['phase'],
   isConfigAbsent: boolean,
-  isRecordedFile: boolean,
+  proof: 'inode' | 'bytes' | undefined,
+  expectedSha256: string | undefined,
   copy: InspectedCopy,
 ): Promise<boolean> {
-  if (phase !== undefined || !isConfigAbsent || !isRecordedFile) return false
-  assertLeftoverStill(context, path, { ino: copy.ino })
+  if (phase !== undefined || !isConfigAbsent || proof === undefined)
+    return false
+  // The bytes were the only proof: hash again, so the sync look right before the link ties the name to what this read saw.
+  const lastLook =
+    proof === 'bytes'
+      ? await rehashBeforeLink(context, path, copy.ino, expectedSha256)
+      : { ino: copy.ino }
+  assertLeftoverStill(context, path, lastLook)
   await link(path, context.path)
   const linked = lstatSync(context.path, {
     bigint: true,
@@ -1982,11 +2147,85 @@ async function putBackDisplaced(
   })
   if (!linked || copy.ino !== linked.ino)
     await undoForeignLink(context, path, linked?.ino)
+  if (proof === 'bytes')
+    await assertLinkedBytes(context, path, copy.ino, expectedSha256)
   // The config name is checked first and the displaced name last, right before the unlink: only the syscall gap after that last look remains.
   assertConfigStill(context, copy.ino, path)
   assertLeftoverStill(context, path, { ino: copy.ino })
   await unlink(path)
   return true
+}
+
+/**
+ * Hashes a displaced file again right before a put-back that rests on its bytes alone; called by {@link putBackDisplaced}.
+ * @param context - The run.
+ * @param path - The displaced name.
+ * @param ino - The inode the first look found.
+ * @param expectedSha256 - The recorded hash.
+ * @returns The inode, size and times of this read, which the synchronous look before the link must still see.
+ * @throws When the file is gone, has another inode or no longer holds the recorded bytes (a writer changed it in place after the first hash); nothing is linked.
+ */
+async function rehashBeforeLink(
+  context: Context,
+  path: string,
+  ino: bigint,
+  expectedSha256: string | undefined,
+): Promise<LeftoverLookback> {
+  const again = await inspectCopy(path, context.seam)
+  if (!again || again.ino !== ino || again.sha256 !== expectedSha256)
+    throw new Error(
+      `The private file at ${path} no longer holds the bytes Codebook checked (another program wrote to it just now), so Codebook did not put it back.`,
+    )
+  return {
+    ino: again.ino,
+    size: again.size,
+    mtimeNs: again.mtimeNs,
+    ctimeNs: again.ctimeNs,
+  }
+}
+
+/**
+ * Checks the file that a put-back just linked to the config name: its inode and bytes must still be the checked ones before the private name is retired; called by {@link putBackDisplaced}.
+ * A file that changed in the gap between the last look and the link stays at the private name only: the config name is unlinked again, while it still shows that inode.
+ * Limit: a write after this read is not seen.
+ * @param context - The run.
+ * @param path - The displaced name; it stays.
+ * @param ino - The linked inode.
+ * @param expectedSha256 - The recorded hash.
+ * @throws When the read fails (an I/O error, the size limit) or the config name shows other bytes or another inode; it names `path`. The config name is taken away only while both names still show the linked inode; otherwise both stay and the error says so.
+ */
+async function assertLinkedBytes(
+  context: Context,
+  path: string,
+  ino: bigint,
+  expectedSha256: string | undefined,
+): Promise<void> {
+  // Any failure of this read (an I/O error, a file past the size limit) is as unverified as a hash mismatch and takes the same undo.
+  const published = await inspectCopy(context.path, context.seam).catch(
+    () => undefined,
+  )
+  if (published?.ino === ino && published.sha256 === expectedSha256) return
+  // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so. The displaced name is looked at first and the config name last, synchronously right before the unlink: only the syscall gap after that last look remains.
+  if (
+    !isLeftoverStill(context, path, { ino }) ||
+    !isLeftoverStill(context, context.path, { ino })
+  )
+    throw new PutBackCheckError(
+      `The private file at ${path} could not be checked after Codebook put it back, and the names no longer show the file Codebook linked, so Codebook could not take the config name ${context.path} away again and left both names as they are; ${context.path} may hold a file Codebook did not verify, so look at both files before you use either.`,
+      true,
+    )
+  try {
+    await unlink(context.path)
+  } catch {
+    throw new PutBackCheckError(
+      `The private file at ${path} changed or could not be read while Codebook put it back, and Codebook could not take the config name ${context.path} away again, so ${context.path} may hold a file Codebook did not verify; ${path} stays as it is, so look at both files before you use either.`,
+      true,
+    )
+  }
+  throw new PutBackCheckError(
+    `The private file at ${path} changed or could not be read while Codebook put it back (another program wrote to it just now), so Codebook took the config name ${context.path} away again and left the file at ${path} untouched.`,
+    false,
+  )
 }
 
 /**
@@ -2054,6 +2293,11 @@ async function settlePending(
   retained: Pending | undefined,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
+  // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
+  if (isTakeBackOwed(pending, receipt)) {
+    await retirePending(context, retained)
+    return receipt
+  }
   // The record of a removal that took the entry out (a receipt stands, the entry is gone) is what a removal retry reads to answer `removed`: another window's inspection leaves it in place, and the retry or a new setup's own record replaces it.
   if (
     receipt !== undefined &&
@@ -2257,6 +2501,8 @@ type RollbackResult = {
   outcome:
     'took-out' | 'replaced-config' | 'not-ours' | 'unreadable' | 'not-taken-out'
   keptLeft: KeptFile[]
+  /** Set with `took-out`: whether the whole file went or only the entry. */
+  removal?: 'file-removed' | 'removed'
 }
 
 /**
@@ -2287,16 +2533,28 @@ async function rollBackPublishedEntry(
   // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
   if (!isSameFileId(written.config.ino, look.identity.ino))
     return { outcome: 'replaced-config', keptLeft: [] }
-  const { keptLeft } = await takeEntryOut(rollbackContextOf(context), {
-    look,
-    receipt: written,
-  })
-  return { outcome: 'took-out', keptLeft }
+  const { keptLeft, status } = await takeEntryOut(
+    rollbackContextOf(context, written.generation),
+    { look, receipt: written },
+  )
+  return { outcome: 'took-out', keptLeft, removal: status }
 }
 
-/** The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads. */
-function rollbackContextOf(context: Context): Context {
-  return { ...context, pendingPath: `${context.pendingPath}.rollback` }
+/**
+ * The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads.
+ * @param context - The run.
+ * @param publishGeneration - The generation of the publish being rolled back; every journal of the rollback records it. Omit it to only read or settle a journal.
+ * @returns The rollback's context.
+ */
+function rollbackContextOf(
+  context: Context,
+  publishGeneration?: string,
+): Context {
+  return {
+    ...context,
+    pendingPath: `${context.pendingPath}.rollback`,
+    ...(publishGeneration !== undefined && { rollbackOf: publishGeneration }),
+  }
 }
 
 /**
@@ -2351,6 +2609,8 @@ async function takeOutUnrecordedEntry(
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
+  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. A failure to write the intent changes nothing: the run rejects as it does without it.
+  await markTakeBackOwed(context, written.generation).catch(() => undefined)
   try {
     result = await rollBackPublishedEntry(context, written)
   } catch {
@@ -2398,6 +2658,8 @@ async function publishEntry(
     createdFile,
     generation,
     installationId,
+    // A first setup is adoptable only once its receipt is written ({@link isTakeBackOwed}).
+    ...(receipt === undefined && { firstSetup: true }),
   })
   const written: Receipt = {
     schemaVersion: 1,
@@ -2439,13 +2701,13 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one.
  * @param context - The run.
- * @returns `true` when a journal of this config was settled (a rollback was cut short), so {@link inspect} finishes the take-back instead of adopting the setup's publish record; `false` when there was none.
  * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then.
  * @example
- * await settleRollbackJournal(context) // => true; the original config is back at its path when a rollback was cut short
+ * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
-async function settleRollbackJournal(context: Context): Promise<boolean> {
+async function settleRollbackJournal(context: Context): Promise<void> {
   const rollbackContext = rollbackContextOf(context)
   const pending = await readRecord(
     rollbackContext.pendingPath,
@@ -2454,10 +2716,11 @@ async function settleRollbackJournal(context: Context): Promise<boolean> {
     context.seam,
   )
   // No rollback was cut short, or the journal belongs to another config, which this run does not settle.
-  if (pending?.targetPath !== context.path) return false
+  if (pending?.targetPath !== context.path) return
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   const tracked = pending.phase ? unsettled.slice(1) : unsettled
+  await markTakeBackOwed(context, pending.publishGeneration, pending)
   await retirePending(
     rollbackContext,
     retainedRecord(
@@ -2467,7 +2730,81 @@ async function settleRollbackJournal(context: Context): Promise<boolean> {
   )
   const [reported] = unsettled
   if (reported) throw unsettledRefusal(rollbackContext, pending.phase, reported)
-  return true
+}
+
+/**
+ * Tells whether a journal of an older build (no generation) provably belongs to another publish than the record; used by {@link markTakeBackOwed}.
+ * @param journal - The journal's displaced file (`keptIno`, `keptSha256`); undefined when there is none.
+ * @param publish - The publish record.
+ * @returns `true` only when both records carry an inode and a hash and the inode or the hash differs (a reused inode cannot hide another file's bytes).
+ * @example
+ * provesAnotherPublish({ keptIno: 5, keptSha256: 'a' }, { ...publish, stagedIno: 5, stagedSha256: 'b' }) // => true
+ */
+function provesAnotherPublish(
+  journal: Pick<Pending, 'keptIno' | 'keptSha256'> | undefined,
+  publish: Pending,
+): boolean {
+  if (
+    journal?.keptIno === undefined ||
+    journal.keptSha256 === undefined ||
+    publish.stagedIno === undefined ||
+    publish.stagedSha256 === undefined
+  )
+    return false
+  return (
+    String(journal.keptIno) !== String(publish.stagedIno) ||
+    journal.keptSha256 !== publish.stagedSha256
+  )
+}
+
+/**
+ * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
+ * Only the publish of the given generation is marked: another installation's pending publish stays as it is.
+ * @param context - The run.
+ * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when `legacyKeptIno` proves it belongs to the publish record.
+ * @param legacyJournal - The rollback's journal; with no generation its `keptIno` and `keptSha256` are compared with the publish record's `stagedIno` and `stagedSha256`.
+ * @example
+ * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
+ */
+async function markTakeBackOwed(
+  context: Context,
+  publishGeneration: string | undefined,
+  legacyJournal?: Pick<Pending, 'keptIno' | 'keptSha256'>,
+): Promise<void> {
+  const publish = await readRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  )
+  // No publish record, one of another config or of another generation (another installation's publish), or one already marked: nothing to mark.
+  if (publish?.targetPath !== context.path || publish.takeBack) return
+  // A journal of an older build names no generation: it belongs to another publish only when both records carry an inode and a hash and these prove it; an ambiguous journal marks take-back, as the previous release did.
+  const belongsToPublish =
+    publishGeneration === undefined
+      ? !provesAnotherPublish(legacyJournal, publish)
+      : publish.generation === publishGeneration
+  if (!belongsToPublish) return
+  await writeRecord(context.pendingPath, { ...publish, takeBack: true })
+}
+
+/**
+ * Tells whether the entry a publish record covers must be taken back instead of adopted; called by {@link inspect} and {@link settlePending}.
+ * @param pending - The publish record.
+ * @param receipt - The receipt that stands, if any.
+ * @returns `true` when the record is marked `takeBack`, or is a first setup's whose own receipt (same generation) was never written.
+ * @example
+ * isTakeBackOwed({ ...pending, firstSetup: true }, undefined) // => true
+ */
+function isTakeBackOwed(
+  pending: Pending,
+  receipt: Receipt | undefined,
+): boolean {
+  if (pending.takeBack) return true
+  return (
+    pending.firstSetup === true &&
+    (receipt === undefined || receipt.generation !== pending.generation)
+  )
 }
 
 /**
@@ -2478,7 +2815,7 @@ async function settleRollbackJournal(context: Context): Promise<boolean> {
  * @param receipt - The receipt that stands, if any.
  * @param retained - What stays of the setup's record after recovery ({@link retainedRecord}).
  * @param look - The config as it stands.
- * @returns The config as it looks after the entry was taken out; undefined when nothing was taken back (the record is then settled as before).
+ * @returns The config as it looks after the entry was taken out, and what the take-back removed (`removal`: the file or only the entry); undefined when nothing was taken back (the record is then settled as before).
  * @throws A refusal when the entry could not be taken out again; nothing else is changed then.
  * @example
  * const afterTakeBack = await finishCutShortSetup(context, pending, receipt, retained, look)
@@ -2489,7 +2826,9 @@ async function finishCutShortSetup(
   receipt: Receipt | undefined,
   retained: Pending | undefined,
   look: ConfigLook,
-): Promise<ConfigLook | undefined> {
+): Promise<
+  { look: ConfigLook; removal?: 'file-removed' | 'removed' } | undefined
+> {
   const { entrySha256, stagedIno } = pending
   if (
     look.kind !== 'present' ||
@@ -2524,7 +2863,7 @@ async function finishCutShortSetup(
       `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
   await retirePending(context, retained)
-  return lookAtConfig(context)
+  return { look: await lookAtConfig(context), removal: result.removal }
 }
 
 /**
@@ -2540,9 +2879,11 @@ async function inspect(context: Context): Promise<{
   look: ConfigLook
   current: unknown
   receipt: Receipt | undefined
+  /** Set when this run's take-back of an interrupted first setup removed the entry (or the file Codebook created): the removal answers it instead of `not-managed`. */
+  tookBack?: 'file-removed' | 'removed'
 }> {
   // A rollback cut short comes first: its original may be the only copy of the learner's other servers.
-  const didSettleRollback = await settleRollbackJournal(context)
+  await settleRollbackJournal(context)
   const pending = await readRecord(
     context.pendingPath,
     pendingSchema,
@@ -2565,10 +2906,10 @@ async function inspect(context: Context): Promise<{
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
   const afterTakeBack =
-    didSettleRollback && pending
+    pending && isTakeBackOwed(pending, stored)
       ? await finishCutShortSetup(context, pending, stored, retained, look)
       : undefined
-  if (afterTakeBack) look = afterTakeBack
+  if (afterTakeBack) look = afterTakeBack.look
   const current = currentEntryOf(look)
   const receipt = await settlePending(
     context,
@@ -2587,7 +2928,12 @@ async function inspect(context: Context): Promise<{
   })
   if (pending && reported)
     throw unsettledRefusal(context, pending.phase, reported)
-  return { look, current, receipt }
+  return {
+    look,
+    current,
+    receipt,
+    ...(afterTakeBack?.removal && { tookBack: afterTakeBack.removal }),
+  }
 }
 
 /**
@@ -2861,7 +3207,12 @@ export type DevinMcpRemovalResult =
       /** Plain sentences (no raw error text) when the entry is gone but Codebook's receipt or a private copy could not be deleted; each names the file; the caller still reports the removal. */
       cleanupFailure?: string
     }
-  | { status: 'not-managed' | 'changed' | 'superseded'; path: string }
+  | {
+      status: 'not-managed' | 'changed' | 'superseded'
+      path: string
+      /** Set with `not-managed` when no receipt is left but the config still holds a `codebook` entry (an orphan), as opposed to no entry at all. */
+      entryStays?: true
+    }
 
 /** Options of {@link removeManagedDevinMcpEntry}. */
 export type DevinMcpRemovalOptions = {
@@ -2915,19 +3266,14 @@ export async function removeManagedDevinMcpEntry(
       // The retry has read the record; it ends it now ({@link inspect} leaves an unrecorded removal's record for this read).
       if (wasUnrecorded) await dropPending(context)
       const ownership = removalOwnership(inspected, options.expectedGeneration)
-      if ('status' in ownership) {
-        // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
-        if (ownership.status !== 'superseded')
-          await rm(context.receiptPath, { force: true })
-        // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
-        if (
-          ownership.status === 'not-managed' &&
-          wasUnrecorded &&
-          inspected.receipt
+      // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
+      if ('status' in ownership)
+        return answerRemovalWithoutTakeOut(
+          context,
+          ownership.status,
+          inspected,
+          wasUnrecorded,
         )
-          return { status: 'removed', path: context.path }
-        return { status: ownership.status, path: context.path }
-      }
       const { status, keptLeft } = await takeEntryOut(context, ownership)
       return dropReceiptAfterRemoval(
         context.receiptPath,
@@ -2937,4 +3283,42 @@ export async function removeManagedDevinMcpEntry(
       )
     },
   )
+}
+
+/**
+ * Answers a removal whose entry is not Codebook's to take out (gone, changed, or a newer setup's) without touching the config; called by {@link removeManagedDevinMcpEntry} under its lock.
+ * @param context - The locked removal's paths.
+ * @param status - What {@link removalOwnership} decided.
+ * @param inspected - What {@link inspect} found under the lock.
+ * @param wasUnrecorded - Whether an earlier removal took the entry out and left its record unwritten.
+ * @returns
+ * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload);
+ * - otherwise `status` itself, with `entryStays` when `not-managed` finds the entry still in the config without its receipt.
+ * @example
+ * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
+ */
+async function answerRemovalWithoutTakeOut(
+  context: Context,
+  status: Extract<RemovalOwnership, { status: string }>['status'],
+  inspected: Awaited<ReturnType<typeof inspect>>,
+  wasUnrecorded: boolean,
+): Promise<DevinMcpRemovalResult> {
+  // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry.
+  if (status !== 'superseded') await rm(context.receiptPath, { force: true })
+  // The entry is gone because this run's take-back of an interrupted first setup took it out: the removal reports that, so the window is offered its reload.
+  if (status === 'not-managed' && inspected.tookBack)
+    return { status: inspected.tookBack, path: context.path }
+  // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
+  if (status === 'not-managed' && wasUnrecorded && inspected.receipt)
+    return { status: 'removed', path: context.path }
+  // An entry that stays without its receipt is no absent entry: the caller must not count the take-back complete.
+  const entryStays =
+    status === 'not-managed' &&
+    !inspected.receipt &&
+    inspected.current !== undefined
+  return {
+    status,
+    path: context.path,
+    ...(entryStays && { entryStays: true as const }),
+  }
 }

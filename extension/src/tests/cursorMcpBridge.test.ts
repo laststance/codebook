@@ -368,3 +368,101 @@ test(
     assert.deepEqual(resolvedPaths, [directory])
   },
 )
+
+// protects=Cursor's bridge staying as it was when the server answers a request 403: that request fails, it is sent once, and the bridge keeps serving (Cycle 0145 task 12 gave the refusal hook to the Devin bridge only); fails_when=Cursor's bridge ends or replays a request after a 401 or 403; no_claim=the Devin bridge's check (devinMcpBridge tests)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge fails only a request the server answers 403 and sends each request once',
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(
+      join(tmpdir(), 'codebook-cursor-bridge-refused-'),
+    )
+    let toolsListRequests = 0
+    const listener = createServer((incoming, outgoing) => {
+      const chunks: Buffer[] = []
+      incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
+      incoming.on('end', () => {
+        if (incoming.method !== 'POST') {
+          outgoing.writeHead(200)
+          outgoing.end()
+          return
+        }
+        const message = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if (message.method === 'initialize') {
+          outgoing.writeHead(200, {
+            'content-type': 'application/json',
+            'mcp-session-id': 'test-session',
+          })
+          outgoing.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: message.id,
+              result: {
+                protocolVersion: message.params.protocolVersion,
+                capabilities: { tools: {} },
+                serverInfo: { name: 'refusing', version: '1' },
+              },
+            }),
+          )
+          return
+        }
+        if (message.method === 'tools/list') toolsListRequests += 1
+        // The notification is accepted; every request after it is refused.
+        outgoing.writeHead(message.id === undefined ? 202 : 403)
+        outgoing.end()
+      })
+    })
+    await new Promise<void>((resolve) =>
+      listener.listen(0, '127.0.0.1', resolve),
+    )
+    context.after(async () => {
+      listener.closeAllConnections()
+      await new Promise<void>((resolve) => listener.close(() => resolve()))
+      await removeTestFolder(directory)
+    })
+    const descriptorPath = join(directory, 'refused.connection.json')
+    await writeFile(
+      descriptorPath,
+      JSON.stringify({
+        url: `http://127.0.0.1:${(listener.address() as AddressInfo).port}/mcp`,
+        token: 'test-token',
+        instanceId: '11111111-1111-4111-8111-111111111111',
+        workspace: directory,
+        apiVersion: '1.0',
+      }),
+      { mode: 0o600 },
+    )
+    const client = new Client({
+      name: 'cursor-stdio-bridge-test',
+      version: '1.0',
+    })
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [join(__dirname, '../cursorMcpBridgeEntry.js'), descriptorPath],
+      stderr: 'pipe',
+    })
+    try {
+      await client.connect(transport, { timeout: 5_000 })
+      // Act
+      const first = await client.listTools().then(
+        () => 'answered',
+        () => 'failed',
+      )
+      const receivedAfterFirst = toolsListRequests
+      const second = await client.listTools().then(
+        () => 'answered',
+        () => 'failed',
+      )
+      // Assert
+      assert.equal(first, 'failed')
+      assert.equal(second, 'failed')
+      // Each request reached the server once, so the bridge did not end and did not replay.
+      assert.equal(receivedAfterFirst, 1)
+      assert.equal(toolsListRequests, 2)
+    } finally {
+      await client.close()
+    }
+  },
+)

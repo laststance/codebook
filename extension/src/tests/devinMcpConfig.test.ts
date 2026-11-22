@@ -11,6 +11,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import {
@@ -2227,6 +2228,242 @@ test('Recovery puts a displaced file with another inode but the recorded bytes b
   })
 })
 
+test('Recovery publishes nothing from a displaced file whose bytes were rewritten in place after they matched the record, and names it', async (context) => {
+  // protects=a displaced file that matched the record by its bytes alone is not linked to the config name after a writer changed it in place; fails_when=the rewritten bytes become the config or the file is not named; no_claim=a write in the syscall gap after the last look; seam=seam.beforeLeftoverCheck rewrites the file in place with the same size before the look that precedes the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const recordedBytes = '{"theme":"dark"}\n'
+  const rewrittenBytes = '{"theme":"evil"}\n'
+  await writeFile(keptPath, recordedBytes)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(recordedBytes),
+  })
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      // The same file, written in place with the same size: the inode stays.
+      writeFileSync(keptPath, rewrittenBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), rewrittenBytes)
+})
+
+test('Recovery takes the config name away again when the displaced file was rewritten in place in the gap before its link, and names the file', async (context) => {
+  // protects=the file linked to the config name is verified (inode and bytes) before the private name is retired, so changed bytes never stay published; fails_when=the rewritten bytes stay at the config name or the private name is deleted; no_claim=a write after the verification read; seam=seam.afterLeftoverCheck rewrites the file in place with the same size right after the last look before the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const recordedBytes = '{"theme":"dark"}\n'
+  const rewrittenBytes = '{"theme":"evil"}\n'
+  await writeFile(keptPath, recordedBytes)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(recordedBytes),
+  })
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      // The same file, written in place with the same size: the inode stays.
+      writeFileSync(keptPath, rewrittenBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    // The shown text itself says what happened to the config name and names it.
+    assert.ok(
+      error.message.includes(`took the config name ${configPath} away again`),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), rewrittenBytes)
+})
+
+test('Recovery takes the config name away again when the displaced file grew past the size limit in the gap before its link, and names the file', async (context) => {
+  // protects=a failing post-link verification (the size limit, not a hash mismatch) takes the same undo, so an unverified file never stays published; fails_when=the grown file stays at the config name or the refusal omits the displaced name; no_claim=what a later recovery does with the kept file; seam=seam.afterLeftoverCheck appends past the limit right after the last look before the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const recordedBytes = '{"theme":"dark"}\n'
+  await writeFile(keptPath, recordedBytes)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(recordedBytes),
+  })
+  let isGrown = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isGrown) return
+      isGrown = true
+      // The same file, appended in place past the 1 MiB limit: the inode stays.
+      appendFileSync(keptPath, ' '.repeat(1_048_576))
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  // The growth was injected (the refusal did not come from another path before the hook ran).
+  assert.equal(isGrown, true)
+  assert.ok(statSync(keptPath).size > 1_048_576)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(keptPath), true)
+})
+
+const PUT_BACK_BYTES = '{"theme":"dark"}\n'
+
+/** Records a displaced file that matches by its bytes alone (another inode) and returns its name. */
+async function arrangeBytesOnlyDisplaced(
+  storage: string,
+  configPath: string,
+): Promise<string> {
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, PUT_BACK_BYTES)
+  utimesSync(keptPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(PUT_BACK_BYTES),
+  })
+  return keptPath
+}
+
+test('Recovery keeps an editor save that landed at the config name while the displaced name was checked after a failed put-back check', async (context) => {
+  // protects=the put-back check looks at the config name last, right before it unlinks it, so a save by rename during the displaced name's look survives; fails_when=the editor's file is unlinked; no_claim=the syscall gap after the last look; seam=seam.afterLeftoverCheck rewrites the displaced file in place, seam.beforeLeftoverCheck renames another file over the config name during the displaced name's second look
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  let isRewritten = false
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      writeFileSync(keptPath, '{"theme":"evil"}\n')
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || !isRewritten || isSaved) return
+      isSaved = true
+      swapFile(configPath, '{"editor":"saved"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(configPath), error.message)
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(configPath, 'utf8'), '{"editor":"saved"}\n')
+})
+
+test('Recovery says the config name could not be taken away when its unlink fails, names both paths and keeps the displaced file in a later run', async (context) => {
+  // protects=a failed unlink never reads as taken away, and the displaced name that shares the config's inode is handed over, not deleted by a later run; fails_when=the refusal says the name was taken away, omits a path, or a later recovery deletes the displaced file; no_claim=the learner's repair; seam=seam.afterLeftoverCheck makes the config directory read-only at the last look before the unlink
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  let isRewritten = false
+  let isLocked = false
+  // The directory is made writable again so the temp folder can be removed, even when the temp folder is already gone.
+  context.after(() => chmod(dirname(configPath), 0o700).catch(() => undefined))
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path === keptPath && !isRewritten) {
+        isRewritten = true
+        writeFileSync(keptPath, '{"theme":"evil"}\n')
+      }
+      if (path === configPath && isRewritten && !isLocked) {
+        isLocked = true
+        chmodSync(dirname(configPath), 0o500)
+      }
+    },
+  })
+  let shown = ''
+  await attempt.catch((error: Error) => {
+    shown = error.message
+  })
+  await chmod(dirname(configPath), 0o700)
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
+
+  // Assert
+  assert.equal(isLocked, true)
+  assert.ok(shown.includes('could not take the config name'), shown)
+  assert.ok(shown.includes(keptPath), shown)
+  assert.ok(shown.includes(configPath), shown)
+  assert.ok(!shown.includes('move it back over the config or delete it'), shown)
+  assert.equal(existsSync(keptPath), true)
+})
+
+// protects=a removal that finds the entry in the config but no receipt answers that the entry stays, apart from an entry that is absent; fails_when=both read as plain not-managed, so a rollback reports no leftover for an orphaned entry and the retry it advises refuses that entry; no_claim=the rollback line's words
+test('a removal whose receipt is gone but whose entry is still in the config says the entry stays, and one with no config says nothing stays', async (context) => {
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await rm(join(storage, 'devin-mcp', 'receipt.json'))
+  const empty = await arrange(context)
+  // Act
+  const orphaned = await removeManagedDevinMcpEntry(storage, home)
+  const absent = await removeManagedDevinMcpEntry(empty.storage, empty.home)
+  // Assert
+  assert.deepEqual(orphaned, {
+    status: 'not-managed',
+    path: configPath,
+    entryStays: true,
+  })
+  assert.deepEqual(absent, { status: 'not-managed', path: empty.configPath })
+})
+
 test('Recovery leaves the config name empty and names a displaced file with another inode and other bytes than the record', async (context) => {
   // protects: a different server definition never becomes Devin's live config after a sync tool replaced the displaced copy / fails_when: a displaced file with neither the recorded inode nor the recorded bytes is linked to the config name / no_claim: the file's permissions, a standing config
   // Arrange
@@ -2397,6 +2634,76 @@ test('A first setup whose receipt cannot be written takes its own entry out agai
 
   // Assert
   assert.equal(retry.status, 'installed')
+})
+
+test('A refresh after a first setup whose receipt and rollback both failed takes the entry back instead of adopting it as installed', async (context) => {
+  // protects=a failed first setup is never adopted as installed when a full disk stopped its receipt and its rollback journal; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of the first refusal, the real ENOSPC code; seam=seam.afterPublish puts folders where the receipt and the rollback journal go, standing for the full disk
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const rollbackJournalPath = join(
+    storage,
+    'devin-mcp',
+    'pending.json.rollback',
+  )
+  const firstSetup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      mkdirSync(receiptPath, { recursive: true })
+      mkdirSync(rollbackJournalPath, { recursive: true })
+    },
+  })
+  await assert.rejects(firstSetup)
+  // Space returns: both blockers are gone, the entry still stands in the config.
+  rmSync(receiptPath, { recursive: true })
+  rmSync(rollbackJournalPath, { recursive: true })
+  assert.ok(
+    JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.codebook,
+    'the failed setup left its entry for the refresh to take back',
+  )
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
+test('A refresh takes back a first setup whose receipt, take-back mark and rollback journal all failed to be written', async (context) => {
+  // protects=a first setup is adopted only once its own receipt exists, so a full disk after the publish never turns the failed setup into an installed one; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of the first refusal; seam=seam.afterPublish blocks the receipt and the journal, and the take-back mark is removed from the publish record to stand for its failed write
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const rollbackJournalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        mkdirSync(receiptPath, { recursive: true })
+        mkdirSync(rollbackJournalPath, { recursive: true })
+      },
+    }),
+  )
+  rmSync(receiptPath, { recursive: true })
+  rmSync(rollbackJournalPath, { recursive: true })
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  delete publishRecord.takeBack
+  writeFileSync(pendingPath, JSON.stringify(publishRecord))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
 })
 
 test('A first setup whose receipt cannot be written removes only its own entry from a config that has other servers', async (context) => {
@@ -2733,6 +3040,317 @@ test('A refresh after a first setup whose rollback was cut short takes the entry
     existsSync(join(storage, 'devin-mcp', 'pending.json.rollback')),
     false,
   )
+})
+
+test('A refresh that fails after settling a cut-short rollback does not let the next refresh turn the failed setup into an installed one', async (context) => {
+  // protects=the take-back of a failed first setup survives a run that failed after the journal was settled; fails_when=the second refresh writes a receipt or leaves the entry in the config; no_claim=the wording of the first refusal; seam=seam.afterMoveAside ends the rollback, seam.afterPublish makes the receipt unwritable, a directory at the receipt path makes its read fail
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  // The first retry settles the journal, then fails reading the receipt (a directory stands there).
+  await assert.rejects(refreshManagedDevinMcpEntry(storage, ENTRY, home))
+  rmSync(receiptPath, { recursive: true })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('A refresh takes back a first setup whose rollback journal was written by the released build and names no publish', async (context) => {
+  // protects=a cut-short rollback journal of an older build, which names no publish generation, still finishes the take-back when it belongs to the publish record; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the generation and the newer marks are removed from the records to stand for the older build
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
+  delete journal.publishGeneration
+  writeFileSync(journalPath, JSON.stringify(journal))
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  delete publishRecord.takeBack
+  delete publishRecord.firstSetup
+  writeFileSync(pendingPath, JSON.stringify(publishRecord))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
+/** Leaves a first setup whose rollback was cut short, with the records of the released build (no generation, no newer marks); `editJournal` changes the journal. */
+async function leaveLegacyCutShortSetup(
+  context: TestContext,
+  editJournal: (
+    journal: Record<string, unknown>,
+    paths: { journalPath: string; configPath: string },
+  ) => void,
+) {
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
+  delete journal.publishGeneration
+  editJournal(journal, { journalPath, configPath })
+  writeFileSync(journalPath, JSON.stringify(journal))
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  delete publishRecord.takeBack
+  delete publishRecord.firstSetup
+  writeFileSync(pendingPath, JSON.stringify(publishRecord))
+  return { home, storage, configPath, receiptPath }
+}
+
+test('A legacy rollback journal with the published inode but another hash does not mark the pending publish for take-back', async (context) => {
+  // protects=an inode reused for another publish never takes out that publish's entry; fails_when=the refresh takes the entry out (status not-managed, no receipt); no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback; the journal's keptSha256 is changed to stand for another publish
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await leaveLegacyCutShortSetup(context, (journal) => {
+      journal.keptSha256 = 'f'.repeat(64)
+    })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'current')
+  assert.equal(existsSync(receiptPath), true)
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+})
+
+test('A legacy rollback journal without a kept inode still marks the pending publish for take-back', async (context) => {
+  // protects=an ambiguous legacy journal never lets the failed setup be adopted as installed; fails_when=the refresh writes an installed receipt or leaves the entry in the config; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends the rollback; the journal is reduced to no kept file (keptName, keptIno, keptSha256 removed)
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await leaveLegacyCutShortSetup(context, (journal, paths) => {
+      // The previous release had put the displaced config back: it stands at the config path again and the journal keeps no kept file.
+      renameSync(
+        join(dirname(paths.configPath), String(journal.keptName)),
+        paths.configPath,
+      )
+      delete journal.keptName
+      delete journal.keptIno
+      delete journal.keptSha256
+    })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
+test('Removing the setup right after a first setup whose rollback was cut short answers removed because the take-back took the entry out', async (context) => {
+  // protects=the removal tells the window that the entry it just took back is gone (notice and Reload Window); fails_when=the removal answers not-managed; no_claim=the wording of any notice; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(result.status, 'removed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
+test('Removing the setup right after a first setup that created the config file and could not take it back answers file-removed', async (context) => {
+  // protects=the removal reports a deleted config file the take-back removed; fails_when=the removal answers not-managed; no_claim=the wording of any notice; seam=seam.afterPublish blocks the receipt and makes the rollback's check fail, so the first run ends with the intent recorded; no config existed before the setup
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let isPublished = false
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      isPublished = true
+      mkdirSync(receiptPath, { recursive: true })
+    },
+    afterCheck: () => {
+      if (isPublished) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(result.status, 'file-removed')
+  assert.equal(existsSync(configPath), false)
+})
+
+test('A rollback journal of another installation does not mark a pending publish for take-back', async (context) => {
+  // protects=a journal left by installation A never takes out the entry installation B is publishing; fails_when=B's published entry is taken out of the config or no receipt is written for it; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends A's rollback and seam.afterPublish makes its receipt unwritable; the journal names another generation than the publish record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  // The journal on disk belongs to installation A; the publish record is installation B's, which carries no take-back mark of its own.
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  writeFileSync(
+    journalPath,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(journalPath, 'utf8')),
+      publishGeneration: '11111111-2222-4333-8444-555555555555',
+    }),
+  )
+  const publishB = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  delete publishB.takeBack
+  // Installation B's publish is an update (not a first setup), so it stays adoptable once its journal-free record is settled.
+  delete publishB.firstSetup
+  writeFileSync(pendingPath, JSON.stringify(publishB))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'current')
+  assert.equal(existsSync(receiptPath), true)
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+})
+
+test('A refresh whose take-back of a cut-short setup cannot start refuses, and the next refresh still takes the entry back', async (context) => {
+  // protects=a failed take-back keeps the intent in the publish record until it ends; fails_when=the second refresh adopts the entry (receipt written) or the record keeps takeBack after the take-back ended; no_claim=the wording of the refusal; seam=seam.afterCheck fails the take-back's move-aside, which is before the config moves
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  await assert.rejects(
+    refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: () => {
+        throw new Error('probe failed')
+      },
+    }),
+  )
+  const recordAfterFailure = JSON.parse(readFileSync(pendingPath, 'utf8'))
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(recordAfterFailure.takeBack, true)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(pendingPath), false)
+})
+
+test('A refresh whose take-back finds the entry changed by an editor keeps the change and writes no installed receipt', async (context) => {
+  // protects=a take-back that finds the entry changed settles the record with a fresh look of the config; fails_when=an installed receipt is written for the failed setup or the editor's entry is lost; no_claim=the wording of any refusal; seam=seam.afterStat saves another entry into a new file between the run's first read and the take-back's read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const editedText =
+    '{"mcpServers":{"alpha":{"command":"a"},"codebook":{"command":"edited-by-hand"}}}\n'
+  let configReadCount = 0
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath) return
+      configReadCount += 1
+      // The first read is the run's own look; the editor's save lands before the take-back reads again.
+      if (configReadCount === 1) swapFile(configPath, editedText)
+    },
+  }).catch(() => undefined)
+
+  // Assert
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), editedText)
 })
 
 test('A refresh after a cut-short rollback never asks to remove the entry by hand when the config cannot be read again', async (context) => {
@@ -3292,6 +3910,184 @@ test('A config rewritten in place after a crashed publish keeps the displaced or
     return true
   })
   assert.equal(readFileSync(displacedPath, 'utf8'), originalBytes)
+})
+
+test('A displaced original is kept and named when an editor saves over the published config during its last read', async (context) => {
+  // protects=the only copy of the learner's other servers survives an editor save that lands between the check of the published config and the delete of the displaced original; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a save after the last look at the config name; seam=seam.afterStat renames another file over the config during the last read of the displaced original
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`,
+  )
+  await writeFile(keptPath, originalBytes)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(readFileSync(configPath, 'utf8')),
+  })
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      // The first read is recovery's own look; the save lands during the last one.
+      if (keptReadCount === 2)
+        swapFile(configPath, '{"mcpServers":{"beta":{"command":"b"}}}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A displaced original is kept and named when an editor rewrites the published config in place during its last read', async (context) => {
+  // protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that keeps its inode and size; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite after the last read of the config; seam=seam.afterStat rewrites the config in place with other bytes of the same size during the last read of the displaced original
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  await writeConfig(configPath, publishedBytes)
+  await writeFile(keptPath, originalBytes)
+  const publishedIno = (await stat(configPath)).ino
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: publishedIno,
+    stagedSha256: sha256(publishedBytes),
+  })
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      // The first read is recovery's own look; the rewrite lands during the last one.
+      if (keptReadCount === 2)
+        writeFileSync(
+          configPath,
+          publishedBytes.replace('codebook', 'codebooX'),
+        )
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal((await stat(configPath)).ino, publishedIno)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test("A displaced original is kept and named when an editor rewrites the published config in place with the same size during the displaced copy's last read", async (context) => {
+  // protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that lands during the displaced copy's final read, after the config was hashed; fails_when=the displaced original is deleted because the final look checks the config's inode alone; no_claim=a rewrite in the syscall gap after the last synchronous look; seam=seam.afterStat rewrites the config in place with other bytes of the same size during the third read of the displaced original
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  await writeConfig(configPath, publishedBytes)
+  // An old modification time keeps the rewrite visible on a file system with coarse timestamps.
+  utimesSync(configPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  await writeFile(keptPath, originalBytes)
+  const publishedIno = (await stat(configPath)).ino
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: publishedIno,
+    stagedSha256: sha256(publishedBytes),
+  })
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      // Reads 1 and 2 are recovery's looks; read 3 follows the config's hash.
+      if (keptReadCount === 3)
+        writeFileSync(
+          configPath,
+          publishedBytes.replace('codebook', 'codebooX'),
+        )
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal((await stat(configPath)).ino, publishedIno)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A displaced original is kept and named when a writer rewrites it with the same length while the published config is read again', async (context) => {
+  // protects=the displaced copy's content is the last async read before the unlink, so a same-length rewrite during the config's re-read is not deleted; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite in the syscall gap after the last hash; seam=seam.afterStat rewrites the displaced copy in place with the same length during the config's re-read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const changedBytes = '{"mcpServers":{"alpha":{"command":"b"}}}\n'
+  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  await writeConfig(configPath, publishedBytes)
+  await writeFile(keptPath, originalBytes)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: (await stat(configPath)).ino,
+    stagedSha256: sha256(publishedBytes),
+  })
+  let keptReadCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === keptPath) keptReadCount += 1
+      // Recovery's first look and its hash before the delete read the copy first; the rewrite lands in the config read that follows them.
+      if (path === configPath && keptReadCount >= 2)
+        writeFileSync(keptPath, changedBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), changedBytes)
 })
 
 test('A leftover that disappears during the final read is not deleted when another file appears at its name', async (context) => {
