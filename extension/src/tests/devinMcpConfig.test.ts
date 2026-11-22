@@ -2784,6 +2784,28 @@ test('A refresh after a cut-short rollback never asks to remove the entry by han
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A put-back keeps the displaced name when only that name was replaced after the config was checked', async (context) => {
+  // protects=the put-back checks the displaced name last, so a swap of that name after the config check is not deleted; fails_when=the swapped-in file is deleted or the refusal omits its path; no_claim=the syscall gap after the last look; seam=seam.beforeLeftoverCheck swaps the displaced name while the config name is checked
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path === configPath) swapFile(keptPath, '{"swapped":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped":true}\n')
+})
+
 test('A put-back never publishes a file that a sync tool swapped in at the displaced name after the first look', async (context) => {
   // protects=a swapped-in file is not linked to the config name; fails_when=the swapped file becomes the config or the refusal omits its path; no_claim=what the file holds; seam=seam.beforeLeftoverCheck swaps the displaced file
   // Arrange

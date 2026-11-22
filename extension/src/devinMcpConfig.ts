@@ -1982,9 +1982,9 @@ async function putBackDisplaced(
   })
   if (!linked || copy.ino !== linked.ino)
     await undoForeignLink(context, path, linked?.ino)
-  assertLeftoverStill(context, path, { ino: copy.ino })
-  // The config name must still show the linked inode before the displaced name goes.
+  // The config name is checked first and the displaced name last, right before the unlink: only the syscall gap after that last look remains.
   assertConfigStill(context, copy.ino, path)
+  assertLeftoverStill(context, path, { ino: copy.ino })
   await unlink(path)
   return true
 }
