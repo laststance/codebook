@@ -2540,31 +2540,146 @@ test('Recovery leaves the config name empty and names a displaced file with anot
   assert.equal(existsSync(keptPath), true)
 })
 
-test('Recovery drops the extra displaced name of a put-back that was interrupted after its link, even when the inode is not the recorded one', async (context) => {
-  // protects: an interrupted put-back is finished instead of refused forever / fails_when: the run refuses because the config name exists while the displaced name is another name of the same file / no_claim: a different file at the config name (refused by the test above's sibling)
+test('Recovery drops the extra displaced name of a put-back that was interrupted after its link, even when the inode is not the recorded one, once the shared bytes still match the record', async (context) => {
+  // Value: protects=an interrupted put-back that only the bytes proved is finished instead of refused forever, after the shared file's bytes were checked against the record; fails_when=the run refuses although the shared bytes still match, keeps the extra private name, changes the config or leaves the record; no_claim=shared bytes that changed (the tests below), a different file at the config name (refused by the test above's sibling); seam=hand-written pending record of a put-back by bytes (another inode), and a manual link of the private file to the config name standing for a put-back that ended after its link
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  await mkdir(dirname(configPath), { recursive: true })
-  const keptPath = privateNameOf(configPath, 'codebook-displaced')
-  const restored = '{"theme":"restored"}\n'
-  await writeFile(keptPath, restored)
-  await link(keptPath, configPath)
-  await writeRecordFile(storage, 'pending.json', {
-    targetPath: configPath,
-    createdFile: false,
-    generation: JOURNAL_GENERATION,
-    keptName: basename(keptPath),
-    keptIno: (await stat(keptPath)).ino + 1,
-    keptSha256: sha256('{"theme":"dark"}\n'),
-  })
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
 
   // Act
   const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
   assert.equal(result.status, 'not-managed')
-  assert.equal(await readFile(configPath, 'utf8'), restored)
+  assert.equal(await readFile(configPath, 'utf8'), '{"theme":"dark"}\n')
   assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('A content-only put-back cut short before its check keeps the private name when the shared bytes changed', async (context) => {
+  // Value: protects=a put-back that only the bytes proved and that ended between its link and its check never drops the private name unless the shared file still holds the recorded bytes, so Codebook never forgets that the config may hold bytes it did not verify; fails_when=the private name is deleted, either name's bytes change, the refusal omits a path or advises moving the copy back, or the record does not turn to handed; no_claim=what an older build does with the handed record (read from its code), and a write in the syscall gap after the last look; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, then an in-place append that keeps valid JSON, standing for a writer between the link and the check
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  appendFileSync(configPath, '\n')
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    // A trailing space: the private path starts with the config's, so only this form proves the config itself is named.
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    assert.ok(
+      !error.message.includes('move it back over the config or delete it'),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(readFileSync(configPath, 'utf8'), '{"theme":"dark"}\n\n')
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"theme":"dark"}\n\n')
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
+test('A content-only put-back cut short before its check names both files and records the handover when the shared bytes are no longer valid JSON', async (context) => {
+  // Value: protects=a refusal of the config's own text after a failed shared-bytes check still names the private file and keeps the record handed, so neither name is deleted later; fails_when=the invalid-JSON refusal hides the private path, the private name is deleted, or pending.json is not handed; no_claim=the order of the two sentences, and what an older build does with the handed record (read from its code); seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, then an in-place append of an opening brace that makes the shared file invalid JSON
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  appendFileSync(configPath, '{')
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(
+      error.message.includes('text that is not valid JSON'),
+      error.message,
+    )
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(readFileSync(configPath, 'utf8'), '{"theme":"dark"}\n{')
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"theme":"dark"}\n{')
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
+test('A content-only put-back that stopped right before it deleted the private name leaves a handed, unverified record, and the next run checks the bytes and finishes', async (context) => {
+  // Value: protects=a put-back that only the bytes proved records itself as handed and unverified before its link, so a run that stops before the private name is deleted leaves a record older builds never delete from, and the next run of this build checks the shared bytes and finishes the put-back; fails_when=the record at the stop is not handed or not marked unverified, the next run refuses, keeps the private name, changes the config or leaves the record; no_claim=what an older build does with that record (read from its code); seam=hand-written pending record of a put-back by bytes with the config name empty, seam.afterLeftoverCheck reads pending.json at the last look at the private name and throws there (the process ends), and that record is written back afterwards because a process that ended there never rewrote it
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let keptLookCount = 0
+  let recordAtStop = ''
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath) return
+      keptLookCount += 1
+      // Look 1 comes right before the link, look 2 right before the private name is deleted.
+      if (keptLookCount !== 2) return
+      recordAtStop = readFileSync(pendingPath, 'utf8')
+      throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  writeFileSync(pendingPath, recordAtStop)
+
+  // Assert
+  assert.equal(keptLookCount, 2)
+  assert.equal(JSON.parse(recordAtStop).phase, 'handed')
+  assert.equal(JSON.parse(recordAtStop).bytesUnverified, true)
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(nextRun.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"theme":"dark"}\n')
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+})
+
+test('A content-only put-back that stopped after it recorded itself as unverified and before its link puts the config back at the next run', async (context) => {
+  // Value: protects=the next run reads an unverified put-back's handed record as in progress and finishes the put-back, so the only copy of the config is never deleted as a leftover while the config name is empty; fails_when=the record at the stop is not handed and unverified, the next run refuses, deletes the private file, or leaves the config name empty or the record behind; no_claim=what an older build does with that record (read from its code); seam=hand-written pending record of a put-back by bytes with the config name empty, seam.afterLeftoverCheck reads pending.json at the look right before the link and throws there (the process ends), and that record is written back afterwards because a process that ended there never rewrote it
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let recordAtStop = ''
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      // The first look at the private name comes right before the link.
+      if (path !== keptPath || recordAtStop !== '') return
+      recordAtStop = readFileSync(pendingPath, 'utf8')
+      throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  writeFileSync(pendingPath, recordAtStop)
+
+  // Assert
+  assert.equal(JSON.parse(recordAtStop).phase, 'handed')
+  assert.equal(JSON.parse(recordAtStop).bytesUnverified, true)
+  assert.equal(existsSync(configPath), false)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(nextRun.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"theme":"dark"}\n')
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
 })
 
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {

@@ -113,6 +113,8 @@ const pendingSchema = z.object({
   publishGeneration: z.string().optional(),
   /** Set by a first setup (no receipt owned an entry that stood, {@link isFirstSetup}) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
   firstSetup: z.boolean().optional(),
+  /** Set, with `phase: 'handed'`, right before the link of a put-back that only the displaced file's bytes prove ({@link putBackDisplaced}): a run that stops before the check leaves a record that older builds read as handed and never delete from, while this build reads it as in progress ({@link leftoverPhaseOf}) and checks the shared bytes before it deletes the private name ({@link assertSharedPutBackBytes}). Gone once the check passed; an older build drops it. */
+  bytesUnverified: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
 type Pending = z.infer<typeof pendingSchema>
@@ -1658,7 +1660,7 @@ type Unsettled = {
  * @param context - The run.
  * @param leftover - The accepted leftover.
  * @returns What was found; a file that cannot be read is an answer, so the other leftovers still settle.
- * @param phase - The phase of the pending record.
+ * @param phase - The phase recovery reads the pending record in ({@link leftoverPhaseOf}): an unverified put-back's handed record counts as in progress.
  * @throws A {@link journalRefusal} when the file has another inode than the record says; an {@link otherInodeRefusal} for the displaced file while a config stands. The displaced file of a change in progress with an empty config name is accepted whatever its inode: it goes back.
  */
 async function lookAtLeftover(
@@ -1872,11 +1874,11 @@ function otherInodeRefusal(
 /**
  * Recovers what an interrupted run left under the private names its pending record holds; called by {@link inspect} before the config is read.
  * Every name must be a bare name Codebook made beside the config with the inode the record holds, checked for all of them before any is moved, linked or deleted. Each leftover is then settled on its own: one that cannot be settled stays and is returned, and the others are still settled.
- * - A displaced config of a write or removal that was still in progress, while the config name is empty: it goes back with a link, which never replaces anything, only while it still has the recorded inode or the recorded bytes; a file with both different (a sync or backup tool replaced it) stays private, the config name stays empty and the refusal names it. When the config name is another name of the same file (a put-back interrupted after its link), the extra displaced name is unlinked.
+ * - A displaced config of a write or removal that was still in progress, while the config name is empty: it goes back with a link, which never replaces anything, only while it still has the recorded inode or the recorded bytes; a file with both different (a sync or backup tool replaced it) stays private, the config name stays empty and the refusal names it. When the config name is another name of the same file (a put-back interrupted after its link), the extra displaced name is unlinked; when only the bytes ever proved that file (another inode than the recorded one), only after the shared bytes were checked against the record ({@link assertSharedPutBackBytes}).
  * - A displaced or staged file that holds exactly the bytes the record names: it is Codebook's own leftover and is deleted. After a finished publish or removal (a completed record) it is never put back.
  * - A staged or displaced name that is another link to the config itself: unlinked, whatever the config holds now; the config keeps the inode.
  * - The probe link of the hard-link check: deleted.
- * - A copy handed to the learner (a handed record): never touched.
+ * - A copy handed to the learner (a handed record): never touched. A record handed only because a put-back by bytes was cut short ({@link Pending.bytesUnverified}) is read as in progress ({@link leftoverPhaseOf}).
  * - Anything else stays and is returned.
  * @param context - The run.
  * @param pending - The pending record of the interrupted run.
@@ -1892,7 +1894,7 @@ async function recoverLeftovers(
   for (const leftover of journalLeftovers(context, pending))
     looked.push({
       leftover,
-      look: await lookAtLeftover(context, leftover, pending.phase),
+      look: await lookAtLeftover(context, leftover, leftoverPhaseOf(pending)),
     })
   const unsettled: Unsettled[] = []
   for (const { leftover, look } of looked) {
@@ -1984,16 +1986,17 @@ async function retirePending(
  * @param leftover - The accepted leftover.
  * Right before each link and unlink the name is looked at again ({@link isLeftoverStill}); a file swapped in since the first look is neither linked nor deleted. A displaced original of an unfinished change whose config name holds another file (not the published staged one) is handed to the learner ({@link handOver}) and never deleted.
  * @param copy - What {@link lookAtLeftover} found.
- * @param pending - The pending record of the interrupted run; its phase is absent while the change was in progress.
+ * @param pending - The pending record of the interrupted run; its phase is absent while the change was in progress (also for an unverified put-back's handed record, {@link leftoverPhaseOf}).
  * @throws When the file differs from what Codebook expected, was handed to the learner, was swapped meanwhile, or the move or delete fails.
  */
 async function tidyLeftover(
   context: Context,
-  { role, path, ino: expectedIno, sha256: expectedSha256 }: Leftover,
+  leftover: Leftover,
   copy: InspectedCopy,
   pending: Pending,
 ): Promise<void> {
-  const { phase } = pending
+  const { role, path, ino: expectedIno, sha256: expectedSha256 } = leftover
+  const phase = leftoverPhaseOf(pending)
   // The probe is a link to the staged file; its inode was checked.
   if (role === 'probe') {
     assertLeftoverStill(context, path, { ino: copy.ino })
@@ -2007,12 +2010,8 @@ async function tidyLeftover(
     throwIfNoEntry: false,
   })
   // The staged or displaced name of a config that has the same inode is only another name of it (a put-back whose unlink failed, or a published staged file): drop the name, the config keeps the inode and whatever the learner wrote since.
-  if (config?.ino === copy.ino) {
-    // The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass.
-    assertConfigStill(context, copy.ino, path)
-    assertLeftoverStill(context, path, { ino: copy.ino })
-    return unlink(path)
-  }
+  if (config?.ino === copy.ino)
+    return dropSecondName(context, leftover, copy, phase)
   // A displaced original of an unfinished change while another config stands at the config name (an editor saved after the move-aside): it may be the only copy of the learner's other servers, so it is handed over and named, never deleted. The published staged file's inode means the change did finish, so that copy is Codebook's own leftover.
   // When the check returns, the config is the published staged file: its inode is checked again right before the unlink.
   const publishedIno =
@@ -2024,7 +2023,7 @@ async function tidyLeftover(
     (await putBackDisplaced(
       context,
       path,
-      phase,
+      pending,
       !config,
       proofOfRecordedCopy(expectedIno, copy, expectedSha256),
       expectedSha256,
@@ -2057,6 +2056,121 @@ async function tidyLeftover(
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
   assertLeftoverStill(context, path, lastLook)
   await unlink(path)
+}
+
+/**
+ * Gives the phase recovery reads a pending record in; called by {@link recoverLeftovers}, {@link tidyLeftover}, {@link putBackDisplaced} and {@link inspect}.
+ * A record that says {@link Pending.bytesUnverified} was written as handed only so that older builds never delete from it while a put-back by bytes is unchecked; this build reads it as the change in progress it is, so it checks the shared bytes and finishes the put-back.
+ * @param pending - The pending record as read.
+ * @returns `undefined` for an unverified put-back's record; the recorded phase otherwise.
+ * @example
+ * leftoverPhaseOf({ ...pending, phase: 'handed', bytesUnverified: true }) // => undefined
+ * leftoverPhaseOf({ ...pending, phase: 'completed' })                     // => 'completed'
+ */
+function leftoverPhaseOf(pending: Pending): Pending['phase'] {
+  return pending.bytesUnverified ? undefined : pending.phase
+}
+
+/**
+ * Drops a staged or displaced name that is only another name of the config (the same inode): a put-back whose unlink failed, a published staged file, or a put-back that only the bytes proved and that stopped after its link, whose shared bytes are checked first; called by {@link tidyLeftover}.
+ * The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass.
+ * @param context - The run.
+ * @param leftover - The accepted leftover.
+ * @param copy - What {@link lookAtLeftover} found at its name.
+ * @param phase - The phase recovery reads the record in ({@link leftoverPhaseOf}).
+ * @throws When either name changed since it was looked at, the shared bytes cannot be verified ({@link assertSharedPutBackBytes}) or the unlink fails; both names stay then.
+ * @example
+ * if (config?.ino === copy.ino) return dropSecondName(context, leftover, copy, phase)
+ */
+async function dropSecondName(
+  context: Context,
+  leftover: Leftover,
+  copy: InspectedCopy,
+  phase: Pending['phase'],
+): Promise<void> {
+  const { role, path, ino: expectedIno, sha256: expectedSha256 } = leftover
+  // Only the bytes ever proved this file: the config may hold bytes nobody checked, so the private name goes only once they are verified.
+  if (isSharedBytesPutBack(role, phase, expectedIno, copy))
+    return assertSharedPutBackBytes(context, path, copy, expectedSha256)
+  assertConfigStill(context, copy.ino, path)
+  assertLeftoverStill(context, path, { ino: copy.ino })
+  return unlink(path)
+}
+
+/**
+ * Tells whether a private name that shares the config's inode is what a put-back by bytes alone leaves when it stops after its link and before its check: the displaced file of a change in progress, with another inode than the recorded one; called by {@link dropSecondName}.
+ * @param role - The leftover's role.
+ * @param phase - The phase recovery reads the record in ({@link leftoverPhaseOf}).
+ * @param expectedIno - The inode the record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @returns `true` for that case; `false` for a staged name, a finished change, and the recorded inode (a put-back by inode, whose bytes may be the learner's later edit).
+ * @example
+ * isSharedBytesPutBack('kept', undefined, recordedIno, copy) // => true when copy.ino is not recordedIno
+ */
+function isSharedBytesPutBack(
+  role: JournalRole,
+  phase: Pending['phase'],
+  expectedIno: RecordedFileId,
+  copy: InspectedCopy,
+): boolean {
+  return (
+    role === 'kept' &&
+    phase === undefined &&
+    !isSameFileId(expectedIno, copy.ino)
+  )
+}
+
+/**
+ * Checks, before it deletes the private name, the bytes of a put-back by bytes alone that stopped after its link; called by {@link dropSecondName}.
+ * Both names show one inode, so the unlink loses no data; what must never happen is that the config keeps bytes Codebook did not verify while the private name, the only sign of that, goes. The first look's hash must be the recorded one, a read of the config name and then of the private name must both show that inode and hash, and synchronous looks, the config name first and the private name last, must still see the size and times of those reads.
+ * Limit: a write between the last look and the unlink is not seen; no Node primitive unlinks by inode or content.
+ * @param context - The run.
+ * @param path - The private name.
+ * @param copy - What {@link lookAtLeftover} found at it.
+ * @param expectedSha256 - The recorded hash.
+ * @throws A {@link PutBackCheckError} (handed) naming both names when a hash differs from the record, a read fails or shows another inode, or a name changed after its read; both names stay. What the unlink throws.
+ * @example
+ * await assertSharedPutBackBytes(context, keptPath, copy, pending.keptSha256)
+ */
+async function assertSharedPutBackBytes(
+  context: Context,
+  path: string,
+  copy: InspectedCopy,
+  expectedSha256: string | undefined,
+): Promise<void> {
+  if (copy.sha256 !== expectedSha256) throw sharedBytesError(context, path)
+  // Any failure of these reads (an I/O error, the size limit) is as unverified as a hash mismatch.
+  const configLook = await inspectCopy(context.path, context.seam).catch(
+    () => undefined,
+  )
+  const privateLook = await inspectCopy(path, context.seam).catch(
+    () => undefined,
+  )
+  if (
+    configLook?.ino !== copy.ino ||
+    configLook.sha256 !== expectedSha256 ||
+    privateLook?.ino !== copy.ino ||
+    privateLook.sha256 !== expectedSha256
+  )
+    throw sharedBytesError(context, path)
+  // Only synchronous looks follow: the config name first, the private name last, right before the unlink.
+  if (
+    !isLeftoverStill(context, context.path, configLook) ||
+    !isLeftoverStill(context, path, privateLook)
+  )
+    throw sharedBytesError(context, path)
+  await unlink(path)
+}
+
+/** The refusal of {@link assertSharedPutBackBytes}: both names of one file stay, and the learner is asked to look at both and never to copy one over the other; handed, so no later run deletes either name. */
+function sharedBytesError(
+  context: Context,
+  copyPath: string,
+): PutBackCheckError {
+  return new PutBackCheckError(
+    `The config at ${context.path} and the private file at ${copyPath} are two names of one file, and Codebook could not verify that it still holds the bytes Codebook kept (it changed or could not be read); Codebook left both names as they are, so look at both before you use either, and never copy one over the other; ${context.retry}.`,
+    true,
+  )
 }
 
 /**
@@ -2151,32 +2265,44 @@ async function keepOriginalUnlessPublished(
  * Puts the displaced config of an interrupted move-aside back at the config name, even if it is not the bytes that were read; called by {@link tidyLeftover}.
  * The name is looked at again right before the link and before the unlink ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so.
  * Limit: a swap between a look and the syscall after it is not seen.
+ * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort.
  * @param context - The run.
  * @param path - The displaced name.
- * @param phase - The phase of the pending record.
+ * @param pending - The pending record of the interrupted run; its phase as recovery reads it ({@link leftoverPhaseOf}) must be absent.
  * @param isConfigAbsent - Whether nothing stands at the config name.
  * @param proof - What shows the displaced file is the recorded one: `inode` (the recorded inode) or `bytes` (another inode whose bytes equal the recorded hash); undefined when neither, and such a file is never published. When only the bytes prove it, the file is hashed again right before the link, its name is looked at synchronously with the size and times of that hash, and the file at the config name is hashed once more after the link: an in-place write in between is refused and nothing stays published from it.
  * @param expectedSha256 - The recorded hash of the displaced file.
  * @param copy - What {@link lookAtLeftover} found; its inode is the one that may be linked.
  * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
- * @throws When the link or unlink fails, the name no longer shows the checked file, or the link produced another file.
+ * @throws When the unverified record cannot be written, the link or unlink fails, the name no longer shows the checked file, or the link produced another file.
  */
 async function putBackDisplaced(
   context: Context,
   path: string,
-  phase: Pending['phase'],
+  pending: Pending,
   isConfigAbsent: boolean,
   proof: 'inode' | 'bytes' | undefined,
   expectedSha256: string | undefined,
   copy: InspectedCopy,
 ): Promise<boolean> {
-  if (phase !== undefined || !isConfigAbsent || proof === undefined)
+  if (
+    leftoverPhaseOf(pending) !== undefined ||
+    !isConfigAbsent ||
+    proof === undefined
+  )
     return false
   // The bytes were the only proof: hash again, so the sync look right before the link ties the name to what this read saw.
   const lastLook =
     proof === 'bytes'
       ? await rehashBeforeLink(context, path, copy.ino, expectedSha256)
       : { ino: copy.ino }
+  // Before the link, the record says the put-back is unchecked: a stop after the link never lets any build drop the private name unverified. A failed write throws here, before anything is linked.
+  if (proof === 'bytes')
+    await writeRecord(context, context.pendingPath, {
+      ...pending,
+      phase: 'handed',
+      bytesUnverified: true,
+    } satisfies Pending)
   assertLeftoverStill(context, path, lastLook)
   await link(path, context.path)
   const linked = lstatSync(context.path, {
@@ -2191,6 +2317,13 @@ async function putBackDisplaced(
   assertConfigStill(context, copy.ino, path)
   assertLeftoverStill(context, path, { ino: copy.ino })
   await unlink(path)
+  // Checked and done: the record says what it said before the put-back; a failed write leaves an unverified record whose private name is gone, which the next run settles as gone.
+  if (proof === 'bytes')
+    await writeRecord(context, context.pendingPath, {
+      ...pending,
+      phase: undefined,
+      bytesUnverified: undefined,
+    } satisfies Pending).catch(() => undefined)
   return true
 }
 
@@ -3089,14 +3222,18 @@ async function inspect(context: Context): Promise<Inspection> {
   )
   // A copy an interrupted run kept comes back, or is deleted, or stays and is named, before the config is read.
   const unsettled = await recoverOwnLeftovers(context, pending)
+  // An unverified put-back's handed record is read as the change in progress it is.
+  const phase = pending && leftoverPhaseOf(pending)
   // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
-  const tracked = pending?.phase ? unsettled.slice(1) : unsettled
+  // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable.
+  if (pending && isHandedNow) await persistHandover(context, pending)
+  const tracked = phase ? unsettled.slice(1) : unsettled
   const [reported] = unsettled
   const retained =
     pending &&
     retainedRecord(
-      isHandedNow ? { ...pending, phase: 'handed' } : pending,
+      isHandedNow ? handedRecordOf(pending) : { ...pending, phase },
       tracked,
     )
   const inspection = await settleAfterRecovery(
@@ -3104,17 +3241,40 @@ async function inspect(context: Context): Promise<Inspection> {
     pending,
     retained,
   ).catch((cause: unknown) => {
-    throw mergeWithLeftover(
-      context,
-      cause,
-      pending?.phase,
-      reported,
-      isHandedNow,
-    )
+    throw mergeWithLeftover(context, cause, phase, reported, isHandedNow)
   })
-  if (pending && reported)
-    throw unsettledRefusal(context, pending.phase, reported)
+  if (pending && reported) throw unsettledRefusal(context, phase, reported)
   return inspection
+}
+
+/**
+ * Gives the record a copy handed to the learner in this run leaves: the whole record as read, now handed and no longer unverified ({@link Pending.bytesUnverified}), so no later run of any build deletes the copy; used by {@link inspect} for the record it writes at once ({@link persistHandover}) and for the record that stays.
+ * @param pending - The pending record as read.
+ * @returns The same record with `phase: 'handed'` and without `bytesUnverified`.
+ * @example
+ * handedRecordOf({ ...pending, bytesUnverified: true }) // => { ...pending, phase: 'handed', bytesUnverified: undefined }
+ */
+function handedRecordOf(pending: Pending): Pending {
+  return { ...pending, phase: 'handed', bytesUnverified: undefined }
+}
+
+/**
+ * Writes the handed record ({@link handedRecordOf}) right after recovery handed a copy to the learner and before the config is read; called by {@link inspect}, so a refusal of a later step (a config that is no valid JSON, another entry) still leaves the copy recorded as handed.
+ * @param context - The run.
+ * @param pending - The pending record as read; the whole record is kept, only its phase changes.
+ * @returns Nothing; best effort: a failed write leaves the record as it was, and {@link settlePending} writes the record that stays again.
+ * @example
+ * if (pending && isHandedNow) await persistHandover(context, pending)
+ */
+async function persistHandover(
+  context: Context,
+  pending: Pending,
+): Promise<void> {
+  await writeRecord(
+    context,
+    context.pendingPath,
+    handedRecordOf(pending),
+  ).catch(() => undefined)
 }
 
 /**
