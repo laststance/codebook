@@ -396,7 +396,7 @@ test('the bridge check answers no-answer when a receipt read fails with EMFILE',
 // protects=a removal seen in a receipt still ending the connected bridge when the descriptor read has no answer (EIO); fails_when=the failed descriptor read answers no-answer first, so a removed MCP receipt is masked and the bridge stays up on repeated refusals; no_claim=a descriptor read that fails while both receipts stand (still no-answer)
 test('the bridge check answers removed when the descriptor read fails with EIO but the MCP receipt was read as missing', async () => {
   // Arrange
-  const mcpPath = '/storage/devin-mcp/receipt.json'
+  const mcpPath = join('/storage', 'devin-mcp', 'receipt.json')
   const maskedModule = await loadModule<{
     checkDevinBridgeReceipts: typeof realCheckDevinBridgeReceipts
   }>(resolve(__dirname, '../utils/checkDevinBridgeReceipts.js'), {
@@ -428,7 +428,7 @@ test('the bridge check answers removed when the descriptor read fails with EIO b
 // protects=a removal seen in one receipt ending the bridge although the other receipt read never settles; fails_when=the check waits for every read, so every refusal times out and the bridge stays up for a removed setup; no_claim=a stalled read when nothing was observed (it stays pending)
 test('the bridge check answers removed at once when the skill receipt read never settles and the MCP receipt was read as missing', async () => {
   // Arrange
-  const mcpPath = '/storage/devin-mcp/receipt.json'
+  const mcpPath = join('/storage', 'devin-mcp', 'receipt.json')
   const stalledModule = await loadModule<{
     checkDevinBridgeReceipts: typeof realCheckDevinBridgeReceipts
   }>(resolve(__dirname, '../utils/checkDevinBridgeReceipts.js'), {
