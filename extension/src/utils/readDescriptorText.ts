@@ -5,15 +5,18 @@ import { DEVIN_DESCRIPTOR_LIMIT_BYTES } from '../constants'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { readUpToLimit } from './readUpToLimit'
 
-/** The `code` of the error {@link readDescriptorText} throws for a file that is no private regular file (a link, a pipe, a device, a folder, readable by others). */
+/** The `code` of the error {@link readDescriptorText} throws for a regular file that others can read (group or other bits set, off Windows). */
 export const DESCRIPTOR_NOT_PRIVATE_CODE = 'EDESCRIPTORNOTPRIVATE'
+
+/** The `code` of the error {@link readDescriptorText} throws for a path that holds no regular file (a link, a pipe, a device, a folder); a mode change cannot help there. */
+export const DESCRIPTOR_NOT_REGULAR_CODE = 'EDESCRIPTORNOTREGULAR'
 
 /** The `code` of the error {@link readDescriptorText} throws for a file larger than {@link DEVIN_DESCRIPTOR_LIMIT_BYTES}, also one that grew past it while read. */
 export const DESCRIPTOR_TOO_LARGE_CODE = 'EDESCRIPTORTOOLARGE'
 
 /**
  * Builds the error of a refusal with its `code`, so a caller tells the refusal by the code and never by the words of the message; called by {@link readOpenedDescriptor} and {@link readDescriptorText}.
- * @param code - {@link DESCRIPTOR_NOT_PRIVATE_CODE} or {@link DESCRIPTOR_TOO_LARGE_CODE}.
+ * @param code - {@link DESCRIPTOR_NOT_PRIVATE_CODE}, {@link DESCRIPTOR_NOT_REGULAR_CODE} or {@link DESCRIPTOR_TOO_LARGE_CODE}.
  * @param message - The sentence of the error.
  * @returns The error, not thrown yet.
  * @example
@@ -33,7 +36,7 @@ const DESCRIPTOR_NOT_PRIVATE_MESSAGE =
  * @param file - The descriptor opened by {@link openWithoutFollowing}.
  * @param platform - The platform whose file modes are judged; tests pass one to cover each system.
  * @returns The file's text.
- * @throws An error with the code {@link DESCRIPTOR_NOT_PRIVATE_CODE} for anything but a regular file private to its owner; an error with the code {@link DESCRIPTOR_TOO_LARGE_CODE} for a larger file, also one that grew past it while read.
+ * @throws An error with the code {@link DESCRIPTOR_NOT_REGULAR_CODE} for anything but a regular file, and one with {@link DESCRIPTOR_NOT_PRIVATE_CODE} for a regular file others can read; an error with the code {@link DESCRIPTOR_TOO_LARGE_CODE} for a larger file, also one that grew past it while read.
  * @example
  * await readOpenedDescriptor(file) // => '{"url":"..."}'
  */
@@ -43,8 +46,13 @@ async function readOpenedDescriptor(
 ): Promise<string> {
   const status = await file.stat()
   // Windows has no owner-only mode bits to judge, so only a non-regular file is refused there.
+  if (!status.isFile())
+    throw descriptorRefusal(
+      DESCRIPTOR_NOT_REGULAR_CODE,
+      DESCRIPTOR_NOT_PRIVATE_MESSAGE,
+    )
   const isReadableByOthers = platform !== 'win32' && (status.mode & 0o077) !== 0
-  if (!status.isFile() || isReadableByOthers)
+  if (isReadableByOthers)
     throw descriptorRefusal(
       DESCRIPTOR_NOT_PRIVATE_CODE,
       DESCRIPTOR_NOT_PRIVATE_MESSAGE,
@@ -66,7 +74,7 @@ async function readOpenedDescriptor(
  * @param descriptorPath - The private connection descriptor of the instance.
  * @param platform - The platform whose file modes are judged; callers leave it to default to this process's platform.
  * @returns The file's text.
- * @throws An error with the code {@link DESCRIPTOR_NOT_PRIVATE_CODE} for a link or another file the path came to hold; what {@link readOpenedDescriptor} throws (the codes {@link DESCRIPTOR_NOT_PRIVATE_CODE} and {@link DESCRIPTOR_TOO_LARGE_CODE}); the file system's error when the path cannot be opened.
+ * @throws An error with the code {@link DESCRIPTOR_NOT_REGULAR_CODE} for a link or another non-regular file; what {@link readOpenedDescriptor} throws; the file system's error when the path cannot be opened, also `EREPLACED` (the path was replaced between the look and the open, a race that says nothing about the file, so callers read it as no answer).
  * @example
  * await readDescriptorText('/agent/x.connection.json') // => '{"url":"..."}'
  */
@@ -77,10 +85,10 @@ export async function readDescriptorText(
   const file = await openWithoutFollowing(descriptorPath).catch(
     (error: unknown) => {
       const { code } = error as { code?: unknown }
-      // A link (ELOOP) or a file other than the one looked at is no private regular file.
-      if (code === 'ELOOP' || code === 'ENOTREG' || code === 'EREPLACED')
+      // A link (ELOOP) or another non-regular file (ENOTREG) is no regular file; EREPLACED is a race and surfaces as it is.
+      if (code === 'ELOOP' || code === 'ENOTREG')
         throw descriptorRefusal(
-          DESCRIPTOR_NOT_PRIVATE_CODE,
+          DESCRIPTOR_NOT_REGULAR_CODE,
           DESCRIPTOR_NOT_PRIVATE_MESSAGE,
         )
       throw error

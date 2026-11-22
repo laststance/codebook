@@ -61,6 +61,7 @@ for (const reason of ['not-private', 'permission'] as const) {
 // protects=a record removed for any other reason says the setup changed meanwhile and offers no mode repair; fails_when=a missing or uninstalled record is told to change a file mode; no_claim=the permission reasons
 for (const reason of [
   'missing',
+  'not-regular',
   'uninstalled',
   'oversized',
   'unparsable',
@@ -73,6 +74,22 @@ for (const reason of [
       answer: 'removed',
       reason,
       path: '/storage/devin-skill/receipt.json',
+    } as const
+    // Act
+    const sentence = devinSetupRefusalSentence(answer)
+    // Assert
+    assert.equal(sentence, CHANGED_SENTENCE)
+  })
+}
+
+// protects=a descriptor refused as not private or unreadable getting the changed sentence, not the receipt mode repair; fails_when=the learner is told to chmod a descriptor with the receipt sentence; no_claim=receipt answers
+for (const reason of ['not-private', 'permission'] as const) {
+  test(`a ${reason} descriptor answer says the setup changed meanwhile`, () => {
+    // Arrange
+    const answer = {
+      answer: 'removed',
+      reason,
+      path: '/storage/agent/x.connection.json',
     } as const
     // Act
     const sentence = devinSetupRefusalSentence(answer)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import { readDescriptorText } from '../utils/readDescriptorText'
@@ -10,6 +10,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 
 const NOT_PRIVATE_MESSAGE =
@@ -100,6 +101,50 @@ test('refuses a link to a descriptor even when the platform is Windows', async (
 
     // Assert
     assert.equal(outcome, NOT_PRIVATE_MESSAGE)
+  } finally {
+    await removeTestFolder(folder)
+  }
+})
+
+// protects=a descriptor that was replaced between the look and the open (an atomic rewrite) surfacing as a race, not as a private-file refusal; fails_when=EREPLACED is rewritten to the not-private code, so the bridge reads the setup as removed; no_claim=real replacement timing
+test('a descriptor replaced between the look and the open surfaces its own EREPLACED code', async () => {
+  // Arrange
+  const { readDescriptorText: readWithReplacement } = await loadModule<{
+    readDescriptorText: typeof readDescriptorText
+  }>(resolve(__dirname, '../utils/readDescriptorText.js'), {
+    './openWithoutFollowing': {
+      openWithoutFollowing: () =>
+        Promise.reject(
+          Object.assign(new Error('replaced'), { code: 'EREPLACED' }),
+        ),
+    },
+  })
+
+  // Act
+  const code = await readWithReplacement(
+    '/storage/agent/x.connection.json',
+  ).then(
+    () => 'read',
+    (error: { code?: string }) => error.code,
+  )
+
+  // Assert
+  assert.equal(code, 'EREPLACED')
+})
+
+// protects=a folder answering as no regular file with its own code, so no mode repair is offered for it; fails_when=a folder is reported as a file that others can read; no_claim=links (covered above)
+test('a folder in the descriptor path is refused with the not-regular code', async () => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'read-descriptor-'))
+  try {
+    // Act
+    const code = await readDescriptorText(folder).then(
+      () => 'read',
+      (error: { code?: string }) => error.code,
+    )
+
+    // Assert
+    assert.equal(code, 'EDESCRIPTORNOTREGULAR')
   } finally {
     await removeTestFolder(folder)
   }

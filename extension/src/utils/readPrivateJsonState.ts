@@ -1,12 +1,18 @@
 import {
   DESCRIPTOR_NOT_PRIVATE_CODE,
+  DESCRIPTOR_NOT_REGULAR_CODE,
   DESCRIPTOR_TOO_LARGE_CODE,
   readDescriptorText,
 } from './readDescriptorText'
 
-/** Why a private JSON file counts as removed or invalid: nothing is there (`missing`), it is a link or another non-regular file or readable by others off Windows (`not-private`), this user may not read it (`permission`), it is larger than the limit (`oversized`) or its text is no JSON (`unparsable`). */
+/** Why a private JSON file counts as removed or invalid: nothing is there (`missing`), it is a link or another non-regular file (`not-regular`), it is readable by others off Windows (`not-private`), this user may not read it (`permission`), it is larger than the limit (`oversized`) or its text is no JSON (`unparsable`). */
 export type PrivateJsonRemovedReason =
-  'missing' | 'not-private' | 'permission' | 'oversized' | 'unparsable'
+  | 'missing'
+  | 'not-regular'
+  | 'not-private'
+  | 'permission'
+  | 'oversized'
+  | 'unparsable'
 
 /** What looking at one private JSON file found: its parsed value (`read`), an observed absence or invalid state with the reason (`removed`), or no answer because the read itself failed (`no-answer`, for example descriptor exhaustion or `EIO`). */
 export type PrivateJsonState =
@@ -17,21 +23,28 @@ export type PrivateJsonState =
 /**
  * Maps the error of a failed read to the reason the file counts as removed, or `undefined` when the read only failed to look; called by {@link readPrivateJsonState}.
  * @param error - What {@link readDescriptorText} threw.
- * @returns The reason for an observed absence (`ENOENT`, `ENOTDIR`), a refusal of {@link readDescriptorText} (by its code, never its words) or a permission refusal (`EACCES`, `EPERM`); `undefined` for any other failure.
+ * @param platform - The platform the read judged; on Windows `EACCES` and `EPERM` also occur while a file is replaced or scanned, so they prove no permission problem there.
+ * @returns The reason for an observed absence (`ENOENT`, `ENOTDIR`), a refusal of {@link readDescriptorText} (by its code, never its words) or a permission refusal (`EACCES`, `EPERM`, off Windows only); `undefined` for any other failure, `EREPLACED` and the Windows permission codes included.
  * @example
  * removedReasonOf(Object.assign(new Error('x'), { code: 'ENOENT' })) // => 'missing'
  * removedReasonOf(Object.assign(new Error('x'), { code: 'EMFILE' })) // => undefined
  */
-function removedReasonOf(error: unknown): PrivateJsonRemovedReason | undefined {
+function removedReasonOf(
+  error: unknown,
+  platform: NodeJS.Platform,
+): PrivateJsonRemovedReason | undefined {
   // Not `instanceof Error`: an error from another realm fails that check.
   const code =
     typeof error === 'object' && error !== null && 'code' in error
       ? error.code
       : undefined
   if (code === 'ENOENT' || code === 'ENOTDIR') return 'missing'
+  if (code === DESCRIPTOR_NOT_REGULAR_CODE) return 'not-regular'
   if (code === DESCRIPTOR_NOT_PRIVATE_CODE) return 'not-private'
   if (code === DESCRIPTOR_TOO_LARGE_CODE) return 'oversized'
-  if (code === 'EACCES' || code === 'EPERM') return 'permission'
+  // On Windows these codes also come from a file that is being replaced or scanned: a race, no answer.
+  if ((code === 'EACCES' || code === 'EPERM') && platform !== 'win32')
+    return 'permission'
   return undefined
 }
 
@@ -45,13 +58,13 @@ function removedReasonOf(error: unknown): PrivateJsonRemovedReason | undefined {
  */
 export async function readPrivateJsonState(
   path: string,
-  platform?: NodeJS.Platform,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<PrivateJsonState> {
   let text: string
   try {
     text = await readDescriptorText(path, platform)
   } catch (error) {
-    const reason = removedReasonOf(error)
+    const reason = removedReasonOf(error, platform)
     return reason === undefined
       ? { state: 'no-answer' }
       : { state: 'removed', reason }

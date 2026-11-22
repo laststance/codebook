@@ -177,7 +177,7 @@ test(
 )
 
 // protects=a linked receipt counting as removed; fails_when=a link answers no-answer or is followed; no_claim=other non-regular files
-test('a receipt that is a link answers removed with the reason not-private', async (context) => {
+test('a receipt that is a link answers removed with the reason not-regular', async (context) => {
   // Arrange
   const storage = await arrangeStorage(context)
   const targetPath = join(storage, 'target.json')
@@ -190,7 +190,7 @@ test('a receipt that is a link answers removed with the reason not-private', asy
   // Assert
   assert.deepEqual(state, {
     state: 'removed',
-    reason: 'not-private',
+    reason: 'not-regular',
     receiptPath,
   })
 })
@@ -234,6 +234,42 @@ for (const code of ['EMFILE', 'ENFILE', 'EIO'])
       state: 'no-answer',
       receiptPath: '/storage/devin-mcp/receipt.json',
     })
+  })
+
+// protects=a replacement race counting as no answer, not as a removal of the setup; fails_when=EREPLACED answers removed; no_claim=the real replacement
+test('a receipt read that reports EREPLACED answers no-answer', async () => {
+  // Arrange
+  const { readReceiptState: readWithFailure } =
+    await loadWithFailingRead('EREPLACED')
+  // Act
+  const state = await readWithFailure('/storage/devin-mcp/receipt.json')
+  // Assert
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'no-answer',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// protects=Windows EPERM and EACCES (seen while a file is replaced or scanned) counting as no answer, and as permission elsewhere; fails_when=Windows answers removed/permission, or another system answers no-answer; no_claim=real Windows errors
+for (const code of ['EPERM', 'EACCES'])
+  test(`a receipt read that fails with ${code} answers no-answer on win32 and permission on linux`, async () => {
+    // Arrange
+    const { readReceiptState: readWithFailure } =
+      await loadWithFailingRead(code)
+    // Act
+    const states = [
+      await readWithFailure('/storage/devin-mcp/receipt.json', 'win32'),
+      await readWithFailure('/storage/devin-mcp/receipt.json', 'linux'),
+    ]
+    // Assert
+    assert.deepEqual(JSON.parse(JSON.stringify(states)), [
+      { state: 'no-answer', receiptPath: '/storage/devin-mcp/receipt.json' },
+      {
+        state: 'removed',
+        reason: 'permission',
+        receiptPath: '/storage/devin-mcp/receipt.json',
+      },
+    ])
   })
 
 // protects=the bridge's check passing for a standing setup; fails_when=the three reads disagree on a setup that stands; no_claim=a removal
