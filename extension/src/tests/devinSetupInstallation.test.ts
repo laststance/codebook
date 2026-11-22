@@ -14,8 +14,8 @@ import {
   writeManagedDevinMcpEntry,
   type DevinMcpEntry,
 } from '../devinMcpConfig'
+import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
-import { hasDevinBridgeReceipts } from '../utils/hasDevinBridgeReceipts'
 
 import { removeTestFolder } from './utils/removeTestFolder'
 
@@ -186,10 +186,10 @@ test(
     )
 
     // Act
-    const stands = await hasDevinBridgeReceipts(descriptorPath)
+    const answer = await checkDevinBridgeReceipts(descriptorPath)
 
     // Assert
-    assert.equal(stands, true)
+    assert.deepEqual(answer, { answer: 'stands' })
   },
 )
 

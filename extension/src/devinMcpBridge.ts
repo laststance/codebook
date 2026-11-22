@@ -18,10 +18,10 @@ import {
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
 } from './constants'
 import { runCursorMcpBridge } from './cursorMcpBridge'
+import { checkDevinBridgeReceipts } from './utils/checkDevinBridgeReceipts'
 import { connectionSchema } from './utils/connectionSchema'
 import { currentStorageOwner } from './utils/currentStorageOwner'
 import { isDescriptorOwnerGone } from './utils/evidenceInUseElsewhere'
-import { hasDevinBridgeReceipts } from './utils/hasDevinBridgeReceipts'
 import { isFileDescriptorExhaustion } from './utils/isFileDescriptorExhaustion'
 import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 import { isSameStorageMachine } from './utils/isSameStorageMachine'
@@ -829,7 +829,7 @@ export function devinDescriptorExpectation(
 }
 
 /**
- * Runs the receipts check of {@link hasDevinBridgeReceipts} within a time budget; called by {@link connectOnce} before the first connection and by {@link setupCheckBeforeReconnect} before each later one.
+ * Runs the receipts check of {@link checkDevinBridgeReceipts} within a time budget; called by {@link connectOnce} before the first connection and by {@link setupCheckBeforeReconnect} before each later one.
  * @param descriptorPath - The selected descriptor, in the agent folder.
  * @param budgetMs - Longest wait for the check.
  * @returns `true` when the setup stands, `false` when the check answered that it does not, `undefined` when it did not answer in time.
@@ -841,7 +841,10 @@ function receiptsStandWithin(
   budgetMs: number,
 ): Promise<boolean | undefined> {
   return answerWithin(
-    hasDevinBridgeReceipts(descriptorPath).catch(() => false),
+    checkDevinBridgeReceipts(descriptorPath).then(
+      (receipts) => receipts.answer === 'stands',
+      () => false,
+    ),
     budgetMs,
   )
 }
@@ -901,7 +904,7 @@ function setupCheckBeforeReconnect(
  * @param expected - What the selection validated ({@link devinDescriptorExpectation}).
  * @param onClosed - Called once the bridge's cleanup has completed after its stdio closed.
  * @param cwd - The bridge's working folder, named by the refusal a later reconnection ends with.
- * Before any request it requires the setup receipts of the descriptor's installation ({@link hasDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
+ * Before any request it requires the setup receipts of the descriptor's installation ({@link checkDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
  * @returns `connected` once the transport is up; `not-set-up` after a pause when the receipts check answered that the setup does not stand; `busy` after a pause when the receipts check did not answer in time, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
  * @example
  * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'

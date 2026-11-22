@@ -1,5 +1,5 @@
 /**
- * Reads the installation id a parsed connection descriptor's mark names; called by the Devin bridge's descriptor scan, {@link readBridgeDescriptor}'s parse and {@link hasDevinBridgeReceipts}, so all three read the mark the same way.
+ * Reads the installation id a parsed connection descriptor's mark names; called by the Devin bridge's descriptor scan, {@link readBridgeDescriptor}'s parse and {@link checkDevinBridgeReceipts}, so all three read the mark the same way.
  * @param raw - The descriptor's parsed JSON.
  * @returns The `devinSetupInstallation` text; `undefined` when the descriptor is no object or names none.
  * @example

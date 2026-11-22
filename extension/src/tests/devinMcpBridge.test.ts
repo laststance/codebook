@@ -1769,8 +1769,8 @@ test(
     const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
       resolve(__dirname, '../devinMcpBridge.js'),
       {
-        './utils/hasDevinBridgeReceipts': {
-          hasDevinBridgeReceipts: () => new Promise<boolean>(() => undefined),
+        './utils/checkDevinBridgeReceipts': {
+          checkDevinBridgeReceipts: () => new Promise<never>(() => undefined),
         },
       },
     )
@@ -1807,11 +1807,19 @@ test(
     const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
       resolve(__dirname, '../devinMcpBridge.js'),
       {
-        './utils/hasDevinBridgeReceipts': {
+        './utils/checkDevinBridgeReceipts': {
           // The first check finds the setup removed; the second finds it standing again.
-          hasDevinBridgeReceipts: () => {
+          checkDevinBridgeReceipts: () => {
             checks += 1
-            return Promise.resolve(checks > 1)
+            return Promise.resolve(
+              checks > 1
+                ? { answer: 'stands' }
+                : {
+                    answer: 'removed',
+                    reason: 'missing',
+                    path: '/receipt.json',
+                  },
+            )
           },
         },
       },
