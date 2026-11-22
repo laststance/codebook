@@ -604,7 +604,7 @@ test('the bridge sends nothing to a loopback listener whose path is not /mcp', a
 })
 
 // Value: protects=the descriptor's bearer token never reaching a url a descriptor was swapped to after the bridge selected it; fails_when=the transport reopens the selected path and connects to whatever url it holds then; why_new=Codex P1 time-of-check gap between selection and connect (Cycle 0143 B1); seam=selectDevinDescriptor, a rewrite of the file, then runCursorMcpBridge on the selected path against a loopback listener that counts requests
-// Windows reports 0o666 for every file, so the private-file check refuses before the url check this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a descriptor swapped to another url after its selection never receives the token',
   { skip: process.platform === 'win32' },
@@ -645,7 +645,7 @@ for (const [change, overrides] of [
   ],
 ] as const) {
   // Value: protects=a Devin window connecting only with the descriptor its selection validated; fails_when=the connection reads the path again and accepts whatever descriptor it holds then, so a removed AI chat setup or another instance's descriptor receives the token and requests; why_new=time-of-check gap between selection and connect (Cycle 0143 /ship pass 2 E1); seam=selectDevinDescriptor, a rewrite of the file, then runCursorMcpBridge with the selection's expectation against a loopback listener that counts requests
-  // Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
+  // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
   test(
     `a descriptor that ${change} after its selection never receives a request`,
     { skip: process.platform === 'win32' },
@@ -819,7 +819,7 @@ test('the bridge skips a descriptor that names no machine', async (context) => {
 })
 
 // Value: protects=the startup deadline of a bridge whose server accepts a connection and never answers; fails_when=the first connection waits for the SDK's 60 s request timeout instead of the remaining startup budget; why_new=B4 unbounded connect; seam=a loopback listener that never answers
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'the bridge gives up on a server that never answers within its startup deadline',
   { skip: process.platform === 'win32', timeout: 15_000 },
@@ -849,7 +849,7 @@ test(
 )
 
 // Value: protects=a Devin window reaching Codebook while the server's sessions are full for a moment (three bridges start at window load); fails_when=an HTTP 429 drops the descriptor instead of asking the same one again; why_new=B5 transient 429; seam=a loopback proxy that answers 429 twice, then forwards to a real Codebook endpoint
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'the bridge asks again after an HTTP 429 and connects',
   { skip: process.platform === 'win32' },
@@ -919,7 +919,7 @@ test(
 )
 
 // Value: protects=a Devin window whose Codebook server is restarting when the bridge starts; fails_when=a reset or refused connection drops the descriptor so the bridge exits before the server listens again; why_new=B5 transient refusal, made deterministic (Cycle 0143 /ship pass 2 E6); seam=a listener that resets each connection and counts the resets, replaced by a proxy to a real Codebook endpoint on the same port once the first reset was observed
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'the bridge keeps asking a refusing server until it listens again',
   { skip: process.platform === 'win32' },
@@ -980,7 +980,7 @@ test(
 )
 
 // Value: protects=a Devin window with two live descriptors of one workspace and pid connecting to the newest at once, with a connection budget that does not shrink to nothing; fails_when=selection waits out the whole selection window for a single descriptor, or the attempt after it gets the 1 ms left of the budget, so a server needing a few hundred milliseconds is never reached; why_new=newest-at-once and the connection floor (Cycle 0143 /ship pass 2 E4); seam=a spawned bridge entry, an older descriptor naming a dead port, a newer one naming a proxy that delays every answer by 400 ms
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'the bridge connects to the newest of two live descriptors through a server that answers slowly',
   { timeout: 30_000, skip: process.platform === 'win32' },
@@ -1044,7 +1044,7 @@ test('the bridge refuses with the setup line when the descriptor lacks devinChat
 })
 
 // Value: protects=a Devin window whose first matching descriptor fails with a server error still reaching its fresh instance within the startup wait; fails_when=the entry exits at the first failed connection instead of dropping that descriptor and polling on; why_new=a stale descriptor that passes the liveness check; seam=a spawned bridge entry, a loopback listener answering 500 whose first request publishes the fresh descriptor, and a real Codebook endpoint
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'the bridge drops a descriptor whose server fails and connects to the fresh one published after its first attempt',
   { skip: process.platform === 'win32' },
@@ -1079,7 +1079,7 @@ test(
 )
 
 // Value: protects=the bearer token never reaching another local service when the descriptor's port is rewritten after the selection; fails_when=the connection compares only instance, pid, workspace and devinChat, so a descriptor naming a different loopback port receives the token; why_new=Cycle 0143 /ship cycle 3 H1 exact endpoint url; seam=selectDevinDescriptor, a rewrite of the url's port, then runCursorMcpBridge with the selection's expectation against two loopback listeners that count requests
-// Windows reports 0o666 for every file, so the private-file check refuses before the expectation check this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a descriptor whose port is rewritten after its selection never sends a request to either port',
   { skip: process.platform === 'win32' },
@@ -1124,7 +1124,7 @@ test(
 )
 
 // Value: protects=the bridge never reading an unbounded descriptor at connection time; fails_when=the final read takes a file of any size (the scan's size cap alone does not cover the file read for the connection); why_new=Cycle 0143 /ship cycle 3 H2 bounded final read; seam=runCursorMcpBridge on a descriptor padded past the limit that names a loopback listener counting requests
-// Windows reports 0o666 for every file, so the private-file check refuses before the size check this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a descriptor larger than the size cap is refused before any request at connection time',
   { skip: process.platform === 'win32' },
@@ -1219,7 +1219,7 @@ test(
 )
 
 // Value: protects=the bridge's total time after its startup deadline; fails_when=every remaining matching descriptor gets its own floor-length attempt once the deadline has passed, so three candidates cost three floors; why_new=Cycle 0143 /ship cycle 3 H3 one late attempt in total; seam=runDevinMcpBridge with three descriptors of one window naming a listener that never answers and records when each initialize request arrives
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'after the deadline the bridge starts at most one more connection attempt however many descriptors match',
   { skip: process.platform === 'win32', timeout: 30_000 },
@@ -1346,7 +1346,7 @@ bridge.runDevinMcpBridge = (agentDirectory) =>
 )
 
 // protects=a Devin window whose symlinked working folder has one lookup that never answers still connecting to its valid descriptor; fails_when=the connection check compares the unresolved folder while the selection matched the real one, so the descriptor is dropped and the bridge refuses; no_claim=a real hung mount (the first resolver call never settles, later ones answer with the real path)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'the bridge connects when only the first lookup of a symlinked working folder never answers',
   { skip: process.platform === 'win32', timeout: 30_000 },
@@ -1604,9 +1604,9 @@ test(
     const resolveWorkspace = (path: string): Promise<string> => {
       if (path !== slowFolder) return Promise.resolve(path)
       slowLookups += 1
-      // The answer comes 300 ms after the first scan's wait ended and before the next scan starts (1,500 ms pause).
+      // The answer comes 1,000 ms after the first scan's wait ended and 2,000 ms before the next scan starts (4,000 ms pause).
       return new Promise<string>((resolveLater) =>
-        setTimeout(() => resolveLater(workspace), 1_300),
+        setTimeout(() => resolveLater(workspace), 2_000),
       )
     }
     // Act
@@ -1614,7 +1614,7 @@ test(
       agentDir,
       workspace,
       process.pid,
-      { timeoutMs: 6_000, intervalMs: 1_500, resolveWorkspace },
+      { timeoutMs: 12_000, intervalMs: 4_000, resolveWorkspace },
     )
     // Assert
     assert.equal(selection?.descriptorPath, descriptorPath)
@@ -1649,8 +1649,9 @@ test(
     await utimes(newerPath, new Date(2_000_000), new Date(2_000_000))
     const resolveWorkspace = (path: string): Promise<string> =>
       path === slowFolder
-        ? new Promise<string>((resolveLater) =>
-            setTimeout(() => resolveLater(workspace), 1_300),
+        ? // The answer comes 1,000 ms after the first scan's wait ended and 2,000 ms before the next scan starts.
+          new Promise<string>((resolveLater) =>
+            setTimeout(() => resolveLater(workspace), 2_000),
           )
         : Promise.resolve(path)
     // Act
@@ -1658,7 +1659,7 @@ test(
       agentDir,
       workspace,
       process.pid,
-      { timeoutMs: 6_000, intervalMs: 1_500, resolveWorkspace },
+      { timeoutMs: 12_000, intervalMs: 4_000, resolveWorkspace },
     )
     // Assert
     assert.equal(selection?.descriptorPath, newerPath)
@@ -1668,8 +1669,7 @@ test(
 // protects=a workspace whose resolution failed late being asked again by the next scan; fails_when=the fallback spelling is kept like a resolved answer, so the next scan judges the stale spelling and the repaired link never matches; no_claim=a real failing realpath (the stand-in rejects after 1,300 ms once)
 test(
   'a workspace lookup that failed late is not kept and the next scan asks again',
-  // A directory symlink needs a privilege on Windows.
-  { skip: process.platform === 'win32', timeout: 20_000 },
+  { timeout: 20_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace } = await createFolders(context)
@@ -1684,10 +1684,10 @@ test(
     const resolveWorkspace = (path: string): Promise<string> => {
       if (path !== brokenFolder) return Promise.resolve(path)
       brokenLookups += 1
-      // The first lookup fails after the first scan's wait; the link is repaired by the second.
+      // The first lookup fails 1,000 ms after the first scan's wait ended and 2,000 ms before the next scan; the link is repaired by the second.
       return brokenLookups === 1
         ? new Promise<string>((_resolve, rejectLater) =>
-            setTimeout(() => rejectLater(new Error('ENOENT')), 1_300),
+            setTimeout(() => rejectLater(new Error('ENOENT')), 2_000),
           )
         : Promise.resolve(workspace)
     }
@@ -1696,7 +1696,7 @@ test(
       agentDir,
       workspace,
       process.pid,
-      { timeoutMs: 4_000, intervalMs: 1_500, resolveWorkspace },
+      { timeoutMs: 12_000, intervalMs: 4_000, resolveWorkspace },
     )
     // Assert
     assert.equal(selection?.descriptorPath, descriptorPath)
@@ -1716,13 +1716,22 @@ test(
     await symlink(workspace, slowFolder)
     await writeDescriptor(agentDir, 0, slowFolder, process.pid)
     const state = createDevinSelectState()
-    let slowLookups = 0
+    let slowLookups = 0,
+      isSlowAnswered = false
+    // The slow lookup answers only when the test releases it, after the first selection has returned.
+    let releaseSlowLookup = (): void => undefined
+    const slowGate = new Promise<void>((resolveLater) => {
+      releaseSlowLookup = resolveLater
+    })
     const resolveWorkspace = (path: string): Promise<string> => {
       if (path !== slowFolder) return Promise.resolve(path)
       slowLookups += 1
-      return new Promise<string>((resolveLater) =>
-        setTimeout(() => resolveLater(workspace), 1_300),
-      )
+      // Only the first lookup is released; a new one stays unanswered, like the mount that is slow again.
+      if (slowLookups > 1) return new Promise<string>(() => undefined)
+      return slowGate.then(() => {
+        isSlowAnswered = true
+        return workspace
+      })
     }
     const options = {
       timeoutMs: 1_100,
@@ -1737,7 +1746,18 @@ test(
       process.pid,
       options,
     )
-    await new Promise((resolveLater) => setTimeout(resolveLater, 500))
+    // The first selection's scan stops waiting a moment after the selection returned; only an answer that no scan waits for is kept.
+    await waitUntil(
+      () => state.waitingScans.get(slowFolder) === 0,
+      "the first selection's scan giving up its wait",
+      5_000,
+    )
+    releaseSlowLookup()
+    await waitUntil(
+      () => isSlowAnswered,
+      'the slow workspace lookup answering',
+      5_000,
+    )
     const second = await selectDevinDescriptor(
       agentDir,
       workspace,
@@ -1842,7 +1862,7 @@ test(
 )
 
 // protects=a connected bridge ending its process once its cleanup completed after Devin closed its stdin, although a lookup of another window's descriptor never settles; fails_when=nothing ends the process, so a referenced handle of the unanswered lookup keeps the bridge alive after Devin is gone; no_claim=a real pending realpath (a referenced setInterval stands in for it)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge exits with 0 after its stdin closes while a lookup never settles',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -1932,7 +1952,7 @@ bridge.runDevinMcpBridge = (agentDirectory, cwd, env, options) =>
 )
 
 // protects=a removed Devin setup not getting a new Codebook session when the old one expires; fails_when=the bridge reinitializes its upstream session without reading the setup receipts again, so a removal made in another window (whose unmark never reaches this window) still opens a session; no_claim=the removal itself (the receipts are rewritten by hand)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose session expired after the setup was removed ends with the not-set-up line and opens no new session',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2086,7 +2106,7 @@ const CURSOR_BRIDGE_MODULE_PATH = JSON.stringify(
 )
 
 // protects=the bridge's close callback running exactly once when Devin closes stdin while the reconnect check still runs and the check then refuses; fails_when=stdin EOF and the refusal each start their own cleanup notice, so the callback (which ends the entry's process) runs twice; no_claim=the real receipts read (the preload's check answers false after 800 ms)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a bridge whose stdin closes during a reconnect check that then refuses calls its close callback once',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2131,7 +2151,7 @@ bridge.runCursorMcpBridge = (descriptorPath, timeoutMs, expected, header) =>
 )
 
 // protects=the not-set-up line of a refused reconnection being written before the bridge's close callback ends the process; fails_when=the check queues the line and returns without waiting for the write, so the callback (process.exit in the entry) can run before the write completed; no_claim=a real full stderr pipe (the preload delays the write's callback by 500 ms while the bytes go out at once, so the loss itself cannot show, only the order)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose setup was removed ends only after the not-set-up line write completed',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2174,7 +2194,7 @@ bridge.runCursorMcpBridge = (descriptorPath, timeoutMs, expected, header, onClos
 )
 
 // protects=a connected bridge ending after its stdin closed although the server never answers the session DELETE; fails_when=the cleanup waits for the DELETE without a bound, so the bridge process stays alive forever; no_claim=the server's own session release (the proxy swallows the DELETE)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge exits after its stdin closes although the server never answers the session DELETE',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2436,8 +2456,13 @@ async function startConnectedBridge(
     proxy: ConnectedBridge['proxy'] = { refuseWith: undefined }
   const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
   const { port } = await listen(context, (incoming, outgoing) => {
-    incoming.on('data', (chunk: Buffer) => {
-      if (chunk.toString('utf8').includes('"method":"initialize"'))
+    // The request is classified once, on its whole body: one request can arrive in several data events.
+    const chunks: Buffer[] = []
+    incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
+    incoming.on('end', () => {
+      if (
+        Buffer.concat(chunks).toString('utf8').includes('"method":"initialize"')
+      )
         counts.initializes += 1
       else if (incoming.method === 'POST') counts.others += 1
     })
@@ -2500,7 +2525,9 @@ async function startConnectedBridge(
     exited,
     readMessages: () =>
       stdout
+        // Only lines that ended with a newline are whole messages; an unfinished last line waits for the next read.
         .split('\n')
+        .slice(0, -1)
         .filter((line) => line.startsWith('{'))
         .map((line) =>
           z.looseObject({ id: z.number().optional() }).parse(JSON.parse(line)),
@@ -2551,7 +2578,7 @@ async function markDescriptorFor(
 const REPLACING_INSTALLATION_ID = '88888888-8888-4888-8888-888888888888'
 
 // protects=a connected bridge never opening a session with its old endpoint once the window's setup moved to another installation (Cycle 0145 task 5); fails_when=the reconnect check asks about the descriptor as it is now, so installation B's records pass while the bridge reconnects with installation A's endpoint and token; no_claim=the removal of a setup (the not-set-up test above)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose session expired after the window was set up again for another installation ends with the replaced line and opens no new session',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2583,7 +2610,7 @@ test(
 )
 
 // protects=a connected bridge still reconnecting when its setup stands after the session expired; fails_when=the bound check refuses a descriptor that still names the instance, endpoint and installation the bridge connected for; no_claim=the answer of a changed setup (the test above)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose session expired while its setup still stands opens a new session and answers',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2608,7 +2635,7 @@ test(
 )
 
 // protects=a connected bridge surviving a file shortage while its reconnect check reads a valid receipt (Cycle 0145 task 6); fails_when=any failed read of a receipt answers 'removed', so one EMFILE ends the bridge with the not-set-up line although nothing was removed; no_claim=a shortage at the first connection (task 13) or other failure codes (the receipt state tests)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose reconnect check meets a file shortage fails only that request, keeps running and reconnects on the next one',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2773,7 +2800,7 @@ test(
 )
 
 // protects=a Devin bridge whose window was unmarked (the server answers 403) ending with the not-set-up line instead of failing every request for good (Cycle 0145 task 12); fails_when=the setup check runs only for the 404 Unknown MCP session, so a 403 never reaches it and the bridge stays up; no_claim=Cursor's bridge, which passes no check (cursorMcpBridge tests)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose window was unmarked and whose server answers 403 ends with the not-set-up line',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2800,7 +2827,7 @@ test(
 )
 
 // protects=a Devin bridge whose token was rotated by a take-back (the server answers 401) ending with the not-set-up line; fails_when=a 401 never reaches the setup check, so the bridge stays up and fails every request; no_claim=the take-back itself (the receipts are rewritten by hand)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose setup was removed and whose server answers 401 ends with the not-set-up line',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2827,7 +2854,7 @@ test(
 )
 
 // protects=a refusal of one request (403) not ending a bridge whose setup stands, and its request not being sent twice; fails_when=the bridge ends on any 403, or replays the request after the check; no_claim=what the server's refusal means
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose setup stands fails only the request the server answered 403 and does not send it again',
   { skip: process.platform === 'win32', timeout: 40_000 },
@@ -2837,6 +2864,8 @@ test(
     bridge.proxy.refuseWith = 403
     bridge.handshake()
     // Act
+    // Requests of the handshake are not counted against the two below.
+    const othersBeforeRequests = bridge.counts.others
     bridge.askToolsList(1)
     const failedRequest = await waitUntil(
       () => bridge.readMessages().find((message) => message.id === 1),
@@ -2860,12 +2889,12 @@ test(
     assert.equal('result' in nextRequest, true)
     assert.equal(bridge.readStderr().includes('is not set up'), false)
     // One request refused, one answered: the refused one was not sent twice.
-    assert.equal(bridge.counts.others, 2)
+    assert.equal(bridge.counts.others - othersBeforeRequests, 2)
   },
 )
 
 // protects=a file shortage at the first connection's descriptor read counting as transient, so the same descriptor is tried again (Cycle 0145 task 13); fails_when=an EMFILE there answers dropped and the selection excludes the only descriptor until the startup deadline, so the bridge never connects; no_claim=the shortage in the scan's own read (readDescriptorFile retries that one) or ENFILE (same predicate)
-// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a bridge whose first descriptor read for the connection meets a file shortage connects to the same descriptor on the retry',
   { skip: process.platform === 'win32', timeout: 40_000 },

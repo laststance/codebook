@@ -450,6 +450,7 @@ test(
         () => 'answered',
         () => 'failed',
       )
+      const receivedAfterFirst = toolsListRequests
       const second = await client.listTools().then(
         () => 'answered',
         () => 'failed',
@@ -458,6 +459,7 @@ test(
       assert.equal(first, 'failed')
       assert.equal(second, 'failed')
       // Each request reached the server once, so the bridge did not end and did not replay.
+      assert.equal(receivedAfterFirst, 1)
       assert.equal(toolsListRequests, 2)
     } finally {
       await client.close()
