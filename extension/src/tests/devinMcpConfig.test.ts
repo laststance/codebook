@@ -2735,6 +2735,55 @@ test('A refresh after a first setup whose rollback was cut short takes the entry
   )
 })
 
+test('A refresh after a cut-short rollback never asks to remove the entry by hand when the config cannot be read again', async (context) => {
+  // protects=the take-back of a cut-short setup asks for a removal by hand only after it confirmed the entry as its own; fails_when=the refusal says by hand after the config became unreadable or a receipt is written; no_claim=what the link's target holds; seam=seam.afterStat swaps the config for a link during the take-back's first read
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const targetPath = `${configPath}.target`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  let configReadCount = 0
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath) return
+      configReadCount += 1
+      // The first read is the run's own look; the swap lands before the take-back reads again.
+      if (configReadCount === 1) {
+        writeFileSync(targetPath, '{"mcpServers":{}}\n')
+        rmSync(configPath)
+        symlinkSync(targetPath, configPath)
+      }
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(configPath), error.message)
+    assert.match(
+      error.message,
+      /could not read that file again, so it left it unchanged/,
+    )
+    assert.doesNotMatch(error.message, /by hand/)
+    return true
+  })
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A put-back never publishes a file that a sync tool swapped in at the displaced name after the first look', async (context) => {
   // protects=a swapped-in file is not linked to the config name; fails_when=the swapped file becomes the config or the refusal omits its path; no_claim=what the file holds; seam=seam.beforeLeftoverCheck swaps the displaced file
   // Arrange

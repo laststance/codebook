@@ -2317,6 +2317,24 @@ function keptCopiesSentence(keptLeft: KeptFile[]): string {
 }
 
 /**
+ * Words how a failed first setup's rollback ended as one clause; used by {@link takeOutUnrecordedEntry} and {@link finishCutShortSetup}.
+ * A by-hand removal is asked for only when the entry was confirmed as Codebook's own and could not be taken out.
+ * @param outcome - The {@link RollbackResult} outcome.
+ * @returns A clause that follows a comma and states what Codebook did with the file and what the learner should check.
+ * @example
+ * rollbackOutcomeClause('took-out') // => 'so it took that entry out again and changed nothing else'
+ */
+function rollbackOutcomeClause(outcome: RollbackResult['outcome']): string {
+  return {
+    'took-out': 'so it took that entry out again and changed nothing else',
+    'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
+    'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
+    unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
+    'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
+  }[outcome]
+}
+
+/**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
  * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy.
  * @param context - The run.
@@ -2343,13 +2361,7 @@ async function takeOutUnrecordedEntry(
   // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left.
   if (outcome === 'took-out' && keptCopies.length === 0)
     await dropPending(context)
-  const sentence = {
-    'took-out': 'so it took that entry out again and changed nothing else',
-    'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
-    'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
-    unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
-    'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
-  }[outcome]
+  const sentence = rollbackOutcomeClause(outcome)
   return new Error(
     `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}; make room for that record, ${retry}.${keptCopiesSentence(keptCopies)}`,
     { cause },
@@ -2498,15 +2510,18 @@ async function finishCutShortSetup(
     installationId: pending.installationId ?? randomUUID(),
     config: { ino: stagedIno },
   }
-  const result = await rollBackPublishedEntry(context, written).catch(
-    () => undefined,
-  )
+  let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
+  try {
+    result = await rollBackPublishedEntry(context, written)
+  } catch {
+    // A refusal after the entry was confirmed as Codebook's own: the message below says it may still stand.
+  }
+  const { outcome, keptLeft } = result
   // The config was saved again or is not Codebook's to touch: the record is settled as before.
-  if (result?.outcome === 'replaced-config' || result?.outcome === 'not-ours')
-    return undefined
-  if (result?.outcome !== 'took-out' || result.keptLeft.length > 0)
+  if (outcome === 'replaced-config' || outcome === 'not-ours') return undefined
+  if (outcome !== 'took-out' || keptLeft.length > 0)
     throw new Error(
-      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path} and Codebook could not take it out again, so remove that entry by hand if it is still there, ${context.retry}.`,
+      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
   await retirePending(context, retained)
   return lookAtConfig(context)
