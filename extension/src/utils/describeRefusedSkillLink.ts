@@ -8,6 +8,7 @@ export const ALLOW_LINKS_THEN_SET_UP_AGAIN = `Check that this folder allows new 
  * @param targetPath - The managed skill path.
  * @param code - The file system's code for the refused link (`EPERM` on Linux and `ENOTSUP` on macOS for a file system without hard links, for example).
  * @param keptPreviousSkillPath - Where Codebook's previous skill stands when an update had moved it away before the link; left out when nothing was moved.
+ * @param hostLabel - The editor the skill is for, as the sentence names it.
  * @returns
  * - Nothing was moved: the sentence that no existing file was changed
  * - The previous skill was moved away: the sentence that names where it is kept and how to go on using it
@@ -20,8 +21,9 @@ export function describeRefusedSkillLink(
   targetPath: string,
   code: string,
   keptPreviousSkillPath?: string,
+  hostLabel = 'Cursor',
 ): string {
-  const refused = `Cursor skill could not be installed: the file system refused to put Codebook's new file in place as ${targetPath} (${code}).`
+  const refused = `${hostLabel} skill could not be installed: the file system refused to put Codebook's new file in place as ${targetPath} (${code}).`
   const state =
     keptPreviousSkillPath === undefined
       ? 'No existing file was changed.'
