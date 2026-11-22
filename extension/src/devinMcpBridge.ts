@@ -331,6 +331,8 @@ interface ScanContext {
   state: DevinSelectState
   /** Late answers this scan took from the state, so every candidate of a workspace in this scan uses the same one. */
   takenLateAnswers: Map<string, string>
+  /** `true` while the scan waits for its candidates; set to `false` when it returns, so a candidate that finishes later never takes a kept answer meant for the next live scan. */
+  isActive: boolean
 }
 
 /**
@@ -347,7 +349,9 @@ async function resolveWorkspaceForScan(
   scan: ScanContext,
 ): Promise<string | undefined> {
   const { state, takenLateAnswers } = scan
-  const late = state.lateWorkspaceAnswers.get(workspace)
+  const late = scan.isActive
+    ? state.lateWorkspaceAnswers.get(workspace)
+    : undefined
   if (late !== undefined) {
     // The next scan takes the kept answer, once; its other candidates read it from the scan.
     state.lateWorkspaceAnswers.delete(workspace)
@@ -675,14 +679,19 @@ async function listDescriptorNames(
  */
 async function scanDescriptors(
   agentDir: string,
-  scan: Omit<ScanContext, 'scanDeadline' | 'takenLateAnswers'>,
+  scan: Omit<ScanContext, 'scanDeadline' | 'takenLateAnswers' | 'isActive'>,
   deadline: number,
 ): Promise<ScanResult> {
   const scanDeadline = Math.min(
       Math.max(deadline, Date.now() + WORKSPACE_RESOLVE_FLOOR_MS),
       Date.now() + DEVIN_BRIDGE_SCAN_WAIT_MS,
     ),
-    context = { ...scan, scanDeadline, takenLateAnswers: new Map() },
+    context: ScanContext = {
+      ...scan,
+      scanDeadline,
+      takenLateAnswers: new Map(),
+      isActive: true,
+    },
     folder = scan.state.workingFolder,
     waiter: { wake: (() => void) | undefined } = { wake: undefined },
     notify = (): void => waiter.wake?.()
@@ -713,6 +722,8 @@ async function scanDescriptors(
     )
   } finally {
     folder.onAnswer = undefined
+    // A candidate still judging after this point belongs to an expired scan.
+    context.isActive = false
   }
 }
 

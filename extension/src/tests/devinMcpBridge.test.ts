@@ -1680,10 +1680,14 @@ test(
       brokenFolder,
       process.pid,
     )
-    let brokenLookups = 0
+    let brokenLookups = 0,
+      judgedCandidates = 0
+    // Each scan judges the one candidate once, through the liveness check, before it asks for the workspace: the count of judgements is the number of the scan that runs.
+    const scanNumberOfLookups: number[] = []
     const resolveWorkspace = (path: string): Promise<string> => {
       if (path !== brokenFolder) return Promise.resolve(path)
       brokenLookups += 1
+      scanNumberOfLookups.push(judgedCandidates)
       // The first lookup fails 1,000 ms after the first scan's wait ended and 2,000 ms before the next scan; the link is repaired by the second.
       return brokenLookups === 1
         ? new Promise<string>((_resolve, rejectLater) =>
@@ -1691,8 +1695,19 @@ test(
           )
         : Promise.resolve(workspace)
     }
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/evidenceInUseElsewhere': {
+          isDescriptorOwnerGone: () => {
+            judgedCandidates += 1
+            return Promise.resolve(false)
+          },
+        },
+      },
+    )
     // Act
-    const selection = await selectDevinDescriptor(
+    const selection = await bridgeModule.selectDevinDescriptor(
       agentDir,
       workspace,
       process.pid,
@@ -1701,6 +1716,115 @@ test(
     // Assert
     assert.equal(selection?.descriptorPath, descriptorPath)
     assert.equal(brokenLookups, 2)
+    // The second lookup starts in the second scan; a cached fallback consumed by the second scan would move it to the third.
+    assert.deepEqual(scanNumberOfLookups, [1, 2])
+  },
+)
+
+// protects=an expired scan's late candidate leaving the kept workspace answer for the next live scan; fails_when=a candidate whose liveness check finishes after its scan returned takes the kept answer, so the next scan starts the slow lookup again and misses the window; no_claim=a real mount (stand-ins for the slow lookup and the slow liveness check, both released by the test)
+test(
+  'a candidate of an expired scan leaves the kept workspace answer to the next scan',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const slowFolder = join(agentDir, '..', 'slow-workspace')
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      0,
+      slowFolder,
+      process.pid,
+    )
+    const stalledPath = await writeDescriptor(
+      agentDir,
+      1,
+      slowFolder,
+      process.pid,
+    )
+    let slowLookups = 0,
+      isSlowAnswered = false,
+      isLivenessAnswered = false
+    let releaseSlowLookup = (): void => undefined,
+      releaseLiveness = (): void => undefined
+    const slowGate = new Promise<void>((resolveLater) => {
+      releaseSlowLookup = resolveLater
+    })
+    const livenessGate = new Promise<void>((resolveLater) => {
+      releaseLiveness = resolveLater
+    })
+    const resolveWorkspace = (path: string): Promise<string> => {
+      if (path !== slowFolder) return Promise.resolve(path)
+      slowLookups += 1
+      // Only the first lookup is released; a new one stays unanswered, like the mount that is slow again.
+      if (slowLookups > 1) return new Promise<string>(() => undefined)
+      return slowGate.then(() => {
+        isSlowAnswered = true
+        return workspace
+      })
+    }
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/evidenceInUseElsewhere': {
+          // One candidate's liveness check stalls until the test releases it; the other answers at once.
+          isDescriptorOwnerGone: (descriptorPath: string) =>
+            descriptorPath === stalledPath
+              ? livenessGate.then(() => {
+                  isLivenessAnswered = true
+                  return false
+                })
+              : Promise.resolve(false),
+        },
+      },
+    )
+    const state = bridgeModule.createDevinSelectState()
+    const options = {
+      timeoutMs: 1_100,
+      intervalMs: 20,
+      resolveWorkspace,
+      state,
+    }
+    // Act
+    const first = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    await waitUntil(
+      () => state.waitingScans.get(slowFolder) === 0,
+      "the first selection's scan giving up its wait",
+      5_000,
+    )
+    releaseSlowLookup()
+    await waitUntil(
+      () => isSlowAnswered,
+      'the slow workspace lookup answering',
+      5_000,
+    )
+    // The stalled candidate of the expired scan now continues; it must leave the kept answer where it is.
+    releaseLiveness()
+    await waitUntil(
+      () => isLivenessAnswered,
+      "the stalled candidate's liveness check answering",
+      5_000,
+    )
+    // The candidate's remaining steps up to its workspace step are microtasks, which all run before this macrotask.
+    await new Promise((resolveLater) => setImmediate(resolveLater))
+    const second = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    // Assert
+    assert.equal(first, undefined)
+    assert.notEqual(second, undefined)
+    assert.equal(
+      [healthyPath, stalledPath].includes(second?.descriptorPath ?? ''),
+      true,
+    )
+    assert.equal(slowLookups, 1)
   },
 )
 
