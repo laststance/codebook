@@ -1515,6 +1515,9 @@ export const DEVIN_WINDOWS_UNSUPPORTED_SENTENCE =
 /** What a Devin Desktop window says after it brought Codebook's MCP entry to this installation (an update moved the bridge, or the configured Node changed): Devin Local runs the new entry only after a reload. */
 export const DEVIN_ENTRY_REFRESHED_SENTENCE =
   'Codebook updated its MCP server entry for Devin Local to this installation. Reload this window so Devin Local starts the updated server.'
+/** What a Devin Desktop window says after it brought Codebook's MCP entry to this installation while Devin's Customize keeps the entry turned off: a reload alone starts no server for it. */
+export const DEVIN_ENTRY_REFRESHED_DISABLED_SENTENCE =
+  "Codebook updated its MCP server entry for Devin Local to this installation, but the codebook server is turned off in Devin's Customize. Turn it on there, then reload this window so Devin Local starts the updated server."
 /** The Output line of a Devin Desktop window whose setup was removed (from another window): it reconnects nothing and writes no file until Set Up AI Chat runs again. */
 export const DEVIN_SETUP_REMOVED_LINE =
   "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again."

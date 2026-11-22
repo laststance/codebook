@@ -1,3 +1,8 @@
+import {
+  DEVIN_ENTRY_REFRESHED_DISABLED_SENTENCE,
+  DEVIN_ENTRY_REFRESHED_SENTENCE,
+} from '../constants'
+
 /** The editors whose **Codebook: Set Up AI Chat** ends with its own next step. */
 type AiChatHost = 'vscode' | 'cursor' | 'devin'
 
@@ -33,4 +38,18 @@ export function aiChatReadyMessage(
   if (host === 'devin' && options.devinEntryDisabled)
     return DEVIN_ENTRY_TURNED_OFF_MESSAGE
   return READY_MESSAGES[host]
+}
+
+/**
+ * Words what a Devin Desktop learner reads after activation brought Codebook's MCP entry to this installation, so a turned-off entry sends them to Devin's Customize instead of promising that the reload starts the server; called by the activation refresh in {@link activate}.
+ * @param entryDisabled - The entry kept `"disabled": true` in Devin's MCP config.
+ * @returns The notice text; the reload sentence when the entry is on.
+ * @example
+ * devinEntryRefreshedMessage(true) // => "Codebook updated its MCP server entry for Devin Local to this installation, but the codebook server is turned off in Devin's Customize. Turn it on there, then reload this window so Devin Local starts the updated server."
+ */
+export function devinEntryRefreshedMessage(entryDisabled: boolean): string {
+  // A turned-off entry is never loaded by the reload, so the learner turns it on first.
+  return entryDisabled
+    ? DEVIN_ENTRY_REFRESHED_DISABLED_SENTENCE
+    : DEVIN_ENTRY_REFRESHED_SENTENCE
 }

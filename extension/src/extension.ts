@@ -62,7 +62,6 @@ import {
   REVIEW_SAVED_SESSION_OPERATIONS_COMMAND,
   SAVE_LEARNING_REPLAY_COMMAND,
   NODE_SERVER_SHUTDOWN_GRACE_MS,
-  DEVIN_ENTRY_REFRESHED_SENTENCE,
   DEVIN_REMOVAL_ACTION,
   DEVIN_REMOVAL_QUESTION,
   DEVIN_SETUP_REMOVED_LINE,
@@ -115,7 +114,10 @@ import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace, type UnsavedStudyArchive } from './studyWorkspace'
 import { agentExitOf, type WikiAgentExit } from './utils/agentExitOf'
-import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
+import {
+  aiChatReadyMessage,
+  devinEntryRefreshedMessage,
+} from './utils/aiChatReadyMessage'
 import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
@@ -1157,7 +1159,7 @@ export function activate(
     ],
     env: {},
   })
-  /** Shows a Devin Desktop notice whose Reload Window button reloads this window, because Devin Local loads its MCP servers only when a window loads; not awaited, so a setup or removal ends without waiting for the learner. @example offerDevinReload('information', DEVIN_ENTRY_REFRESHED_SENTENCE) */
+  /** Shows a Devin Desktop notice whose Reload Window button reloads this window, because Devin Local loads its MCP servers only when a window loads; not awaited, so a setup or removal ends without waiting for the learner. @example offerDevinReload('information', devinEntryRefreshedMessage(false)) */
   const offerDevinReload = (
     severity: NoticeSeverity,
     message: string,
@@ -1300,13 +1302,15 @@ export function activate(
         .join(' '),
     )
   }
-  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line. @returns `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed. @example await refreshDevinEntry(storageRoot) // => 'current' */
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
   const refreshDevinEntry = async (
     storageRoot: string,
-  ): Promise<
-    | Awaited<ReturnType<typeof refreshManagedDevinMcpEntry>>['status']
-    | 'refused'
-  > => {
+  ): Promise<{
+    status:
+      | Awaited<ReturnType<typeof refreshManagedDevinMcpEntry>>['status']
+      | 'refused'
+    disabled: boolean
+  }> => {
     let nodeExecutable: string
     try {
       nodeExecutable = await resolveExternalNodeExecutable(
@@ -1317,7 +1321,7 @@ export function activate(
     } catch {
       // The failure's own text can carry paths and process output; the Output gets a fixed line.
       diagnostics.info(DEVIN_REFRESH_NODE_FAILURE_LINE)
-      return 'refused'
+      return { status: 'refused', disabled: false }
     }
     try {
       // Windows opened together may hold the entry's lock one after the other.
@@ -1331,12 +1335,12 @@ export function activate(
         )
       // A kept copy of the previous config holds other servers' settings and must not go unreported.
       if (refresh.cleanupFailure) diagnostics.info(refresh.cleanupFailure)
-      return refresh.status
+      return { status: refresh.status, disabled: Boolean(refresh.disabled) }
     } catch (error) {
       diagnostics.info(
         `Codebook did not refresh its Devin Desktop MCP entry: ${thrownMessage(error)}`,
       )
-      return 'refused'
+      return { status: 'refused', disabled: false }
     }
   }
   /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. The setup counts as removed when the skill check fails and the entry's receipt is gone, decided before Node or the config is read. @returns `false` when the window is refused or the setup was removed, so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
@@ -1367,7 +1371,8 @@ export function activate(
       diagnostics.info(
         `Codebook did not refresh its Devin Desktop skill: ${skillFailure}`,
       )
-    const entryStatus = await refreshDevinEntry(storageRoot)
+    const { status: entryStatus, disabled: entryDisabled } =
+      await refreshDevinEntry(storageRoot)
     // A removal finished in another window meanwhile took a receipt: the setup is not Codebook's any more, and nothing reconnects (both receipts are read right before the server starts).
     if (!(await hasDevinSetupReceipts(storageRoot))) {
       diagnostics.info(DEVIN_SETUP_REMOVED_LINE)
@@ -1378,9 +1383,9 @@ export function activate(
       diagnostics.info(DEVIN_ENTRY_MISSING_LINE)
       return false
     }
-    // Devin Local runs the entry it read when the window loaded, so the updated one needs a reload.
+    // Devin Local runs the entry it read when the window loaded, so the updated one needs a reload; an entry turned off in Customize needs turning on first.
     if (entryStatus === 'refreshed')
-      offerDevinReload('information', DEVIN_ENTRY_REFRESHED_SENTENCE)
+      offerDevinReload('information', devinEntryRefreshedMessage(entryDisabled))
     return true
   }
   /** The steps of one Devin Desktop removal, run under {@link underDevinLock}: the skill, then the entry, then this window's saved setup and descriptor mark. @returns The notice the removal ends with. @example const notice = await removeDevinSetupLocked() */

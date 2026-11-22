@@ -409,6 +409,7 @@ async function devinWindow(
             ...(options.cleanupFailure && {
               cleanupFailure: options.cleanupFailure,
             }),
+            ...(options.entryDisabled && { disabled: true }),
           }
         },
         removeManagedDevinMcpEntry: async (
@@ -664,6 +665,34 @@ test('a Devin Desktop window that opens on a set-up workspace refreshes a moved 
         severity: 'information',
         message:
           'Codebook updated its MCP server entry for Devin Local to this installation. Reload this window so Devin Local starts the updated server.',
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a learner who turned Codebook's Devin entry off in Customize is told to turn it on before the reload / fails_when: the activation notice promises that a reload starts the updated server while the entry stays off / no_claim: the entry's own refresh (devinMcpConfig tests)
+test('a Devin Desktop window whose refreshed MCP entry is turned off in Customize asks to turn it on before the reload', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    entryRefresh: 'refreshed',
+    entryDisabled: true,
+  })
+  try {
+    // Act
+    await waitUntil(
+      () => window.notices.length > 0,
+      'the refreshed entry notice',
+    )
+    // Assert
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          "Codebook updated its MCP server entry for Devin Local to this installation, but the codebook server is turned off in Devin's Customize. Turn it on there, then reload this window so Devin Local starts the updated server.",
         actions: ['Reload Window'],
       },
     ])
