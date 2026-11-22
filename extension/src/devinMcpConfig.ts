@@ -1569,17 +1569,30 @@ async function lookAtLeftover(
   }
   if (!copy) return { kind: 'gone' }
   if (isSameFileId(leftover.ino, copy.ino)) return { kind: 'found', copy }
-  // A move-aside that took a newer save (another inode) while the config name is still empty: the file goes back, never replacing anything ({@link tidyLeftover}).
+  // A change still in progress whose config name is empty (the file may go back) or is another name of this very file (an interrupted put-back: the extra name is dropped); both are settled by {@link tidyLeftover}, which puts a file back only while it is still the recorded one.
   if (
     leftover.role === 'kept' &&
     phase === undefined &&
-    !lstatSync(context.path, { throwIfNoEntry: false })
+    isEmptyOrSameFile(context.path, copy.ino)
   )
     return { kind: 'found', copy }
   // A file under a Codebook name that is not the inode Codebook recorded is somebody else's; the displaced one is named with the way to get it back.
   throw leftover.role === 'kept'
     ? otherInodeRefusal(context, leftover.path)
     : journalRefusal(context)
+}
+
+/**
+ * Tells whether the config name holds nothing or another name of the file with the given inode; called by {@link lookAtLeftover} for the displaced file of a change in progress.
+ * @param configPath - The config name.
+ * @param copyIno - The inode of the displaced file.
+ * @returns `true` when nothing stands at the config name or the config has that inode; `false` when a different file stands there.
+ * @example
+ * isEmptyOrSameFile('/home/me/.config/devin/mcp_config.json', 42n) // => true when the name is empty
+ */
+function isEmptyOrSameFile(configPath: string, copyIno: bigint): boolean {
+  const config = lstatSync(configPath, { bigint: true, throwIfNoEntry: false })
+  return !config || config.ino === copyIno
 }
 
 /** The refusal for a displaced file that has another inode than the record says while a config stands at the config name: it may be a newer save of the learner's, so nothing is moved or deleted and the record stays. */
@@ -1595,7 +1608,7 @@ function otherInodeRefusal(
 /**
  * Recovers what an interrupted run left under the private names its pending record holds; called by {@link inspect} before the config is read.
  * Every name must be a bare name Codebook made beside the config with the inode the record holds, checked for all of them before any is moved, linked or deleted. Each leftover is then settled on its own: one that cannot be settled stays and is returned, and the others are still settled.
- * - A displaced config of a write or removal that was still in progress, while the config name is empty: it goes back with a link, which never replaces anything, whatever its inode (a newer save that the move-aside took).
+ * - A displaced config of a write or removal that was still in progress, while the config name is empty: it goes back with a link, which never replaces anything, only while it still has the recorded inode or the recorded bytes; a file with both different (a sync or backup tool replaced it) stays private, the config name stays empty and the refusal names it. When the config name is another name of the same file (a put-back interrupted after its link), the extra displaced name is unlinked.
  * - A displaced or staged file that holds exactly the bytes the record names: it is Codebook's own leftover and is deleted. After a finished publish or removal (a completed record) it is never put back.
  * - A staged or displaced name that is another link to the config itself: unlinked, whatever the config holds now; the config keeps the inode.
  * - The probe link of the hard-link check: deleted.
@@ -1700,12 +1713,15 @@ async function retirePending(
  */
 async function tidyLeftover(
   context: Context,
-  { role, path, sha256: expectedSha256 }: Leftover,
+  { role, path, ino: expectedIno, sha256: expectedSha256 }: Leftover,
   copy: { sha256: string; ino: bigint },
   phase: Pending['phase'],
 ): Promise<void> {
   // The probe is a link to the staged file; its inode was checked.
   if (role === 'probe') return unlink(path)
+  // A copy handed to the learner is never touched, not even when the learner linked it back to the config (checked before the same-inode branch).
+  if (role === 'kept' && phase === 'handed')
+    throw new Error('The copy was handed to the learner.')
   const config = lstatSync(context.path, {
     bigint: true,
     throwIfNoEntry: false,
@@ -1714,7 +1730,13 @@ async function tidyLeftover(
   if (config?.ino === copy.ino) return unlink(path)
   if (
     role === 'kept' &&
-    (await putBackDisplaced(context, path, phase, !config))
+    (await putBackDisplaced(
+      context,
+      path,
+      phase,
+      !config,
+      isSameFileId(expectedIno, copy.ino) || copy.sha256 === expectedSha256,
+    ))
   )
     return
   if (copy.sha256 !== expectedSha256)
@@ -1728,17 +1750,18 @@ async function tidyLeftover(
  * @param path - The displaced name.
  * @param phase - The phase of the pending record.
  * @param isConfigAbsent - Whether nothing stands at the config name.
- * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished or the config name is taken.
- * @throws When the copy was handed to the learner, or the link or unlink fails.
+ * @param isRecordedFile - Whether the displaced file still has the recorded inode or the recorded bytes; a file with neither is never published.
+ * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
+ * @throws When the link or unlink fails.
  */
 async function putBackDisplaced(
   context: Context,
   path: string,
   phase: Pending['phase'],
   isConfigAbsent: boolean,
+  isRecordedFile: boolean,
 ): Promise<boolean> {
-  if (phase === 'handed') throw new Error('The copy was handed to the learner.')
-  if (phase !== undefined || !isConfigAbsent) return false
+  if (phase !== undefined || !isConfigAbsent || !isRecordedFile) return false
   await link(path, context.path)
   await unlink(path)
   return true

@@ -2054,14 +2054,72 @@ test('A removal that keeps other servers and cannot write its completed record k
   assert.equal(existsSync(displacedPath), true)
 })
 
-test('Recovery puts a displaced file with another inode back when the config name is still empty and deletes nothing', async (context) => {
-  // Value: protects=a newer save that the move-aside took is not lost when the run ended before the comparison; fails_when=the file with another inode is deleted, left aside or refused while the config name is empty; why_new=recovery refused every file whose inode differed from the record; seam=hand-written pending record whose recorded inode is not the file's, with no config at the config name
+test('Recovery puts a displaced file with another inode but the recorded bytes back when the config name is still empty and deletes nothing', async (context) => {
+  // Value: protects=a displaced file that still holds the recorded bytes is not lost when its inode changed and the run ended before the comparison; fails_when=the file with another inode but the recorded bytes is deleted, left aside or refused while the config name is empty; why_new=recovery refused every file whose inode differed from the record; seam=hand-written pending record whose recorded inode is not the file's, with no config at the config name
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await mkdir(dirname(configPath), { recursive: true })
   const keptPath = privateNameOf(configPath, 'codebook-displaced')
-  const newerSave = '{"theme":"saved by an editor"}\n'
+  const newerSave = '{"theme":"dark"}\n'
   await writeFile(keptPath, newerSave)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(newerSave),
+  })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'not-managed')
+  assert.equal(await readFile(configPath, 'utf8'), newerSave)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  await assert.rejects(stat(join(storage, 'devin-mcp', 'pending.json')), {
+    code: 'ENOENT',
+  })
+})
+
+test('Recovery leaves the config name empty and names a displaced file with another inode and other bytes than the record', async (context) => {
+  // protects: a different server definition never becomes Devin's live config after a sync tool replaced the displaced copy / fails_when: a displaced file with neither the recorded inode nor the recorded bytes is linked to the config name / no_claim: the file's permissions, a standing config
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, '{"mcpServers":{"foreign":{"command":"x"}}}\n')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256('{"theme":"dark"}\n'),
+  })
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath))
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(keptPath), true)
+})
+
+test('Recovery drops the extra displaced name of a put-back that was interrupted after its link, even when the inode is not the recorded one', async (context) => {
+  // protects: an interrupted put-back is finished instead of refused forever / fails_when: the run refuses because the config name exists while the displaced name is another name of the same file / no_claim: a different file at the config name (refused by the test above's sibling)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const restored = '{"theme":"restored"}\n'
+  await writeFile(keptPath, restored)
+  await link(keptPath, configPath)
   await writeRecordFile(storage, 'pending.json', {
     targetPath: configPath,
     createdFile: false,
@@ -2076,11 +2134,35 @@ test('Recovery puts a displaced file with another inode back when the config nam
 
   // Assert
   assert.equal(result.status, 'not-managed')
-  assert.equal(await readFile(configPath, 'utf8'), newerSave)
-  assert.deepEqual(await leftoversBeside(configPath), [])
-  await assert.rejects(stat(join(storage, 'devin-mcp', 'pending.json')), {
-    code: 'ENOENT',
+  assert.equal(await readFile(configPath, 'utf8'), restored)
+  assert.equal(existsSync(keptPath), false)
+})
+
+test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
+  // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const handedBytes = '{"theme":"dark"}\n'
+  await writeFile(keptPath, handedBytes)
+  await link(keptPath, configPath)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'handed',
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(handedBytes),
   })
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
+
+  // Assert
+  assert.equal(existsSync(keptPath), true)
+  assert.equal(await readFile(keptPath, 'utf8'), handedBytes)
 })
 
 test('A put-back whose displaced name cannot be deleted keeps the record and names it, and the next run deletes only that name', async (context) => {
