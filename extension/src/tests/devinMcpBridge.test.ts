@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { runDevinMcpBridge, selectDevinDescriptor } from '../devinMcpBridge'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { z } from 'zod'
 
+import { runDevinMcpBridge, selectDevinDescriptor } from '../devinMcpBridge'
+import { startServer } from '../server'
+import { currentStorageOwner } from '../utils/currentStorageOwner'
+
+import { createHarness } from './helpers'
 import { removeTestFolder } from './utils/removeTestFolder'
+import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 const FAST = { timeoutMs: 300, intervalMs: 20 }
 const IDS = [
@@ -38,6 +46,7 @@ async function writeDescriptor(
   index: number,
   workspace: string,
   pid: number,
+  owner: Record<string, unknown> = {},
 ): Promise<string> {
   const path = join(agentDir, `${IDS[index]}.connection.json`)
   await writeFile(
@@ -49,6 +58,7 @@ async function writeDescriptor(
       workspace,
       apiVersion: '1.0',
       pid,
+      ...owner,
     }),
     { mode: 0o600 },
   )
@@ -122,7 +132,12 @@ test('the bridge reports the recovery line and exit code 1 when no instance matc
   let exitCode: typeof process.exitCode
   try {
     // Act
-    await runDevinMcpBridge(agentDir, workspace, {}, FAST)
+    await runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: '10' },
+      FAST,
+    )
     exitCode = process.exitCode
   } finally {
     process.stderr.write = originalWrite
@@ -135,19 +150,172 @@ test('the bridge reports the recovery line and exit code 1 when no instance matc
   ])
 })
 
-// Value: protects=windows of one folder without a known extension host pid from mixing; fails_when=two workspace matches pick one; no_claim=the single-match case
-test('the bridge without an extension host pid refuses two matching workspaces', async (context) => {
+// Value: protects=a Devin window never talking to another window's Codebook of the same folder; fails_when=a bridge without WINDSURF_EXT_HOST_PID still connects to the one workspace match instead of refusing; no_claim=the 15 s default wait
+test('without a window identity the bridge refuses with that line', async (context) => {
   // Arrange
   const { agentDir, workspace } = await createFolders(context)
   await writeDescriptor(agentDir, 0, workspace, 10)
-  await writeDescriptor(agentDir, 1, workspace, 20)
+  const lines: string[] = [],
+    originalWrite = process.stderr.write.bind(process.stderr),
+    originalExitCode = process.exitCode
+  process.stderr.write = (chunk: string) => {
+    lines.push(chunk)
+    return true
+  }
+  let exitCode: typeof process.exitCode
+  try {
+    // Act
+    await runDevinMcpBridge(agentDir, workspace, {}, FAST)
+    exitCode = process.exitCode
+  } finally {
+    process.stderr.write = originalWrite
+    process.exitCode = originalExitCode
+  }
+  // Assert
+  assert.equal(exitCode, 1)
+  assert.deepEqual(lines, [
+    'Codebook cannot tell which Devin Desktop window started this bridge: WINDSURF_EXT_HOST_PID is not set. Reload the window; if this stays, Devin Desktop changed how it starts MCP servers.\n',
+  ])
+})
+
+/** The machine and boot of this test's window, as the descriptor of a window of this build records them. */
+const MACHINE = {
+  hostname: 'workstation',
+  machineId: 'machine-a',
+  boot: { id: 'boot-1' },
+}
+
+// Value: protects=a Devin window connecting to its own fresh instance, not to the descriptor a crashed window left under the same extension host pid; fails_when=the first descriptor of the workspace and pid is taken without asking whether its owner still runs, so the bridge connects to a dead url; why_new=pid reuse after a crash or reboot; seam=the injected machine identity (the stale descriptor names this running process with an earlier start)
+test('the bridge skips the descriptor of a crashed window and waits for the fresh one', async (context) => {
+  // Arrange
+  const { agentDir, workspace } = await createFolders(context)
+  await writeDescriptor(agentDir, 0, workspace, process.pid, {
+    ...MACHINE,
+    processStart: startOfKilledWindow(),
+  })
+  const fresh = new Promise<string>((resolve) =>
+    setTimeout(
+      () =>
+        resolve(writeDescriptor(agentDir, 1, workspace, process.pid, MACHINE)),
+      100,
+    ),
+  )
   // Act
   const selection = await selectDevinDescriptor(
     agentDir,
     workspace,
-    undefined,
-    FAST,
+    process.pid,
+    { timeoutMs: 3_000, intervalMs: 20, identity: MACHINE },
   )
   // Assert
-  assert.equal(selection, undefined)
+  assert.equal(selection?.descriptorPath, await fresh)
+  assert.equal(selection.instanceId, IDS[1])
+})
+
+// Value: protects=the three launches of one window choosing the same instance; fails_when=several live descriptors of one workspace and pid resolve by the folder's listing order instead of by newest file time; why_new=a known pid used to return the first match; seam=none (file times set with utimes)
+test('the bridge resolves two live descriptors of one window to the newest one whatever the creation order', async (context) => {
+  // Arrange: two folders with the same two descriptors; the newer file time sits on the first in one folder and on the second in the other.
+  const newestIsFirst = await createFolders(context),
+    newestIsSecond = await createFolders(context)
+  const picked: string[] = []
+  for (const [folders, isFirstNewer] of [
+    [newestIsFirst, true],
+    [newestIsSecond, false],
+  ] as const) {
+    const { agentDir, workspace } = folders
+    const firstPath = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+      MACHINE,
+    )
+    const secondPath = await writeDescriptor(
+      agentDir,
+      1,
+      workspace,
+      process.pid,
+      MACHINE,
+    )
+    const newer = new Date(2_000_000),
+      older = new Date(1_000_000)
+    await utimes(
+      firstPath,
+      isFirstNewer ? newer : older,
+      isFirstNewer ? newer : older,
+    )
+    await utimes(
+      secondPath,
+      isFirstNewer ? older : newer,
+      isFirstNewer ? older : newer,
+    )
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { ...FAST, identity: MACHINE },
+    )
+    picked.push(selection?.instanceId ?? 'none')
+  }
+  // Assert
+  assert.deepEqual(picked, [IDS[0], IDS[1]])
+})
+
+// Value: protects=a Devin window whose first matching descriptor does not answer still reaching its fresh instance within the startup wait; fails_when=the entry exits at the first failed connection instead of dropping that descriptor and polling on; why_new=a stale descriptor that passes the liveness check; seam=a spawned bridge entry, a refused loopback url and a real Codebook endpoint
+test('the bridge drops a descriptor whose server refuses and connects to the fresh one written 500 ms later', async (context) => {
+  // Arrange
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service),
+    root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-devin-bridge-live-')),
+    )
+  context.after(async () => {
+    await endpoint.close()
+    await harness.close()
+    await removeTestFolder(root)
+  })
+  const owner = await currentStorageOwner()
+  const writeLive = (index: number, url: string): Promise<void> =>
+    writeFile(
+      join(root, `${IDS[index]}.connection.json`),
+      JSON.stringify({
+        ...endpoint.descriptor,
+        url,
+        instanceId: IDS[index],
+        pid: process.pid,
+        ...owner,
+      }),
+      { mode: 0o600 },
+    )
+  await writeLive(0, 'http://127.0.0.1:1/mcp')
+  const fresh = new Promise<void>((resolve) =>
+    setTimeout(() => resolve(writeLive(1, endpoint.descriptor.url)), 500),
+  )
+  const client = new Client({ name: 'devin-bridge-test', version: '1.0' })
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(__dirname, '../devinMcpBridgeEntry.js'), root],
+    cwd: harness.directory,
+    env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+    stderr: 'pipe',
+  })
+  try {
+    // Act
+    await client.connect(transport, { timeout: 10_000 })
+    await fresh
+    const status = await client.callTool({
+      name: 'codebook_status',
+      arguments: {},
+    })
+    // Assert
+    assert.equal(
+      z
+        .object({ data: z.object({ instanceId: z.string() }) })
+        .parse(status.structuredContent).data.instanceId,
+      endpoint.descriptor.instanceId,
+    )
+  } finally {
+    await client.close()
+  }
 })

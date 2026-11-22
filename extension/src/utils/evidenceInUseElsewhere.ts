@@ -23,7 +23,7 @@ function isPresent(path: string): Promise<boolean> {
 }
 
 /** Says whether an owner record names no machine at all: no host name, no machine id and no pseudonym, as a connection descriptor of a build up to 0.2.28 does. @example namesNoMachine({ pid: 4242 }) // => true */
-function namesNoMachine(owner: RecordedOwner): boolean {
+export function namesNoMachine(owner: RecordedOwner): boolean {
   return [
     owner.hostname,
     owner.machineId,
@@ -33,7 +33,7 @@ function namesNoMachine(owner: RecordedOwner): boolean {
 }
 
 /**
- * Says whether a connection descriptor names an editor process that no longer exists, so a descriptor left by a crashed window keeps nothing in place; called by {@link evidenceInUseElsewhere}.
+ * Says whether a connection descriptor names an editor process that no longer exists, so a descriptor left by a crashed window keeps nothing in place; called by {@link evidenceInUseElsewhere} and by the Devin Desktop bridge's descriptor choice ({@link selectDevinDescriptor}).
  * A descriptor that names a process and no machine was written by a build up to 0.2.28. It lies in this machine's own storage, so it is this machine's and is judged by its process id alone; taking it for another machine's would keep the evidence of every crashed window of such a build on disk for good.
  * @param descriptor - The `<instanceId>.connection.json` file of another instance.
  * @param identity - The machine and the boot of this process; {@link currentStorageOwner} when left out.
@@ -44,7 +44,7 @@ function namesNoMachine(owner: RecordedOwner): boolean {
  * @example
  * await isDescriptorOwnerGone('/storage/agent/instance.connection.json') // => true after its window was killed
  */
-async function isDescriptorOwnerGone(
+export async function isDescriptorOwnerGone(
   descriptor: string,
   identity?: StorageOwnerIdentity,
 ): Promise<boolean> {

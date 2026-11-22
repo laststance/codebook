@@ -210,7 +210,11 @@ test('the packaged Devin bridge exits 1 with the recovery line when no Codebook 
     execFile(
       process.execPath,
       [bridgePath, agentDirectory],
-      { cwd: workspace, env: { PATH: process.env.PATH }, timeout: 60_000 },
+      {
+        cwd: workspace,
+        env: { PATH: process.env.PATH, WINDSURF_EXT_HOST_PID: '1' },
+        timeout: 60_000,
+      },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
