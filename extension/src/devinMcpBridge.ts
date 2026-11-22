@@ -12,6 +12,7 @@ import {
   DEVIN_BRIDGE_HEADER_NAME,
   DEVIN_BRIDGE_HEADER_VALUE,
   DEVIN_BRIDGE_RECONNECT_CHECK_MS,
+  DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX,
   DEVIN_BRIDGE_REFUSAL_EXIT_MS,
   DEVIN_BRIDGE_SCAN_WAIT_MS,
   DEVIN_CONNECT_FLOOR_MS,
@@ -336,6 +337,8 @@ interface ScanContext {
   takenLateAnswers: Map<string, string>
   /** `true` while the scan waits for its candidates; set to `false` when it returns, so a candidate that finishes later never takes a kept answer meant for the next live scan. */
   isActive: boolean
+  /** How many candidates of this scan wait on each workspace's lookup; taken out of {@link DevinSelectState.waitingScans} when the scan ends, so a scan that returned never hides a late answer. */
+  ownWaiting: Map<string, number>
 }
 
 /**
@@ -379,18 +382,49 @@ async function resolveWorkspaceForScan(
       ),
   )
   if (!lookup) return undefined
-  state.waitingScans.set(
-    workspace,
-    (state.waitingScans.get(workspace) ?? 0) + 1,
-  )
+  adjustWaiting(scan, workspace, 1)
   try {
     return (await answerWithin(lookup, scan.scanDeadline - Date.now()))?.path
   } finally {
-    state.waitingScans.set(
-      workspace,
-      (state.waitingScans.get(workspace) ?? 1) - 1,
-    )
+    // An ended scan already gave its waits back when it ended.
+    if (scan.isActive) adjustWaiting(scan, workspace, -1)
   }
+}
+
+/**
+ * Changes how many candidates wait on a workspace's lookup, in the scan's own count and in the shared one; called by {@link resolveWorkspaceForScan} and {@link releaseWaiting}.
+ * @param scan - The scan whose candidate starts or stops waiting.
+ * @param workspace - The workspace path the lookup is about.
+ * @param delta - `1` when a candidate starts waiting, `-1` when it stops.
+ * @example
+ * adjustWaiting(scan, '/repo', 1) // => state.waitingScans.get('/repo') grows by one
+ */
+function adjustWaiting(
+  scan: ScanContext,
+  workspace: string,
+  delta: number,
+): void {
+  scan.ownWaiting.set(workspace, (scan.ownWaiting.get(workspace) ?? 0) + delta)
+  scan.state.waitingScans.set(
+    workspace,
+    (scan.state.waitingScans.get(workspace) ?? 0) + delta,
+  )
+}
+
+/**
+ * Gives back every wait a scan still holds when it ends, so a lookup that answers later is kept for the next scan; called by {@link scanDescriptors}.
+ * @param scan - The scan that ended.
+ * @example
+ * releaseWaiting(scan) // => scan.ownWaiting.size === 0
+ */
+function releaseWaiting(scan: ScanContext): void {
+  scan.isActive = false
+  for (const [workspace, count] of scan.ownWaiting)
+    scan.state.waitingScans.set(
+      workspace,
+      (scan.state.waitingScans.get(workspace) ?? 0) - count,
+    )
+  scan.ownWaiting.clear()
 }
 
 /**
@@ -682,7 +716,10 @@ async function listDescriptorNames(
  */
 async function scanDescriptors(
   agentDir: string,
-  scan: Omit<ScanContext, 'scanDeadline' | 'takenLateAnswers' | 'isActive'>,
+  scan: Omit<
+    ScanContext,
+    'scanDeadline' | 'takenLateAnswers' | 'isActive' | 'ownWaiting'
+  >,
   deadline: number,
 ): Promise<ScanResult> {
   const scanDeadline = Math.min(
@@ -694,6 +731,7 @@ async function scanDescriptors(
       scanDeadline,
       takenLateAnswers: new Map(),
       isActive: true,
+      ownWaiting: new Map(),
     },
     folder = scan.state.workingFolder,
     waiter: { wake: (() => void) | undefined } = { wake: undefined },
@@ -726,7 +764,7 @@ async function scanDescriptors(
   } finally {
     folder.onAnswer = undefined
     // A candidate still judging after this point belongs to an expired scan.
-    context.isActive = false
+    releaseWaiting(context)
   }
 }
 
@@ -910,7 +948,7 @@ function writeRefusalLine(line: string): Promise<void> {
  * @param binding - What the bridge connected for ({@link bindingOfSelection}).
  * @param cwd - The bridge's working folder, named by the refusal line.
  * @returns A check resolving `true` when the setup stands and `false` after it wrote the refusal.
- * @throws From the returned check, when the receipts check does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS} or answers `no-answer` (a read failed without telling whether the setup stands): that request fails, no line is written and the bridge stays up for the next one.
+ * @throws From the returned check, when {@link DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX} reads already hang unanswered, when the receipts check does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS} or answers `no-answer` (a read failed without telling whether the setup stands): that request fails, no line is written and the bridge stays up for the next one.
  * @example
  * await setupCheckBeforeReconnect('/storage/agent/x.connection.json', binding, '/repo')() // => false once the setup was removed
  */
@@ -919,18 +957,27 @@ function setupCheckBeforeReconnect(
   binding: DevinBridgeBinding,
   cwd: string,
 ): () => Promise<boolean> {
-  // The timed answer of the receipts read still running: every request that arrives before the read settles waits on this one result, so a stalled read is started once and costs one timer, however many requests time out on it.
+  // The timed answer of the receipts read still within its deadline: every request that arrives before the deadline waits on this one result, so a stalled read is started once and costs one timer, however many requests wait on it. After the deadline the answer is dropped, so the next request reads afresh.
   let timedRead: Promise<DevinBridgeReceiptsAnswer | undefined> | undefined,
-    ending: Promise<boolean> | undefined
+    ending: Promise<boolean> | undefined,
+    // Raw reads that have not settled: a read cannot be cancelled, so only this many hang at once before a request fails without starting another.
+    outstandingReads = 0
   function startTimedRead(): Promise<DevinBridgeReceiptsAnswer | undefined> {
+    if (outstandingReads >= DEVIN_BRIDGE_RECONNECT_READS_OUTSTANDING_MAX)
+      throw new Error('Codebook setup check did not answer.')
+    outstandingReads += 1
     const read = checkDevinBridgeReceipts(descriptorPath, binding).catch(
       (): DevinBridgeReceiptsAnswer => ({ answer: 'no-answer' }),
     )
-    // The read is shared until it settles; a request after that starts a new one.
     void read.finally(() => {
-      timedRead = undefined
+      outstandingReads -= 1
     })
-    return answerWithin(read, DEVIN_BRIDGE_RECONNECT_CHECK_MS)
+    const timed = answerWithin(read, DEVIN_BRIDGE_RECONNECT_CHECK_MS)
+    // The read is shared only until its deadline; a later request starts a new one.
+    void timed.finally(() => {
+      if (timedRead === timed) timedRead = undefined
+    })
+    return timed
   }
   async function check(): Promise<boolean> {
     // Once the bridge has ended, no later request checks again.

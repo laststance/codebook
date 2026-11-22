@@ -1832,6 +1832,72 @@ test(
   },
 )
 
+// protects=a late real path being kept when the scan that waited for it already returned with an older match (Cycle 0145 final-range review, CodeRabbit final-range F6); fails_when=the ended scan still counts as waiting, so the answer is dropped and the next scan starts the slow lookup again and misses the newer candidate; no_claim=a real mount (the slow lookup is a stand-in released by the test)
+test(
+  'a real path that answers after its scan returned with an older match is kept for the next selection',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const slowFolder = join(agentDir, '..', 'slow-workspace')
+    const olderPath = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    const newerPath = await writeDescriptor(
+      agentDir,
+      1,
+      slowFolder,
+      process.pid,
+    )
+    // The newer descriptor is the slow candidate, so the scan returns with the older match first.
+    await utimes(olderPath, new Date(1_000_000), new Date(1_000_000))
+    await utimes(newerPath, new Date(2_000_000), new Date(2_000_000))
+    let slowLookups = 0,
+      isSlowAnswered = false
+    let releaseSlowLookup = (): void => undefined
+    const slowGate = new Promise<void>((resolveLater) => {
+      releaseSlowLookup = resolveLater
+    })
+    const resolveWorkspace = (path: string): Promise<string> => {
+      if (path !== slowFolder) return Promise.resolve(path)
+      slowLookups += 1
+      // Only the first lookup is released; a new one stays unanswered, like the mount that is slow again.
+      if (slowLookups > 1) return new Promise<string>(() => undefined)
+      return slowGate.then(() => {
+        isSlowAnswered = true
+        return workspace
+      })
+    }
+    const options = {
+      timeoutMs: 1_100,
+      intervalMs: 20,
+      resolveWorkspace,
+      state: createDevinSelectState(),
+    }
+    // Act
+    const first = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    releaseSlowLookup()
+    await waitUntil(
+      () => isSlowAnswered,
+      'the slow workspace lookup answering',
+      5_000,
+    )
+    const second = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      options,
+    )
+    // Assert
+    assert.equal(first?.descriptorPath, olderPath)
+    assert.equal(second?.descriptorPath, newerPath)
+    assert.equal(slowLookups, 1)
+  },
+)
+
 // protects=a kept lookup answer being used once (the next selection takes it, the one after looks again); fails_when=the answer is never kept, so the second selection finds nothing, or stays in the state, so the third never looks again; no_claim=a real mount
 test(
   'a selection after the kept workspace answer was taken starts a new lookup',
@@ -2158,9 +2224,9 @@ test(
   },
 )
 
-// protects=receipt reads of a stalled disk not piling up, one per request (Cycle 0145 /ship pass 1, FX6 item 3); fails_when=only the timed wait is shared, so each request that times out leaves its read running and the next request starts another; no_claim=how long a real stalled read takes to settle
+// protects=receipt reads of a stalled disk not piling up, at most two hanging at once (Cycle 0145 /ship pass 1, FX6 item 3; revised by CodeRabbit final-range F4: a timed-out read is no longer shared, so the bound counts the reads still hanging); fails_when=each request that times out leaves its read running and the next request starts another without a bound; no_claim=how long a real stalled read takes to settle
 test(
-  'three requests that time out on one stalled receipts read start that read once',
+  'requests that time out one after another on a stalled disk start at most two receipts reads',
   { timeout: 30_000 },
   async (context) => {
     // Arrange
@@ -2219,7 +2285,8 @@ test(
       'Codebook setup check did not answer.',
       'Codebook setup check did not answer.',
     ])
-    assert.equal(reads, 2)
+    // The connection's own check plus two hanging reads; the third request fails at once without a read.
+    assert.equal(reads, 3)
   },
 )
 
@@ -2588,7 +2655,8 @@ test(
     )
     const { connected, readStderr } = watchConnectedLine(child)
     const exited = new Promise<number | null>((done) => {
-      child.on('exit', (code) => done(code))
+      // Waits for close, not exit: stderr's last chunk can arrive after exit.
+      child.on('close', (code) => done(code))
     })
     await connected
     // Act
@@ -3125,7 +3193,8 @@ async function startConnectedBridge(
   running.child = child
   const watcher = watchConnectedLine(child)
   const exited = new Promise<number | null>((done) => {
-    child.on('exit', (code) => done(code))
+    // Waits for close, not exit: stderr's last chunk can arrive after exit.
+    child.on('close', (code) => done(code))
   })
   let stdout = ''
   child.stdout?.on('data', (chunk: Buffer) => {
@@ -3307,6 +3376,59 @@ fsPromises.open = (path, ...rest) => {
     const nextRequest = await waitUntil(
       () => bridge.readMessages().find((message) => message.id === 2),
       'the answer to the next request',
+      20_000,
+      undefined,
+      20,
+    )
+    // Assert
+    assert.equal('error' in failedRequest, true)
+    assert.equal('result' in nextRequest, true)
+    assert.equal(bridge.readStderr().includes('is not set up'), false)
+    assert.equal(bridge.counts.initializes, 1)
+  },
+)
+
+// protects=a connected bridge reconnecting on the request after one whose receipts read hung (Cycle 0145 final-range review, CodeRabbit final-range F4); fails_when=the timed-out read stays shared until the raw read settles, so every later request gets the same stale timeout and the bridge never reconnects; no_claim=how many hung reads may be outstanding (a unit of the bound)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose reconnect check hung once fails that request, then reconnects on the next request',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // The preload never settles the first open of the MCP receipt after the test created its flag file, the way a stalled mount would.
+    const preload = `const fsPromises = require('node:fs/promises')
+const { existsSync, unlinkSync } = require('node:fs')
+const { dirname, join } = require('node:path')
+const originalOpen = fsPromises.open
+fsPromises.open = (path, ...rest) => {
+  const receiptPath = String(path)
+  if (receiptPath.endsWith(join('devin-mcp', 'receipt.json'))) {
+    const flagPath = join(dirname(dirname(receiptPath)), 'hang-receipt-once')
+    if (existsSync(flagPath)) {
+      unlinkSync(flagPath)
+      return new Promise(() => {})
+    }
+  }
+  return originalOpen(path, ...rest)
+}
+`
+    const bridge = await startConnectedBridge(context, preload)
+    await writeFile(join(bridge.root, 'hang-receipt-once'), '')
+    bridge.handshake()
+    await bridge.expireSession()
+    // Act
+    bridge.askToolsList(1)
+    const failedRequest = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 1),
+      'the failed answer of the request whose receipts read hung',
+      20_000,
+      undefined,
+      20,
+    )
+    bridge.askToolsList(2)
+    const nextRequest = await waitUntil(
+      () => bridge.readMessages().find((message) => message.id === 2),
+      'the answer to the request after the hung read',
       20_000,
       undefined,
       20,
