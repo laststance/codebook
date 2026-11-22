@@ -3093,6 +3093,194 @@ test('A first setup whose receipt cannot be written keeps the setup record and n
   assert.equal(pending.phase, 'handed')
 })
 
+/** The `phase` of a record that {@link DevinMcpTestSeam.beforeRecordWrite} is about to write; undefined for a record without one. */
+function phaseOfRecord(record: unknown): unknown {
+  return typeof record === 'object' && record !== null && 'phase' in record
+    ? record.phase
+    : undefined
+}
+
+/** A full disk's answer to a record write, as the temporary file's write gives it. */
+function noSpaceLeft(): Error {
+  return Object.assign(new Error('no space left on device'), {
+    code: 'ENOSPC',
+  })
+}
+
+/**
+ * Stands for a disk that fills up right after a publish wrote its completed record: that record is written, and every record write after it (the handed record, the receipt, the take-back mark, the rollback's journal) fails with ENOSPC.
+ * @returns The `beforeRecordWrite` hook, and the completed record as it was written.
+ * @example
+ * const disk = diskFullAfterCompletedRecord()
+ * await writeManagedDevinMcpEntry(storage, ENTRY, home, { beforeRecordWrite: disk.beforeRecordWrite })
+ */
+function diskFullAfterCompletedRecord() {
+  let completed: unknown
+  return {
+    beforeRecordWrite: ({ record }: { record: unknown }): void => {
+      if (completed !== undefined) throw noSpaceLeft()
+      if (phaseOfRecord(record) === 'completed') completed = record
+    },
+    completedRecord: (): unknown => completed,
+  }
+}
+
+test('A full disk while a first setup hands a changed copy over keeps its record, so the next run takes the entry back and names the copy', async (context) => {
+  // Value: protects=a first setup whose handed record cannot be written keeps its completed record with the take-back intent, so a stop before the receipt never leaves an entry that no record owns, and the changed copy of the learner's previous config stays and is named; fails_when=pending.json is dropped, the next run leaves the entry or writes a receipt, the copy is deleted or changed, or the next run does not name it; no_claim=a real ENOSPC (the seam cancels each write the way a full disk at the temporary file does), and the wording beyond the copy's path; seam=seam.beforeRecordWrite fails every record write after the completed record with ENOSPC, seam.afterPublish writes into the displaced copy the way an editor that kept the old file open does
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const savedIntoCopy =
+    '{"mcpServers":{"alpha":{"command":"saved into the old file"}}}\n'
+  const disk = diskFullAfterCompletedRecord()
+  let copyPath = ''
+
+  // Act
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: disk.beforeRecordWrite,
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      writeFileSync(copyPath, savedIntoCopy)
+    },
+  })
+
+  // Assert
+  await assert.rejects(setup)
+  assert.deepEqual(
+    JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.codebook,
+    ENTRY,
+  )
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(
+    readFileSync(pendingPath, 'utf8'),
+    JSON.stringify(disk.completedRecord()),
+  )
+  assert.equal(JSON.parse(readFileSync(pendingPath, 'utf8')).phase, 'completed')
+  assert.equal(JSON.parse(readFileSync(pendingPath, 'utf8')).firstSetup, true)
+
+  // Act
+  const recovery = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(recovery, (error: Error) => {
+    assert.ok(error.message.includes(copyPath), error.message)
+    return true
+  })
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(copyPath, 'utf8'), savedIntoCopy)
+
+  // Act
+  const furtherRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(furtherRun.status, 'not-managed')
+  assert.equal(readFileSync(copyPath, 'utf8'), savedIntoCopy)
+})
+
+test('The take-back of a first setup whose handed record hit a full disk keeps the learner’s changed copy when it is cut short at its move-aside and finished later', async (context) => {
+  // Value: protects=a take-back that a stop cut short at its own move-aside is finished by the next run (the original config back, the entry out) while the changed copy the full disk left untracked stays as it is and is named; fails_when=no take-back runs, the config stays without the learner's servers or keeps the entry, a receipt is written, or the changed copy is deleted or changed; no_claim=a real ENOSPC, and the wording of the cut-short refusal; seam=seam.beforeRecordWrite fails every record write after the completed record with ENOSPC, seam.afterPublish writes into the displaced copy, seam.afterMoveAside ends the take-back (the process ends) right after it moved the config aside
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const savedIntoCopy =
+    '{"mcpServers":{"alpha":{"command":"saved into the old file"}}}\n'
+  const disk = diskFullAfterCompletedRecord()
+  let copyPath = ''
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: disk.beforeRecordWrite,
+      afterPublish: (displacedPath) => {
+        copyPath = displacedPath ?? ''
+        writeFileSync(copyPath, savedIntoCopy)
+      },
+    }),
+  )
+
+  // Act
+  const cutShort = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterMoveAside: () => {
+      throw new Error('process ended')
+    },
+  })
+
+  // Assert
+  await assert.rejects(cutShort)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(copyPath, 'utf8'), savedIntoCopy)
+
+  // Act
+  const finished = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(finished, (error: Error) => {
+    assert.ok(error.message.includes(copyPath), error.message)
+    return true
+  })
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(copyPath, 'utf8'), savedIntoCopy)
+
+  // Act
+  const furtherRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(furtherRun.status, 'not-managed')
+  assert.equal(readFileSync(copyPath, 'utf8'), savedIntoCopy)
+})
+
+test('A first setup whose handed record hit a full disk but whose receipt was written takes nothing back and names the copy once', async (context) => {
+  // Value: protects=keeping a first setup's record when its handed write fails never takes back a setup whose own receipt got written: the entry and the receipt stay, and the kept record only names the changed copy once more; fails_when=the next run takes the entry out, changes or drops the receipt, deletes or changes the copy, does not name the copy, or keeps refusing after naming it; no_claim=a real ENOSPC, and the wording beyond the copy's path; seam=seam.beforeRecordWrite fails only the handed record's write with ENOSPC, seam.afterPublish writes into the displaced copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const savedIntoCopy =
+    '{"mcpServers":{"alpha":{"command":"saved into the old file"}}}\n'
+  let copyPath = ''
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      writeFileSync(copyPath, savedIntoCopy)
+    },
+  })
+  const receiptAfterSetup = readFileSync(receiptPath, 'utf8')
+
+  // Act
+  const nextRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.ok(setup.cleanupFailure?.includes(copyPath), setup.cleanupFailure)
+  await assert.rejects(nextRun, (error: Error) => {
+    assert.ok(error.message.includes(copyPath), error.message)
+    return true
+  })
+  assert.deepEqual(
+    JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.codebook,
+    ENTRY,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptAfterSetup)
+  assert.equal(readFileSync(copyPath, 'utf8'), savedIntoCopy)
+
+  // Act
+  const furtherRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(furtherRun.status, 'current')
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptAfterSetup)
+})
+
 test('A first setup whose receipt cannot be written leaves a config that was saved again with the same entry unchanged', async (context) => {
   // protects: a file Codebook did not publish is never edited by the rollback / fails_when: a new config with the same codebook entry but another inode loses that entry or the refusal does not say it was left unchanged / no_claim: a save with different bytes
   // Arrange

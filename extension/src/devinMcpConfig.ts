@@ -702,7 +702,9 @@ async function markCompleted(
  * Records that a copy was named to the learner (in a refusal or in `cleanupFailure`), so no later run deletes it, whatever its bytes; the next run reports it once and stops tracking it ({@link recoverLeftovers}).
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
- * @returns Nothing; when the record cannot be written it is dropped instead, so the copy is no longer tracked and stays for good.
+ * @returns Nothing. When the record cannot be written (a full disk), a first setup's record or one marked for take-back stays as it is on disk: it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte. Any other record is dropped instead, so the copy is no longer tracked and stays for good.
+ * @example
+ * await handOver(context, journal) // pending.json now says handed
  */
 async function handOver(context: Context, journal: Pending): Promise<void> {
   try {
@@ -711,6 +713,8 @@ async function handOver(context: Context, journal: Pending): Promise<void> {
       phase: 'handed',
     } satisfies Pending)
   } catch {
+    // Dropping this record would let a stop before the receipt leave an entry that no record owns; the copy stays untracked and is named by the caller and, once, by the next run.
+    if (isFirstSetupRecord(journal) || journal.takeBack) return
     await dropPending(context)
   }
 }
