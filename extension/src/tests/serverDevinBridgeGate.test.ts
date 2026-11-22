@@ -7,7 +7,7 @@ import {
   DEVIN_BRIDGE_HEADER_VALUE,
   MAX_SESSIONS,
 } from '../constants'
-import { DEVIN_BRIDGE_NOT_SET_UP_SENTENCE } from '../devinWindowSentences'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
 import { createHarness } from './helpers'
@@ -31,8 +31,15 @@ const LIST_TOOLS = JSON.stringify({
 /** Starts a Codebook server whose Devin mark is the returned switch; both are closed when the test ends. */
 async function startGatedServer(context: TestContext, isMarked: boolean) {
   const harness = await createHarness()
-  const mark = { isOn: isMarked }
-  const endpoint = await startServer(harness.service, Date.now, () => mark.isOn)
+  const mark = { isOn: isMarked, bodyChunks: 0 }
+  const endpoint = await startServer(
+    harness.service,
+    Date.now,
+    () => mark.isOn,
+    () => {
+      mark.bodyChunks += 1
+    },
+  )
   context.after(async () => {
     await endpoint.close()
     await harness.close()
@@ -91,7 +98,10 @@ test('a Devin bridge that connected to a marked server is refused after the mark
 
   // Assert
   assert.equal(refused.status, 403)
-  assert.match(refused.text, new RegExp(DEVIN_BRIDGE_NOT_SET_UP_SENTENCE))
+  assert.equal(
+    JSON.parse(refused.text).error,
+    'Codebook AI chat for Devin Desktop is not set up in this window. Run Codebook: Set Up AI Chat, then reload the window.',
+  )
   assert.equal(withoutHeader.status, 200)
 })
 
@@ -124,12 +134,16 @@ test('a Devin bridge request whose body is held open across the unmark is refuse
       },
     )
     held.on('error', reject)
-    // The first half of the body goes out; the unmark lands; then the rest.
+    // The first half of the body goes out; once the server has received it the unmark lands; then the rest.
     held.write(LIST_TOOLS.slice(0, 10))
-    setTimeout(() => {
+    const chunksBefore = mark.bodyChunks
+    void waitUntil(
+      () => mark.bodyChunks > chunksBefore,
+      'the server to receive the first chunk of the body',
+    ).then(() => {
       mark.isOn = false
       held.end(LIST_TOOLS.slice(10))
-    }, 50)
+    }, reject)
   })
 
   // Act
@@ -166,4 +180,29 @@ test('a request without the Devin bridge header is served while the mark is off'
 
   // Assert
   assert.equal(initialized.status, 200)
+})
+
+test('a refused Devin initialization leaves every idle session of other clients served', async (context) => {
+  // protects=a Devin bridge retrying with the mark off cannot push other clients' idle sessions out at MAX_SESSIONS (Cycle 0144 R20); fails_when=the refused initialize evicts and closes the least recently seen idle session before the gate refuses it; no_claim=the order of sessions that are evicted for a client that is served
+  // Arrange
+  const { endpoint, mark } = await startGatedServer(context, false)
+  const sessionIds: string[] = []
+  for (let slot = 0; slot < MAX_SESSIONS; slot += 1) {
+    const initialized = await post(endpoint, INITIALIZE, {})
+    sessionIds.push(initialized.sessionId ?? '')
+  }
+
+  // Act
+  const refused = await post(endpoint, INITIALIZE, DEVIN_HEADERS)
+  const statuses: number[] = []
+  for (const sessionId of sessionIds)
+    statuses.push(
+      (await post(endpoint, LIST_TOOLS, { 'mcp-session-id': sessionId }))
+        .status,
+    )
+
+  // Assert
+  assert.equal(mark.isOn, false)
+  assert.equal(refused.status, 403)
+  assert.deepEqual(statuses, Array(MAX_SESSIONS).fill(200))
 })

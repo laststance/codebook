@@ -55,10 +55,17 @@ function rejectHttp(
   response.end(JSON.stringify({ error: reason }))
 }
 
-/** Enforces an absolute bounded body read; called only after authorization. @example await readBody(request, response) */
+/**
+ * Enforces an absolute bounded body read; called only after authorization.
+ * @param request - The authorized request.
+ * @param response - Receives the 4xx failure of a bad body.
+ * @param onChunk - Test seam: called with each received chunk, so a test can wait until the server has the start of a body.
+ * @example await readBody(request, response, onBodyChunk)
+ */
 async function readBody(
   request: IncomingMessage,
   response: ServerResponse,
+  onChunk?: () => void,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -78,6 +85,7 @@ async function readBody(
     const onError = (error: Error): void => finish(error)
     const onAbort = (): void => finish(new Error('Request aborted'))
     const onData = (chunk: Buffer): void => {
+      onChunk?.()
       size += chunk.length
       if (size > HTTP_BODY_LIMIT_BYTES) {
         rejectHttp(response, 413, 'Request body too large')
@@ -112,12 +120,14 @@ async function readBody(
  * @param service - The study service the sessions talk to.
  * @param now - The clock; tests replace it.
  * @param isDevinChatEnabled - Tells whether this window's Devin AI chat mark is on; a request that carries the Devin bridge header is refused with 403 while it says `false`. Left out, no request is refused for its header (Cursor's window, tests).
+ * @param onBodyChunk - Test seam: called whenever a request body chunk arrives.
  * @example const endpoint = await startServer(service)
  */
 export async function startServer(
   service: StudyService,
   now = Date.now,
   isDevinChatEnabled?: () => boolean,
+  onBodyChunk?: () => void,
 ) {
   const token = randomBytes(TOKEN_BYTES).toString('hex')
   const expected = Buffer.from(`Bearer ${token}`)
@@ -178,7 +188,7 @@ export async function startServer(
         try {
           const body =
             request.method === 'POST'
-              ? await readBody(request, response)
+              ? await readBody(request, response, onBodyChunk)
               : undefined
           if (stopping) {
             rejectHttp(response, 503, 'Server stopping')
@@ -191,6 +201,13 @@ export async function startServer(
             request.method === 'POST' &&
             isInitializeRequest(body)
           ) {
+            // Before any session is reserved or evicted: a refused Devin initialization must not push another client's idle session out at MAX_SESSIONS.
+            if (
+              isDevinBridgeRequestRefused(request.headers, isDevinChatEnabled)
+            ) {
+              rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
+              return
+            }
             let replaced: [string, Session] | undefined
             if (sessions.size + pendingSessions.size >= MAX_SESSIONS) {
               // Clients that end without DELETE leave idle sessions behind; the least recently seen one makes room, and only busy sessions refuse.
