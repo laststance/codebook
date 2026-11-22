@@ -9,6 +9,12 @@ export interface DevinBridgeBinding {
   instanceId?: string
   url?: string
   installationId?: string
+  /** The workspace folder the checked server serves; only a setup's final check names it. */
+  workspace?: string
+  /** The host process id the descriptor was written with; only a setup's final check names it. */
+  pid?: number
+  /** Whether the descriptor must carry `devinChat: true`; only a setup's final check asks for it. */
+  requiresDevinChat?: boolean
 }
 
 /** Why the setup counts as removed: any {@link ReceiptRemovedReason} of a receipt (or of the descriptor itself), `no-mark` for a descriptor that names no installation, or `another-installation` for an MCP receipt whose installation id differs from the descriptor's mark. */
@@ -48,6 +54,25 @@ function descriptorText(
 }
 
 /**
+ * Reads a number field of a parsed descriptor; called by {@link isDescriptorReplaced}.
+ * @param descriptor - The descriptor's parsed JSON.
+ * @param field - The field name.
+ * @returns The field's number; `undefined` for a descriptor that is no object or a field that is no number.
+ * @example
+ * descriptorNumber({ pid: 42 }, 'pid') // => 42
+ */
+function descriptorNumber(
+  descriptor: unknown,
+  field: string,
+): number | undefined {
+  const value =
+    typeof descriptor === 'object' && descriptor !== null && field in descriptor
+      ? Reflect.get(descriptor, field)
+      : undefined
+  return typeof value === 'number' ? value : undefined
+}
+
+/**
  * Says whether the descriptor now names another instance, endpoint or installation than the binding; called by {@link checkDevinBridgeReceipts}.
  * @param descriptor - The descriptor's parsed JSON.
  * @param marked - The installation id the descriptor's mark names (already known to exist).
@@ -61,12 +86,24 @@ function isDescriptorReplaced(
   marked: string,
   binding: DevinBridgeBinding,
 ): boolean {
-  const differs = (expected: string | undefined, actual: string | undefined) =>
-    expected !== undefined && expected !== actual
+  const differs = <Value extends string | number>(
+    expected: Value | undefined,
+    actual: Value | undefined,
+  ) => expected !== undefined && expected !== actual
+  const lacksDevinChat =
+    binding.requiresDevinChat === true &&
+    !(
+      typeof descriptor === 'object' &&
+      descriptor !== null &&
+      Reflect.get(descriptor, 'devinChat') === true
+    )
   return (
     differs(binding.instanceId, descriptorText(descriptor, 'instanceId')) ||
     differs(binding.url, descriptorText(descriptor, 'url')) ||
-    differs(binding.installationId, marked)
+    differs(binding.installationId, marked) ||
+    differs(binding.workspace, descriptorText(descriptor, 'workspace')) ||
+    differs(binding.pid, descriptorNumber(descriptor, 'pid')) ||
+    lacksDevinChat
   )
 }
 

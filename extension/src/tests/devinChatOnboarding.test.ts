@@ -168,6 +168,8 @@ async function devinWindow(
     skillReceiptMode?: number
     /** How many of the first reads of the setup receipts get no answer (descriptor exhaustion), as `null`. */
     receiptReadsWithoutAnswer?: number
+    failFirstInstallationRead?: boolean
+    removalDeletesReceipt?: boolean
   } = {},
 ) {
   const directory =
@@ -508,6 +510,9 @@ async function devinWindow(
           entryRemovals.push(structuredClone(removalOptions))
           if (options.failEntryRemoval)
             throw new Error('Injected entry removal failure')
+          // The real removal deletes its own record of the entry.
+          if (options.removalDeletesReceipt)
+            await rm(join(directory, 'devin-mcp/receipt.json'), { force: true })
           return (
             options.removalResult ?? { status: 'removed', path: configPath }
           )
@@ -566,13 +571,24 @@ async function devinWindow(
       // Reads the real receipt; `afterInstallationRead` runs once, right after the first read answered, as a receipt that becomes unreadable between the setup's check and its mark write.
       './utils/readDevinInstallationId': {
         readDevinInstallationId: async (storageRoot: string) => {
-          const installationId = await readDevinInstallationId(storageRoot)
+          const installationRead = await readDevinInstallationId(storageRoot)
+          // A first read that failed to look (for example EMFILE) classifies as no answer, whatever the receipt holds.
+          if (options.failFirstInstallationRead) {
+            options.failFirstInstallationRead = false
+            return {
+              installationId: undefined,
+              state: {
+                state: 'no-answer' as const,
+                receiptPath: join(storageRoot, 'devin-mcp', 'receipt.json'),
+              },
+            }
+          }
           const afterRead = options.afterInstallationRead
           if (afterRead) {
             options.afterInstallationRead = undefined
             await afterRead()
           }
-          return installationId
+          return installationRead
         },
       },
       './utils/resolveExternalNodeExecutable': {
@@ -1530,6 +1546,141 @@ test(
   },
 )
 
+// protects=Set Up AI Chat does not report success for a descriptor that names another server than the one it checked; fails_when=the final check accepts a descriptor of another instance, so the reload is offered for a window whose bridge cannot select this server; why_new=Cycle 0145 /ship pass 1 finding (false success, final check without server identity); seam=the descriptor is replaced right after the installation id was read; no_claim=the wording of the rollback's Output lines
+test(
+  'Devin Desktop setup rolls back with the changed-meanwhile sentence and offers no reload when the descriptor names another instance at the final check',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, {
+      afterInstallationRead: async (): Promise<void> => {
+        await writeFile(
+          await window.descriptorPath(),
+          JSON.stringify({
+            instanceId: 'instance-other',
+            url: 'http://127.0.0.1/instance-other/mcp',
+            token: 'test-token',
+            workspace: window.directory,
+            apiVersion: '1.6',
+            pid: process.pid,
+          }),
+          { mode: 0o600 },
+        )
+      },
+    })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(
+        setupOutcome,
+        'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.',
+      )
+      assert.deepEqual(window.notices, [])
+      assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=Set Up AI Chat does not report success for a descriptor rewritten to an empty object, which gains only the mark; fails_when=the final check accepts a descriptor that names no instance, url, workspace or host; why_new=Cycle 0145 /ship pass 1 finding (false success, final check without server identity); seam=the descriptor is replaced by {} right after the installation id was read; no_claim=the wording of the rollback's Output lines
+test(
+  'Devin Desktop setup rolls back and offers no reload when the descriptor was rewritten to an empty object before the final check',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, {
+      afterInstallationRead: async (): Promise<void> => {
+        await writeFile(await window.descriptorPath(), '{}', { mode: 0o600 })
+      },
+    })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(
+        setupOutcome,
+        'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.',
+      )
+      assert.deepEqual(window.notices, [])
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=a first setup whose MCP receipt others can read and whose rollback deletes that receipt asks only for a setup retry, not for a mode repair of a file that is gone; fails_when=the sentence is chosen before the rollback and names the deleted receipt with the mode-600 instruction; why_new=Cycle 0145 /ship pass 1 finding (false success, chmod for a deleted receipt); seam=a removal stand-in that deletes the receipt as the real one does; no_claim=a receipt that stays (the sibling test above)
+test(
+  'Devin Desktop setup asks only for a retry when its rollback deleted the receipt others could read',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, {
+      receiptMode: 0o644,
+      removalDeletesReceipt: true,
+    })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(
+        setupOutcome,
+        'The Devin Desktop setup changed while this setup ran; run Codebook: Set Up AI Chat again.',
+      )
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// protects=a first read of the installation id that failed to look (EMFILE) asks for a retry and offers no mode repair for a private receipt that holds a valid id; fails_when=the refusal reads the receipt again, finds it fine and asks the learner to chmod a file that needs nothing; why_new=Cycle 0145 /ship pass 1 finding (error handling, EMFILE then reread); seam=the first installation id read answers no answer; no_claim=a receipt others can read (the sibling test above)
+test(
+  'Devin Desktop setup asks for a retry without a mode repair when the first read of the installation id gave no answer',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, {
+      failFirstInstallationRead: true,
+    })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(
+        setupOutcome,
+        'Codebook could not read its setup records just now; run Codebook: Set Up AI Chat again.',
+      )
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
 // Value: protects=a window that opens on a set-up workspace writes its descriptor already marked; fails_when=the descriptor written at the server start lacks devinChat, so Devin Local's bridge refuses the window after every reload; why_new=review finding C8 (descriptor decided before the start); seam=the real descriptor file in the temporary storage
 test('a Devin Desktop window that opens on a set-up workspace writes a marked connection descriptor', async (context) => {
   // Arrange
@@ -2095,13 +2246,15 @@ test('a Devin Desktop setup whose server was stopped while it finished takes the
   }
 })
 
-// protects: a Devin Desktop setup whose server is stopped while its committed setup is being saved rolls back, keeps no saved setup and offers no reload; fails_when=the setup checks the server only before the receipts read and the commit write, so a Stop in that gap ends in success and a reload offer for a bridge with nothing to reach; no_claim=a server stopped before the receipts read (the sibling test above)
-test('a Devin Desktop setup whose server was stopped while its commit was written rolls back and offers no reload', async (context) => {
+// protects: a Devin Desktop setup whose server is stopped while its committed setup is being saved ends in success with the committed setup and no rollback; fails_when=the setup checks the server after the commit write and rolls back, so a failing restore write leaves a committed value that the next start marks as a failed setup; no_claim=a server stopped before the receipts read (the sibling test above), the restart itself (a window load starts the server of a saved setup)
+test('a Devin Desktop setup whose server was stopped while its commit was written keeps the committed setup and takes nothing back', async (context) => {
   // Arrange
   const stopServer = async (): Promise<void> => {
     await window.commands.get('codebook.stopAgentServer')!()
   }
-  const window = await devinWindow(context, { onSetupCommit: stopServer })
+  const window = await devinWindow(context, {
+    onSetupCommit: stopServer,
+  })
   try {
     await window.commands.get('codebook.startAgentServer')!()
     // Act
@@ -2112,12 +2265,13 @@ test('a Devin Desktop setup whose server was stopped while its commit was writte
       (error: Error) => error.message,
     )
     // Assert
-    assert.equal(
-      setupOutcome,
-      'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup did not complete. Run Codebook: Set Up AI Chat again.',
-    )
-    assert.deepEqual(window.notices, [])
-    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    assert.equal(setupOutcome, 'resolved')
+    assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
+      workspace: window.directory,
+    })
+    assert.deepEqual(window.entryRemovals, [])
+    assert.equal(window.notices.length, 1)
+    assert.deepEqual(window.notices[0]?.actions, ['Reload Window'])
   } finally {
     await window.loaded.deactivate()
   }

@@ -12,6 +12,9 @@ export function devinRollbackLeftoverLine(
 ): string | undefined {
   if (removal.status === 'changed')
     return `Codebook left the Devin Desktop MCP entry this setup wrote in ${removal.path}: it was edited after setup.`
+  // The receipt is gone but the entry is still in the config: a retry would refuse it as an entry Codebook did not write.
+  if (removal.status === 'not-managed' && removal.entryStays)
+    return `Codebook could not take back the Devin Desktop MCP entry this setup wrote in ${removal.path}: its record of the entry is gone, so the codebook entry stays there; remove that entry by hand before you run Codebook: Set Up AI Chat again.`
   if (
     (removal.status === 'removed' || removal.status === 'file-removed') &&
     removal.cleanupFailure

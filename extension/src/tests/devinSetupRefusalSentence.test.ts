@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test'
 
 import { devinInstallationReadRefusal } from '../utils/devinInstallationReadRefusal'
 import { devinSetupRefusalSentence } from '../utils/devinSetupRefusalSentence'
+import { readReceiptState } from '../utils/readReceiptState'
 import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
 
 import { removeTestFolder } from './utils/removeTestFolder'
@@ -208,8 +209,8 @@ test(
     const missing = join(storage, 'devin-skill', 'receipt.json')
     // Act
     const sentences = [
-      await devinInstallationReadRefusal(readable),
-      await devinInstallationReadRefusal(missing),
+      devinInstallationReadRefusal(await readReceiptState(readable), readable),
+      devinInstallationReadRefusal(await readReceiptState(missing), missing),
     ]
     // Assert
     assert.deepEqual(sentences, [
@@ -219,6 +220,23 @@ test(
   },
 )
 
+// protects=a first read of the installation id that gave no answer (for example EMFILE) is told as a read that failed, with no mode instruction, even though the receipt itself is private and holds an id; fails_when=the refusal reads the receipt again, finds it fine and offers the mode-600 repair for a file that needs none; why_new=Cycle 0145 /ship pass 1 finding on devinInstallationReadRefusal; seam=a hand-made no-answer state; no_claim=Windows
+test('the installation id refusal asks for a retry, not a mode repair, when the first read gave no answer', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receipt = join(storage, 'devin-mcp', 'receipt.json')
+  await writeFile(receipt, '{"installed":true,"installationId":"a"}', {
+    mode: 0o600,
+  })
+  // Act
+  const sentence = devinInstallationReadRefusal(
+    { state: 'no-answer', receiptPath: receipt },
+    receipt,
+  )
+  // Assert
+  assert.equal(sentence, UNREADABLE_SENTENCE)
+})
+
 // protects=an installed receipt without an installation id (an older build) keeps the id sentence naming the file; fails_when=the refusal falls to the changed sentence, so the learner is not told which file to refresh; no_claim=other states
 test('the installation id refusal names an installed receipt that holds no id', async (context) => {
   // Arrange
@@ -226,7 +244,10 @@ test('the installation id refusal names an installed receipt that holds no id', 
   const receipt = join(storage, 'devin-mcp', 'receipt.json')
   await writeFile(receipt, '{"installed":true}', { mode: 0o600 })
   // Act
-  const sentence = await devinInstallationReadRefusal(receipt)
+  const sentence = devinInstallationReadRefusal(
+    await readReceiptState(receipt),
+    receipt,
+  )
   // Assert
   assert.equal(
     sentence,

@@ -27,6 +27,27 @@ test('a Devin rollback line names the edited entry or the files a removal left, 
   ])
 })
 
+// protects=a rollback whose removal found no receipt but the entry still in the config reports itself incomplete and names the config path and the entry; fails_when=the removal's not-managed answer yields no line, so the Output claims a clean take-back while an orphaned entry makes the retry refuse; why_new=Cycle 0145 /ship pass 1 finding on devinRollbackLeftoverLine; seam=none; no_claim=an absent entry, which stays silent
+test('a Devin rollback line names the config and the entry that stays when its receipt is gone, and stays silent for an absent entry', () => {
+  // Arrange
+  const orphaned = {
+    status: 'not-managed',
+    path: '/config/mcp_config.json',
+    entryStays: true,
+  } as const
+  const absent = {
+    status: 'not-managed',
+    path: '/config/mcp_config.json',
+  } as const
+  // Act
+  const lines = [orphaned, absent].map(devinRollbackLeftoverLine)
+  // Assert
+  assert.deepEqual(lines, [
+    'Codebook could not take back the Devin Desktop MCP entry this setup wrote in /config/mcp_config.json: its record of the entry is gone, so the codebook entry stays there; remove that entry by hand before you run Codebook: Set Up AI Chat again.',
+    undefined,
+  ])
+})
+
 // protects=the saved Devin setup a window trusts ignores a provisional value left by a failed run and falls back to the setup before it; fails_when=a provisional workspace counts as the setup outside a running setup, so a crashed setup marks a descriptor; why_new=the provisional fallback was covered only through the window harness, not the nested previous value or an unreadable saved value; seam=none; no_claim=how the run saves values
 test('a provisional Devin setup counts only during its own run and otherwise reads as the setup before it', () => {
   // Arrange

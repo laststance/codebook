@@ -164,6 +164,7 @@ import { describeWikiGenerateConfirmation } from './utils/describeWikiGenerateCo
 import { describeWikiSkillStepEnd } from './utils/describeWikiSkillStepEnd'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { devinInstallationReadRefusal } from './utils/devinInstallationReadRefusal'
+import { devinRefusalAfterRollback } from './utils/devinRefusalAfterRollback'
 import {
   devinEntryRemovalOf,
   devinRemovalNotice,
@@ -1410,41 +1411,57 @@ export function activate(
         context.globalStorageUri.fsPath,
       )
       // A window marked without a readable installation id would be refused by the bridge, and the offered reload could not connect.
-      const checkedInstallationId = await readDevinInstallationId(
+      const mcpReceiptPath = join(
+        context.globalStorageUri.fsPath,
+        'devin-mcp',
+        'receipt.json',
+      )
+      const installationRead = await readDevinInstallationId(
         context.globalStorageUri.fsPath,
       )
+      const checkedInstallationId = installationRead.installationId
+      // The first read's own classification decides the sentence: a transient failure is no permission problem.
       if (!checkedInstallationId)
         throw new Error(
-          await devinInstallationReadRefusal(
-            join(context.globalStorageUri.fsPath, 'devin-mcp', 'receipt.json'),
-          ),
+          devinInstallationReadRefusal(installationRead.state, mcpReceiptPath),
         )
       // The descriptor of a server started before this setup carries no mark yet.
       await markDevinChatDescriptor(true, checkedInstallationId)
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
-      // Success only when the bridge's own check stands for the descriptor just marked.
+      // Success only when the bridge's own check stands for the descriptor just marked, and that descriptor names the checked server, its workspace and host, carries the mark and this setup's installation.
       const refusal = devinSetupRefusalSentence(
-        await checkDevinBridgeReceipts(checkedServer.descriptorPath),
+        await checkDevinBridgeReceipts(checkedServer.descriptorPath, {
+          instanceId: checkedServer.endpoint.descriptor.instanceId,
+          url: checkedServer.endpoint.descriptor.url,
+          workspace: setupWorkspace,
+          pid: process.pid,
+          installationId: checkedInstallationId,
+          requiresDevinChat: true,
+        }),
       )
       if (refusal) throw new Error(refusal)
       // The receipts read awaited: a removal, a Stop or a folder change in that gap ends the setup.
       assertDevinSetupStillStands(checkedServer)
-      // The last step: a failing commit write rolls back like any other failed step.
+      // The commit write is the last step that can fail the setup and nothing is checked after it: a change after it is a later event (a stopped server starts again when the window loads, another window's removal unmarks this one at its next sync), so there is no rollback after the commit and no half-committed value.
       await context.workspaceState.update('codebook.aiChatSetup', {
         workspace: setupWorkspace,
       })
-      // The commit write awaited too: a failure here still rolls back to `previousSetup`.
-      assertDevinSetupStillStands(checkedServer)
       isDevinRunProvisional = false
     } catch (error) {
       // A different Devin Desktop window may have removed the shared skill during the saved setup.
       const isRolledBack = await rollBackDevinSetup(entryWrite, previousSetup)
+      // A repair instruction for a receipt the rollback deleted would ask for a file that is gone.
+      const sentence = await devinRefusalAfterRollback(
+        thrownMessage(error),
+        join(context.globalStorageUri.fsPath, 'devin-mcp', 'receipt.json'),
+      )
       // A rollback that failed in part says where its reasons are.
       if (!isRolledBack)
         throw new Error(
-          `${thrownMessage(error)} ${DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE}`,
+          `${sentence} ${DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE}`,
         )
+      if (sentence !== thrownMessage(error)) throw new Error(sentence)
       throw error
     }
     return {

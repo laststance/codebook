@@ -3103,7 +3103,12 @@ export type DevinMcpRemovalResult =
       /** Plain sentences (no raw error text) when the entry is gone but Codebook's receipt or a private copy could not be deleted; each names the file; the caller still reports the removal. */
       cleanupFailure?: string
     }
-  | { status: 'not-managed' | 'changed' | 'superseded'; path: string }
+  | {
+      status: 'not-managed' | 'changed' | 'superseded'
+      path: string
+      /** Set with `not-managed` when no receipt is left but the config still holds a `codebook` entry (an orphan), as opposed to no entry at all. */
+      entryStays?: true
+    }
 
 /** Options of {@link removeManagedDevinMcpEntry}. */
 export type DevinMcpRemovalOptions = {
@@ -3168,7 +3173,16 @@ export async function removeManagedDevinMcpEntry(
           inspected.receipt
         )
           return { status: 'removed', path: context.path }
-        return { status: ownership.status, path: context.path }
+        // An entry that stays without its receipt is no absent entry: the caller must not count the take-back complete.
+        const entryStays =
+          ownership.status === 'not-managed' &&
+          !inspected.receipt &&
+          inspected.current !== undefined
+        return {
+          status: ownership.status,
+          path: context.path,
+          ...(entryStays && { entryStays: true as const }),
+        }
       }
       const { status, keptLeft } = await takeEntryOut(context, ownership)
       return dropReceiptAfterRemoval(

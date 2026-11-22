@@ -2306,6 +2306,25 @@ test('Recovery takes the config name away again when the displaced file was rewr
   assert.equal(readFileSync(keptPath, 'utf8'), rewrittenBytes)
 })
 
+// protects=a removal that finds the entry in the config but no receipt answers that the entry stays, apart from an entry that is absent; fails_when=both read as plain not-managed, so a rollback reports no leftover for an orphaned entry and the retry it advises refuses that entry; no_claim=the rollback line's words
+test('a removal whose receipt is gone but whose entry is still in the config says the entry stays, and one with no config says nothing stays', async (context) => {
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  await rm(join(storage, 'devin-mcp', 'receipt.json'))
+  const empty = await arrange(context)
+  // Act
+  const orphaned = await removeManagedDevinMcpEntry(storage, home)
+  const absent = await removeManagedDevinMcpEntry(empty.storage, empty.home)
+  // Assert
+  assert.deepEqual(orphaned, {
+    status: 'not-managed',
+    path: configPath,
+    entryStays: true,
+  })
+  assert.deepEqual(absent, { status: 'not-managed', path: empty.configPath })
+})
+
 test('Recovery leaves the config name empty and names a displaced file with another inode and other bytes than the record', async (context) => {
   // protects: a different server definition never becomes Devin's live config after a sync tool replaced the displaced copy / fails_when: a displaced file with neither the recorded inode nor the recorded bytes is linked to the config name / no_claim: the file's permissions, a standing config
   // Arrange

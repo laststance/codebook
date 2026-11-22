@@ -18,7 +18,7 @@ export type ReceiptState =
   | { state: 'no-answer'; receiptPath: string }
 
 /**
- * Looks at one of the Devin setup's receipts and says whether it stands, was removed (with the reason) or cannot be told; called by {@link readInstalledReceipt} and by `checkDevinBridgeReceipts`, so the bridge, the setup and the refresh judge a receipt the same way.
+ * Looks at one of the Devin setup's receipts and says whether it stands, was removed (with the reason) or cannot be told; called by {@link readDevinInstallationId} and by `checkDevinBridgeReceipts`, so the bridge, the setup and the refresh judge a receipt the same way.
  * @param receiptPath - A `receipt.json` of the global storage (`devin-skill` or `devin-mcp`).
  * @param platform - The platform whose file modes are judged; defaults to this process's platform.
  * @returns A {@link ReceiptState}; never throws.
