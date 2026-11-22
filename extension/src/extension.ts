@@ -1225,13 +1225,15 @@ export function activate(
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
-      if (enabled && !(await devinSetupStands())) return
+      // One read decides the guard, the file's id and the in-memory mark: a removal between two reads cannot leave a mark without its id.
+      const field = await devinChatField()
+      if (enabled && field.devinChat !== true) return
       // An unmark clears the in-memory mark first, so the server refuses the bridge before the file is rewritten.
       isDevinChatMarked &&= enabled
       await setDescriptorDevinChat(
         target.descriptorPath,
         enabled,
-        (await devinChatField()).devinSetupInstallation,
+        field.devinSetupInstallation,
       )
       isDevinChatMarked ||= enabled
     })
@@ -3894,10 +3896,12 @@ export function activate(
   // Register lazy readers before restored captured documents or contributed views request their providers.
   workspace()
   repository()
+  // Settles when the reconnect at activation ended (started the server or decided not to); tests wait on it.
+  let reconnectSettled: Promise<void> = Promise.resolve()
   if (
     context.workspaceState.get<{ workspace: string }>('codebook.aiChatSetup')
   ) {
-    void (async () => {
+    reconnectSettled = (async () => {
       if (!setupMatchesCurrentWorkspace())
         throw new Error('The selected workspace changed after setup')
       if (isCursorHost)
@@ -3933,6 +3937,7 @@ export function activate(
   return {
     inspectStudy: () => reader?.inspect(),
     inspectRepository: () => repositoryReader?.inspect(),
+    whenReconnected: (): Promise<void> => reconnectSettled,
   }
 }
 

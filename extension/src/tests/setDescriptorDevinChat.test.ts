@@ -38,15 +38,18 @@ async function settleWithin(
 test('mark update refuses a named pipe at the descriptor path instead of holding the descriptor queue', async (context) => {
   // protects=a pipe at the descriptor path cannot hang the descriptor queue; fails_when=the update waits on the pipe for ever; no_claim=another window's removal of the descriptor
   // Arrange
+  if (process.platform === 'win32')
+    return context.skip('Windows has no mkfifo to create a named pipe')
   const folder = await mkdtemp(join(tmpdir(), 'codebook-descriptor-fifo-'))
   const descriptorPath = join(folder, 'instance.connection.json')
-  await run('mkfifo', [descriptorPath])
+  // Registered before mkfifo: a failed mkfifo still removes the folder.
   context.after(async () => {
     // Unblocks a read that is still waiting on the pipe, so the process can end.
     const releasing = await open(descriptorPath, 'r+').catch(() => undefined)
     await releasing?.close()
     await removeTestFolder(folder)
   })
+  await run('mkfifo', [descriptorPath])
 
   // Act
   const outcome = await settleWithin(
