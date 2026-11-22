@@ -115,6 +115,45 @@ async function readBody(
   })
 }
 
+const SESSION_LIMIT_SENTENCE =
+  'MCP session limit exceeded; every session has a request in flight. Retry after one completes.'
+
+/**
+ * Tells whether any session has no request in flight, so an initialization at the session limit can replace one.
+ * @param sessions - The live sessions by id.
+ * @returns `true` when at least one session is idle.
+ * @example hasIdleSession(new Map()) // => false
+ */
+function hasIdleSession(sessions: ReadonlyMap<string, Session>): boolean {
+  return [...sessions.values()].some((candidate) => !candidate.active)
+}
+
+/**
+ * Takes room for one admitted initialization in a single synchronous step: at the session limit the least recently seen idle session leaves `sessions` at once, so a request for it answers Unknown MCP session and no two initializations pick the same one.
+ * @param sessions - The live sessions by id; the picked one is deleted from it.
+ * @param admittedCount - Reserved sessions that already took their slot and are not in `sessions` yet.
+ * @returns
+ * - `undefined` when there is room and nobody was replaced
+ * - The picked session, already removed from `sessions`, which the caller closes
+ * - `'full'` when every session has a request in flight
+ * @example takeSessionRoom(new Map(), 0) // => undefined
+ */
+function takeSessionRoom(
+  sessions: Map<string, Session>,
+  admittedCount: number,
+): Session | undefined | 'full' {
+  if (sessions.size + admittedCount < MAX_SESSIONS) return undefined
+  // Clients that end without DELETE leave idle sessions behind; only busy sessions refuse.
+  let oldest: [string, Session] | undefined
+  for (const entry of sessions) {
+    if (!entry[1].active && (!oldest || entry[1].lastSeen < oldest[1].lastSeen))
+      oldest = entry
+  }
+  if (!oldest) return 'full'
+  sessions.delete(oldest[0])
+  return oldest[1]
+}
+
 /**
  * Hosts authenticated SDK sessions separately from application runs; editor commands own its lifetime.
  * @param service - The study service the sessions talk to.
@@ -131,10 +170,11 @@ export async function startServer(
 ) {
   let token = randomBytes(TOKEN_BYTES).toString('hex')
   let expected = Buffer.from(`Bearer ${token}`)
+  let generation = 0
   const sessions = new Map<string, Session>()
   const pendingSessions = new Set<Session>()
-  // Idle sessions an initialization has picked to replace but has not closed yet: they count as free slots and cannot be picked twice.
-  const retiring = new Set<Session>()
+  // Reserved sessions whose initialization passed the dispatch-time gate and took its slot: with the live sessions they never exceed MAX_SESSIONS.
+  const admittedSessions = new Set<Session>()
   let origin = '',
     stopping = false,
     inFlight = 0
@@ -187,7 +227,6 @@ export async function startServer(
         }
         inFlight += 1
         let session: Session | undefined
-        let replaced: [string, Session] | undefined
         try {
           const body =
             request.method === 'POST'
@@ -211,32 +250,13 @@ export async function startServer(
               rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
               return
             }
+            // Early refusal only: the room is taken synchronously at dispatch, so a request that finds no idle session at MAX_SESSIONS does not build a transport.
             if (
-              sessions.size - retiring.size + pendingSessions.size >=
-              MAX_SESSIONS
+              sessions.size + admittedSessions.size >= MAX_SESSIONS &&
+              !hasIdleSession(sessions)
             ) {
-              // Clients that end without DELETE leave idle sessions behind; the least recently seen one makes room, and only busy sessions refuse.
-              const idle = [...sessions].filter(
-                ([, candidate]) =>
-                  !candidate.active && !retiring.has(candidate),
-              )
-              replaced = idle.reduce<(typeof idle)[number] | undefined>(
-                (oldest, entry) =>
-                  !oldest || entry[1].lastSeen < oldest[1].lastSeen
-                    ? entry
-                    : oldest,
-                undefined,
-              )
-              if (!replaced) {
-                rejectHttp(
-                  response,
-                  429,
-                  'MCP session limit exceeded; every session has a request in flight. Retry after one completes.',
-                )
-                return
-              }
-              // Picked only: the session leaves once the dispatch-time gate has passed, so a refusal evicts nobody.
-              retiring.add(replaced[1])
+              rejectHttp(response, 429, SESSION_LIMIT_SENTENCE)
+              return
             }
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: randomUUID,
@@ -244,6 +264,7 @@ export async function startServer(
               onsessioninitialized: (sessionId) => {
                 if (session) {
                   pendingSessions.delete(session)
+                  admittedSessions.delete(session)
                   sessions.set(sessionId, session)
                 }
               },
@@ -266,6 +287,7 @@ export async function startServer(
             } catch (error) {
               // One scope from the reserved slot to the connected session: whatever fails in between gives the slot back.
               pendingSessions.delete(session)
+              admittedSessions.delete(session)
               await session.protocol.close()
               throw error
             }
@@ -274,6 +296,7 @@ export async function startServer(
             transport.onclose = (): void => {
               priorClose?.()
               pendingSessions.delete(ownedSession)
+              admittedSessions.delete(ownedSession)
               if (transport.sessionId) sessions.delete(transport.sessionId)
             }
           }
@@ -291,6 +314,7 @@ export async function startServer(
             return
           }
           // Right before dispatch, after the body was read: a Devin bridge request is refused once this window's AI chat mark is off, also one whose body was held open across the unmark.
+          const isInitialization = pendingSessions.has(session)
           if (
             isDevinBridgeRequestRefused(
               request.headers,
@@ -299,17 +323,26 @@ export async function startServer(
             )
           ) {
             // An initialization of this request reserved the session (it has no id yet): give the slot back.
-            if (!session.transport.sessionId) {
+            if (isInitialization) {
               pendingSessions.delete(session)
               await session.protocol.close()
             }
             rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
             return
           }
-          // The gate passed: the picked idle session leaves now and the new one has its slot. Best effort close: no client can reach it any more, and its failed close must not refuse the new client.
-          if (replaced) {
-            sessions.delete(replaced[0])
-            await replaced[1].protocol.close().catch(() => undefined)
+          if (isInitialization) {
+            // One synchronous step, no await between choosing and deleting: the least recently seen idle session leaves at once (a request for it now answers Unknown MCP session) and the new one takes its slot.
+            const room = takeSessionRoom(sessions, admittedSessions.size)
+            if (room === 'full') {
+              pendingSessions.delete(session)
+              await session.protocol.close()
+              rejectHttp(response, 429, SESSION_LIMIT_SENTENCE)
+              return
+            }
+            const replaced = room
+            admittedSessions.add(session)
+            // Best effort close: no client can reach it any more, and its failed close must not refuse the new client.
+            await replaced?.protocol.close().catch(() => undefined)
           }
           session.lastSeen = now()
           session.active += 1
@@ -320,12 +353,12 @@ export async function startServer(
             session.lastSeen = now()
             if (!session.transport.sessionId) {
               pendingSessions.delete(session)
+              admittedSessions.delete(session)
               await session.protocol.close()
             }
           }
         } finally {
           inFlight -= 1
-          if (replaced) retiring.delete(replaced[1])
         }
       })().catch(() =>
         rejectHttp(
@@ -374,15 +407,26 @@ export async function startServer(
     descriptor,
     expire,
     /**
-     * Replaces the bearer token, so every client that holds the old one is refused with 401 on its next request; called by the extension when a failed Devin Desktop setup is taken back, because a bridge of an earlier build sends no Devin header and only the token can stop it.
-     * @returns The new token; the caller writes it into the connection descriptor.
-     * @example const next = endpoint.rotateToken()
+     * Prepares the next bearer token without switching to it, so the caller can write it into the connection descriptor first and switch only once that write carried it; called by the extension when a failed Devin Desktop setup is taken back, because a bridge of an earlier build sends no Devin header and only the token can stop it.
+     * `commit` makes the server refuse the old token with 401 and accept the new one, and counts one more {@link tokenGeneration}; a prepared token that is never committed changes nothing.
+     * @returns The next token and the `commit` that switches to it.
+     * @example const next = endpoint.prepareTokenRotation(); await writeIt(next.token); next.commit()
      */
-    rotateToken(): string {
-      token = randomBytes(TOKEN_BYTES).toString('hex')
-      expected = Buffer.from(`Bearer ${token}`)
-      descriptor.token = token
-      return token
+    prepareTokenRotation(): { token: string; commit: () => void } {
+      const nextToken = randomBytes(TOKEN_BYTES).toString('hex')
+      return {
+        token: nextToken,
+        commit: (): void => {
+          token = nextToken
+          expected = Buffer.from(`Bearer ${token}`)
+          descriptor.token = token
+          generation += 1
+        },
+      }
+    },
+    /** How many times the bearer token was switched; the VS Code MCP definition's version includes it, so a client re-resolves the definition (and its bearer) after a switch. Never the token or a hash of it. */
+    get tokenGeneration(): number {
+      return generation
     },
     get listening(): boolean {
       return server.listening && !stopping

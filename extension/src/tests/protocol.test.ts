@@ -602,6 +602,112 @@ test('two clients that initialize at the same moment while eight sessions are id
   }
 })
 
+// Cycle 0144 F14: protects=a client that was answered between a ninth initialize starting and its dispatch keeps its session, because a picked session is never left routable while its eviction is pending; fails_when=the pick marks the least recently seen session at connect time, answers a request for it, and the eviction then closes it under that answer; no_claim=which idle session is replaced when none was seen during the hold
+test('a session that answers while a ninth client is still connecting is not the one the ninth client replaces', async (context) => {
+  // Arrange: the ninth client's protocol connect is held until the first session was asked once.
+  let enterNinthConnect!: () => void, releaseNinthConnect!: () => void
+  const ninthConnectEntered = new Promise<void>((resolve) => {
+    enterNinthConnect = resolve
+  })
+  const ninthConnectReleased = new Promise<void>((resolve) => {
+    releaseNinthConnect = resolve
+  })
+  adjustProtocols(context, (protocol, index) => {
+    if (index !== 8) return
+    const connectProtocol = protocol.connect.bind(protocol)
+    protocol.connect = async (
+      ...args: Parameters<typeof connectProtocol>
+    ): Promise<void> => {
+      enterNinthConnect()
+      await ninthConnectReleased
+      await connectProtocol(...args)
+    }
+  })
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now)
+  const connections: Awaited<ReturnType<typeof connect>>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      now = index * 1_000
+      connections.push(await connect(endpoint.descriptor))
+    }
+    const original = [...connections]
+    now = 8_000
+    // Act
+    const ninthConnecting = connect(endpoint.descriptor)
+    await ninthConnectEntered
+    const answeredDuringConnect = await sessionAnswer(original[0]!)
+    now = 9_000
+    releaseNinthConnect()
+    connections.push(await ninthConnecting)
+    // Assert
+    assert.equal(answeredDuringConnect, 'answers')
+    assert.deepEqual(await Promise.all(original.map(sessionAnswer)), [
+      'answers',
+      'unknown session',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+    ])
+  } finally {
+    releaseNinthConnect()
+    await Promise.allSettled(
+      connections.map((connection) => connection.client.close()),
+    )
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
+// Cycle 0144 F14: protects=live sessions never exceed eight when two clients initialize while the first replaced session is still closing; fails_when=the replaced session still counts as a free slot while its close runs, so the tenth client is admitted without replacing anyone; no_claim=the order the two replacements finish
+test('ten clients connecting at once while eight are idle leave exactly eight sessions answering', async (context) => {
+  // Arrange: every close is slow, so evictions overlap the next initialization.
+  adjustProtocols(context, (protocol) => {
+    const close = protocol.close.bind(protocol)
+    protocol.close = async (): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await close()
+    }
+  })
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now)
+  const connections: Awaited<ReturnType<typeof connect>>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      now = index * 1_000
+      connections.push(await connect(endpoint.descriptor))
+    }
+    const original = [...connections]
+    now = 8_000
+    // Act
+    const newcomers = await Promise.all([
+      connect(endpoint.descriptor),
+      connect(endpoint.descriptor),
+    ])
+    connections.push(...newcomers)
+    // Assert
+    const answers = await Promise.all(
+      [...original, ...newcomers].map(sessionAnswer),
+    )
+    assert.equal(answers.filter((answer) => answer === 'answers').length, 8)
+    assert.deepEqual(answers.slice(0, 2), [
+      'unknown session',
+      'unknown session',
+    ])
+  } finally {
+    await Promise.allSettled(
+      connections.map((connection) => connection.close()),
+    )
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
 // Cycle 0045 (A-L1): red while the rejected close of the replaced session reached the request's catch, so the new client got a 500 after the old session was gone.
 test('a ninth client is admitted although the session it replaces fails to close', async (context) => {
   // Arrange

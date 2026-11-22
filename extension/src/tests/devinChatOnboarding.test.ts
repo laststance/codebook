@@ -24,6 +24,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer as startRealServer } from '../server'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
+import { setDescriptorDevinChat } from '../utils/setDescriptorDevinChat'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
 import { withDevinSetupLock } from '../utils/withDevinSetupLock'
 
@@ -123,7 +124,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in. The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -155,6 +156,7 @@ async function devinWindow(
     onSkillCheck?: () => Promise<void>
     failEntryRemoval?: boolean
     realServer?: boolean
+    failDescriptorUnmark?: boolean
   } = {},
 ) {
   const directory =
@@ -213,15 +215,26 @@ async function devinWindow(
   // A setup saved by an earlier window names the workspace this window opens.
   if (options.savedSetup)
     state.set('codebook.aiChatSetup', { workspace: directory })
+  // How often the window told the editor that its MCP definitions changed, and the provider it registered.
+  let changeEventCount = 0
+  let mcpProvider:
+    | {
+        provideMcpServerDefinitions: () => { version?: string }[]
+      }
+    | undefined
   class Emitter {
     event = (): void => {}
-    fire(): void {}
+    fire(): void {
+      changeEventCount += 1
+    }
     dispose(): void {}
   }
   class HttpDefinition {
     constructor(
       public label: string,
       public uri: string,
+      public headers: unknown,
+      public version?: string,
     ) {}
   }
   class Service {
@@ -294,7 +307,13 @@ async function devinWindow(
     McpHttpServerDefinition: HttpDefinition,
     Uri: { parse: (value: string) => value },
     lm: {
-      registerMcpServerDefinitionProvider: () => ({ dispose(): void {} }),
+      registerMcpServerDefinitionProvider: (
+        _id: string,
+        received: NonNullable<typeof mcpProvider>,
+      ) => {
+        mcpProvider = received
+        return { dispose(): void {} }
+      },
     },
   }
   const loaded = await loadModule<typeof ExtensionModule>(
@@ -343,7 +362,11 @@ async function devinWindow(
               apiVersion: '1.6',
             },
             close: async (): Promise<void> => {},
-            rotateToken: (): string => 'rotated-test-token',
+            prepareTokenRotation: () => ({
+              token: 'rotated-test-token',
+              commit: (): void => {},
+            }),
+            tokenGeneration: 0,
           }
         },
       },
@@ -489,6 +512,20 @@ async function devinWindow(
           },
         },
       }),
+      // The rewrite that removes the mark fails; every other rewrite is the real one.
+      ...(options.failDescriptorUnmark && {
+        './utils/setDescriptorDevinChat': {
+          setDescriptorDevinChat: (
+            path: string,
+            enabled: boolean,
+            installationId?: string,
+            token?: string,
+          ): Promise<boolean> =>
+            enabled
+              ? setDescriptorDevinChat(path, enabled, installationId, token)
+              : Promise.reject(new Error('Injected descriptor unmark failure')),
+        },
+      }),
       // Reads the real records; an armed hold makes the next read wait after it read, as a removal that lands in between would find it.
       './utils/hasDevinSetupReceipts': {
         hasDevinSetupReceipts: async (storageRoot: string) => {
@@ -588,6 +625,11 @@ async function devinWindow(
     releaseRewrite,
     receiptsReached,
     releaseReceipts,
+    /** How often the window told the editor that its MCP definitions changed. */
+    changeEvents: (): number => changeEventCount,
+    /** The version the window's MCP provider gives its definition now, or `undefined` when it gives none. */
+    definitionVersion: (): string | undefined =>
+      mcpProvider?.provideMcpServerDefinitions()[0]?.version,
     /** Makes the next read of the setup records wait after it read them, until {@link releaseReceipts}. */
     armReceiptsHold: (): void => {
       isReceiptsHoldArmed = true
@@ -1976,6 +2018,94 @@ test('a Devin bridge without the Devin header that holds the old token is refuse
       [statusBeforeFailure, withOldToken, withNewToken],
       [200, 401, 200],
     )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a failed setup's rollback in a window whose descriptor was never marked keeps the token, so no client of that window loses its connection for no reason (Cycle 0144 F15) / fails_when: the rollback rotates the token of a window that never carried the Devin mark, so the old token answers 401 / no_claim: a window whose mark was removed
+test('a failed Devin setup in a window whose descriptor was never marked keeps the token it serves', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    realServer: true,
+    skillManaged: false,
+  })
+  try {
+    await window.commands.get('codebook.startAgentServer')!()
+    const descriptorFile = await window.descriptorPath()
+    const tokenBefore = JSON.parse(await readFile(descriptorFile, 'utf8')).token
+    // Act
+    await window.commands.get('codebook.setupAiChat')!().catch(() => undefined)
+    const tokenAfter = JSON.parse(await readFile(descriptorFile, 'utf8')).token
+    const withOldToken = await postInitialize(
+      descriptorFile,
+      false,
+      tokenBefore,
+    )
+    // Assert
+    assert.equal(tokenAfter, tokenBefore)
+    assert.equal(withOldToken, 200)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a rollback whose descriptor rewrite fails leaves the server on the token the descriptor still holds, so clients that read the file keep their connection (Cycle 0144 F15) / fails_when: the server switches to the new token before the descriptor carries it, so the file's token answers 401 / no_claim: the learner's wording beyond the incomplete take-back
+test('a Devin setup whose rollback cannot write the descriptor keeps serving the token the descriptor holds and reports the take-back incomplete', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    realServer: true,
+    failDescriptorUnmark: true,
+    onSkillCheck: async (): Promise<void> => {
+      // The restarted server read the half-saved setup, so its descriptor is marked.
+      await window.commands.get('codebook.stopAgentServer')!()
+      await window.commands.get('codebook.startAgentServer')!()
+    },
+  })
+  try {
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    const descriptorFile = await window.descriptorPath()
+    const status = await postInitialize(descriptorFile, false)
+    // Assert
+    assert.equal(status, 200)
+    assert.equal(setupOutcome.includes('could not take back everything'), true)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a committed token rotation changes the MCP definition's version and tells the editor, so a VS Code MCP client resolves the definition again with the new bearer (Cycle 0144 F15) / fails_when: the version stays the same or no change event fires after the switch / no_claim: the editor's own re-resolve
+test('a committed token rotation changes the MCP definition version and fires the definitions change event', async (context) => {
+  // Arrange
+  let versionBefore: string | undefined
+  let eventsBefore = 0
+  const window = await devinWindow(context, {
+    realServer: true,
+    savedSetup: true,
+    entryWrite: 'current',
+    skillManaged: false,
+    onSkillCheck: async (): Promise<void> => {
+      // The restarted server is marked; another window's removal then takes the skill record, so the rollback leaves the window unmarked while its earlier setup stays saved.
+      await window.commands.get('codebook.stopAgentServer')!()
+      await window.commands.get('codebook.startAgentServer')!()
+      await rm(join(window.directory, 'devin-skill/receipt.json'))
+      versionBefore = window.definitionVersion()
+      eventsBefore = window.changeEvents()
+    },
+  })
+  try {
+    // Act
+    await window.commands.get('codebook.setupAiChat')!().catch(() => undefined)
+    // Assert
+    assert.equal(typeof versionBefore, 'string')
+    assert.notEqual(window.definitionVersion(), versionBefore)
+    assert.equal(window.changeEvents(), eventsBefore + 1)
   } finally {
     await window.loaded.deactivate()
   }

@@ -270,7 +270,7 @@ test('a Devin bridge ends its own session with DELETE while the mark is off', as
 })
 
 test('a rotated token refuses a client that holds the old one with 401 and serves the new one', async (context) => {
-  // protects=a bridge of an earlier build (no Devin header) is stopped by the rollback's token rotation (Cycle 0144 F6); fails_when=the old token is still accepted after rotateToken, or the new one is refused; no_claim=what the extension writes into the descriptor
+  // protects=a bridge of an earlier build (no Devin header) is stopped by the rollback's token rotation (Cycle 0144 F6); fails_when=the old token is still accepted after the rotation is committed, or the new one is refused; no_claim=what the extension writes into the descriptor
   // Arrange
   const { endpoint } = await startGatedServer(context, true)
   const initialized = await post(endpoint, INITIALIZE, {})
@@ -278,7 +278,9 @@ test('a rotated token refuses a client that holds the old one with 401 and serve
   const oldToken = endpoint.descriptor.token
 
   // Act
-  const newToken = endpoint.rotateToken()
+  const rotation = endpoint.prepareTokenRotation()
+  const newToken = rotation.token
+  rotation.commit()
   const withOldToken = await fetch(endpoint.descriptor.url, {
     method: 'POST',
     headers: {

@@ -18,7 +18,7 @@ const run = promisify(execFile)
 /** Resolves with the settled outcome of `work`, or `'hung'` when it does not settle within the budget. */
 async function settleWithin(
   timeoutMs: number,
-  work: Promise<void>,
+  work: Promise<unknown>,
 ): Promise<'resolved' | 'hung' | Error> {
   const controller = new AbortController()
   try {

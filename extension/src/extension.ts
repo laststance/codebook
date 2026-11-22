@@ -1238,7 +1238,27 @@ export function activate(
       )
       isDevinChatMarked ||= enabled
     })
-  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @param rotateWhenUnmarked - Rotates the server's bearer token when the window ends up unmarked and writes the new one into the descriptor, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
+  /** Rewrites the descriptor of `target` for the mark it earns; when `rotates`, the next token is only prepared, written with a removed mark, and the server switches to it (and the VS Code MCP client is told) once the file carries it, so a failed write leaves the server and the file on the old token. @example await writeSyncedDescriptor(running, false, undefined, true) */
+  const writeSyncedDescriptor = async (
+    target: NonNullable<typeof running>,
+    isMarked: boolean,
+    installationId: string | undefined,
+    rotates: boolean,
+  ): Promise<void> => {
+    const rotation = rotates
+      ? target.endpoint.prepareTokenRotation()
+      : undefined
+    const wroteToken = await setDescriptorDevinChat(
+      target.descriptorPath,
+      isMarked,
+      installationId,
+      rotation?.token,
+    )
+    if (!wroteToken) return
+    rotation?.commit()
+    notifyMcpDefinitions()
+  }
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
   const syncDevinChatDescriptor = (rotateWhenUnmarked = false): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
@@ -1247,16 +1267,11 @@ export function activate(
       const isMarked = field.devinChat === true
       // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
       isDevinChatMarked &&= isMarked
-      // The server refuses the old token from here on; the descriptor then carries the new one, which every client of this window reads from the file ({@link connect}) or from the running server (the VS Code MCP provider).
-      const rotatedToken =
-        rotateWhenUnmarked && !isMarked
-          ? target.endpoint.rotateToken()
-          : undefined
-      await setDescriptorDevinChat(
-        target.descriptorPath,
+      await writeSyncedDescriptor(
+        target,
         isMarked,
         field.devinSetupInstallation,
-        rotatedToken,
+        rotateWhenUnmarked && !isMarked,
       )
       isDevinChatMarked ||= isMarked
     })
@@ -1556,6 +1571,11 @@ export function activate(
     vscode.Uri
   ) {
     const changes = new vscode.EventEmitter<void>()
+    /** The definition's version: it changes with the token generation, so the editor resolves the definition again, with the new bearer, after the token was switched. */
+    const mcpDefinitionVersion = (
+      current: NonNullable<typeof running>,
+    ): string =>
+      `${EXTENSION_VERSION}-${current.service.instanceId}-${current.endpoint.tokenGeneration}`
     notifyMcpDefinitions = (): void => changes.fire()
     context.subscriptions.push(
       changes,
@@ -1572,7 +1592,7 @@ export function activate(
                 'Codebook',
                 vscode.Uri.parse(descriptor.url),
                 {},
-                `${EXTENSION_VERSION}-${running.service.instanceId}`,
+                mcpDefinitionVersion(running),
               ),
             ]
           },
@@ -1588,7 +1608,7 @@ export function activate(
             const descriptor = running.endpoint.descriptor
             definition.uri = vscode.Uri.parse(descriptor.url)
             definition.headers = { Authorization: `Bearer ${descriptor.token}` }
-            definition.version = `${EXTENSION_VERSION}-${running.service.instanceId}`
+            definition.version = mcpDefinitionVersion(running)
             return definition
           },
         },

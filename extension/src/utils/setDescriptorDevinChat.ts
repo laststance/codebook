@@ -14,7 +14,8 @@ const descriptorSchema = z.record(z.string(), z.unknown())
  * @param descriptorPath - The window's `<instance>.connection.json` in the agent folder.
  * @param enabled - `true` writes `"devinChat": true`; `false` removes the field and the installation mark.
  * @param installationId - The installation id of the MCP receipt the mark is made for; written as `devinSetupInstallation` beside `devinChat` when `enabled`, so a bridge can tell a removed setup from an updated one. Left out, no installation is named and the Devin bridge refuses the descriptor.
- * @param token - A new bearer token to write in place of the one in the file, when the server rotated it ({@link startServer}'s `rotateToken`); the field stays as written when left out.
+ * @param token - The next bearer token ({@link startServer}'s `prepareTokenRotation`), written in place of the one in the file only when this rewrite removes a mark (the file carried `devinChat: true` and `enabled` is `false`): a window that was never marked has no Devin bridge to stop and keeps its token. The field stays as written otherwise.
+ * @returns Whether the file now carries `token`; the caller switches the server to it only then.
  * @throws When the descriptor is gone or cannot be replaced; for a file that is no JSON object only {@link DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE}, because the descriptor holds the bearer token and a parser's message quotes part of the file.
  * @example
  * await setDescriptorDevinChat('/storage/agent/instance-1.connection.json', true)
@@ -24,7 +25,7 @@ export async function setDescriptorDevinChat(
   enabled: boolean,
   installationId?: string,
   token?: string,
-): Promise<void> {
+): Promise<boolean> {
   // The bounded read (no link followed, no wait on a pipe, regular and size-capped) keeps the descriptor queue from holding on a hostile path.
   const text = await readDescriptorText(descriptorPath).catch(
     (error: unknown) => {
@@ -41,20 +42,22 @@ export async function setDescriptorDevinChat(
     throw new Error(DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE)
   }
   const {
-    devinChat: _previous,
+    devinChat: previous,
     devinSetupInstallation: _previousInstallation,
     ...rest
   } = fields
+  // Only the removal of a mark rotates the token: no Devin bridge can hold it otherwise.
+  const writesToken = Boolean(token) && !enabled && previous === true
   await atomicPrivateWrite(
     descriptorPath,
     enabled
       ? {
           ...rest,
-          ...(token && { token }),
           devinChat: true,
           ...(installationId && { devinSetupInstallation: installationId }),
         }
-      : { ...rest, ...(token && { token }) },
+      : { ...rest, ...(writesToken && { token }) },
     DEVIN_MCP_RECORD_LIMIT_BYTES,
   )
+  return writesToken
 }
