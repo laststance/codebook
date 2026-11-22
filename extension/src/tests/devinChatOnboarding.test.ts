@@ -125,7 +125,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam); `removalResult` what the entry removal resolves with (a plain removal when left out); `failSetupCommit` makes a write of a setup value (not a clearing) that follows a provisional one fail; `failSetupRestore` makes every write that follows a provisional one fail (the commit and the restore). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -159,6 +159,9 @@ async function devinWindow(
     realServer?: boolean
     failDescriptorUnmark?: boolean
     afterInstallationRead?: () => Promise<void>
+    removalResult?: { status: 'removed'; path: string; cleanupFailure?: string }
+    failSetupCommit?: boolean
+    failSetupRestore?: boolean
   } = {},
 ) {
   const directory =
@@ -214,6 +217,8 @@ async function devinWindow(
   const receiptsReached = new Promise<void>((resolve) => {
     receiptsEntered = resolve
   })
+  // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
+  let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
   if (options.savedSetup)
     state.set('codebook.aiChatSetup', { workspace: directory })
@@ -490,7 +495,9 @@ async function devinWindow(
           entryRemovals.push(structuredClone(removalOptions))
           if (options.failEntryRemoval)
             throw new Error('Injected entry removal failure')
-          return { status: 'removed', path: configPath }
+          return (
+            options.removalResult ?? { status: 'removed', path: configPath }
+          )
         },
       },
       // A rewrite that has read the descriptor waits before it writes, as a stop that comes in between would find it.
@@ -607,6 +614,21 @@ async function devinWindow(
           value !== undefined
         )
           throw new Error('Injected workspace state save failure')
+        // Once a provisional value was written, the writes that follow can be made to fail.
+        if (key === 'codebook.aiChatSetup') {
+          const isProvisional =
+            typeof value === 'object' &&
+            value !== null &&
+            'provisional' in value
+          if (
+            hasWrittenProvisional &&
+            !isProvisional &&
+            (options.failSetupRestore ||
+              (options.failSetupCommit && value !== undefined))
+          )
+            throw new Error('Injected workspace state commit failure')
+          hasWrittenProvisional ||= isProvisional
+        }
         state.set(key, structuredClone(value))
       },
     },
@@ -2148,6 +2170,39 @@ test('a committed token rotation changes the MCP definition version and fires th
     assert.equal(typeof versionBefore, 'string')
     assert.notEqual(window.definitionVersion(), versionBefore)
     assert.equal(window.changeEvents(), eventsBefore + 1)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a rollback whose entry removal resolved with a kept receipt or copy reports itself incomplete and names the file in the Output; fails_when=only a rejected removal counts, so the learner is told the setup was taken back while a record stays; no_claim=the wording of the Output line beyond the named file
+test('a Devin setup rollback whose entry removal left a file behind tells the learner the take-back is incomplete and names the file', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    skillManaged: false,
+    removalResult: {
+      status: 'removed',
+      path: '/config/mcp_config.json',
+      cleanupFailure:
+        'Codebook could not delete its own record of that entry at /storage/devin-mcp/receipt.json; delete that record by hand.',
+    },
+  })
+  try {
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(setupOutcome.includes('could not take back everything'), true)
+    assert.equal(
+      window.outputLines.some((line) =>
+        line.includes('/storage/devin-mcp/receipt.json'),
+      ),
+      true,
+    )
   } finally {
     await window.loaded.deactivate()
   }

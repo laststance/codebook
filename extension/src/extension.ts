@@ -165,6 +165,7 @@ import {
   devinEntryRemovalOf,
   devinRemovalNotice,
 } from './utils/devinRemovalNotice'
+import { devinRollbackLeftoverLine } from './utils/devinRollbackLeftoverLine'
 import { devinWindowRefusal } from './utils/devinWindowRefusal'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
@@ -1304,12 +1305,21 @@ export function activate(
         undefined,
         undefined,
         { expectedGeneration: entryWrite.generation },
-      ).catch((cleanupError: unknown) => {
-        isComplete = false
-        diagnostics.info(
-          `Codebook could not take back the Devin Desktop MCP entry this setup wrote: ${thrownMessage(cleanupError)}`,
-        )
-      })
+      ).then(
+        (removal) => {
+          // A removal that resolved may still have left a receipt, a copy or an edited entry.
+          const leftover = devinRollbackLeftoverLine(removal)
+          if (leftover === undefined) return
+          isComplete = false
+          diagnostics.info(leftover)
+        },
+        (cleanupError: unknown) => {
+          isComplete = false
+          diagnostics.info(
+            `Codebook could not take back the Devin Desktop MCP entry this setup wrote: ${thrownMessage(cleanupError)}`,
+          )
+        },
+      )
     // Any server running now may have read the half-saved setup, not only the one the setup checked.
     // A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the rollback is incomplete; the window's in-memory mark is already off, so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too.
     await syncDevinChatDescriptor(true).catch((error: unknown) => {
