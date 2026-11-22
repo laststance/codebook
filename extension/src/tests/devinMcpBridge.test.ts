@@ -107,7 +107,10 @@ async function writeDescriptor(
   return path
 }
 
-/** Runs the bridge in this process and returns what it wrote to stderr, its exit code and how long it took. */
+/**
+ * Runs the bridge in this process and returns the stderr lines the bridge entry would show and the exit code it would end with.
+ * The bridge returns its refusal line instead of writing it, so the line is added to what the bridge itself wrote (the connected line), and the exit code is 1 exactly when the bridge refused.
+ */
 async function runCapturingStderr(
   agentDir: string,
   workspace: string,
@@ -115,20 +118,19 @@ async function runCapturingStderr(
   options: { timeoutMs?: number; intervalMs?: number },
 ) {
   const lines: string[] = [],
-    originalWrite = process.stderr.write.bind(process.stderr),
-    originalExitCode = process.exitCode
+    originalWrite = process.stderr.write.bind(process.stderr)
   process.stderr.write = (chunk: string) => {
     lines.push(chunk)
     return true
   }
-  let exitCode: typeof process.exitCode
+  let refusal: string | undefined
   try {
-    await runDevinMcpBridge(agentDir, workspace, env, options)
-    exitCode = process.exitCode
+    refusal = await runDevinMcpBridge(agentDir, workspace, env, options)
   } finally {
     process.stderr.write = originalWrite
-    process.exitCode = originalExitCode
   }
+  if (refusal !== undefined) lines.push(`${refusal}\n`)
+  const exitCode: number | undefined = refusal === undefined ? undefined : 1
   return { lines, exitCode }
 }
 
@@ -1159,32 +1161,83 @@ test(
         },
       },
     )
-    const lines: string[] = [],
-      originalWrite = process.stderr.write.bind(process.stderr),
-      originalExitCode = process.exitCode
-    process.stderr.write = (chunk: string) => {
-      lines.push(chunk)
-      return true
-    }
-    let exitCode: typeof process.exitCode
     // Act
-    try {
-      await bridgeModule.runDevinMcpBridge(
-        agentDir,
-        workspace,
-        { WINDSURF_EXT_HOST_PID: String(process.pid) },
-        { timeoutMs: 300, intervalMs: 20 },
-      )
-      exitCode = process.exitCode
-    } finally {
-      process.stderr.write = originalWrite
-      process.exitCode = originalExitCode
-    }
+    const refusal = await bridgeModule.runDevinMcpBridge(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      { timeoutMs: 300, intervalMs: 20 },
+    )
     // Assert
-    assert.equal(exitCode, 1)
-    assert.deepEqual(lines, [
+    assert.equal(
+      refusal,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
+    )
+  },
+)
+
+// protects=the bridge entry ending its process right after the refusal line when a lookup never answers; fails_when=the entry only sets the exit code, so a referenced handle of the unanswered lookup keeps the process alive and Devin never gets the end of the stream; no_claim=a real pending file-system request (a referenced setInterval stands in for it)
+test(
+  'the bridge entry exits with 1 right after its refusal line while a lookup never settles',
+  { timeout: 15_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const preloadPath = join(agentDir, '..', 'preload.js')
+    // The preload gives the entry's call a 500 ms deadline and a resolver that never settles but holds an event-loop handle.
+    await writeFile(
+      preloadPath,
+      `const bridge = require(${JSON.stringify(resolve(__dirname, '../devinMcpBridge.js'))})
+const original = bridge.runDevinMcpBridge
+bridge.runDevinMcpBridge = (agentDirectory) =>
+  original(agentDirectory, process.cwd(), process.env, {
+    timeoutMs: 500,
+    intervalMs: 20,
+    resolveWorkspace: () => {
+      setInterval(() => {}, 1_000)
+      return new Promise(() => {})
+    },
+  })
+`,
+    )
+    // Act
+    const startedAt = Date.now()
+    const result = await new Promise<{
+      code: number | null
+      stderr: string
+      elapsedMs: number
+    }>((done) => {
+      const child = execFile(
+        process.execPath,
+        [
+          '--require',
+          preloadPath,
+          join(__dirname, '../devinMcpBridgeEntry.js'),
+          agentDir,
+        ],
+        {
+          cwd: workspace,
+          env: { WINDSURF_EXT_HOST_PID: '10' },
+          // A process that is still alive here is the failure; it is ended so the test does not hang.
+          timeout: 3_000,
+          killSignal: 'SIGKILL',
+        },
+        (_error, _stdout, stderr) =>
+          done({
+            code: child.exitCode,
+            stderr,
+            elapsedMs: Date.now() - startedAt,
+          }),
+      )
+    })
+    // Assert
+    assert.equal(result.code, 1)
+    assert.equal(
+      result.stderr,
       `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
-    ])
+    )
+    // gstack-timing-ok: the contract is an exit before 3,000 ms with a 500 ms deadline.
+    assert.equal(result.elapsedMs < 3_000, true)
   },
 )
 

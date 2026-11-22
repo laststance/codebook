@@ -400,17 +400,6 @@ function extensionHostPidOf(env: NodeJS.ProcessEnv): number | undefined {
 }
 
 /**
- * Ends the bridge with one fixed line on stderr and exit code 1; called by {@link runDevinMcpBridge} for every refusal.
- * @param line - The recovery sentence, without a line break and without descriptor contents.
- * @example
- * refuse('Codebook is not running for /repo in this Devin Desktop window. ...')
- */
-function refuse(line: string): void {
-  process.stderr.write(`${line}\n`)
-  process.exitCode = 1
-}
-
-/**
  * Names what the selection of one descriptor validated, so {@link runCursorMcpBridge} connects only with a descriptor that still says the same; called by {@link runDevinMcpBridge} for each selection.
  * @param selection - The descriptor chosen by {@link selectDevinDescriptor}.
  * @param pid - The extension host process id the selection matched.
@@ -501,27 +490,29 @@ function mayStartAttempt(
  *
  * Started by the bridge entry file from the `mcp_config.json` entry Set Up AI Chat writes.
  *
- * Without a usable `WINDSURF_EXT_HOST_PID` the bridge cannot tell its window from another window of the same folder, so it selects nothing, writes one line and exits 1.
- * A descriptor of this window that lacks `devinChat: true` means AI chat is not set up here: one line, exit 1, at once.
+ * Without a usable `WINDSURF_EXT_HOST_PID` the bridge cannot tell its window from another window of the same folder, so it selects nothing and returns one refusal line.
+ * A descriptor of this window that lacks `devinChat: true` means AI chat is not set up here: one refusal line, at once.
+ * The function never writes the line and never ends the process: an imported function must not end its caller, and a lookup that never answers would keep the process alive anyway. The bridge entry file writes the line and exits 1 from the write's callback.
  * Each connection attempt (the descriptor read and the whole handshake) is bounded by the remaining startup deadline, but never by less than {@link DEVIN_CONNECT_FLOOR_MS}: the bridge's total time can exceed the 15 s startup window by that floor, and after the deadline at most one more attempt starts in total, however many descriptors remain. The connection reads the descriptor again and refuses it when it is no longer the one selected (see {@link devinDescriptorExpectation}). A chosen descriptor whose server fails is dropped and the deadline keeps running for a fresh one; a busy or restarting server (HTTP 429, ECONNREFUSED, ECONNRESET) is asked again after a short pause until the deadline. Nothing reaches stdout (the MCP channel) before the transport is up, and no message holds the token.
  *
  * @param agentDir - Folder holding the window instances' connection descriptors.
  * @param cwd - Working folder of the bridge process; the window's workspace.
  * @param env - Environment; `WINDSURF_EXT_HOST_PID` names the extension host.
  * @param options - Polling limits of {@link selectDevinDescriptor}; tests shorten them.
+ * @returns
+ * - `undefined` once the transport is connected
+ * - the one refusal line (no line break, no descriptor contents) when the bridge refuses; the caller writes it and exits 1
  */
 export async function runDevinMcpBridge(
   agentDir: string,
   cwd: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
   options: DevinSelectOptions = {},
-): Promise<void> {
+): Promise<string | undefined> {
   const pid = extensionHostPidOf(env)
   // No window identity: refuse rather than guess among windows of one folder.
   if (pid === undefined)
-    return refuse(
-      'Codebook cannot tell which Devin Desktop window started this bridge: WINDSURF_EXT_HOST_PID is not set. Reload the window; if this stays, Devin Desktop changed how it starts MCP servers.',
-    )
+    return 'Codebook cannot tell which Devin Desktop window started this bridge: WINDSURF_EXT_HOST_PID is not set. Reload the window; if this stays, Devin Desktop changed how it starts MCP servers.'
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     excludedPaths = new Set<string>(),
     // The working folder's lookup spends the same startup window, so a mount that never answers cannot hold the bridge before its first selection; one that does not answer is compared as written, as the selection does.
@@ -541,21 +532,18 @@ export async function runDevinMcpBridge(
       timeoutMs: Math.max(0, deadline - Date.now()),
     })
     // No match in time: one fixed recovery line, no descriptor contents.
-    if (!selection) return refuse(notRunningLine(cwd))
+    if (!selection) return notRunningLine(cwd)
     // This window runs Codebook but its AI chat setup is for another folder or missing: nothing to wait for.
     if (!selection.devinChat)
-      return refuse(
-        `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${cwd}. Run Codebook: Set Up AI Chat here, then reload the window.`,
-      )
+      return `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${cwd}. Run Codebook: Set Up AI Chat here, then reload the window.`
     // Once the deadline has passed only one more attempt may start in total, however many descriptors remain.
-    if (!mayStartAttempt(deadline, lateAttempt))
-      return refuse(notRunningLine(cwd))
+    if (!mayStartAttempt(deadline, lateAttempt)) return notRunningLine(cwd)
     const outcome = await connectOnce(
       selection,
       deadline,
       devinDescriptorExpectation(selection, pid, realCwd),
     )
-    if (outcome === 'connected') return
+    if (outcome === 'connected') return undefined
     if (outcome === 'dropped') excludedPaths.add(selection.descriptorPath)
   }
 }
