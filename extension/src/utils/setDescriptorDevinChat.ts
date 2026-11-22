@@ -14,6 +14,7 @@ const descriptorSchema = z.record(z.string(), z.unknown())
  * @param descriptorPath - The window's `<instance>.connection.json` in the agent folder.
  * @param enabled - `true` writes `"devinChat": true`; `false` removes the field and the installation mark.
  * @param installationId - The installation id of the MCP receipt the mark is made for; written as `devinSetupInstallation` beside `devinChat` when `enabled`, so a bridge can tell a removed setup from an updated one. Left out, no installation is named and the Devin bridge refuses the descriptor.
+ * @param token - A new bearer token to write in place of the one in the file, when the server rotated it ({@link startServer}'s `rotateToken`); the field stays as written when left out.
  * @throws When the descriptor is gone or cannot be replaced; for a file that is no JSON object only {@link DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE}, because the descriptor holds the bearer token and a parser's message quotes part of the file.
  * @example
  * await setDescriptorDevinChat('/storage/agent/instance-1.connection.json', true)
@@ -22,6 +23,7 @@ export async function setDescriptorDevinChat(
   descriptorPath: string,
   enabled: boolean,
   installationId?: string,
+  token?: string,
 ): Promise<void> {
   // The bounded read (no link followed, no wait on a pipe, regular and size-capped) keeps the descriptor queue from holding on a hostile path.
   const text = await readDescriptorText(descriptorPath).catch(
@@ -48,10 +50,11 @@ export async function setDescriptorDevinChat(
     enabled
       ? {
           ...rest,
+          ...(token && { token }),
           devinChat: true,
           ...(installationId && { devinSetupInstallation: installationId }),
         }
-      : rest,
+      : { ...rest, ...(token && { token }) },
     DEVIN_MCP_RECORD_LIMIT_BYTES,
   )
 }

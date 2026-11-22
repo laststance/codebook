@@ -55,6 +55,7 @@ async function readOpenedFile(
  * @param path - Absolute path of the manifest or receipt.
  * @param openConstants - The open flags this system defines; `fs.constants` unless a test takes one away.
  * @param limitBytes - The largest size the caller accepts, {@link WIKI_METADATA_FILE_LIMIT_BYTES} by default; a larger file is refused by its size before any byte of it is read.
+ * @param onOpenError - Told what the open threw, so a caller can tell a descriptor shortage (a later attempt overcomes it) from an absent file; the answer is `undefined` either way.
  * @returns
  * - A regular file of at most `limitBytes`: its bytes, inode number and modification time, all from one open file
  * - A missing file, a link, a pipe, a device, a folder, a larger file, one that grew past the limit while it was read, one that was replaced between the look and the open, one that cannot be read, or one whose handle cannot be closed: undefined. It never rejects.
@@ -70,9 +71,13 @@ export async function readWikiRegularFile(
   path: string,
   openConstants?: NoFollowOpenConstants,
   limitBytes: number = WIKI_METADATA_FILE_LIMIT_BYTES,
+  onOpenError?: (error: unknown) => void,
 ): Promise<WikiRegularFile | undefined> {
   const file = await openWithoutFollowing(path, openConstants).catch(
-    () => undefined,
+    (error: unknown) => {
+      onOpenError?.(error)
+      return undefined
+    },
   )
   if (!file) return undefined
   // A file that cannot be read is refused.

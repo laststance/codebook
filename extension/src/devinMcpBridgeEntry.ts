@@ -20,9 +20,9 @@ if (!agentDir)
     'Codebook Devin MCP bridge requires the agent folder of this Codebook installation.',
   )
 else
-  // Once the connected bridge's cleanup completed after stdin closed, end the process: a lookup that never settles must not keep it alive.
+  // Once the connected bridge's cleanup completed after stdin closed (or a removed setup ended it with exit code 1), end the process: a lookup that never settles must not keep it alive.
   void runDevinMcpBridge(agentDir, process.cwd(), process.env, {
-    onClosed: () => process.exit(0),
+    onClosed: () => process.exit(process.exitCode ?? 0),
   }).then(
     (refusal) => {
       // A refusal ends the process; the connected path (no line) keeps serving.

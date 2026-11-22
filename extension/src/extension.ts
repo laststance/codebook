@@ -96,6 +96,7 @@ import {
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
+  devinReceiptUnreadableSentence,
 } from './devinWindowSentences'
 import { createEnvironment, requireWorkspace } from './environment'
 import { learningItemSchema } from './identitySchemas'
@@ -1237,8 +1238,8 @@ export function activate(
       )
       isDevinChatMarked ||= enabled
     })
-  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @example await syncDevinChatDescriptor() */
-  const syncDevinChatDescriptor = (): Promise<void> =>
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @param rotateWhenUnmarked - Rotates the server's bearer token when the window ends up unmarked and writes the new one into the descriptor, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
+  const syncDevinChatDescriptor = (rotateWhenUnmarked = false): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
@@ -1246,10 +1247,16 @@ export function activate(
       const isMarked = field.devinChat === true
       // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
       isDevinChatMarked &&= isMarked
+      // The server refuses the old token from here on; the descriptor then carries the new one, which every client of this window reads from the file ({@link connect}) or from the running server (the VS Code MCP provider).
+      const rotatedToken =
+        rotateWhenUnmarked && !isMarked
+          ? target.endpoint.rotateToken()
+          : undefined
       await setDescriptorDevinChat(
         target.descriptorPath,
         isMarked,
         field.devinSetupInstallation,
+        rotatedToken,
       )
       isDevinChatMarked ||= isMarked
     })
@@ -1283,8 +1290,8 @@ export function activate(
         )
       })
     // Any server running now may have read the half-saved setup, not only the one the setup checked.
-    // A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the rollback is incomplete; the window's in-memory mark is already off, so the server refuses the Devin bridge meanwhile.
-    await syncDevinChatDescriptor().catch((error: unknown) => {
+    // A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the rollback is incomplete; the window's in-memory mark is already off, so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too.
+    await syncDevinChatDescriptor(true).catch((error: unknown) => {
       isComplete = false
       diagnostics.info(
         `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
@@ -1334,6 +1341,13 @@ export function activate(
         context.extensionPath,
         context.globalStorageUri.fsPath,
       )
+      // A window marked without a readable installation id would be refused by the bridge, and the offered reload could not connect.
+      if (!(await readDevinInstallationId(context.globalStorageUri.fsPath)))
+        throw new Error(
+          devinReceiptUnreadableSentence(
+            join(context.globalStorageUri.fsPath, 'devin-mcp', 'receipt.json'),
+          ),
+        )
       // The descriptor of a server started before this setup carries no mark yet.
       await markDevinChatDescriptor(true)
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.

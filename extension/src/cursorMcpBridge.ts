@@ -55,7 +55,7 @@ async function connectWithin(
 }
 
 /**
- * Releases the session a failed handshake may have allocated, without waiting longer than {@link CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS} for a server that no longer answers; called by {@link runCursorMcpBridge} before it closes a failed client.
+ * Releases an upstream session (one a failed handshake may have allocated, or one {@link runCursorMcpBridge} ends), without waiting longer than {@link CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS} for a server that no longer answers; called by {@link runCursorMcpBridge} before it closes a failed client and when it closes a session.
  * @param http - The transport whose session is released.
  * @example
  * await releaseHalfOpenSession(http)
@@ -78,6 +78,7 @@ async function releaseHalfOpenSession(
  * @param expected - What the Devin Desktop bridge's selection validated; the descriptor read for the connection must still say the same, else nothing is sent. Cursor's bridge passes none.
  * @param extraHeader - A request header sent on every request to the server, beside the bearer token; the Devin Desktop bridge marks its requests with it ({@link DEVIN_BRIDGE_HEADER_NAME}). Cursor's bridge passes none.
  * @param onClosed - Called once the bridge's cleanup has completed after stdin closed or the stdio transport closed; the Devin Desktop bridge entry ends its process there, so a lookup that never settles cannot keep it alive. Cursor's bridge passes none and ends with its event loop.
+ * @param beforeUpstream - Check run before every upstream reinitialization after the first connection (an expired session); when it resolves `false` the bridge ends (cleanup, then `onClosed`) instead of reconnecting, and when it rejects only that request fails. The Devin Desktop bridge passes its receipts check; Cursor's bridge passes none.
  * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
  * @example await runCursorMcpBridge('/private/current.connection.json')
  */
@@ -87,6 +88,7 @@ export async function runCursorMcpBridge(
   expected?: DescriptorExpectation,
   extraHeader?: { name: string; value: string },
   onClosed?: () => void,
+  beforeUpstream?: () => Promise<boolean>,
 ): Promise<void> {
   const startedAt = Date.now()
   // The read of the descriptor spends the same startup budget as the handshake.
@@ -124,12 +126,8 @@ export async function runCursorMcpBridge(
   const closeUpstream = async (
     connection: Awaited<ReturnType<typeof connectUpstream>>,
   ): Promise<void> => {
-    // Releasing the HTTP session immediately keeps short Cursor restarts below the server's session limit.
-    try {
-      await connection.http.terminateSession()
-    } catch {
-      /* The session may already have expired. */
-    }
+    // Releasing the HTTP session immediately keeps short Cursor restarts below the server's session limit; a server that accepted the DELETE and never answers must not keep the bridge alive, so the wait is bounded and failures (an expired session) are ignored.
+    await releaseHalfOpenSession(connection.http)
     await connection.client.close()
   }
   let active = await connectUpstream(firstHandshakeMs)
@@ -151,6 +149,11 @@ export async function runCursorMcpBridge(
         throw error
       if (active === previous) {
         reconnecting ??= (async () => {
+          // A setup removed elsewhere must not get a new session: end the bridge instead.
+          if (beforeUpstream && !(await beforeUpstream())) {
+            shutdownThenNotify()
+            throw new Error('Codebook setup was removed.')
+          }
           const next = await connectUpstream()
           if (closed) {
             await closeUpstream(next)

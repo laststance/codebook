@@ -6,8 +6,12 @@ import {
   CONNECTION_DESCRIPTOR_SUFFIX,
   DEVIN_BRIDGE_CWD_LOOKUP_MS,
   DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX,
+  DEVIN_BRIDGE_DESCRIPTOR_READ_RETRIES_MAX,
+  DEVIN_BRIDGE_DESCRIPTOR_READ_RETRY_MS,
+  DEVIN_BRIDGE_DESCRIPTOR_READS_MAX,
   DEVIN_BRIDGE_HEADER_NAME,
   DEVIN_BRIDGE_HEADER_VALUE,
+  DEVIN_BRIDGE_RECONNECT_CHECK_MS,
   DEVIN_BRIDGE_SCAN_WAIT_MS,
   DEVIN_CONNECT_FLOOR_MS,
   DEVIN_DESCRIPTOR_LIMIT_BYTES,
@@ -17,6 +21,7 @@ import { connectionSchema } from './utils/connectionSchema'
 import { currentStorageOwner } from './utils/currentStorageOwner'
 import { isDescriptorOwnerGone } from './utils/evidenceInUseElsewhere'
 import { hasDevinBridgeReceipts } from './utils/hasDevinBridgeReceipts'
+import { isFileDescriptorExhaustion } from './utils/isFileDescriptorExhaustion'
 import { isLoopbackMcpUrl } from './utils/isLoopbackMcpUrl'
 import { isSameStorageMachine } from './utils/isSameStorageMachine'
 import type { DescriptorExpectation } from './utils/readBridgeDescriptor'
@@ -27,6 +32,11 @@ import {
 } from './utils/readRecordedOwner'
 import { readWikiRegularFile } from './utils/readWikiRegularFile'
 import { realOrSame } from './utils/realOrSame'
+import {
+  createSlotLimit,
+  runWithinSlotLimit,
+  type SlotLimit,
+} from './utils/runWithinSlotLimit'
 
 /** Selected Codebook instance of one Devin Desktop window; carries no credential. */
 export interface DevinDescriptorSelection {
@@ -71,6 +81,38 @@ type DevinCandidate = DevinDescriptorSelection & {
 }
 
 /**
+ * Opens and reads one descriptor file, opening it again after a pause while the process is out of file descriptors; called by {@link readCandidate}.
+ * A descriptor shortage is transient (other reads free their descriptors), so it is never answered as an absent file; after {@link DEVIN_BRIDGE_DESCRIPTOR_READ_RETRIES_MAX} attempts the file counts as unreadable for this scan and the next poll asks again.
+ * @param descriptorPath - The `<instanceId>.connection.json` file.
+ * @returns The file as {@link readWikiRegularFile} read it, or `undefined` for a file that must not be used or could not be opened.
+ * @example
+ * await readDescriptorFile('/storage/agent/instance.connection.json') // => { bytes, inode, modifiedAtMs }
+ */
+async function readDescriptorFile(
+  descriptorPath: string,
+): ReturnType<typeof readWikiRegularFile> {
+  for (let attempt = 0; ; attempt += 1) {
+    let isShortage = false
+    const file = await readWikiRegularFile(
+      descriptorPath,
+      undefined,
+      DEVIN_DESCRIPTOR_LIMIT_BYTES,
+      (error) => {
+        isShortage = isFileDescriptorExhaustion(error)
+      },
+    )
+    // A shortage is retried after a pause; anything else is the answer.
+    if (
+      file ||
+      !isShortage ||
+      attempt >= DEVIN_BRIDGE_DESCRIPTOR_READ_RETRIES_MAX
+    )
+      return file
+    await sleep(DEVIN_BRIDGE_DESCRIPTOR_READ_RETRY_MS)
+  }
+}
+
+/**
  * Reads one connection descriptor as a candidate of this machine; called by {@link readCandidates} for each file of the agent folder.
  * The file is read as a regular file of at most {@link DEVIN_DESCRIPTOR_LIMIT_BYTES} that is never followed as a link and never waited on, so a pipe cannot hold the scan. A descriptor whose owner is not positively this machine (another machine sharing the home folder, or a build that names none) and one whose endpoint is not loopback are skipped.
  * @param descriptorPath - The `<instanceId>.connection.json` file.
@@ -83,11 +125,7 @@ async function readCandidate(
   descriptorPath: string,
   identity: StorageOwnerIdentity,
 ): Promise<DevinCandidate | undefined> {
-  const file = await readWikiRegularFile(
-    descriptorPath,
-    undefined,
-    DEVIN_DESCRIPTOR_LIMIT_BYTES,
-  )
+  const file = await readDescriptorFile(descriptorPath)
   if (!file) return undefined
   try {
     const raw: unknown = JSON.parse(file.bytes.toString('utf8'))
@@ -179,9 +217,19 @@ interface WorkingFolderLookups {
   onAnswer: (() => void) | undefined
 }
 
+/** The listing of the agent folder: `running` while one is in flight, `settled` once it answered and no scan has taken the names yet. */
+interface FolderListing {
+  running: Promise<void> | undefined
+  settled: string[] | undefined
+}
+
 /** What one bridge remembers across its polls: the lookups still running (descriptor reads and workspace lookups) and those of its working folder. */
 export interface DevinSelectState {
   reads: InFlightLookups<DevinCandidate>
+  /** Bounds how many descriptor files are open at once. */
+  readSlots: SlotLimit
+  /** The folder listing, shared by the polls: one in flight, and the answer of one that settled between scans. */
+  listing: FolderListing
   workspaces: InFlightLookups<string>
   workingFolder: WorkingFolderLookups
 }
@@ -195,6 +243,8 @@ export interface DevinSelectState {
 export function createDevinSelectState(): DevinSelectState {
   return {
     reads: new Map(),
+    readSlots: createSlotLimit(),
+    listing: { running: undefined, settled: undefined },
     workspaces: new Map(),
     workingFolder: { pending: 0, answer: undefined, onAnswer: undefined },
   }
@@ -333,7 +383,12 @@ async function startCandidate(
     scan.state.reads,
     descriptorPath,
     true,
-    () => readCandidate(descriptorPath, scan.identity),
+    () =>
+      runWithinSlotLimit(
+        scan.state.readSlots,
+        DEVIN_BRIDGE_DESCRIPTOR_READS_MAX,
+        () => readCandidate(descriptorPath, scan.identity),
+      ),
   )
   if (!candidate) return undefined
   return {
@@ -508,6 +563,44 @@ async function awaitNewestMatch(
 }
 
 /**
+ * Lists the descriptor files of the agent folder, sharing one listing across polls; called by {@link scanDescriptors} at each poll.
+ * A listing that outlasts one scan's wait is not thrown away: it keeps running, the next poll waits for the same one (no second `readdir` starts), and its answer is taken when it arrives, so a slow home folder still yields its descriptors within the startup budget. An answer that arrived between scans is taken at the start of the next one.
+ * @param agentDir - Folder holding `*.connection.json` descriptors.
+ * @param listing - The bridge's shared listing state.
+ * @param scanDeadline - When this scan stops waiting (epoch milliseconds).
+ * @returns The descriptor file names, or an empty list when the folder cannot be read or the listing did not answer before `scanDeadline`.
+ * @example
+ * await listDescriptorNames('/storage/agent', state.listing, Date.now() + 1_000) // => ['<instanceId>.connection.json']
+ */
+async function listDescriptorNames(
+  agentDir: string,
+  listing: FolderListing,
+  scanDeadline: number,
+): Promise<string[]> {
+  // An answer that arrived since the last scan is the newest there is.
+  if (!listing.settled && !listing.running)
+    listing.running = readdir(agentDir)
+      .then(
+        (listed) => {
+          listing.settled = listed.filter((name) =>
+            name.endsWith(CONNECTION_DESCRIPTOR_SUFFIX),
+          )
+        },
+        () => {
+          listing.settled = []
+        },
+      )
+      .finally(() => {
+        listing.running = undefined
+      })
+  if (listing.running)
+    await answerWithin(listing.running, scanDeadline - Date.now())
+  const names = listing.settled ?? []
+  listing.settled = undefined
+  return names
+}
+
+/**
  * Finds the newest live descriptor of this window in the agent folder within one scan; called by {@link selectDevinDescriptor} at each poll.
  * The scan waits at most {@link DEVIN_BRIDGE_SCAN_WAIT_MS} (and never past the startup deadline, or {@link WORKSPACE_RESOLVE_FLOOR_MS} after the scan began when the deadline has passed), and no lookup starts after that. Every descriptor is read and judged concurrently ({@link judgeDescriptorFile}), so a read, owner check or lookup that never answers never holds a healthy match: the newest candidate that answered is taken ({@link awaitNewestMatch}), never by listing order. Unfinished reads and lookups stay in the shared state, so the next poll lists the folder again without starting duplicates and sees descriptors written meanwhile.
  * @param agentDir - Folder holding `*.connection.json` descriptors.
@@ -530,15 +623,11 @@ async function scanDescriptors(
     folder = scan.state.workingFolder,
     waiter: { wake: (() => void) | undefined } = { wake: undefined },
     notify = (): void => waiter.wake?.()
-  const names =
-    (await answerWithin(
-      readdir(agentDir).then(
-        (listed) =>
-          listed.filter((name) => name.endsWith(CONNECTION_DESCRIPTOR_SUFFIX)),
-        () => [],
-      ),
-      scanDeadline - Date.now(),
-    )) ?? []
+  const names = await listDescriptorNames(
+    agentDir,
+    scan.state.listing,
+    scanDeadline,
+  )
   const files = names.map((name) => {
     const entry: ScanEntry = {
       order: undefined,
@@ -679,6 +768,53 @@ export function devinDescriptorExpectation(
 }
 
 /**
+ * Runs the receipts check of {@link hasDevinBridgeReceipts} within a time budget; called by {@link connectOnce} before the first connection and by {@link setupCheckBeforeReconnect} before each later one.
+ * @param descriptorPath - The selected descriptor, in the agent folder.
+ * @param budgetMs - Longest wait for the check.
+ * @returns `true` when the setup stands, `false` when the check answered that it does not, `undefined` when it did not answer in time.
+ * @example
+ * await receiptsStandWithin('/storage/agent/x.connection.json', 3_000) // => true
+ */
+function receiptsStandWithin(
+  descriptorPath: string,
+  budgetMs: number,
+): Promise<boolean | undefined> {
+  return answerWithin(
+    hasDevinBridgeReceipts(descriptorPath).catch(() => false),
+    budgetMs,
+  )
+}
+
+/**
+ * Makes the check the bridge runs before it opens a new upstream session after the first one expired; passed by {@link connectOnce} to {@link runCursorMcpBridge}.
+ * A removal in another window never unmarks this window's descriptor, so the receipts are read again: when the setup no longer stands the not-set-up line is written to stderr and the exit code is set to 1, and the bridge ends instead of reconnecting.
+ * @param descriptorPath - The selected descriptor, in the agent folder.
+ * @param cwd - The bridge's working folder, named by the refusal line.
+ * @returns A check resolving `true` when the setup stands and `false` after it wrote the refusal.
+ * @throws From the returned check, when the receipts read does not answer within {@link DEVIN_BRIDGE_RECONNECT_CHECK_MS}: that request fails and the bridge stays up for the next one.
+ * @example
+ * await setupCheckBeforeReconnect('/storage/agent/x.connection.json', '/repo')() // => false once the setup was removed
+ */
+function setupCheckBeforeReconnect(
+  descriptorPath: string,
+  cwd: string,
+): () => Promise<boolean> {
+  return async () => {
+    const stands = await receiptsStandWithin(
+      descriptorPath,
+      DEVIN_BRIDGE_RECONNECT_CHECK_MS,
+    )
+    if (stands === undefined)
+      throw new Error('Codebook setup check did not answer in time.')
+    if (!stands) {
+      process.stderr.write(`${notSetUpLine(cwd)}\n`)
+      process.exitCode = 1
+    }
+    return stands
+  }
+}
+
+/**
  * Connects the bridge to one selected instance within the remaining startup budget; called by {@link runDevinMcpBridge}.
  * A failure is not reported: the error may hold credential fragments.
  * The attempt gets at least {@link DEVIN_CONNECT_FLOOR_MS}, also when the deadline has nearly passed, so the bridge's total time can exceed the startup window by that floor.
@@ -686,6 +822,7 @@ export function devinDescriptorExpectation(
  * @param deadline - When the startup wait ends (epoch milliseconds).
  * @param expected - What the selection validated ({@link devinDescriptorExpectation}).
  * @param onClosed - Called once the bridge's cleanup has completed after its stdio closed.
+ * @param cwd - The bridge's working folder, named by the refusal a later reconnection ends with.
  * Before any request it requires the setup receipts of the descriptor's installation ({@link hasDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
  * @returns `connected` once the transport is up; `not-set-up` after a pause when the receipts check answered that the setup does not stand; `busy` after a pause when the receipts check did not answer in time, the server answered 429 or refused or reset the connection, and time remains; `dropped` for any other failure (a handshake that does not finish in time included) and when no time remains.
  * @example
@@ -696,10 +833,11 @@ async function connectOnce(
   deadline: number,
   expected: DescriptorExpectation,
   onClosed: (() => void) | undefined,
+  cwd: string,
 ): Promise<'connected' | 'busy' | 'dropped' | 'not-set-up'> {
   // The last check before an MCP session: the setup the descriptor was marked for must still stand. It is bounded like every other wait: a check that does not answer in time is transient, never a missing setup; one that answered and failed counts like an unmarked descriptor, so the bridge keeps polling until its deadline, then names the missing setup.
-  const receiptsStand = await answerWithin(
-    hasDevinBridgeReceipts(selection.descriptorPath).catch(() => false),
+  const receiptsStand = await receiptsStandWithin(
+    selection.descriptorPath,
     Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now()),
   )
   if (receiptsStand !== true) {
@@ -715,6 +853,7 @@ async function connectOnce(
       expected,
       { name: DEVIN_BRIDGE_HEADER_NAME, value: DEVIN_BRIDGE_HEADER_VALUE },
       onClosed,
+      setupCheckBeforeReconnect(selection.descriptorPath, cwd),
     )
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
@@ -812,6 +951,7 @@ export async function runDevinMcpBridge(
       // The connection check compares with the working-folder value the selection matched with, never a second lookup of its own.
       devinDescriptorExpectation(selection, pid, selection.matchedCwd),
       options.onClosed,
+      cwd,
     )
     if (outcome === 'connected') return undefined
     noteConnectOutcome(outcome, selection.descriptorPath, excludedPaths, wait)

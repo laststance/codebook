@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -122,7 +123,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in. The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in. The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`receiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -140,6 +141,7 @@ async function devinWindow(
     entryWrite?: 'installed' | 'updated' | 'current'
     remoteName?: string
     entryReceipt?: boolean
+    receiptMode?: number
     nodeFailure?: boolean
     entryRefreshBusy?: number
     failSetupSave?: boolean
@@ -341,6 +343,7 @@ async function devinWindow(
               apiVersion: '1.6',
             },
             close: async (): Promise<void> => {},
+            rotateToken: (): string => 'rotated-test-token',
           }
         },
       },
@@ -413,6 +416,12 @@ async function devinWindow(
             MCP_RECEIPT_TEXT,
             { mode: 0o600 },
           )
+          // A receipt restored with another mode (a backup, a copy) is not private.
+          if (options.receiptMode !== undefined)
+            await chmod(
+              join(directory, 'devin-mcp/receipt.json'),
+              options.receiptMode,
+            )
           // The entry comes from the loaded module's own realm; a copy of this realm compares by value.
           writtenEntries.push(structuredClone(entry))
           return {
@@ -1243,25 +1252,57 @@ test('Devin Desktop marks the connection descriptor after setup and unmarks it a
 })
 
 // Value: protects=the descriptor mark names the installation of the MCP receipt, so a bridge can tell a removed setup from an updated one (Cycle 0144 task 1); fails_when=the mark carries no installation id or another one than the receipt's, so the bridge refuses every window or accepts a removed setup; no_claim=the bridge's comparison of the id with the receipt; why_new=Cycle 0144 task 1; seam=the real descriptor file in the temporary storage
-test('Devin Desktop writes the installation id of the MCP receipt beside devinChat and drops it with the mark', async (context) => {
-  // Arrange
-  const window = await devinWindow(context, { confirmRemoval: true })
-  try {
-    await window.commands.get('codebook.startAgentServer')!()
-    // Act
-    await window.commands.get('codebook.setupAiChat')!()
-    const afterSetup = await window.readDescriptorInstallation()
-    await window.commands.get('codebook.removeManagedDevinSetup')!()
-    const afterRemoval = await window.readDescriptorInstallation()
-    // Assert
-    assert.deepEqual(
-      [afterSetup, afterRemoval],
-      ['installation-test', undefined],
-    )
-  } finally {
-    await window.loaded.deactivate()
-  }
-})
+test(
+  'Devin Desktop writes the installation id of the MCP receipt beside devinChat and drops it with the mark',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, { confirmRemoval: true })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      await window.commands.get('codebook.setupAiChat')!()
+      const afterSetup = await window.readDescriptorInstallation()
+      await window.commands.get('codebook.removeManagedDevinSetup')!()
+      const afterRemoval = await window.readDescriptorInstallation()
+      // Assert
+      assert.deepEqual(
+        [afterSetup, afterRemoval],
+        ['installation-test', undefined],
+      )
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
+
+// Value: protects=Set Up AI Chat does not report success for a window whose bridge could never connect because the MCP receipt's installation id cannot be read (Cycle 0144 F12); fails_when=the window is marked and the reload is offered although the receipt (mode 0644) is unreadable, so rerunning setup repeats it; no_claim=the wording of the repair beyond naming the receipt file; why_new=Cycle 0144 F12; seam=the real descriptor and receipt files in the temporary storage
+test(
+  'Devin Desktop setup refuses with the receipt file to repair when the receipt is not private, and leaves the descriptor unmarked',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const window = await devinWindow(context, { receiptMode: 0o644 })
+    try {
+      await window.commands.get('codebook.startAgentServer')!()
+      // Act
+      const setupOutcome = await window.commands.get(
+        'codebook.setupAiChat',
+      )!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Assert
+      assert.equal(
+        setupOutcome,
+        `Codebook could not read the installation id in ${join(window.directory, 'devin-mcp', 'receipt.json')}, so Devin Local could not connect. Make that file readable only by you (mode 600), or delete it, then run Codebook: Set Up AI Chat again.`,
+      )
+      assert.equal(await window.readDescriptorField(), undefined)
+    } finally {
+      await window.loaded.deactivate()
+    }
+  },
+)
 
 // Value: protects=a window that opens on a set-up workspace writes its descriptor already marked; fails_when=the descriptor written at the server start lacks devinChat, so Devin Local's bridge refuses the window after every reload; why_new=review finding C8 (descriptor decided before the start); seam=the real descriptor file in the temporary storage
 test('a Devin Desktop window that opens on a set-up workspace writes a marked connection descriptor', async (context) => {
@@ -1833,18 +1874,20 @@ test('a Devin Desktop setup that fails after a server restart unmarks the new se
  * Posts an MCP initialize to the server a Devin Desktop window runs, as the Devin bridge (or any other client) would.
  * @param descriptorFile - The path of the window's connection descriptor.
  * @param isDevinBridge - Whether the request carries `x-codebook-bridge: devin`.
+ * @param token - The bearer token to send instead of the descriptor's current one (a client that connected earlier).
  * @returns The HTTP status of the answer.
  * @example await postInitialize(await window.descriptorPath(), true) // => 403 while the window's mark is off
  */
 async function postInitialize(
   descriptorFile: string,
   isDevinBridge: boolean,
+  token?: string,
 ): Promise<number> {
   const descriptor = JSON.parse(await readFile(descriptorFile, 'utf8'))
   const answer = await fetch(descriptor.url, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${descriptor.token}`,
+      authorization: `Bearer ${token ?? descriptor.token}`,
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       ...(isDevinBridge && { 'x-codebook-bridge': 'devin' }),
@@ -1891,6 +1934,47 @@ test('a Devin bridge request is served while the setup stands and refused after 
     assert.deepEqual(
       [statusBeforeFailure, bridgeStatus, otherClientStatus],
       [200, 403, 200],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects: a failed Devin setup's rollback rotates the server's token and writes the new one into the descriptor, so a bridge of an earlier build (it sends no Devin header) is refused too (Cycle 0144 F6) / fails_when: the old token still works after the rollback, or the descriptor's new token is refused / no_claim: the bridge's own reconnect
+test('a Devin bridge without the Devin header that holds the old token is refused after a failed setup took the setup back, and the descriptor token is served', async (context) => {
+  // Arrange
+  let oldToken: string | undefined
+  let statusBeforeFailure: number | undefined
+  const restartAndRememberToken = async (): Promise<void> => {
+    // The restarted server read the half-saved setup, so it is marked and the bridge connects with its token.
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    oldToken = JSON.parse(
+      await readFile(await window.descriptorPath(), 'utf8'),
+    ).token
+    statusBeforeFailure = await postInitialize(
+      await window.descriptorPath(),
+      false,
+      oldToken,
+    )
+  }
+  const window = await devinWindow(context, {
+    realServer: true,
+    onSkillCheck: restartAndRememberToken,
+  })
+  try {
+    // Act
+    await window.commands.get('codebook.setupAiChat')!().catch(() => undefined)
+    const descriptorFile = await window.descriptorPath()
+    const newToken = JSON.parse(await readFile(descriptorFile, 'utf8')).token
+    const withOldToken = await postInitialize(descriptorFile, false, oldToken)
+    const withNewToken = await postInitialize(descriptorFile, false)
+    // Assert
+    assert.equal(typeof oldToken, 'string')
+    assert.notEqual(newToken, oldToken)
+    assert.deepEqual(
+      [statusBeforeFailure, withOldToken, withNewToken],
+      [200, 401, 200],
     )
   } finally {
     await window.loaded.deactivate()

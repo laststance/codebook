@@ -28,14 +28,18 @@ const LIST_TOOLS = JSON.stringify({
   method: 'tools/list',
 })
 
-/** Starts a Codebook server whose Devin mark is the returned switch; both are closed when the test ends. */
-async function startGatedServer(context: TestContext, isMarked: boolean) {
+/** Starts a Codebook server whose Devin mark is the returned switch (or `gate` when a test needs to decide per call); both are closed when the test ends. */
+async function startGatedServer(
+  context: TestContext,
+  isMarked: boolean,
+  gate?: () => boolean,
+) {
   const harness = await createHarness()
   const mark = { isOn: isMarked, bodyChunks: 0 }
   const endpoint = await startServer(
     harness.service,
     Date.now,
-    () => mark.isOn,
+    gate ?? (() => mark.isOn),
     () => {
       mark.bodyChunks += 1
     },
@@ -205,4 +209,94 @@ test('a refused Devin initialization leaves every idle session of other clients 
   assert.equal(mark.isOn, false)
   assert.equal(refused.status, 403)
   assert.deepEqual(statuses, Array(MAX_SESSIONS).fill(200))
+})
+
+test('a Devin initialization refused at dispatch time because the mark turned off meanwhile leaves every idle session of other clients served', async (context) => {
+  // protects=an initialize at MAX_SESSIONS whose mark turns off after the early gate does not close another client's idle session (Cycle 0144 F13); fails_when=the least recently seen idle session is evicted and closed before the dispatch-time gate refuses the request; no_claim=which session is evicted for a client that is served
+  // Arrange
+  let gateCalls = 0
+  // The early gate (call 1) sees the mark on; the dispatch-time gate (call 2 on) sees it off.
+  const { endpoint } = await startGatedServer(
+    context,
+    true,
+    () => (gateCalls += 1) === 1,
+  )
+  const sessionIds: string[] = []
+  for (let slot = 0; slot < MAX_SESSIONS; slot += 1) {
+    const initialized = await post(endpoint, INITIALIZE, {})
+    sessionIds.push(initialized.sessionId ?? '')
+  }
+  gateCalls = 0
+
+  // Act
+  const refused = await post(endpoint, INITIALIZE, DEVIN_HEADERS)
+  const statuses: number[] = []
+  for (const sessionId of sessionIds)
+    statuses.push(
+      (await post(endpoint, LIST_TOOLS, { 'mcp-session-id': sessionId }))
+        .status,
+    )
+
+  // Assert
+  assert.equal(refused.status, 403)
+  assert.deepEqual(statuses, Array(MAX_SESSIONS).fill(200))
+})
+
+test('a Devin bridge ends its own session with DELETE while the mark is off', async (context) => {
+  // protects=a bridge the mark left behind can clean up its session instead of leaving it to the idle timeout (Cycle 0144 F13); fails_when=the gate refuses the DELETE with 403 and the session stays served; no_claim=DELETE of another client's session
+  // Arrange
+  const { endpoint, mark } = await startGatedServer(context, true)
+  const initialized = await post(endpoint, INITIALIZE, DEVIN_HEADERS)
+  const sessionId = initialized.sessionId ?? ''
+  mark.isOn = false
+
+  // Act
+  const deleted = await fetch(endpoint.descriptor.url, {
+    method: 'DELETE',
+    headers: {
+      authorization: `Bearer ${endpoint.descriptor.token}`,
+      'mcp-session-id': sessionId,
+      ...DEVIN_HEADERS,
+    },
+  })
+  await deleted.text()
+  const afterwards = await post(endpoint, LIST_TOOLS, {
+    'mcp-session-id': sessionId,
+  })
+
+  // Assert
+  assert.equal(deleted.status, 200)
+  assert.equal(afterwards.status, 404)
+})
+
+test('a rotated token refuses a client that holds the old one with 401 and serves the new one', async (context) => {
+  // protects=a bridge of an earlier build (no Devin header) is stopped by the rollback's token rotation (Cycle 0144 F6); fails_when=the old token is still accepted after rotateToken, or the new one is refused; no_claim=what the extension writes into the descriptor
+  // Arrange
+  const { endpoint } = await startGatedServer(context, true)
+  const initialized = await post(endpoint, INITIALIZE, {})
+  const sessionId = initialized.sessionId ?? ''
+  const oldToken = endpoint.descriptor.token
+
+  // Act
+  const newToken = endpoint.rotateToken()
+  const withOldToken = await fetch(endpoint.descriptor.url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${oldToken}`,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      'mcp-session-id': sessionId,
+    },
+    body: LIST_TOOLS,
+  })
+  await withOldToken.text()
+  const withNewToken = await post(endpoint, LIST_TOOLS, {
+    'mcp-session-id': sessionId,
+  })
+
+  // Assert
+  assert.notEqual(newToken, oldToken)
+  assert.equal(endpoint.descriptor.token, newToken)
+  assert.equal(withOldToken.status, 401)
+  assert.equal(withNewToken.status, 200)
 })

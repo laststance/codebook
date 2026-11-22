@@ -1850,6 +1850,8 @@ test('Recovery adopts a published entry and settles each leftover on its own whe
     keptName: basename(keptPath),
     keptIno,
     keptSha256: sha256('bytes Codebook expected'),
+    // The displaced original stays tracked, so its record keeps the staged inode that tells a published file from a newer save.
+    stagedIno: configIno,
   })
 })
 
@@ -3083,4 +3085,173 @@ test('A receipt of an older build whose entry the learner edited still gets an i
     /^[0-9a-f-]{36}$/,
   )
   assert.equal(readFileSync(configPath, 'utf8'), configBefore)
+})
+
+test('A displaced original that could not be read in the first recovery is handed over, not deleted, when an editor saves a new config before the second recovery', async (context) => {
+  // protects=the only copy of the learner's other servers survives a recovery that could not read it, followed by an editor save; fails_when=the retained record loses the staged inode and the second recovery deletes the original because its hash still matches; no_claim=the wording of the refusal; seam=seam.afterStat throws on the first read of the displaced original
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`,
+  )
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const stagedPath = privateNameOf(configPath, 'tmp')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeFile(keptPath, originalBytes)
+  // The staged name is another link to the published config; the first recovery cleans it up.
+  linkSync(configPath, stagedPath)
+  const configIno = (await stat(configPath)).ino
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedName: basename(stagedPath),
+    stagedIno: configIno,
+    stagedSha256: sha256(readFileSync(configPath, 'utf8')),
+  })
+  let keptReadCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      keptReadCount += 1
+      if (keptReadCount === 1) throw new Error('input/output error')
+    },
+  }).catch(() => undefined)
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  // An editor saves a new config after the first recovery.
+  swapFile(configPath, '{"mcpServers":{"beta":{"command":"b"}}}\n')
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A leftover that disappears during the final read is not deleted when another file appears at its name', async (context) => {
+  // protects=the delete path never unlinks a name whose file differs from the one that was hashed; fails_when=the final recheck passes on the handle's own inode and the file that appeared at the name is deleted; no_claim=the gap between the last look and the unlink; seam=seam.afterStat removes the leftover and writes another file at its name during the second read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"theme":"dark"}\n')
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeFile(keptPath, '{"theme":"dark"}\n')
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256('{"theme":"dark"}\n'),
+  })
+  let statCount = 0
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      statCount += 1
+      // The first read is recovery's own look; the swap lands during the second one.
+      if (statCount === 2) {
+        rmSync(keptPath)
+        writeFileSync(keptPath, '{"theme":"another file that appeared"}\n')
+      }
+    },
+  })
+
+  // Assert
+  await attempt.catch(() => undefined)
+  assert.equal(
+    readFileSync(keptPath, 'utf8'),
+    '{"theme":"another file that appeared"}\n',
+  )
+})
+
+test('A setup after a removal that left its receipt behind starts a new installation id', async (context) => {
+  // protects=descriptors marked before a removal stay refused after a later setup; fails_when=the new receipt carries the id of the removed installation; no_claim=the bridge check itself; seam=the receipt is written back after the removal, as a failed receipt delete leaves it
+  // Arrange
+  const { home, storage } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptBefore = await readRecordFile(storage, 'receipt.json')
+  const removed = await removeManagedDevinMcpEntry(storage, home)
+  assert.equal(removed.status, 'file-removed')
+  await writeRecordFile(storage, 'receipt.json', receiptBefore)
+
+  // Act
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  const receiptAfter = await readRecordFile(storage, 'receipt.json')
+  assert.match(receiptAfter.installationId, /^[0-9a-f-]{36}$/)
+  assert.notEqual(receiptAfter.installationId, receiptBefore.installationId)
+})
+
+test('A refusal about an entry the learner saved after a crash names the original that was handed over', async (context) => {
+  // protects=the learner learns where the displaced original is even when the refusal is about their own entry; fails_when=the refusal names only the edited entry; no_claim=the wording around the path; seam=hand-written pending record of an interrupted write, then the learner's own codebook entry saved
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`,
+  )
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeFile(keptPath, originalBytes)
+  const publishedIno = (await stat(configPath)).ino
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(originalBytes),
+    stagedIno: publishedIno,
+  })
+  swapFile(
+    configPath,
+    '{"mcpServers":{"codebook":{"command":"/usr/bin/learner-own"}}}\n',
+  )
+
+  // Act
+  const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+})
+
+test('A crashed setup after a removal that left its receipt behind is adopted with a new installation id', async (context) => {
+  // protects=descriptors marked before a removal stay refused when the next run adopts a setup that crashed before its receipt write; fails_when=the adopted receipt carries the id of the removed installation; no_claim=the bridge check itself; seam=the receipt is written back after the removal and seam.afterPublish ends the setup before its receipt write
+  // Arrange
+  const { home, storage } = await arrange(context)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptBefore = await readRecordFile(storage, 'receipt.json')
+  await removeManagedDevinMcpEntry(storage, home)
+  await writeRecordFile(storage, 'receipt.json', receiptBefore)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+
+  // Act
+  await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  const receiptAfter = await readRecordFile(storage, 'receipt.json')
+  assert.match(receiptAfter.installationId, /^[0-9a-f-]{36}$/)
+  assert.notEqual(receiptAfter.installationId, receiptBefore.installationId)
 })

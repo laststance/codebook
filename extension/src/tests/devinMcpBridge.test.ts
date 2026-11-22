@@ -3,6 +3,7 @@ import { execFile, spawn } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
+  readdir,
   realpath,
   symlink,
   unlink,
@@ -30,6 +31,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod'
 
+import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
 import { runCursorMcpBridge } from '../cursorMcpBridge'
 import type * as DevinMcpBridgeModule from '../devinMcpBridge'
 import {
@@ -1503,7 +1505,8 @@ for (const stalledIndex of [0, 1]) {
 // protects=a working folder whose lookup answers during a scan being used at once; fails_when=the scan under way keeps matching with the folder as written until it ends, so a hanging same-window candidate holds the matching descriptor for the whole scan wait; no_claim=a real mount (the lookup answers after 1,100 ms)
 test(
   'a scan ends and starts again when the working folder lookup answers during it',
-  { timeout: 20_000 },
+  // A directory symlink needs a privilege on Windows.
+  { skip: process.platform === 'win32', timeout: 20_000 },
   async (context) => {
     // Arrange
     const { agentDir, workspace, otherWorkspace } = await createFolders(context)
@@ -1711,5 +1714,291 @@ bridge.runDevinMcpBridge = (agentDirectory, cwd, env, options) =>
     // Assert
     assert.equal(result.signal, null)
     assert.equal(result.code, 0)
+  },
+)
+
+// protects=a removed Devin setup not getting a new Codebook session when the old one expires; fails_when=the bridge reinitializes its upstream session without reading the setup receipts again, so a removal made in another window (whose unmark never reaches this window) still opens a session; no_claim=the removal itself (the receipts are rewritten by hand)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge whose session expired after the setup was removed ends with the not-set-up line and opens no new session',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    let now = 0
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service, () => now),
+      agentDir = await makeLiveAgentFolder(),
+      root = dirname(agentDir)
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    // The proxy counts the initialize requests that reach the server.
+    let initializeRequests = 0
+    const { port } = await listen(context, (incoming, outgoing) => {
+      incoming.on('data', (chunk: Buffer) => {
+        if (chunk.toString('utf8').includes('"method":"initialize"'))
+          initializeRequests += 1
+      })
+      forward(Number(new URL(endpoint.descriptor.url).port), incoming, outgoing)
+    })
+    await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    const child = spawn(
+      process.execPath,
+      [join(__dirname, '../devinMcpBridgeEntry.js'), agentDir],
+      {
+        cwd: harness.directory,
+        env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+        // A process that is still alive here is the failure; it is ended so the test does not hang.
+        timeout: 25_000,
+        killSignal: 'SIGKILL',
+      },
+    )
+    let stderr = ''
+    const connected = new Promise<void>((done) => {
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8')
+        if (stderr.includes('Codebook bridge: instance')) done()
+      })
+    })
+    const exited = new Promise<number | null>((done) => {
+      child.on('exit', (code) => done(code))
+    })
+    await connected
+    // Act
+    await writeSetupReceipts(root, { installed: false }, false)
+    now = SESSION_IDLE_TIMEOUT_MS + 1
+    await endpoint.expire()
+    const send = (message: object): void => {
+      child.stdin.write(`${JSON.stringify(message)}\n`)
+    }
+    send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'devin-bridge-test', version: '1.0' },
+      },
+    })
+    send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+    const exitCode = await exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(
+      stderr.includes(
+        `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(harness.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+      ),
+      true,
+    )
+    // Only the bridge's own first handshake reached the server.
+    assert.equal(initializeRequests, 1)
+  },
+)
+
+// protects=a connected bridge ending after its stdin closed although the server never answers the session DELETE; fails_when=the cleanup waits for the DELETE without a bound, so the bridge process stays alive forever; no_claim=the server's own session release (the proxy swallows the DELETE)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'a connected bridge exits after its stdin closes although the server never answers the session DELETE',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const harness = await createHarness(),
+      endpoint = await startServer(harness.service),
+      agentDir = await makeLiveAgentFolder(),
+      root = dirname(agentDir)
+    context.after(async () => {
+      await endpoint.close()
+      await harness.close()
+      await removeTestFolder(root)
+    })
+    // The proxy accepts the DELETE and never answers it.
+    const { port } = await listen(context, (incoming, outgoing) => {
+      if (incoming.method === 'DELETE') return
+      forward(Number(new URL(endpoint.descriptor.url).port), incoming, outgoing)
+    })
+    await writeDescriptor(agentDir, 0, harness.directory, process.pid, {
+      ...endpoint.descriptor,
+      url: `http://127.0.0.1:${port}/mcp`,
+      instanceId: IDS[0],
+    })
+    const child = spawn(
+      process.execPath,
+      [join(__dirname, '../devinMcpBridgeEntry.js'), agentDir],
+      {
+        cwd: harness.directory,
+        env: { WINDSURF_EXT_HOST_PID: String(process.pid) },
+        // A process that is still alive here is the failure; it is ended so the test does not hang.
+        timeout: 25_000,
+        killSignal: 'SIGKILL',
+      },
+    )
+    let stderr = ''
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+      // The bridge writes its connected line once the transport is up; Devin then closes stdin.
+      if (stderr.includes('Codebook bridge: instance')) child.stdin.end()
+    })
+    // Act
+    const startedAt = Date.now()
+    const result = await new Promise<{
+      code: number | null
+      signal: NodeJS.Signals | null
+    }>((done) => {
+      child.on('exit', (code, signal) => done({ code, signal }))
+    })
+    const elapsedMs = Date.now() - startedAt
+    // Assert
+    assert.equal(result.signal, null)
+    assert.equal(result.code, 0)
+    // gstack-timing-ok: the contract is an exit within the cleanup bound (1,000 ms) plus the start, with a wide margin for the gate's parallel load.
+    assert.equal(elapsedMs < 15_000, true)
+  },
+)
+
+// protects=a healthy descriptor being chosen on a home folder whose listing takes longer than one scan wait; fails_when=each scan starts a new readdir and discards a listing slower than the scan wait, so no listing ever answers within the startup budget; no_claim=a real slow disk (the listing stand-in answers after 1,500 ms)
+test(
+  'a folder listing slower than one scan wait still selects the descriptor within the startup budget',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+    )
+    let listings = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        'node:fs/promises': {
+          // Every listing takes 1,500 ms, longer than the 1,000 ms scan wait.
+          readdir: async (path: string) => {
+            listings += 1
+            await new Promise<void>((done) => setTimeout(done, 1_500))
+            return readdir(path)
+          },
+        },
+      },
+    )
+    // Act
+    const selection = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 10_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, healthyPath)
+    assert.equal(listings, 1)
+  },
+)
+
+// protects=a healthy descriptor being chosen when the first open fails because the process is out of file descriptors; fails_when=the shortage reads as an absent descriptor and is only asked again at the next poll (here 5,000 ms later); no_claim=a real descriptor limit (the read stand-in reports EMFILE once)
+test(
+  'a descriptor whose first open fails with EMFILE is read again within the scan, not at the next poll',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+    )
+    let opens = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/readWikiRegularFile': {
+          readWikiRegularFile: (
+            ...parameters: Parameters<typeof readWikiRegularFile>
+          ) => {
+            opens += 1
+            if (opens > 1) return readWikiRegularFile(...parameters)
+            // The first open runs out of file descriptors.
+            parameters[3]?.(Object.assign(new Error('x'), { code: 'EMFILE' }))
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+    )
+    // Act
+    const startedAt = Date.now()
+    const selection = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 10_000, intervalMs: 5_000 },
+    )
+    const elapsedMs = Date.now() - startedAt
+    // Assert
+    assert.equal(selection?.descriptorPath, healthyPath)
+    // gstack-timing-ok: the contract is a retry inside the first scan (about 100 ms), not at the next poll 5,000 ms later; margin for the gate's parallel load.
+    assert.equal(elapsedMs < 2_500, true)
+  },
+)
+
+// protects=a folder of many descriptors never opening more files at once than the cap; fails_when=every candidate is opened at once, so a process at its descriptor limit fails them all with EMFILE; no_claim=the real descriptor limit (the read stand-in counts the reads in flight)
+test(
+  'forty descriptors are read at most sixteen at a time and the newest is still selected',
+  { timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let newestPath = ''
+    for (let index = 0; index < 40; index += 1) {
+      const path = await writeDescriptor(
+        agentDir,
+        index,
+        workspace,
+        process.pid,
+      )
+      await utimes(
+        path,
+        new Date(1_000_000 + index),
+        new Date(1_000_000 + index),
+      )
+      newestPath = path
+    }
+    let open = 0,
+      mostOpen = 0
+    const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
+      resolve(__dirname, '../devinMcpBridge.js'),
+      {
+        './utils/readWikiRegularFile': {
+          readWikiRegularFile: async (
+            ...parameters: Parameters<typeof readWikiRegularFile>
+          ) => {
+            open += 1
+            mostOpen = Math.max(mostOpen, open)
+            // A pause keeps the read open long enough for the others to start.
+            await new Promise<void>((done) => setTimeout(done, 30))
+            open -= 1
+            return readWikiRegularFile(...parameters)
+          },
+        },
+      },
+    )
+    // Act
+    const selection = await bridgeModule.selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 10_000, intervalMs: 20 },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, newestPath)
+    assert.equal(mostOpen, 16)
   },
 )

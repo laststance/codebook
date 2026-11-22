@@ -492,6 +492,14 @@ export const DEVIN_BRIDGE_CWD_LOOKUP_MS = 1_000
 export const DEVIN_BRIDGE_SCAN_WAIT_MS = 1_000
 /** How long the Devin Desktop bridge entry waits for its refusal line to be written before it ends the process anyway, so a full stderr pipe cannot keep a refused bridge alive. */
 export const DEVIN_BRIDGE_REFUSAL_EXIT_MS = 1_000
+/** Longest wait for the receipts check the Devin Desktop bridge runs before it opens a new upstream session after the first one expired. */
+export const DEVIN_BRIDGE_RECONNECT_CHECK_MS = 3_000
+/** Most descriptor files the Devin Desktop bridge reads at once, so a folder of many never exhausts the process's file descriptors. */
+export const DEVIN_BRIDGE_DESCRIPTOR_READS_MAX = 16
+/** How many times the bridge opens a descriptor again after the process ran out of file descriptors. */
+export const DEVIN_BRIDGE_DESCRIPTOR_READ_RETRIES_MAX = 20
+/** How long the bridge waits before it opens a descriptor again after the process ran out of file descriptors. */
+export const DEVIN_BRIDGE_DESCRIPTOR_READ_RETRY_MS = 50
 /** The most working-folder lookups of the Devin Desktop bridge that may be unanswered at once, so a hung mount holds at most two of libuv's four pool threads. */
 export const DEVIN_BRIDGE_CWD_LOOKUPS_PENDING_MAX = 2
 

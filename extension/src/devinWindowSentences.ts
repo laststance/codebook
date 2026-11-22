@@ -40,3 +40,12 @@ export const DEVIN_BRIDGE_NOT_SET_UP_SENTENCE =
 /** What a failed Devin Desktop setup adds to its sentence when its rollback could not take back everything it saved: the reasons are in the Output. */
 export const DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE =
   "Codebook could not take back everything the setup saved; see Codebook's Output for details."
+
+/**
+ * What the Devin Desktop setup answers when the installation id of Codebook's MCP receipt cannot be read (for example the file was restored with a mode other than private), because the bridge would refuse the window and the offered reload could not connect.
+ * @param receiptPath - The `devin-mcp/receipt.json` in Codebook's global storage.
+ * @returns One sentence that names the file to repair.
+ * @example devinReceiptUnreadableSentence('/storage/devin-mcp/receipt.json') // => 'Codebook could not read the installation id in /storage/devin-mcp/receipt.json, …'
+ */
+export const devinReceiptUnreadableSentence = (receiptPath: string): string =>
+  `Codebook could not read the installation id in ${receiptPath}, so Devin Local could not connect. Make that file readable only by you (mode 600), or delete it, then run Codebook: Set Up AI Chat again.`

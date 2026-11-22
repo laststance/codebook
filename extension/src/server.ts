@@ -129,10 +129,12 @@ export async function startServer(
   isDevinChatEnabled?: () => boolean,
   onBodyChunk?: () => void,
 ) {
-  const token = randomBytes(TOKEN_BYTES).toString('hex')
-  const expected = Buffer.from(`Bearer ${token}`)
+  let token = randomBytes(TOKEN_BYTES).toString('hex')
+  let expected = Buffer.from(`Bearer ${token}`)
   const sessions = new Map<string, Session>()
   const pendingSessions = new Set<Session>()
+  // Idle sessions an initialization has picked to replace but has not closed yet: they count as free slots and cannot be picked twice.
+  const retiring = new Set<Session>()
   let origin = '',
     stopping = false,
     inFlight = 0
@@ -185,6 +187,7 @@ export async function startServer(
         }
         inFlight += 1
         let session: Session | undefined
+        let replaced: [string, Session] | undefined
         try {
           const body =
             request.method === 'POST'
@@ -208,11 +211,14 @@ export async function startServer(
               rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
               return
             }
-            let replaced: [string, Session] | undefined
-            if (sessions.size + pendingSessions.size >= MAX_SESSIONS) {
+            if (
+              sessions.size - retiring.size + pendingSessions.size >=
+              MAX_SESSIONS
+            ) {
               // Clients that end without DELETE leave idle sessions behind; the least recently seen one makes room, and only busy sessions refuse.
               const idle = [...sessions].filter(
-                ([, candidate]) => !candidate.active,
+                ([, candidate]) =>
+                  !candidate.active && !retiring.has(candidate),
               )
               replaced = idle.reduce<(typeof idle)[number] | undefined>(
                 (oldest, entry) =>
@@ -229,6 +235,8 @@ export async function startServer(
                 )
                 return
               }
+              // Picked only: the session leaves once the dispatch-time gate has passed, so a refusal evicts nobody.
+              retiring.add(replaced[1])
             }
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: randomUUID,
@@ -252,12 +260,8 @@ export async function startServer(
               lastSeen: now(),
               active: 0,
             }
-            // The replaced session leaves and the new one takes its slot in one step, before anything is awaited: an initialize that arrives while the replaced session closes counts the new one and cannot pick the same session.
-            if (replaced) sessions.delete(replaced[0])
             pendingSessions.add(session)
             try {
-              // Best effort: no client can reach the replaced session any more, and its failed close must not refuse the new client.
-              await replaced?.[1].protocol.close().catch(() => undefined)
               await session.protocol.connect(transport)
             } catch (error) {
               // One scope from the reserved slot to the connected session: whatever fails in between gives the slot back.
@@ -288,7 +292,11 @@ export async function startServer(
           }
           // Right before dispatch, after the body was read: a Devin bridge request is refused once this window's AI chat mark is off, also one whose body was held open across the unmark.
           if (
-            isDevinBridgeRequestRefused(request.headers, isDevinChatEnabled)
+            isDevinBridgeRequestRefused(
+              request.headers,
+              isDevinChatEnabled,
+              request.method,
+            )
           ) {
             // An initialization of this request reserved the session (it has no id yet): give the slot back.
             if (!session.transport.sessionId) {
@@ -297,6 +305,11 @@ export async function startServer(
             }
             rejectHttp(response, 403, DEVIN_BRIDGE_NOT_SET_UP_SENTENCE)
             return
+          }
+          // The gate passed: the picked idle session leaves now and the new one has its slot. Best effort close: no client can reach it any more, and its failed close must not refuse the new client.
+          if (replaced) {
+            sessions.delete(replaced[0])
+            await replaced[1].protocol.close().catch(() => undefined)
           }
           session.lastSeen = now()
           session.active += 1
@@ -312,6 +325,7 @@ export async function startServer(
           }
         } finally {
           inFlight -= 1
+          if (replaced) retiring.delete(replaced[1])
         }
       })().catch(() =>
         rejectHttp(
@@ -359,6 +373,17 @@ export async function startServer(
   return {
     descriptor,
     expire,
+    /**
+     * Replaces the bearer token, so every client that holds the old one is refused with 401 on its next request; called by the extension when a failed Devin Desktop setup is taken back, because a bridge of an earlier build sends no Devin header and only the token can stop it.
+     * @returns The new token; the caller writes it into the connection descriptor.
+     * @example const next = endpoint.rotateToken()
+     */
+    rotateToken(): string {
+      token = randomBytes(TOKEN_BYTES).toString('hex')
+      expected = Buffer.from(`Bearer ${token}`)
+      descriptor.token = token
+      return token
+    },
     get listening(): boolean {
       return server.listening && !stopping
     },
