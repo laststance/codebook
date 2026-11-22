@@ -244,6 +244,65 @@ test('the bridge ignores a descriptor of another extension host process', async 
   assert.equal(selection, undefined)
 })
 
+// protects: this window's connection when another window's stale descriptor points at a mount that never answers / fails_when: selection resolves every descriptor's workspace before judging its pid, so the hanging lookup stalls past the deadline / no_claim: a real MCP connection
+test(
+  'a stale descriptor of another window on a hanging mount does not stall this window selection',
+  { timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+    const ownPath = await writeDescriptor(agentDir, 0, workspace, process.pid)
+    await writeDescriptor(agentDir, 1, otherWorkspace, process.pid + 1)
+    const resolvedPaths: string[] = []
+    const resolveWorkspace = (path: string): Promise<string> => {
+      resolvedPaths.push(path)
+      // The other window's mount never answers.
+      if (path === otherWorkspace) return new Promise<string>(() => undefined)
+      return Promise.resolve(path)
+    }
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { ...FAST, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, ownPath)
+    assert.deepEqual(resolvedPaths, [workspace, workspace])
+  },
+)
+
+// protects: the startup deadline of selection against a same-window descriptor whose workspace never answers / fails_when: the lookup is not bounded by the remaining budget, so the newer hanging descriptor blocks the healthy one / no_claim: which descriptor wins when both answer
+test(
+  'a same-window descriptor whose workspace never answers is skipped for the healthy one',
+  { timeout: 10_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace, otherWorkspace } = await createFolders(context)
+    await writeDescriptor(agentDir, 1, otherWorkspace, process.pid)
+    const healthyPath = await writeDescriptor(
+      agentDir,
+      0,
+      workspace,
+      process.pid,
+    )
+    const resolveWorkspace = (path: string): Promise<string> =>
+      path === otherWorkspace
+        ? new Promise<string>(() => undefined)
+        : Promise.resolve(path)
+    // Act
+    const selection = await selectDevinDescriptor(
+      agentDir,
+      workspace,
+      process.pid,
+      { timeoutMs: 600, intervalMs: 20, resolveWorkspace },
+    )
+    // Assert
+    assert.equal(selection?.descriptorPath, healthyPath)
+  },
+)
+
 // Value: protects=a bridge started before Codebook finishes activating; fails_when=selection gives up at the first look instead of polling; no_claim=the default 15 s limit
 test('the bridge finds a descriptor written 600 ms after it started', async (context) => {
   // Arrange

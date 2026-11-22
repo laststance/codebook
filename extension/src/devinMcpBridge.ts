@@ -39,11 +39,15 @@ export interface DevinSelectOptions {
   identity?: StorageOwnerIdentity
   /** Descriptor files that did not answer; they are not chosen again. */
   excludedPaths?: ReadonlySet<string>
+  /** Resolves a workspace to its real path; {@link realOrSame} unless a test names its own (for example one that never answers). */
+  resolveWorkspace?: (path: string) => Promise<string>
 }
 
 /** Polling defaults: Codebook may still be activating when Devin starts the bridge. */
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_INTERVAL_MS = 250
+/** Least time one workspace resolution may take once the startup deadline has passed, so a healthy local folder still resolves for the one look a late selection makes. */
+const WORKSPACE_RESOLVE_FLOOR_MS = 200
 /** How long the bridge waits before it asks a busy or restarting server again. */
 const TRANSIENT_RETRY_PAUSE_MS = 200
 
@@ -119,27 +123,60 @@ async function readCandidates(
   return candidates
 }
 
-/** Keeps the descriptors whose workspace has the same real path as `realCwd`, whose owner still runs and, when known, whose pid is the extension host's; newest first, by file time then instance id. */
+/**
+ * Resolves a workspace to its real path within a time budget; called by {@link matchDescriptors} and {@link selectDevinDescriptor} so a mount that never answers cannot hold the selection past its startup deadline.
+ * @param resolveWorkspace - The resolver, {@link realOrSame} unless a test names its own.
+ * @param path - The workspace folder to resolve.
+ * @param deadline - Epoch milliseconds at which the startup window ends.
+ * @returns The real path, or `undefined` when the resolver did not answer within the remaining budget (never less than {@link WORKSPACE_RESOLVE_FLOOR_MS}).
+ * @example
+ * await resolveWithinBudget(realOrSame, '/repo', Date.now() + 15_000) // => '/repo'
+ */
+async function resolveWithinBudget(
+  resolveWorkspace: (path: string) => Promise<string>,
+  path: string,
+  deadline: number,
+): Promise<string | undefined> {
+  const budgetMs = Math.max(WORKSPACE_RESOLVE_FLOOR_MS, deadline - Date.now())
+  let timer: NodeJS.Timeout | undefined
+  const timedOut = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), budgetMs)
+  })
+  try {
+    return await Promise.race([resolveWorkspace(path), timedOut])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Keeps the descriptors whose pid is the extension host's, whose owner still runs and whose workspace has the same real path as `realCwd`; newest first, by file time then instance id. The cheap fields are judged first, so another window's descriptor never has its workspace resolved; a workspace that does not answer before `deadline` skips that descriptor. */
 async function matchDescriptors(
   agentDir: string,
   realCwd: string,
   extHostPid: number,
   identity: StorageOwnerIdentity,
   excludedPaths: ReadonlySet<string>,
+  resolveWorkspace: (path: string) => Promise<string>,
+  deadline: number,
 ): Promise<DevinDescriptorSelection[]> {
   const matches: Array<DevinDescriptorSelection & { modifiedAtMs: number }> = []
   for (const { pid, ...selection } of await readCandidates(
     agentDir,
     identity,
   )) {
-    const isSameWorkspace = (await realOrSame(selection.workspace)) === realCwd
+    // Cheap fields first: another window's descriptor is dropped before any file system lookup.
     if (
-      isSameWorkspace &&
-      pid === extHostPid &&
-      !excludedPaths.has(selection.descriptorPath) &&
-      !(await isDescriptorOwnerGone(selection.descriptorPath, identity))
+      pid !== extHostPid ||
+      excludedPaths.has(selection.descriptorPath) ||
+      (await isDescriptorOwnerGone(selection.descriptorPath, identity))
     )
-      matches.push(selection)
+      continue
+    const realWorkspace = await resolveWithinBudget(
+      resolveWorkspace,
+      selection.workspace,
+      deadline,
+    )
+    if (realWorkspace === realCwd) matches.push(selection)
   }
   // Newest first, ties by instance id: the order never depends on the folder's listing order.
   matches.sort(
@@ -182,7 +219,10 @@ export async function selectDevinDescriptor(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS,
     deadline = Date.now() + timeoutMs,
-    realCwd = await realOrSame(cwd),
+    resolveWorkspace = options.resolveWorkspace ?? realOrSame,
+    // A working folder that does not answer in time is compared as written, like one that does not resolve.
+    realCwd =
+      (await resolveWithinBudget(resolveWorkspace, cwd, deadline)) ?? cwd,
     identity = options.identity ?? (await currentStorageOwner())
   for (;;) {
     const matches = await matchDescriptors(
@@ -191,6 +231,8 @@ export async function selectDevinDescriptor(
       extHostPid,
       identity,
       options.excludedPaths ?? new Set(),
+      resolveWorkspace,
+      deadline,
     )
     // Matches come newest first, so several live ones resolve to the newest without waiting.
     if (matches.length > 0) return matches[0]

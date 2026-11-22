@@ -351,14 +351,20 @@ test(
       }),
       { mode: 0o600 },
     )
+    const resolvedPaths: string[] = []
     // Act
     const outcome = readBridgeDescriptor(
       descriptorPath,
       { instanceId, pid: process.pid, workspace: directory, devinChat: true },
       300,
-      () => new Promise<string>(() => undefined),
+      (path) => {
+        resolvedPaths.push(path)
+        return new Promise<string>(() => undefined)
+      },
     )
     // Assert
     await assert.rejects(outcome, /did not finish in time/)
+    // The resolver was reached, so a slow read alone cannot pass this test.
+    assert.deepEqual(resolvedPaths, [directory])
   },
 )
