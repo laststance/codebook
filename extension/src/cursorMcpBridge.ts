@@ -288,6 +288,10 @@ export async function runCursorMcpBridge(
         await server.close()
       }
     })())
+  // Waits until no refusal check is active; each check is bounded by its caller's own deadline.
+  const drainActiveRefusals = async (): Promise<void> => {
+    while (refusals.size > 0) await Promise.allSettled([...refusals])
+  }
   // Runs the cleanup once, then tells the caller it is complete (never before).
   // One shared promise: stdin EOF during a reconnect check and the check's own refusal both reach it, and `onClosed` must run once.
   let notifying: Promise<void> | undefined
@@ -296,6 +300,8 @@ export async function runCursorMcpBridge(
     notifying ??= Promise.allSettled(drainRefusals ? [...refusals] : [])
       .then(shutdown)
       .catch(() => undefined)
+      // A refusal check can start while the upstream session is released; wait for those too (not on the refusal's own end path).
+      .then(() => (drainRefusals ? drainActiveRefusals() : undefined))
       .then(() => onClosed?.())
   }
   stdio.onclose = (): void => shutdownThenNotify()

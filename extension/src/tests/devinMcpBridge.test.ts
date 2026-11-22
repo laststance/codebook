@@ -3594,6 +3594,61 @@ fsPromises.open = async (path, ...rest) => {
   },
 )
 
+// protects=the refusal line and exit code 1 of a Devin bridge whose request is answered 403 while its upstream session is being released after stdin closed (Cycle 0145 final-range review, CodeRabbit final-range F3); fails_when=shutdown drains only the refusal checks present when stdin closed, so the check this 403 starts is not awaited and the process ends before its line with exit code 0; no_claim=a refusal that arrives after the upstream is released
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose request is answered 403 during the session release after stdin closed still ends with exit code 1 and the not-set-up line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    // The preload holds the receipt reads that start after it is armed, so the check outlives the release.
+    const preload = `const fsPromises = require('node:fs/promises')
+const originalOpen = fsPromises.open
+let isArmed = false
+process.on('SIGUSR2', () => { isArmed = true })
+fsPromises.open = async (path, ...rest) => {
+  if (isArmed && String(path).endsWith('receipt.json'))
+    await new Promise((done) => setTimeout(done, 700))
+  return originalOpen(path, ...rest)
+}
+`
+    const bridge = await startConnectedBridge(context, preload)
+    await writeSetupReceipts(bridge.root, { installed: false }, false)
+    bridge.arm()
+    // The proxy holds the tools/list request and the session DELETE (method '') until the test says; the DELETE is then forwarded.
+    let releaseToolsList: () => void = () => undefined,
+      markDeleteSeen: () => void = () => undefined
+    const toolsListHeld = new Promise<void>((done) => {
+      releaseToolsList = done
+    })
+    const deleteSeen = new Promise<void>((done) => {
+      markDeleteSeen = done
+    })
+    bridge.proxy.decide = async (method) => {
+      if (method === 'tools/list') {
+        await toolsListHeld
+        return 403
+      }
+      if (method === '') {
+        markDeleteSeen()
+        await new Promise((done) => setTimeout(done, 300))
+      }
+      return undefined
+    }
+    bridge.handshake()
+    bridge.askToolsList(1)
+    await new Promise((done) => setTimeout(done, 300))
+    // Act
+    bridge.closeStdin()
+    await deleteSeen
+    releaseToolsList()
+    const exitCode = await bridge.exited
+    // Assert
+    assert.equal(exitCode, 1)
+    assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
+  },
+)
+
 // protects=exit code 1 of a Devin bridge that confirmed a removed setup, when SIGTERM arrives while its refusal line is still being written (Cycle 0145 /ship pass 1, Codex structured P1 signal); fails_when=the signal cleanup sets exit code 0 over the refusal's 1; no_claim=the line reaching Devin Desktop's stderr pipe
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
