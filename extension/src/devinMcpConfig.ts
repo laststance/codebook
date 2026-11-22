@@ -2725,7 +2725,7 @@ async function markTakeBackOwed(
     publishGeneration === undefined
       ? legacyKeptIno !== undefined &&
         publish.stagedIno !== undefined &&
-        isSameFileId(legacyKeptIno, publish.stagedIno)
+        String(legacyKeptIno) === String(publish.stagedIno)
       : publish.generation === publishGeneration
   if (!belongsToPublish) return
   await writeRecord(context.pendingPath, { ...publish, takeBack: true })
