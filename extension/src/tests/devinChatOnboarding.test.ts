@@ -1859,7 +1859,7 @@ test('a Devin Desktop window starts no receipt read after its unmarked descripto
       "the reconnect's connection descriptor",
       15_000,
     )
-    // The retry wait of 500 ms would end after the deadline; a read started then shows within a second.
+    // gstack-timing-ok: proving that no read starts after the deadline needs a window past the 500 ms retry wait; a slow runner can only hide the defect, never fail a correct build.
     await delay(1_200)
     // Assert
     assert.equal(window.receiptReadCount(), 1)
