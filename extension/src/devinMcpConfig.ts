@@ -766,14 +766,18 @@ function dropPending(context: Context): Promise<void> {
 /**
  * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending}, {@link retirePending} and {@link handOver}.
  * @param context - The run; its pending path is deleted.
- * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (nothing is deleted then); what the delete throws other than for a name that is gone.
+ * @param assertStill - A synchronous look at another name that must still hold, called right before the delete (for a tracked journal after its last look); throwing keeps the record. Undefined when nothing else must hold ({@link retirePending}).
+ * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (nothing is deleted then); what `assertStill` throws; what the delete throws other than for a name that is gone.
  * @example
  * await removeRecord(context) // pending.json is gone
  */
-function removeRecord(context: Context): Promise<void> {
-  return context.journalVersion
-    ? dropTrackedJournal(context)
-    : rm(context.pendingPath, { force: true })
+async function removeRecord(
+  context: Context,
+  assertStill?: () => void,
+): Promise<void> {
+  if (context.journalVersion) return dropTrackedJournal(context, assertStill)
+  assertStill?.()
+  await rm(context.pendingPath, { force: true })
 }
 
 /**
@@ -2243,7 +2247,8 @@ function parseRecord<Schema extends z.ZodType>(
  * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename (for a tracked journal also before the last look at its name).
  * @param path - The record file.
  * @param value - The complete record.
- * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam throws; a {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again. The previous record then stays byte for byte, and so does a tracked version.
+ * @param assertStill - A synchronous look at another name that must still hold, called after the seam (and a tracked journal's last look) right before the rename or link, so nothing that the caller's earlier look found can change while the bytes are flushed; throwing cancels the write. Undefined when nothing else must hold ({@link retirePending}).
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam or `assertStill` throws; a {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again. The previous record then stays byte for byte, and so does a tracked version.
  * @example
  * await writeRecord(context, context.pendingPath, { ...journal, phase: 'completed' })
  */
@@ -2251,18 +2256,20 @@ async function writeRecord(
   context: Context,
   path: string,
   value: unknown,
+  assertStill?: () => void,
 ): Promise<void> {
   const tracked =
     path === context.pendingPath ? context.journalVersion : undefined
   // Every record but a tracked journal is replaced whatever stands at its name.
   if (!tracked) {
-    await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () =>
-      context.seam?.beforeRecordWrite?.({ path, record: value }),
-    )
+    await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () => {
+      context.seam?.beforeRecordWrite?.({ path, record: value })
+      assertStill?.()
+    })
     return
   }
   // Only a write that went through moves the version: after a refused one the next guarded step on that name finds the conflict again.
-  tracked.current = await writeTrackedJournal(context, value)
+  tracked.current = await writeTrackedJournal(context, value, assertStill)
 }
 
 /**
@@ -2271,8 +2278,9 @@ async function writeRecord(
  * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
  * @param context - The run; its pending path is the journal, its seam is called right before the last look.
  * @param value - The complete journal.
+ * @param assertStill - What else must still hold, looked at right after the last look ({@link writeRecord}).
  * @returns The version this write published: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write throws. The name then stays as it was.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write or `assertStill` throws. The name then stays as it was.
  * @example
  * await writeTrackedJournal(rollbackContext, retained) // => { ino: 43n, sha256: 'cd…' }; pending.json.rollback holds `retained` while it held this run's version
  * await writeTrackedJournal(heldRun, retained) // throws a `gone` JournalConflictError once a sync tool moved pending.json away after the run read it
@@ -2280,22 +2288,24 @@ async function writeRecord(
 async function writeTrackedJournal(
   context: Context,
   value: unknown,
+  assertStill?: () => void,
 ): Promise<RecordVersion> {
   // No version of this run stands at the name: the write claims it, never replacing what stands there.
   if (context.journalVersion?.current === undefined)
-    return claimJournal(context, value)
+    return claimJournal(context, value, assertStill)
   const look = await lookAtTrackedJournal(context)
   // The name went empty since this run's version: a publish record a decision read is gone and stays gone, a journal of this run's rollback is claimed again.
   if (!look) {
     if (context.journalVersion.refusesEmptyName)
       throw journalConflictError(context, 'gone')
-    return claimJournal(context, value)
+    return claimJournal(context, value, assertStill)
   }
   const path = context.pendingPath
   const { staged, version } = await stageRecord(path, value)
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
     assertTrackedJournalStill(context, look)
+    assertStill?.()
     await rename(staged, path)
   } catch (error) {
     // Nothing was published: the staged name goes, and the name stays as it was.
@@ -2310,19 +2320,22 @@ async function writeTrackedJournal(
  * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}), which goes again whatever happens.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
+ * @param assertStill - What else must still hold, looked at right after the seam and before the link ({@link writeRecord}).
  * @returns The version the link published: the inode of the file this call wrote and the hash of its bytes.
- * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is; what the write or the link throws otherwise.
+ * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is; what the write, `assertStill` or the link throws otherwise.
  * @example
  * await claimJournal(rollbackContext, journal) // => { ino: 44n, sha256: 'ef…' }; pending.json.rollback holds `journal`, or the call throws and the name stays as it was
  */
 async function claimJournal(
   context: Context,
   value: unknown,
+  assertStill?: () => void,
 ): Promise<RecordVersion> {
   const path = context.pendingPath
   const { staged, version } = await stageRecord(path, value)
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
+    assertStill?.()
     await link(staged, path).catch((error: unknown) => {
       // Something stands at the name already: it is never replaced.
       throw codeOf(error) === 'EEXIST'
@@ -3034,29 +3047,51 @@ function retainedRecord(
 
 /**
  * Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay; called by {@link settleRollbackJournal} for a rollback's journal, and for `pending.json` by {@link settlePending}, {@link adoptPending} and {@link finishCutShortSetup}.
- * A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link writeRecord}, {@link removeRecord}); another journal a backup restored there stays for the next run, and the call rejects. A publish record whose old record's private name this run's put-back found empty (`emptiedRetiredPath`, {@link settleRetiredReceipt}) is the only pointer to that name, so it ends only while one synchronous look right before the write or delete still finds that name empty.
+ * A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link writeRecord}, {@link removeRecord}); another journal a backup restored there stays for the next run, and the call rejects. A publish record whose old record's private name this run's put-back found empty ({@link settleRetiredReceipt}) is the only pointer to that name, so it ends only while one synchronous look right before the rename or unlink still finds that name empty ({@link retiredNameCheck}), after the bytes of what stays were flushed and after a tracked record's own last look.
  * So is the publish record of a run that holds a legacy journal ({@link heldPublishContext}): it is ended only as the version that journal's decision read, what stays of it is never written back at a name found empty (a sync tool moved it away), and a rejection there is worded as that record's ({@link publishRecordConflict}).
  * @param context - The run; its pending path is the record.
  * @param retained - What stays of the record; undefined when nothing does.
- * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
- * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (the name stays as it is); the {@link retiredBackRefusal} when a file stands at `emptiedRetiredPath` again or that look fails (the record stays byte for byte and the run goes no further); what the write or delete throws.
+ * @param assertStill - A synchronous look at another name that must still hold right before the rename or unlink ({@link retiredNameCheck}); undefined when nothing else must hold.
+ * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (the name stays as it is); what `assertStill` throws, such as the {@link retiredBackRefusal} (the record stays byte for byte and the run goes no further); what the write or delete throws.
  * @example
  * await retirePending(rollbackContext, undefined) // pending.json.rollback is gone while it held the version this run settled
+ * await retirePending(context, retained, retiredNameCheck(context, emptiedRetiredPath)) // throws, keeping pending.json, once a backup put the old record back at that name
  */
 async function retirePending(
   context: Context,
   retained: Pending | undefined,
-  emptiedRetiredPath?: string,
+  assertStill?: () => void,
 ): Promise<void> {
-  // A file back at the private name found empty (or a look that failed): the record that leads there stays.
-  if (emptiedRetiredPath !== undefined && !isNameEmptyNow(emptiedRetiredPath))
-    throw retiredBackRefusal(context, emptiedRetiredPath)
-  if (retained) await writeRecord(context, context.pendingPath, retained)
-  else await removeRecord(context)
+  if (retained)
+    await writeRecord(context, context.pendingPath, retained, assertStill)
+  else await removeRecord(context, assertStill)
 }
 
 /**
- * Tells, by one synchronous look, whether nothing stands at a name; called only by {@link retirePending}, right before it ends a publish record whose old record's private name this run found empty.
+ * Gives the synchronous look that must still find the old record's private name empty right before a publish record that leads there ends ({@link retirePending}); called by {@link settlePending} and {@link finishCutShortSetup} with what {@link settleRetiredReceipt} found.
+ * @param context - The run; gives the refusal's publish record path and the command to run again.
+ * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
+ * @returns
+ * - undefined when no private name was found empty
+ * - a look that throws the {@link retiredBackRefusal} when a file stands at that name again or the look fails, otherwise
+ * @example
+ * retiredNameCheck(context, undefined) // => undefined
+ * retiredNameCheck(context, retiredPath)?.() // throws once a backup put the old record back at retiredPath
+ */
+function retiredNameCheck(
+  context: Context,
+  emptiedRetiredPath: string | undefined,
+): (() => void) | undefined {
+  if (emptiedRetiredPath === undefined) return undefined
+  return (): void => {
+    // A file back at the private name found empty (or a look that failed): the record that leads there stays.
+    if (!isNameEmptyNow(emptiedRetiredPath))
+      throw retiredBackRefusal(context, emptiedRetiredPath)
+  }
+}
+
+/**
+ * Tells, by one synchronous look, whether nothing stands at a name; called by {@link retiredNameCheck}, right before a publish record whose old record's private name this run found empty ends.
  * @param path - The name to look at.
  * @returns `true` when nothing stands there; `false` when anything stands there or the look failed.
  * @example
@@ -3841,7 +3876,11 @@ async function settlePending(
   if (!pending) return receipt
   // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
   if (isTakeBackOwed(pending, receipt)) {
-    await retirePending(context, retained, emptiedRetiredPath)
+    await retirePending(
+      context,
+      retained,
+      retiredNameCheck(context, emptiedRetiredPath),
+    )
     return receipt
   }
   // The record of a removal that took the entry out (a receipt stands, the entry is gone) is what a removal retry reads to answer `removed`: another window's inspection leaves it in place, and the retry or a new setup's own record replaces it.
@@ -3870,7 +3909,11 @@ async function settlePending(
     )
   if (isPendingStale(context, pending, current, receipt)) {
     // The rename never happened (or this was a removal): the pending record is stale; the leftovers that stay remain tracked.
-    await retirePending(context, retained, emptiedRetiredPath)
+    await retirePending(
+      context,
+      retained,
+      retiredNameCheck(context, emptiedRetiredPath),
+    )
     return receipt
   }
   throw refusal(
@@ -4868,7 +4911,7 @@ function retiredDropRefusal(
 }
 
 /**
- * Builds the refusal for a later run that found a first setup's old record's private name empty ({@link endOnEmptyName}) and, at its look right before it ended the publish record that leads there, found a file there again or could not look; called only by {@link retirePending}, which then keeps that publish record byte for byte, and the run goes no further.
+ * Builds the refusal for a later run that found a first setup's old record's private name empty ({@link endOnEmptyName}) and, at its look right before it ended the publish record that leads there, found a file there again or could not look; called only by the look {@link retiredNameCheck} gives {@link retirePending}, which then keeps that publish record byte for byte, and the run goes no further.
  * @param context - The run; gives the publish record's path and the command to run again.
  * @param retiredPath - The private name that was found empty.
  * @returns The error, not thrown yet.
@@ -5613,15 +5656,20 @@ function assertTrackedJournalStill(
  * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link assertHeldPublishLeft}); a name found empty keeps the version, because this run did not empty it.
  * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then); what the unlink throws other than for a name that is gone.
+ * @param assertStill - A synchronous look at another name that must still hold, called right after the last look and before the unlink ({@link removeRecord}); throwing keeps the journal.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then); what `assertStill` throws; what the unlink throws other than for a name that is gone.
  * @example
  * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
  */
-async function dropTrackedJournal(context: Context): Promise<void> {
+async function dropTrackedJournal(
+  context: Context,
+  assertStill?: () => void,
+): Promise<void> {
   const look = await lookAtTrackedJournal(context)
   // Nothing stands at the name: nothing is deleted.
   if (!look) return
   assertTrackedJournalStill(context, look)
+  assertStill?.()
   await unlink(context.pendingPath).catch((error: unknown) => {
     // Another program removed it first: the name is empty, as the delete wanted.
     if (codeOf(error) !== 'ENOENT') throw error
@@ -6178,7 +6226,11 @@ async function finishCutShortSetup(
     throw new Error(
       `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome, context)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
-  await retirePending(context, retained, emptiedRetiredPath)
+  await retirePending(
+    context,
+    retained,
+    retiredNameCheck(context, emptiedRetiredPath),
+  )
   return { look: await lookAtConfig(context), removal: result.removal }
 }
 
