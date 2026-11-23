@@ -170,8 +170,12 @@ type Context = {
   retry: string
   /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
   rollbackOf?: string
-  /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal, and for the rest of {@link inspect} on a run that holds a legacy journal, which tracks the publish record that journal's decision read the same way ({@link heldPublishContext}): the version of the record that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}) and cleared once it deleted that record itself ({@link dropTrackedJournal}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}). */
-  journalVersion?: { current: RecordVersion | undefined }
+  /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal, and for the rest of {@link inspect} on a run that holds a legacy journal, which tracks the publish record that journal's decision read the same way ({@link heldPublishContext}): the version of the record that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}) and cleared once it deleted that record itself ({@link dropTrackedJournal}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}), and so does a write at a rollback journal's name found empty; a publish record's name found empty is refused instead (`refusesEmptyName`). */
+  journalVersion?: {
+    current: RecordVersion | undefined
+    /** Set when the tracked record is the publish record a decision read ({@link heldPublishContext}, {@link markTakeBackOwed}): while a version is known, an empty name means that record disappeared after the read, so a write there throws a `gone` {@link JournalConflictError} instead of writing the record back ({@link writeTrackedJournal}). A rollback journal's tracker leaves it unset: that journal is this run's own record of what it still tracks, so a write claims its empty name again. */
+    refusesEmptyName?: true
+  }
 }
 
 /** A copy of the config that Codebook keeps for a moment, and what it must hold. */
@@ -2228,13 +2232,14 @@ async function writeRecord(
 
 /**
  * Writes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote, or nothing; called only by {@link writeRecord}.
- * A name with no known version, or one found empty, is claimed ({@link claimJournal}). Otherwise the bytes are staged and flushed first, and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced.
+ * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed first, and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced.
  * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
  * @param context - The run; its pending path is the journal, its seam is called right before the last look.
  * @param value - The complete journal.
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again; what the write throws. The name then stays as it was.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write throws. The name then stays as it was.
  * @example
  * await writeTrackedJournal(rollbackContext, retained) // pending.json.rollback holds `retained` while it held this run's version
+ * await writeTrackedJournal(heldRun, retained) // throws a `gone` JournalConflictError once a sync tool moved pending.json away after the run read it
  */
 async function writeTrackedJournal(
   context: Context,
@@ -2244,8 +2249,12 @@ async function writeTrackedJournal(
   if (context.journalVersion?.current === undefined)
     return claimJournal(context, value)
   const look = await lookAtTrackedJournal(context)
-  // The name went empty since this run's version: the write claims it.
-  if (!look) return claimJournal(context, value)
+  // The name went empty since this run's version: a publish record a decision read is gone and stays gone, a journal of this run's rollback is claimed again.
+  if (!look) {
+    if (context.journalVersion.refusesEmptyName)
+      throw journalConflictError(context, 'gone')
+    return claimJournal(context, value)
+  }
   const path = context.pendingPath
   await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () => {
     context.seam?.beforeRecordWrite?.({ path, record: value })
@@ -2698,11 +2707,11 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
 
-/** Thrown by a write or delete of a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`); nothing was written or deleted at that name ({@link journalConflictError}), and {@link settleRollbackJournal} ends the run with it. */
+/** Thrown by a write or delete of a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`), and by a write of a tracked publish record whose name was found empty (`gone`, {@link writeTrackedJournal}); nothing was written or deleted at that name ({@link journalConflictError}), and {@link settleRollbackJournal} ends the run with it, or {@link publishRecordConflict} words it as the publish record's. */
 class JournalConflictError extends Error {
   constructor(
     message: string,
-    readonly kind: 'changed' | 'unread',
+    readonly kind: 'changed' | 'unread' | 'gone',
     options?: ErrorOptions,
   ) {
     super(message, options)
@@ -2972,7 +2981,7 @@ function retainedRecord(
 /**
  * Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay; called by {@link settleRollbackJournal} for a rollback's journal, and for `pending.json` by {@link settlePending}, {@link adoptPending} and {@link finishCutShortSetup}.
  * A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link writeRecord}, {@link removeRecord}); another journal a backup restored there stays for the next run, and the call rejects. A publish record whose old record's private name this run's put-back found empty (`emptiedRetiredPath`, {@link settleRetiredReceipt}) is the only pointer to that name, so it ends only while one synchronous look right before the write or delete still finds that name empty.
- * So is the publish record of a run that holds a legacy journal ({@link heldPublishContext}): it is ended only as the version that journal's decision read, and a rejection there is worded as that record's ({@link publishRecordConflict}).
+ * So is the publish record of a run that holds a legacy journal ({@link heldPublishContext}): it is ended only as the version that journal's decision read, what stays of it is never written back at a name found empty (a sync tool moved it away), and a rejection there is worded as that record's ({@link publishRecordConflict}).
  * @param context - The run; its pending path is the record.
  * @param retained - What stays of the record; undefined when nothing does.
  * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
@@ -5606,7 +5615,7 @@ function assertHeldJournalStill(
 
 /**
  * Binds the rest of a run that holds a legacy rollback journal ({@link HeldJournal}) to the publish record that journal's decision read; called by {@link inspect} right after its own read of `pending.json`, before anything is recovered, adopted or ended from it.
- * A backup or sync tool may put another record at that name, or move it away, after the decision read it: the run then stops instead of adopting or ending a record the journal was never decided on, and the held journal stays for the next run. From here on the run tracks the version it read ({@link Context.journalVersion}), so every later write or delete of that record goes on only while its name still shows what this run read or last wrote ({@link writeRecord}, {@link removeRecord}).
+ * A backup or sync tool may put another record at that name, or move it away, after the decision read it: the run then stops instead of adopting or ending a record the journal was never decided on, and the held journal stays for the next run. From here on the run tracks the version it read ({@link Context.journalVersion}), so every later write or delete of that record goes on only while its name still shows what this run read or last wrote ({@link writeRecord}, {@link removeRecord}), and a write never puts that record back at a name found empty (`refusesEmptyName`).
  * @param context - The run.
  * @param held - The held journal; undefined when none is held.
  * @param version - The version of `pending.json` that {@link inspect}'s read saw; undefined when the name was empty.
@@ -5629,7 +5638,11 @@ function heldPublishContext(
   // Another inode or other bytes: not the record the journal was decided on.
   if (version.ino !== decided.ino || version.sha256 !== decided.sha256)
     throw unmatchedJournalRefusal(context, 'record-reread', held.legacy)
-  return { ...context, journalVersion: { current: version } }
+  // An empty name later means this record disappeared: it is never written back there.
+  return {
+    ...context,
+    journalVersion: { current: version, refusesEmptyName: true },
+  }
 }
 
 /**
@@ -5660,24 +5673,30 @@ async function assertHeldPublishLeft(
 }
 
 /**
- * Words a conflict at the publish record's name as that record's own refusal: a write or delete that tracked the version this run read of `pending.json` ({@link Context.journalVersion}) found another file there or could not read it again, and the {@link JournalConflictError} it threw speaks of a rollback record; called by {@link markTakeBackOwed}, {@link settleAfterRecovery} and {@link assertHeldPublishLeft}.
+ * Words a conflict at the publish record's name as that record's own refusal: a write or delete that tracked the version this run read of `pending.json` ({@link Context.journalVersion}) found another file there, could not read it again or, for a write, found the name empty, and the {@link JournalConflictError} it threw speaks of a rollback record; called by {@link markTakeBackOwed}, {@link settleAfterRecovery} and {@link assertHeldPublishLeft}.
  * @param context - The run; its pending path is the publish record.
  * @param legacy - The legacy journal's evidence, which the refusal names; undefined for a journal of this build.
  * @param error - What the write, delete or look threw.
  * @returns
- * - the `record-reread` {@link unmatchedJournalRefusal} for a {@link JournalConflictError}
+ * - the `record-gone` {@link unmatchedJournalRefusal} for a `gone` {@link JournalConflictError} (a write found the name empty)
+ * - the `record-reread` one for any other {@link JournalConflictError}
  * - `error` itself otherwise
  * @example
  * throw publishRecordConflict(context, legacy, conflict) // 'Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at …/pending.json changed while Codebook was settling it …'
+ * throw publishRecordConflict(context, legacy, goneConflict) // '… but the record of that setup at …/pending.json disappeared while Codebook was settling it …'
  */
 function publishRecordConflict(
   context: Context,
   legacy: LegacyJournalEvidence | undefined,
   error: unknown,
 ): unknown {
-  return error instanceof JournalConflictError
-    ? unmatchedJournalRefusal(context, 'record-reread', legacy)
-    : error
+  if (!(error instanceof JournalConflictError)) return error
+  // A write that found the name empty says the record disappeared; every other conflict says it changed.
+  return unmatchedJournalRefusal(
+    context,
+    error.kind === 'gone' ? 'record-gone' : 'record-reread',
+    legacy,
+  )
 }
 
 /** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `another-config` leaves it too but was decided on one read of a restored config that is valid and lacks the setup's entry, so the journal is held until the run's own look shows those bytes ({@link settleRollbackJournal}), and `unmatched` (the evidence contradicts itself), `unread` (the config that decides could not be read) and `invalid` (it was read but is no valid JSON config, as while an editor saves it) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
@@ -5856,7 +5875,7 @@ function unmatchedJournalRefusal(
 }
 
 /**
- * Builds the refusal for a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`); thrown by {@link lookAtTrackedJournal}, {@link assertTrackedJournalStill} and {@link claimJournal}, so nothing is written or deleted at that name and the run goes no further ({@link settleRollbackJournal}).
+ * Builds the refusal for a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`); thrown by {@link lookAtTrackedJournal}, {@link assertTrackedJournalStill} and {@link claimJournal}, so nothing is written or deleted at that name and the run goes no further ({@link settleRollbackJournal}). Also for a tracked publish record whose name was found empty (`gone`, {@link writeTrackedJournal}), which the awaited write's caller words as that record's own refusal ({@link publishRecordConflict}).
  * @param context - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its retry ends the sentence.
  * @param kind - What the look found.
  * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
@@ -5870,8 +5889,11 @@ function journalConflictError(
   cause?: unknown,
 ): JournalConflictError {
   const { pendingPath: journal, retry } = context
+  const replaced = `While Codebook settled its rollback record at ${journal} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`
+  // A name found empty is worded as a removal too; a publish record's caller replaces it with that record's own refusal.
   const sentence = {
-    changed: `While Codebook settled its rollback record at ${journal} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`,
+    changed: replaced,
+    gone: replaced,
     unread: `While Codebook settled its rollback record at ${journal} (a rollback that ended early), it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, ${retry}, and that run reads that name first.`,
   }[kind]
   return new JournalConflictError(
@@ -5923,14 +5945,14 @@ function unmatchedLeftoverSentence(
 
 /**
  * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
- * Only the publish of the given generation is marked: another installation's pending publish stays as it is. The mark replaces only the version of the record this call read ({@link Context.journalVersion}): a record a backup or sync tool put at that name meanwhile stays, and the run stops.
+ * Only the publish of the given generation is marked: another installation's pending publish stays as it is. The mark replaces only the version of the record this call read ({@link Context.journalVersion}): a record a backup or sync tool put at that name meanwhile stays, one it moved away is not written back at the empty name, and the run stops.
  * @param context - The run.
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
  * @returns
  * - The decision ({@link PublishDecision}): the belonging it decided ({@link JournalBelonging}), `belongs` once the mark is written, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`), with the version of the record it was decided on
  * - undefined when there is no publish record of this config, or it is marked already
- * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, and its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
+ * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written, and its `record-gone` sentence when that name is found empty then ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
  * @example
  * await markTakeBackOwed(context, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' } }; pending.json now holds takeBack: true
  */
@@ -5961,9 +5983,12 @@ async function markTakeBackOwed(
   // Contradicting, unread or half-saved evidence keeps both records: the learner or the next run decides.
   if (belonging !== 'belongs')
     throw unmatchedJournalRefusal(context, belonging, legacy)
-  // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, and the run stops.
+  // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, one it moved away is not written back, and the run stops.
   await writeRecord(
-    { ...context, journalVersion: { current: version } },
+    {
+      ...context,
+      journalVersion: { current: version, refusesEmptyName: true },
+    },
     context.pendingPath,
     { ...publish, takeBack: true },
   ).catch((error: unknown) => {
