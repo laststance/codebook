@@ -37,7 +37,7 @@ export type DevinSetupLockReports = {
  * @returns What the operation returns, once the lock is released or its release outlasted its bound.
  * @throws
  * - An error with {@link DEVIN_SETUP_LOCK_HELD_SENTENCE} when the lock stays held, or is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS}
- * - What the operation throws, and what the lock throws otherwise
+ * - What the operation throws, also when it throws before it returns a promise, and what the lock throws otherwise
  * @example
  * await withDevinSetupLock('/storage/devin-setup', () => removeDevinSetupLocked())
  * await withDevinSetupLock('/storage/devin-setup', () => setUpDevinChatLocked(), undefined, { onReleaseStalled: () => diagnostics.info('…') })
@@ -71,7 +71,10 @@ export async function withDevinSetupLock<Value>(
       if (isAbandoned) return
       didRun = true
       resolveAcquired()
-      await operation().then(resolveOperation, rejectOperation)
+      // A throw before the operation returns a promise becomes its rejection, so it settles the result and is never retried as a refusal of this lock.
+      await Promise.resolve()
+        .then(operation)
+        .then(resolveOperation, rejectOperation)
     })
   }, wait)
   // Awaited below; a failure after the caller stopped waiting (an abandoned wait, a stalled release) is nobody's.
@@ -90,14 +93,11 @@ export async function withDevinSetupLock<Value>(
     isAbandoned = true
     throw new Error(DEVIN_SETUP_LOCK_HELD_SENTENCE)
   }
-  // The operation is never cut; the release's own timer starts once it settled. An operation that throws before it returns a promise ends the lock's run instead, which answers with that error.
-  await Promise.race([
-    settled.then(
-      () => undefined,
-      () => undefined,
-    ),
-    locking,
-  ])
+  // The operation is never cut, and it always settles its result, also when it throws at its call; the release's own timer starts once it settled.
+  await settled.then(
+    () => undefined,
+    () => undefined,
+  )
   if (!(await settledWithin(locking, DEVIN_SETUP_LOCK_RELEASE_MS)))
     onReleaseStalled?.()
   return settled
