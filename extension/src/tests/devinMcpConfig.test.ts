@@ -4350,7 +4350,197 @@ test('A first setup whose handed record hit a full disk and whose changed copy c
   assert.equal(setup.status, 'installed')
   assert.ok(
     setup.cleanupFailure?.includes(
-      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but it could not record that it leaves that copy to you, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+})
+
+test('A first setup whose handed record hit a full disk and whose changed copy cannot be read warns that Codebook still tracks that copy, which the next run then deletes', async (context) => {
+  // Value: protects=a setup never leaves a copy to the learner while its completed record still lets a later run delete it, also when that copy cannot be read at the moment it would move out of recovery's reach; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy; no_claim=a real I/O error or handle shortage (seam.afterStat throws EIO once at the copy's read) and a real ENOSPC (seam.beforeRecordWrite fails only the handed record); seam=seam.afterPublish sets the displaced copy's times so the copy counts as changed
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  let copyPath = ''
+  let hasFailedRead = false
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      utimesSync(copyPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+    },
+    afterStat: (path) => {
+      if (path !== copyPath || hasFailedRead) return
+      hasFailedRead = true
+      throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+    },
+  })
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasFailedRead, true)
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+})
+
+test('A first setup whose handed record hit a full disk and whose copy a writer changed warns that Codebook still tracks that copy, which the next run deletes once the writer put the previous bytes back', async (context) => {
+  // Value: protects=a changed copy that stays under the name the completed record holds is named with the warning, because a writer that still holds that file can put the recorded bytes back and the next run then deletes it; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy once its bytes are back; no_claim=a real writer (writeFileSync into the same inode stands for an editor that kept the old file open), a real ENOSPC (seam.beforeRecordWrite fails only the handed record), and a copy whose bytes stay changed (named once and kept, covered above)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  let copyPath = ''
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      writeFileSync(
+        copyPath,
+        '{"mcpServers":{"alpha":{"command":"saved into the old file"}}}\n',
+      )
+    },
+  })
+  const copyInoAfterSetup = statSync(copyPath).ino
+  writeFileSync(copyPath, originalText)
+  assert.equal(statSync(copyPath).ino, copyInoAfterSetup)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+})
+
+test('A setup whose last look at the unchanged moved-aside copy fails warns that Codebook still tracks that copy, which the next run then deletes', async (context) => {
+  // Value: protects=an unchanged copy whose last look failed is named with the warning that the next run deletes it, which it then does; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy; no_claim=a real lstat EIO or EACCES (seam.beforeLeftoverCheck throws once at the copy's last look)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  let copyPath = ''
+  let hasFailedLook = false
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== copyPath || hasFailedLook) return
+      hasFailedLook = true
+      throw Object.assign(new Error('input/output error'), { code: 'EIO' })
+    },
+  })
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasFailedLook, true)
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+})
+
+test('A setup that cannot delete the unchanged moved-aside copy warns that Codebook still tracks that copy, which the next run then deletes', async (context) => {
+  // Value: protects=an unchanged copy that could not be deleted is named with the warning that the next run deletes it, which it then does; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy; no_claim=why the unlink fails (a read-only config folder, set by seam.afterLeftoverCheck right after the copy's last look, stands for any failed unlink), and the staged name's wording
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('a read-only folder does not stop root or Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath, beforeCleanup } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  // The folder is writable again before the test folder is removed, in the one cleanup.
+  beforeCleanup(() => chmod(dirname(configPath), 0o700))
+  let copyPath = ''
+  let isLocked = false
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+    afterLeftoverCheck: (path) => {
+      if (path !== copyPath || isLocked) return
+      isLocked = true
+      chmodSync(dirname(configPath), 0o500)
+    },
+  })
+  await chmod(dirname(configPath), 0o700)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(isLocked, true)
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+})
+
+test('A first setup whose handed record hit a full disk after a writer changed the copy at its last look warns that Codebook still tracks that copy, which the next run deletes once the previous bytes are back', async (context) => {
+  // Value: protects=a copy whose name changed at the last look and whose handover could not be recorded goes through the same keep-out step as a changed copy, so it is named with the warning while the completed record still holds its inode; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy once its bytes are back; no_claim=a real writer (seam.beforeLeftoverCheck appends to the copy in place once, after the comparison) and a real ENOSPC (seam.beforeRecordWrite fails only the handed record)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  let copyPath = ''
+  let isAppended = false
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== copyPath || isAppended) return
+      isAppended = true
+      appendFileSync(copyPath, ' ')
+    },
+  })
+  writeFileSync(copyPath, originalText)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(isAppended, true)
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
     ),
     setup.cleanupFailure,
   )

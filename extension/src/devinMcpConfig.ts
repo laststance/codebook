@@ -308,7 +308,7 @@ function recordFailureRefusal({ path, retry }: Context, cause: unknown): Error {
 type KeptFile = {
   path: string
   holds: 'previous' | 'new'
-  /** Set for a copy that stays under the name a completed record tracks because neither its handed record nor its move to a name no record tracks succeeded ({@link keepFromRecovery}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
+  /** Set for a copy of the previous config that stays under a name a record on disk still holds ({@link discardDisplaced}, {@link keepFromRecovery}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
   isLeftover?: true
 }
 
@@ -317,9 +317,9 @@ function keptCopyPhrase(copyPath: string): string {
   return `a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers)`
 }
 
-/** What happens next to a kept copy that a completed record still tracks ({@link KeptFile.isLeftover}), said wherever such a copy is named instead of the advice to delete it. */
+/** What happens next to a kept copy that a record on disk still holds ({@link KeptFile.isLeftover}), said wherever such a copy is named instead of the advice to delete it. */
 const LEFTOVER_CLAUSE =
-  'but it could not record that it leaves that copy to you, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
+  'but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
 /** The refusal for a config that appeared while Codebook was replacing yours: that config stays, and so does the displaced copy, because a writer may still hold the old file open. */
 function newConfigRefusal({ path, retry }: Context, copyPath: string): Error {
@@ -353,7 +353,7 @@ function journalRefusal({ path, pendingPath, retry }: Context): Error {
   )
 }
 
-/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a completed record still tracks says that a later run deletes it ({@link LEFTOVER_CLAUSE}) instead of leaving it to the learner. */
+/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}) instead of leaving it to the learner. */
 function keptFileSentence({ path, holds, isLeftover }: KeptFile): string {
   const what =
     holds === 'previous'
@@ -933,7 +933,7 @@ const KEPT_COPY_SUFFIX = 'codebook-kept'
 
 /**
  * Deletes the displaced copy after the config was published or removed, unless a writer changed it since the comparison; called by {@link settlePublished} and by the removal.
- * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) and never deleted by a later run, also when the handed record cannot be written ({@link keepFromRecovery}). When the completed record cannot be written nothing is deleted.
+ * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) or moved out of recovery's reach ({@link keepFromRecovery}); any other copy that stays, also an unchanged one whose last look or delete failed, is reported as one a later run deletes ({@link KeptFile.isLeftover}). When the completed record cannot be written nothing is deleted.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
  * @param displacedPath - The private name of the displaced copy.
@@ -949,31 +949,53 @@ async function discardDisplaced(
   const copy: KeptFile = { path: displacedPath, holds: 'previous' }
   if (!(await markCompleted(context, journal)))
     return { outcome: 'unrecorded', copy }
-  if (await didCopyChange(held)) {
-    // The completed record stays on disk when the handed one cannot be written, and the next run would delete a copy that still holds the recorded bytes.
-    const isRecorded = await handOver(context, journal)
+  // A copy a writer changed since the comparison, or a name that shows another file now, is handed to the learner.
+  const look = (await didCopyChange(held))
+    ? 'changed'
+    : lookAtComparedName(context, displacedPath, held)
+  if (look === 'changed')
     return {
       outcome: 'kept',
-      copy: isRecorded
-        ? copy
-        : await keepFromRecovery(context, journal, displacedPath, held),
+      copy: await handOverCopy(context, journal, displacedPath, held),
     }
-  }
-  // The held handle proves the file that was compared, not the name: a file swapped in at the name since is kept, never deleted. Limit: a swap between this look and the unlink is not seen.
-  if (!(await isStillHeldOrUnprovable(context, journal, displacedPath, held)))
-    return { outcome: 'kept', copy }
-  const isDeleted = await didUnlink(displacedPath)
-  return { outcome: isDeleted ? 'deleted' : 'kept', copy }
+  // The completed record still names this unchanged copy, so the next run deletes it while it holds the recorded bytes: its sentence says so.
+  if (look === 'unknown' || !(await didUnlink(displacedPath)))
+    return { outcome: 'kept', copy: { ...copy, isLeftover: true } }
+  return { outcome: 'deleted', copy }
 }
 
 /**
- * Keeps a changed displaced copy out of a later run's reach when its handed record could not be written and the completed record stays on disk; called by {@link discardDisplaced}.
- * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds; any other copy stays where it is, and the next run names it once and never deletes it. A copy that cannot move stays a leftover the next run deletes, and its sentence says so.
+ * Hands a displaced copy that stays to the learner ({@link handOver}); when that cannot be recorded and the completed record stays on disk, keeps the copy out of a later run's reach ({@link keepFromRecovery}); called by {@link discardDisplaced} for a copy that changed after the comparison or whose name shows another file.
+ * @param context - The run.
+ * @param journal - The record as it was written before the first move.
+ * @param displacedPath - The private name of the displaced copy.
+ * @param held - The copy as it was compared.
+ * @returns The copy as it stays: at its private name once the handed record is written or the record was dropped, else as {@link keepFromRecovery} leaves it.
+ * @example
+ * await handOverCopy(context, journal, displacedPath, held) // => { path: displacedPath, holds: 'previous' } once the handed record is written
+ */
+async function handOverCopy(
+  context: Context,
+  journal: Pending,
+  displacedPath: string,
+  held: HeldCopy,
+): Promise<KeptFile> {
+  return (await handOver(context, journal))
+    ? { path: displacedPath, holds: 'previous' }
+    : keepFromRecovery(context, journal, displacedPath, held)
+}
+
+/**
+ * Keeps a changed displaced copy out of a later run's reach when its handed record could not be written and the completed record stays on disk; called by {@link handOverCopy}.
+ * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds. A copy whose name shows another file or nothing stays as it is and is left to the learner; one that cannot be read, holds other bytes or cannot move stays tracked ({@link KeptFile.isLeftover}), and its sentence says that a later run deletes it while it still holds the recorded bytes.
  * @param context - The run; its seam is called when the copy is read.
  * @param journal - The record as it was written before the first move; its kept hash is the bytes recovery deletes.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared; its inode is the one the record holds.
- * @returns The copy as it stays: at its new name, at its private name, or at its private name marked {@link KeptFile.isLeftover} when the move failed.
+ * @returns The copy as it stays:
+ * - at its new name once it moved;
+ * - at its private name when that name shows another file or nothing;
+ * - at its private name marked {@link KeptFile.isLeftover} when it could not be read, holds other bytes or could not move.
  * @example
  * await keepFromRecovery(context, journal, displacedPath, held) // => { path: '…/mcp_config.json.<generation>.codebook-kept', holds: 'previous' }
  */
@@ -984,43 +1006,48 @@ async function keepFromRecovery(
   held: HeldCopy,
 ): Promise<KeptFile> {
   const copy: KeptFile = { path: displacedPath, holds: 'previous' }
-  const now = await inspectCopy(displacedPath, context.seam).catch(
-    () => undefined,
-  )
-  // Another file, other bytes, a copy that is gone or one that cannot be read: the next run never deletes it.
-  if (now?.ino !== held.ino || now.sha256 !== journal.keptSha256) return copy
+  const tracked: KeptFile = { ...copy, isLeftover: true }
+  let now: InspectedCopy | undefined
+  try {
+    now = await inspectCopy(displacedPath, context.seam)
+  } catch {
+    // A copy that cannot be read now may still be the recorded file with the recorded bytes at the next run.
+    return tracked
+  }
+  // Another file, or nothing: the recorded file does not stand at this name, so the next run never deletes what is here.
+  if (now?.ino !== held.ino) return copy
+  // The recorded file with other bytes stays where it is; a writer that still holds it can write the recorded bytes back before the next run, which then deletes it.
+  if (now.sha256 !== journal.keptSha256) return tracked
   const keptPath = `${displacedPath.slice(0, -JOURNAL_SUFFIX.kept.length)}${KEPT_COPY_SUFFIX}`
   return rename(displacedPath, keptPath).then(
     (): KeptFile => ({ path: keptPath, holds: 'previous' }),
-    (): KeptFile => ({ ...copy, isLeftover: true }),
+    () => tracked,
   )
 }
 
 /**
- * Tells whether the displaced name still shows the compared file, for {@link discardDisplaced}; a name that changed is handed to the learner, and a look that throws (EIO, EACCES) cannot prove the delete is safe, so the copy is kept without failing the publish that already happened.
- * @param context - The run.
- * @param journal - The record as it was written before the first move.
+ * Looks at the displaced name right before {@link discardDisplaced} deletes it: the held handle proves the compared file, not the name.
+ * Limit: a swap between this look and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param context - The run; its seam is called around the look ({@link isLeftoverStill}).
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
- * @returns `true` only when the name still shows the compared file.
+ * @returns
+ * - `held` when the name shows the compared inode and size;
+ * - `changed` when it is gone or shows another file or size;
+ * - `unknown` when the look throws (EIO, EACCES), which proves nothing.
  * @example
- * if (!(await isStillHeldOrUnprovable(context, journal, path, held))) return 'kept'
+ * lookAtComparedName(context, displacedPath, held) // => 'held'
  */
-async function isStillHeldOrUnprovable(
+function lookAtComparedName(
   context: Context,
-  journal: Pending,
   displacedPath: string,
   held: HeldCopy,
-): Promise<boolean> {
-  let isStill
+): 'held' | 'changed' | 'unknown' {
   try {
-    isStill = isLeftoverStill(context, displacedPath, held)
+    return isLeftoverStill(context, displacedPath, held) ? 'held' : 'changed'
   } catch {
-    // Cannot prove it is safe to delete: the copy stays and the cleanup notice names it.
-    return false
+    return 'unknown'
   }
-  if (!isStill) await handOver(context, journal)
-  return isStill
 }
 
 /**
