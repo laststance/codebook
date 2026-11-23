@@ -4606,7 +4606,7 @@ test('A first setup whose handed record hit a full disk and whose copy a writer 
 })
 
 test('A setup whose last look at the unchanged moved-aside copy fails warns that Codebook still tracks that copy, which the next run then deletes', async (context) => {
-  // Value: protects=an unchanged copy whose last look failed is named with the warning that the next run deletes it, which it then does; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy; no_claim=a real lstat EIO or EACCES (seam.beforeLeftoverCheck throws once at the copy's last look)
+  // Value: protects=an unchanged copy whose last look failed is named with the warning that the next run deletes it, which it then does; fails_when=the notice advises deleting at will or omits the path, the copy is gone or changed before the next run, or the next run keeps the copy; no_claim=a real lstat EIO or EACCES (seam.beforeLeftoverCheck throws once at the copy's last look)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -4622,6 +4622,11 @@ test('A setup whose last look at the unchanged moved-aside copy fails warns that
       throw Object.assign(new Error('input/output error'), { code: 'EIO' })
     },
   })
+  // The copy the notice names still stands, with the previous config, until the next run.
+  assert.equal(
+    readFileSync(copyPath, 'utf8'),
+    '{"mcpServers":{"alpha":{"command":"a"}}}\n',
+  )
 
   // Act
   const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
@@ -4640,7 +4645,7 @@ test('A setup whose last look at the unchanged moved-aside copy fails warns that
 })
 
 test('A setup that cannot delete the unchanged moved-aside copy warns that Codebook still tracks that copy, which the next run then deletes', async (context) => {
-  // Value: protects=an unchanged copy that could not be deleted is named with the warning that the next run deletes it, which it then does; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy; no_claim=why the unlink fails (a read-only config folder, set by seam.afterLeftoverCheck right after the copy's last look, stands for any failed unlink), and the staged name's wording
+  // Value: protects=an unchanged copy that could not be deleted is named with the warning that the next run deletes it, which it then does; fails_when=the notice advises deleting at will or omits the path, the copy is gone or changed before the next run, or the next run keeps the copy; no_claim=why the unlink fails (a read-only config folder, set by seam.afterLeftoverCheck right after the copy's last look, stands for any failed unlink), and the staged name's wording
   if (process.getuid?.() === 0 || process.platform === 'win32') {
     context.skip('a read-only folder does not stop root or Windows')
     return
@@ -4663,6 +4668,11 @@ test('A setup that cannot delete the unchanged moved-aside copy warns that Codeb
     },
   })
   await chmod(dirname(configPath), 0o700)
+  // The copy the notice names still stands, with the previous config, until the next run.
+  assert.equal(
+    readFileSync(copyPath, 'utf8'),
+    '{"mcpServers":{"alpha":{"command":"a"}}}\n',
+  )
 
   // Act
   const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
@@ -6612,29 +6622,35 @@ test('A write that published the config still writes its receipt when the rechec
 })
 
 test('A displaced original of a record without a staged inode is not reported as handed over because another config stands', async (context) => {
-  // protects=the hand-over needs a recorded staged inode that differs from the config's; fails_when=a record without stagedIno gives the false another-config-was-saved refusal; no_claim=what happens to the copy afterwards beyond the hash check; seam=none
+  // Value: protects=the hand-over needs a recorded staged inode that differs from the config's, so a record without stagedIno keeps the displaced original untouched, names it as a copy Codebook could not settle and never records it as handed; fails_when=the refresh resolves, rejects with any other refusal (the false another-config-was-saved one included), changes the config or the copy, or leaves a handed record, or pending.json cannot be read or parsed for any reason but its absence; no_claim=what a later run does with the copy; seam=none (a hand-written record of a write that ended right after its move-aside, without stagedIno)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await mkdir(dirname(configPath), { recursive: true })
-  await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
   await writeFile(configPath, '{"another config":1}\n')
 
   // Act
-  const outcome = await refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(
-    (error: Error) => error,
-  )
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
-  assert.equal(
-    outcome instanceof Error &&
-      outcome.message.includes('handed to the learner'),
-    false,
-  )
+  await assert.rejects(refresh, (error: Error) => {
+    assert.equal(
+      error.message,
+      `Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at that copy, move it back over the config or delete it, then run Codebook: Set Up AI Chat again.`,
+    )
+    return true
+  })
   assert.equal(readFileSync(configPath, 'utf8'), '{"another config":1}\n')
-  const pendingRecord = await readRecordFile(storage, 'pending.json').catch(
-    () => ({ phase: 'dropped' }),
-  )
-  assert.notEqual(pendingRecord.phase, 'handed')
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+  let pendingPhase: unknown = 'no record'
+  try {
+    pendingPhase = (await readRecordFile(storage, 'pending.json')).phase
+  } catch (error) {
+    // Only a missing record counts as no record; any other read or parse failure fails the test.
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+      throw error
+  }
+  assert.notEqual(pendingPhase, 'handed')
 })
 
 test('A receipt of an older build whose entry the learner edited still gets an installation id and keeps the config as it is', async (context) => {
