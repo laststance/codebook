@@ -2799,6 +2799,95 @@ test('A put-back by bytes whose look before the link fails writes its record bac
   assert.equal(readFileSync(keptPath, 'utf8'), '{"theme":"evil"}\n')
 })
 
+/**
+ * Loads the config module with an `unlink` that fails for every displaced name, as a busy file system does, and works for every other path.
+ * @returns The loaded module.
+ * @example
+ * const failing = await loadWithFailingDisplacedUnlink()
+ * await failing.refreshManagedDevinMcpEntry(storage, ENTRY, home)
+ */
+function loadWithFailingDisplacedUnlink() {
+  return loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.codebook-displaced'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+}
+
+test('An unverified put-back whose private name cannot be deleted keeps its handed, unverified record, and the next run checks the bytes and finishes', async (context) => {
+  // Value: protects=a put-back by bytes whose shared bytes passed the check but whose private name could not be deleted keeps its record handed and unverified, so an older build never deletes that second name by its inode alone, and the next run of this build checks the bytes again and finishes; fails_when=the record that stays is not handed or not unverified, the private name is deleted while its unlink fails, the config changes, or the next run refuses or keeps the private name; no_claim=what an older build does with the record (read from its code); seam=hand-written handed, unverified pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, and the config module loaded with an unlink that fails for the displaced name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const unverified = await readRecordFile(storage, 'pending.json')
+  await writeRecordFile(storage, 'pending.json', {
+    ...unverified,
+    phase: 'handed',
+    bytesUnverified: true,
+  })
+  linkSync(keptPath, configPath)
+  const failing = await loadWithFailingDisplacedUnlink()
+
+  // Act
+  const attempt = failing.refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  const retained = await readRecordFile(storage, 'pending.json')
+  assert.equal(retained.phase, 'handed')
+  assert.equal(retained.bytesUnverified, true)
+  assert.equal(retained.keptName, basename(keptPath))
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(nextRun.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('A put-back by bytes whose private name cannot be deleted after its link keeps the record handed and unverified', async (context) => {
+  // Value: protects=a put-back by bytes that linked and checked the file but could not delete its private name keeps the record it wrote before the link (handed, unverified) instead of rewriting it as a plain change in progress, so an older build never deletes that second name by its inode alone; fails_when=the record that stays is not handed or not unverified, a name is deleted, or the config holds other bytes; no_claim=what an older build does with the record (read from its code), and the next run (the test above covers it); seam=hand-written pending record of a put-back by bytes (another inode) with the config name empty, and the config module loaded with an unlink that fails for the displaced name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const failing = await loadWithFailingDisplacedUnlink()
+
+  // Act
+  const attempt = failing.refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  const retained = await readRecordFile(storage, 'pending.json')
+  assert.equal(retained.phase, 'handed')
+  assert.equal(retained.bytesUnverified, true)
+  assert.equal(retained.keptName, basename(keptPath))
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange

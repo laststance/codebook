@@ -113,7 +113,7 @@ const pendingSchema = z.object({
   publishGeneration: z.string().optional(),
   /** Set by a first setup (no receipt owned an entry that stood, {@link isFirstSetup}) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
   firstSetup: z.boolean().optional(),
-  /** Set, with `phase: 'handed'`, right before the link of a put-back that only the displaced file's bytes prove ({@link putBackDisplaced}): a run that stops before the check leaves a record that older builds read as handed and never delete from, while this build reads it as in progress ({@link leftoverPhaseOf}) and checks the shared bytes before it deletes the private name ({@link assertSharedPutBackBytes}). Gone once the check passed and the name is gone, or when the put-back failed before a second name of the config stood ({@link restoreUnlessSecondName}); an older build drops it. */
+  /** Set, with `phase: 'handed'`, right before the link of a put-back that only the displaced file's bytes prove ({@link putBackDisplaced}): a run that stops before the check leaves a record that older builds read as handed and never delete from, while this build reads it as in progress ({@link leftoverPhaseOf}) and checks the shared bytes before it deletes the private name ({@link assertSharedPutBackBytes}). It stays while that name is a second name of the config that no check cleared ({@link recordAfterRecovery}); gone once the check passed and the name is gone, when the put-back failed before such a second name stood ({@link restoreUnlessSecondName}), or when the copy was handed over ({@link handedRecordOf}); an older build drops it. */
   bytesUnverified: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
@@ -1996,7 +1996,7 @@ function unsettledRefusal(
 
 /**
  * Builds the record that stays after a recovery: only the unsettled leftovers' names, inodes and hashes, so the next run retries just those.
- * @param pending - The record the run read.
+ * @param pending - The record recovery keeps ({@link recordAfterRecovery}); its phase, and its unverified mark ({@link Pending.bytesUnverified}) while the displaced file stays tracked, carry over.
  * @param tracked - The unsettled leftovers that stay tracked; for a finished or handed record the one reported is left out ({@link unsettledRefusal}).
  * @returns The reduced record; undefined when nothing stays tracked.
  */
@@ -2011,6 +2011,9 @@ function retainedRecord(
     createdFile: false,
     generation: pending.generation,
     phase: pending.phase,
+    // The mark belongs to the displaced file of an unchecked put-back by bytes, so it stays only with that file.
+    ...(roles.has('kept') &&
+      pending.bytesUnverified === true && { bytesUnverified: true }),
     ...(pending.publishGeneration !== undefined && {
       publishGeneration: pending.publishGeneration,
     }),
@@ -2119,7 +2122,7 @@ async function tidyLeftover(
 }
 
 /**
- * Gives the phase recovery reads a pending record in; called by {@link recoverLeftovers}, {@link tidyLeftover}, {@link putBackDisplaced}, {@link settleRollbackJournal} and {@link inspect}.
+ * Gives the phase recovery reads a pending record in; called by {@link recoverLeftovers}, {@link tidyLeftover}, {@link putBackDisplaced}, {@link recordAfterRecovery}, {@link settleRollbackJournal} and {@link inspect}.
  * A record that says {@link Pending.bytesUnverified} was written as handed only so that older builds never delete from it while a put-back by bytes is unchecked; this build reads it as the change in progress it is, so it checks the shared bytes and finishes the put-back.
  * @param pending - The pending record as read.
  * @returns `undefined` for an unverified put-back's record; the recorded phase otherwise.
@@ -2415,7 +2418,7 @@ async function restoreUnlessSecondName(
 }
 
 /**
- * Tells whether a displaced name is a second name of the config that no check cleared: both names show one inode, and it is not the inode the record holds, as a put-back by bytes leaves it after its link; called by {@link restoreUnlessSecondName}.
+ * Tells whether a displaced name is a second name of the config that no check cleared: both names show one inode, and it is not the inode the record holds, as a put-back by bytes leaves it after its link; called by {@link restoreUnlessSecondName} and {@link recordAfterRecovery}.
  * Only such a name needs the unverified mark ({@link Pending.bytesUnverified}): it keeps an older build from deleting the name on the strength of the shared inode alone.
  * @param context - The run; its config path is looked at.
  * @param leftover - The displaced name and the inode the record holds for it.
@@ -3066,7 +3069,7 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   await retirePending(
     rollbackContext,
     retainedRecord(
-      isHandedNow ? handedRecordOf(pending, unsettled) : { ...pending, phase },
+      recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
       tracked,
     ),
   )
@@ -3386,7 +3389,7 @@ async function inspect(context: Context): Promise<Inspection> {
   const retained =
     pending &&
     retainedRecord(
-      isHandedNow ? handedRecordOf(pending, unsettled) : { ...pending, phase },
+      recordAfterRecovery(context, pending, unsettled, isHandedNow),
       tracked,
     )
   const inspection = await settleAfterRecovery(
@@ -3401,7 +3404,39 @@ async function inspect(context: Context): Promise<Inspection> {
 }
 
 /**
- * Gives the record a copy handed to the learner in this run leaves: the whole record as read, now handed and no longer unverified ({@link Pending.bytesUnverified}), so no later run of any build deletes the copy; used by {@link inspect} for the record it writes at once ({@link persistHandover}) and for the record that stays, and by {@link settleRollbackJournal} for a rollback's journal.
+ * Gives the record a recovery keeps, before {@link retainedRecord} cuts it to the leftovers that stay; called by {@link inspect} for `pending.json` and by {@link settleRollbackJournal} for a rollback's journal.
+ * @param context - The run whose config the record covers.
+ * @param pending - The record as read.
+ * @param unsettled - The leftovers recovery could not settle.
+ * @param isHandedNow - Whether a copy was handed to the learner in this run.
+ * @returns
+ * - The handed record ({@link handedRecordOf}) when a copy was handed over in this run
+ * - The record handed and unverified ({@link Pending.bytesUnverified}) while its displaced name stays a second name of the config that no check cleared ({@link isUnverifiedSecondName}), also when this run's put-back wrote that mark: an older build then never deletes that name by the shared inode alone, and this build checks the bytes again
+ * - Otherwise the record in the phase recovery reads it ({@link leftoverPhaseOf}), without the mark: a displaced file that is no second name of the config leaves an older build nothing to delete by its inode, and an older build would read an empty config name under a handed record as handed over
+ * @example
+ * retainedRecord(recordAfterRecovery(context, pending, unsettled, false), tracked)
+ */
+function recordAfterRecovery(
+  context: Context,
+  pending: Pending,
+  unsettled: Unsettled[],
+  isHandedNow: boolean,
+): Pending {
+  if (isHandedNow) return handedRecordOf(pending, unsettled)
+  const phase = leftoverPhaseOf(pending)
+  const isUnverified =
+    phase === undefined &&
+    unsettled.some(
+      ({ leftover }) =>
+        leftover.role === 'kept' && isUnverifiedSecondName(context, leftover),
+    )
+  return isUnverified
+    ? { ...pending, phase: 'handed', bytesUnverified: true }
+    : { ...pending, phase, bytesUnverified: undefined }
+}
+
+/**
+ * Gives the record a copy handed to the learner in this run leaves: the whole record as read, now handed and no longer unverified ({@link Pending.bytesUnverified}), so no later run of any build deletes the copy; used by {@link recordAfterRecovery} and {@link persistHandover}.
  * The kept inode becomes the one the handed copy's name showed ({@link Unsettled.handedIno}): a copy that only its bytes proved has another inode than the recorded one, and a handed record with the recorded inode would make every later run refuse it as somebody else's file ({@link otherInodeRefusal}).
  * @param pending - The pending record as read.
  * @param unsettled - The leftovers recovery could not settle; the handed one names its copy's inode.
