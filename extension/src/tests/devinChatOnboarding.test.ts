@@ -3948,6 +3948,145 @@ test("a Devin Desktop window whose refresh's look for an owed take-back never an
   }
 })
 
+// Value: protects=a Devin Desktop window whose activation refresh found an owed take-back, and whose removal of that failed setup's entry then outlasts the refresh's 3 seconds, reconnects nothing and says in the Output that the take-back has not finished, so it never serves the failed setup's entry that the take-back removes later (Cycle 0146 /ship last round, outside-voice 1 and adversarial-native 3); fails_when=the lapse reads as an ordinary refusal, so the window reconnects while both setup records still stand and starts its server marked for the failed setup; no_claim=a look whose read of the record never answers (the test above: the window still reconnects) and a server started meanwhile (the next tests); the window load's own look waits at its gate, so the refresh's look is the one that finds the real record, and the held stand-in entry removal deletes the receipt as the real one does once released
+test("a Devin Desktop window whose refresh's take-back of an owed entry outlasts the refresh's budget reconnects nothing", async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await leaveOwedTakeBack(storageDirectory, 'generation-of-a-failed-setup')
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    holdOwedTakeBackLookAt: 1,
+    holdEntryRemoval: true,
+    removalDeletesReceipt: true,
+  })
+  try {
+    // Act
+    const reconnect = await within(window.whenReconnected(), 10_000)
+    const stepsWhileRemovalHangs = [...window.steps]
+    window.holds.entryRemoval.release()
+    await waitUntil(
+      async () => !(await isSetupLockHeld(storageDirectory)),
+      "the setup lock's release once the refresh's take-back ended",
+      5_000,
+    )
+    // Assert
+    assert.equal(reconnect, undefined)
+    assert.deepEqual(stepsWhileRemovalHangs, [
+      'verify Devin skill',
+      'resolve Node',
+      'remove MCP entry',
+    ])
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'remove MCP entry',
+    ])
+    assert.deepEqual(window.outputLines, [
+      "Codebook is finishing the take-back of a failed Devin Desktop setup that a reload or a closed window stopped: it takes the codebook entry that setup wrote out of Devin Desktop's MCP config.",
+      'Codebook did not refresh its Devin Desktop MCP entry or reconnect this window because the take-back of the failed Devin Desktop setup that wrote that entry has not finished; run Codebook: Set Up AI Chat again once storage answers.',
+    ])
+    assert.equal(await owedTakeBackRecord(storageDirectory), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a server that a Devin Desktop window starts while the take-back of an owed entry at its load still waits on storage (the reconnect gave up on the setup lock that take-back holds) refuses the Devin bridge meanwhile, and once that take-back removed the failed setup's entry and its receipt, the window's descriptor is unmarked and its server still refuses the bridge (Cycle 0146 /ship last round, outside-voice 1 and adversarial-native 3); fails_when=the owed take-back takes no mark off, so the server is marked from the receipts that take-back has not removed yet, and it keeps serving the bridge after the entry is gone; no_claim=a removal that fails (the record stays, and the window then serves as its setup records say) and the refresh's own look (the test above); the refresh's skill check waits at its gate until the load's take-back holds the setup lock, the held stand-in entry removal deletes the receipt as the real one does once released, the server and the lock are the real ones
+test("a server started while a window load's take-back of an owed entry waits on storage refuses the Devin bridge and stays unmarked after that take-back", async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await leaveOwedTakeBack(storageDirectory, 'generation-of-a-failed-setup')
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    realServer: true,
+    holdSkillCheck: true,
+    holdEntryRemoval: true,
+    removalDeletesReceipt: true,
+  })
+  try {
+    await waitUntil(
+      () => window.holds.entryRemoval.reachedAtMs(),
+      "the window load's take-back of the owed entry",
+    )
+    window.holds.skillCheck.release()
+    const reconnect = await within(window.whenReconnected(), 10_000)
+    const descriptorFile = await window.descriptorPath()
+    // Act
+    const statusWhileTakeBackWaits = await postInitialize(descriptorFile, true)
+    window.holds.entryRemoval.release()
+    await waitUntil(
+      async () => !(await isSetupLockHeld(storageDirectory)),
+      "the setup lock's release once the load's take-back ended",
+      5_000,
+    )
+    const statusAfterTakeBack = await postInitialize(descriptorFile, true)
+    // Assert
+    assert.equal(reconnect, undefined)
+    assert.equal(window.steps.includes('start server'), true)
+    assert.equal(statusWhileTakeBackWaits, 403)
+    assert.equal(await window.readDescriptorField(), undefined)
+    assert.equal(statusAfterTakeBack, 403)
+    assert.equal(await owedTakeBackRecord(storageDirectory), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a late mark (the server start's read of the setup records answered after its 5-second deadline) gives way to the take-back of an owed entry at the window load that still waits on storage, so the server keeps refusing the Devin bridge until that take-back's own descriptor step decides, which leaves the window unmarked once the failed setup's entry and its receipt are gone (Cycle 0146 /ship last round, outside-voice 1); fails_when=the late mark reads the receipts that take-back has not removed yet and turns the in-memory mark on, so the bridge is served while the failed setup's entry is being taken back; no_claim=a late mark during a setup, its take-back or a removal (their own tests); the refresh's skill check waits at its gate until the load's take-back holds the setup lock, the server start's read of the records waits at its gate after it read them, the held stand-in entry removal deletes the receipt as the real one does once released, the server and the lock are the real ones
+test("a late mark during a window load's take-back of an owed entry leaves the server refusing the Devin bridge", async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await leaveOwedTakeBack(storageDirectory, 'generation-of-a-failed-setup')
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    realServer: true,
+    holdSkillCheck: true,
+    holdEntryRemoval: true,
+    removalDeletesReceipt: true,
+    holdReceiptReadAt: 1,
+  })
+  try {
+    await waitUntil(
+      () => window.holds.entryRemoval.reachedAtMs(),
+      "the window load's take-back of the owed entry",
+    )
+    window.holds.skillCheck.release()
+    await waitUntil(
+      () => window.descriptorReadable(),
+      "the descriptor the server start published unmarked at its read's deadline",
+      15_000,
+    )
+    // Act
+    window.holds.receiptRead.release()
+    await waitUntil(
+      () => window.lateMarkDecisions.length === 1,
+      "the late mark's decision",
+    )
+    const statusWhileTakeBackWaits = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    window.holds.entryRemoval.release()
+    await waitUntil(
+      async () => !(await isSetupLockHeld(storageDirectory)),
+      "the setup lock's release once the load's take-back ended",
+      5_000,
+    )
+    // Assert
+    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(statusWhileTakeBackWaits, 403)
+    assert.equal(await window.readDescriptorField(), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a failed first Devin setup stops serving the Devin bridge as soon as its take-back starts, also while the take-back's entry removal waits on storage (Cycle 0146 task 1a, v2 finding 5); fails_when=the window's mark stays on until the take-back's last step, so the bridge is served for a setup that is being taken back; no_claim=the descriptor file's content; the held stand-in entry removal stands for the stalled storage, the server is the real one
 test("a failed first Devin setup's bridge request is refused while its take-back waits on storage", async (context) => {
   // Arrange

@@ -370,8 +370,9 @@ export function activate(
     step: DevinStorageStep
     reason?: string
   }
-  /** A run of a Devin Desktop window that takes the window's mark off: its removal, or the take-back of its failed setup ({@link devinMarkTakeOffs}). */
-  type DevinMarkTakeOffRun = Exclude<DevinBackgroundWorkKind, 'setup'>
+  /** A run of a Devin Desktop window that takes the window's mark off: its removal, the take-back of its failed setup, or the take-back of a failed setup's entry that a reload left owed ({@link devinMarkTakeOffs}). */
+  type DevinMarkTakeOffRun =
+    Exclude<DevinBackgroundWorkKind, 'setup'> | 'owed take-back'
   /** What a Devin Desktop setup was run for: the workspace folder the command ran in and the count of folder changes ({@link devinFolderGeneration}) at that moment, so every later step can tell that the window changed its folders since ({@link assertDevinSetupFolderUnchanged}). */
   type DevinSetupInvocation = {
     workspace: string
@@ -527,7 +528,7 @@ export function activate(
   }
   /** Whether this window's connection descriptor carries the Devin AI chat mark right now: set once the mark is written, cleared before an unmark rewrites the descriptor. The server refuses a request of the Devin bridge while it is `false` ({@link startServer}), so a bridge that connected before a failed setup's rollback stops being served. */
   let isDevinChatMarked = false
-  /** The runs of this window that take its Devin mark off now: a removal from the moment the learner confirmed it, and the take-back of a failed setup whose entry it installed (or whose earlier setup does not stand) from its start; each counts until the turn right before its own descriptor step in {@link inDescriptorQueue}, or until it ended without reaching that step ({@link endDevinMarkTakeOff}). While one counts, nothing turns the in-memory mark on ({@link isDevinMarkBeingTakenOff}). */
+  /** The runs of this window that take its Devin mark off now: a removal from the moment the learner confirmed it, the take-back of a failed setup whose entry it installed (or whose earlier setup does not stand) from its start, and the take-back of an owed entry from the moment its record was found ({@link finishOwedDevinTakeBack}); each counts until the turn right before its own descriptor step in {@link inDescriptorQueue}, or until it ended without reaching that step ({@link endDevinMarkTakeOff}). While one counts, nothing turns the in-memory mark on ({@link isDevinMarkBeingTakenOff}). */
   const devinMarkTakeOffs = new Set<DevinMarkTakeOffRun>()
   /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
   const devinChatField = async (): Promise<DevinChatFields> => {
@@ -1460,13 +1461,13 @@ export function activate(
     offerDevinReload('information', DEVIN_LATE_MARK_SENTENCE)
   }
   /**
-   * Whether a removal of this window, or the take-back of a failed setup that takes the mark off, counts as taking the window's Devin mark off now ({@link devinMarkTakeOffs}): the server start's queue turn then leaves the in-memory mark off whatever it decided, and no mark or sync turns it on, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn, {@link markDevinChatDescriptor} and {@link syncDevinChatDescriptor}. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
+   * Whether a removal of this window, or the take-back of a failed setup or of an owed entry that takes the mark off, counts as taking the window's Devin mark off now ({@link devinMarkTakeOffs}): the server start's queue turn then leaves the in-memory mark off whatever it decided, and no mark, sync or late mark turns it on, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn, {@link markDevinChatDescriptor}, {@link syncDevinChatDescriptor} and {@link isDevinSetupChanging}. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
    * @returns `true` from the moment the removal was confirmed, or the take-back began, until the turn right before that run's own descriptor step, or until the run ended without reaching it.
    * @example isDevinMarkBeingTakenOff() // => true while Remove Devin Desktop Setup waits for the setup lock
    */
   const isDevinMarkBeingTakenOff = (): boolean => devinMarkTakeOffs.size > 0
   /**
-   * Counts `run` as taking this window's Devin mark off from now on, and turns the in-memory mark off at once, before the run waits on any storage or lock, so the server refuses the Devin bridge meanwhile (it reads the mark per request); called by {@link removeDevinSetup} once the learner confirmed and by {@link revokeFailedSetupMark}.
+   * Counts `run` as taking this window's Devin mark off from now on, and turns the in-memory mark off at once, before the run waits on any storage or lock, so the server refuses the Devin bridge meanwhile (it reads the mark per request); called by {@link removeDevinSetup} once the learner confirmed, by {@link revokeFailedSetupMark} and by {@link finishOwedDevinTakeBack} once it found an owed take-back.
    * @param run - The run that begins.
    * @example beginDevinMarkTakeOff('removal')
    */
@@ -1495,14 +1496,15 @@ export function activate(
     void syncDevinChatDescriptor().catch(reportDescriptorUpdateFailure)
   }
   /**
-   * Whether a Devin Desktop setup, its take-back or a removal of this window runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-back and the removal rewrite the descriptor), so a late mark gives way to it; read by {@link isLateMarkTarget}.
+   * Whether a Devin Desktop setup, its take-back, a removal of this window or the take-back of an owed entry that takes the mark off runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-backs and the removal rewrite the descriptor), so a late mark gives way to it; read by {@link isLateMarkTarget}.
    * @returns `true` while such a run goes on.
    * @example isDevinSetupChanging() // => true while Set Up AI Chat runs
    */
   const isDevinSetupChanging = (): boolean =>
     devinRemoving ||
     devinSetup !== undefined ||
-    devinBackgroundWork !== undefined
+    devinBackgroundWork !== undefined ||
+    isDevinMarkBeingTakenOff()
   /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
   const isLateMarkTarget = (server: Running): boolean =>
     running === server &&
@@ -1762,22 +1764,27 @@ export function activate(
       },
     )
   /**
-   * Finishes the take-back of a failed Devin Desktop setup that a reload, a crash or a closed window stopped before its entry step ended ({@link recordTakeBackOwed}): takes that entry back by the generation its record names, so a newer setup's entry stays, and writes one line to the Output.
+   * Finishes the take-back of a failed Devin Desktop setup that a reload, a crash or a closed window stopped before its entry step ended ({@link recordTakeBackOwed}): takes that entry back by the generation its record names, so a newer setup's entry stays, and writes one line to the Output. From the moment it finds the record until that take-back's descriptor step, the window's mark is off ({@link beginDevinMarkTakeOff}), so a server running or started meanwhile refuses the Devin bridge; that step then gives the window the mark its setup records still earn once the removal answered ({@link syncRolledBackDescriptor}): none when that entry's receipt went with it.
    * Run under the setup lock, first, by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads ({@link finishOwedDevinTakeBackAtLoad}), so no later run adopts or refreshes the failed setup's entry; a setup and a refresh go on only when it answers `none`.
+   * @param onOwedFound - Hears that the first look found the record, before the take-back waits on storage; the activation refresh passes it ({@link refreshUnderDevinLock}), so a refresh that answers before that take-back ended reconnects nothing.
    * @returns What the last look found ({@link readOwedDevinTakeBack}), looked at again after a take-back it ran:
    * - `none` when no record stood, or the one that stood is gone after its entry's take-back
    * - `owed` when the record still stands (a failed removal keeps it)
    * - `unknown` when the record could not be read, which the Output names
    * @example await finishOwedDevinTakeBack() // => 'none'
    */
-  const finishOwedDevinTakeBack = async (): Promise<
-    OwedDevinTakeBack['state']
-  > => {
+  const finishOwedDevinTakeBack = async (
+    onOwedFound?: () => void,
+  ): Promise<OwedDevinTakeBack['state']> => {
     const storageRoot = context.globalStorageUri.fsPath
     const firstLook = await readOwedDevinTakeBack(storageRoot)
     if (firstLook.state === 'owed') {
+      onOwedFound?.()
       diagnostics.info(DEVIN_OWED_TAKE_BACK_LINE)
+      // The failed setup's entry is served no more from now on, also by a server started while its removal waits on storage.
+      beginDevinMarkTakeOff('owed take-back')
       await takeBackDevinEntry(firstLook.generation)
+      await syncRolledBackDescriptor('owed take-back')
     }
     // Only a record that is gone now leaves no later run that takes out the entry this run keeps: a removal that failed keeps it, and so may a failed delete of the record.
     const lastLook =
@@ -1808,9 +1815,11 @@ export function activate(
       )
     })
   }
-  /** The take-back's last step: gives the server running now, which may be one started during the setup, the mark its restored setup earns; the take-back stops taking the mark off in the turn right before it ({@link handDevinMarkToDescriptorStep}). A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the take-back is incomplete; the window's in-memory mark is already off ({@link revokeFailedSetupMark}), so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too. @returns Whether the descriptor was rewritten; a failure went to the Output. @example await syncRolledBackDescriptor() */
-  const syncRolledBackDescriptor = (): Promise<boolean> => {
-    handDevinMarkToDescriptorStep('take-back')
+  /** The last step of a take-back, of a failed setup or of an owed entry ({@link finishOwedDevinTakeBack}): gives the server running now, which may be one started during the setup or the take-back, the mark its restored setup earns; the take-back stops taking the mark off in the turn right before it ({@link handDevinMarkToDescriptorStep}). A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the take-back is incomplete; the window's in-memory mark is already off ({@link revokeFailedSetupMark}), so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too. @param run - The take-back whose descriptor step this is. @returns Whether the descriptor was rewritten; a failure went to the Output. @example await syncRolledBackDescriptor('take-back') */
+  const syncRolledBackDescriptor = (
+    run: DevinMarkTakeOffRun,
+  ): Promise<boolean> => {
+    handDevinMarkToDescriptorStep(run)
     return syncDevinChatDescriptor(true).then(
       () => true,
       (error: unknown) => {
@@ -1867,7 +1876,7 @@ export function activate(
             ]
           : []),
         // Any server running now may have read the half-saved setup, not only the one the setup checked.
-        takeBackStep('descriptor', syncRolledBackDescriptor),
+        takeBackStep('descriptor', () => syncRolledBackDescriptor('take-back')),
       ],
       DEVIN_SETUP_ROLLBACK_BUDGET_MS,
       onLapse,
@@ -2223,11 +2232,11 @@ export function activate(
   }
   /**
    * Runs the activation refresh's rewrite of the entry under the setup lock ({@link DEVIN_REFRESH_LOCK_BOUND}), after the look for an owed take-back ({@link finishOwedDevinTakeBack}), so the refresh never rewrites the entry between another window's entry write and that setup's take-back, and never keeps a failed setup's entry that a reload left as installed; called by {@link refreshDevinEntry}.
-   * Why: the window's server starts after the refresh, and the bridge Devin Local started at the window load waits 15 seconds for it, so the lock is waited for only a few seconds and the look only {@link DEVIN_REFRESH_TAKE_BACK_BUDGET_MS} ({@link runStepsWithinBudget}); the look is never cut: it keeps the lock until it ends, and nothing is refreshed after it.
+   * Why: the window's server starts after the refresh, and the bridge Devin Local started at the window load waits 15 seconds for it, so the lock is waited for only a few seconds and the look only {@link DEVIN_REFRESH_TAKE_BACK_BUDGET_MS} ({@link runStepsWithinBudget}); the look is never cut: it keeps the lock until it ends, and nothing is refreshed after it. A look that found the record when its budget passed answers `owed`, because the entry it is still taking back is the failed setup's.
    * @param rewrite - The entry's rewrite, run only when no take-back is owed.
-   * @returns What the rewrite answered, or `{ status: 'owed' }` when an owed take-back's record still stands after its removal was tried.
+   * @returns What the rewrite answered, or `{ status: 'owed' }` when an owed take-back's record still stands after its removal was tried, or the look found that record and had not ended when its budget passed.
    * @throws
-   * - An error with {@link DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE} when the look could not read the record, or outlasted its budget
+   * - An error with {@link DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE} when the look could not read the record, or its read outlasted the budget
    * - The lock's refusal, and what the rewrite threw
    * @example
    * await refreshUnderDevinLock(() => refreshManagedDevinMcpEntry(storageRoot, entry)) // => { status: 'current', path: '/home/user/.config/devin/mcp_config.json' }
@@ -2236,20 +2245,27 @@ export function activate(
     rewrite: () => Promise<Refresh>,
   ): Promise<Refresh | { status: 'owed' }> => {
     let hasLapsed = false
-    let refuseAtLapse!: () => void
-    const lapsed = new Promise<never>((_resolve, reject) => {
-      refuseAtLapse = (): void =>
-        reject(new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE))
+    // Set once the look found the record of an owed take-back, before that take-back waits on storage.
+    let isTakeBackOwed = false
+    let answerAtLapse!: () => void
+    const lapsed = new Promise<{ status: 'owed' }>((resolve, reject) => {
+      answerAtLapse = (): void => {
+        // The look is still taking the failed setup's entry back: the window reconnects nothing.
+        if (isTakeBackOwed) resolve({ status: 'owed' })
+        else reject(new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE))
+      }
     })
     const run = underDevinLock(async () => {
       // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed; a record that cannot be read may name that entry, so the refresh changes nothing.
-      const look = finishOwedDevinTakeBack()
+      const look = finishOwedDevinTakeBack(() => {
+        isTakeBackOwed = true
+      })
       await runStepsWithinBudget(
         [{ name: 'owed take-back', run: () => look }],
         DEVIN_REFRESH_TAKE_BACK_BUDGET_MS,
         () => {
           hasLapsed = true
-          refuseAtLapse()
+          answerAtLapse()
         },
       )
       const owedTakeBack = await look
@@ -2263,7 +2279,7 @@ export function activate(
     run.catch(() => {})
     return Promise.race([run, lapsed])
   }
-  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link refreshUnderDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other, as is a record of an owed take-back that cannot be read, or whose look outlasts its budget ({@link finishOwedDevinTakeBack}); called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, `refused` when nothing was refreshed, or `owed` when an owed take-back's record still stands after its removal was tried, so the entry is the failed setup's and the window reconnects nothing; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link refreshUnderDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other, as is a record of an owed take-back that cannot be read, or whose read outlasts its budget ({@link finishOwedDevinTakeBack}); called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, `refused` when nothing was refreshed, or `owed` when an owed take-back's record still stands after its removal was tried, or that take-back had not ended within the budget, so the entry is the failed setup's and the window reconnects nothing; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
   const refreshDevinEntry = async (
     storageRoot: string,
   ): Promise<{
