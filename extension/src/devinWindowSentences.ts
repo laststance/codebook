@@ -25,6 +25,10 @@ export const DEVIN_SETUP_NODE_FAILURE_SENTENCE =
 export const DEVIN_SETUP_LOCK_HELD_SENTENCE =
   'Another Codebook window is changing the Devin Desktop setup. Try again in a moment.'
 
+/** What a Devin Desktop setup or removal answers when storage did not hand the setup lock over within 15 seconds ({@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS}) and no other window's lock refused it meanwhile: a disk that stops answering, or this window's own earlier setup or removal whose run or release still holds the lock. */
+export const DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE =
+  'Codebook could not take its Devin Desktop setup lock because storage does not answer or this window is still finishing an earlier setup or removal. Try again in a moment, or reload the window.'
+
 /** What the Devin Desktop setup answers when this window's connection descriptor cannot be read as a JSON object; fixed text, because the descriptor holds the bearer token and a parser's own message quotes part of the file. */
 export const DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE =
   "Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again."

@@ -4,7 +4,10 @@ import {
   DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
   DEVIN_SETUP_LOCK_WAIT_ATTEMPTS,
 } from '../constants'
-import { DEVIN_SETUP_LOCK_HELD_SENTENCE } from '../devinWindowSentences'
+import {
+  DEVIN_SETUP_LOCK_HELD_SENTENCE,
+  DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE,
+} from '../devinWindowSentences'
 
 import {
   retryWhileStorageLockHeld,
@@ -27,7 +30,7 @@ export type DevinSetupLockReports = {
 }
 
 /**
- * Runs one Devin Desktop setup or removal alone across every window of the user: it waits a bounded time for a setup lock that another extension host process holds ({@link withStorageLock} queues only inside one process and refuses at once otherwise), then refuses with one fixed sentence; called by the Devin Desktop setup and removal of {@link activate}.
+ * Runs one Devin Desktop setup or removal alone across every window of the user: it waits a bounded time for a setup lock that another extension host process holds ({@link withStorageLock} queues only inside one process and refuses at once otherwise), then refuses with one fixed sentence, and with another when storage never handed the lock over and no other window's lock was seen; called by the Devin Desktop setup and removal of {@link activate}.
  * Only the taking of the lock is retried: the operation runs once, and a held-lock refusal of a lock it takes itself reaches the caller as it is.
  * Each wait has its own timer, so storage that stops answering never holds the caller: the taking of the lock, from the call, at most {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} (a lock taken later runs nothing and is released at once); the operation as long as it needs; the release, from the operation's end, at most {@link DEVIN_SETUP_LOCK_RELEASE_MS} (it goes on afterwards, and this process's next hold of the lock waits for it in {@link withStorageLock}'s queue).
  * @param lockDirectory - The `devin-setup` folder of Codebook's global storage.
@@ -36,7 +39,8 @@ export type DevinSetupLockReports = {
  * @param reports - `onReleaseStalled`, told when the release outlasts its bound.
  * @returns What the operation returns, once the lock is released or its release outlasted its bound.
  * @throws
- * - An error with {@link DEVIN_SETUP_LOCK_HELD_SENTENCE} when the lock stays held, or is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS}
+ * - An error with {@link DEVIN_SETUP_LOCK_HELD_SENTENCE} when the lock stays held, or is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} after another window's lock refused it
+ * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE} when the lock is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} and no held-lock refusal came: storage did not answer, or this process's own earlier hold still has the lock
  * - What the operation throws, also when it throws before it returns a promise, and what the lock throws otherwise
  * @example
  * await withDevinSetupLock('/storage/devin-setup', () => removeDevinSetupLocked())
@@ -63,6 +67,7 @@ export async function withDevinSetupLock<Value>(
   })
   let didRun = false
   let isAbandoned = false
+  let wasRefusedByHeldLock = false
   const locking = retryWhileStorageLockHeld(() => {
     // A wait the caller gave up on takes no further attempt: this is no held-lock refusal, so the retry ends.
     if (isAbandoned) throw new Error(DEVIN_SETUP_LOCK_HELD_SENTENCE)
@@ -75,6 +80,10 @@ export async function withDevinSetupLock<Value>(
       await Promise.resolve()
         .then(operation)
         .then(resolveOperation, rejectOperation)
+    }).catch((error: unknown) => {
+      // Another window's lock refused this taking: a wait that runs out later names that window.
+      if (error instanceof StorageLockHeldError) wasRefusedByHeldLock = true
+      throw error
     })
   }, wait)
   // Awaited below; a failure after the caller stopped waiting (an abandoned wait, a stalled release) is nobody's.
@@ -88,10 +97,14 @@ export async function withDevinSetupLock<Value>(
       throw new Error(DEVIN_SETUP_LOCK_HELD_SENTENCE)
     throw error
   })
-  // Storage that did not hand the lock over within the budget gets the same answer; a lock taken at the very moment of the bound runs.
+  // Storage that did not hand the lock over within the budget names another window only after that window's lock refused a taking; a lock taken at the very moment of the bound runs.
   if (!isAcquiredInTime && !didRun) {
     isAbandoned = true
-    throw new Error(DEVIN_SETUP_LOCK_HELD_SENTENCE)
+    throw new Error(
+      wasRefusedByHeldLock
+        ? DEVIN_SETUP_LOCK_HELD_SENTENCE
+        : DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE,
+    )
   }
   // The operation is never cut, and it always settles its result, also when it throws at its call; the release's own timer starts once it settled.
   await settled.then(

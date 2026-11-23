@@ -14,21 +14,24 @@ import { within } from './utils/within'
 /**
  * Loads {@link lockModule.withDevinSetupLock} over a stand-in of the storage lock it takes (the module `./withStorageLock`), whose taking of the lock and whose release wait while the test holds them, as on a disk that stops answering.
  * Called by the tests of the setup lock's bounds below; each test loads its own copy, so no hold of one test reaches another.
- * @param holds - Which step of the storage lock waits for the test: `acquisition` before the lock is taken, `release` after the locked steps ended; a step left out goes on at once.
- * @returns The loaded lock; `storageLockEvents`, what the storage lock did in order (`lock taken`, `lock released`); and `letAcquisitionGo` and `letReleaseGo`, which let the held step go on.
+ * @param holds - Which step of the storage lock waits for the test: `acquisition` before the lock is taken, `release` after the locked steps ended; a step left out goes on at once. `heldRefusals`: how many takings refuse first with a {@link StorageLockHeldError}, as while another window holds the lock; none when left out.
+ * @returns The loaded lock; `storageLockEvents`, what the storage lock did in order (`lock refused`, `lock taken`, `lock released`); and `letAcquisitionGo` and `letReleaseGo`, which let the held step go on.
  * @example
  * const storage = await devinSetupLockOverStalledStorage({ acquisition: true })
  * storage.letAcquisitionGo() // the lock is taken now
+ * await devinSetupLockOverStalledStorage({ acquisition: true, heldRefusals: 1 }) // one refusal, then a taking that waits
  */
 async function devinSetupLockOverStalledStorage(holds: {
   acquisition?: boolean
   release?: boolean
+  heldRefusals?: number
 }) {
   const acquisition = defer<void>()
   const release = defer<void>()
   // A step the test does not hold goes on at once.
   if (!holds.acquisition) acquisition.resolve()
   if (!holds.release) release.resolve()
+  let heldRefusalsLeft = holds.heldRefusals ?? 0
   const storageLockEvents: string[] = []
   const loaded = await loadModule<typeof lockModule>(
     resolve(__dirname, '../utils/withDevinSetupLock.js'),
@@ -38,6 +41,14 @@ async function devinSetupLockOverStalledStorage(holds: {
           _directory: string,
           locked: () => Promise<Value>,
         ): Promise<Value> => {
+          // Another window's lock refuses the first takings, as the real storage lock does while it is held.
+          if (heldRefusalsLeft > 0) {
+            heldRefusalsLeft -= 1
+            storageLockEvents.push('lock refused')
+            throw new StorageLockHeldError(
+              'Learning storage is locked by another writer',
+            )
+          }
           await acquisition.promise
           storageLockEvents.push('lock taken')
           try {
@@ -58,8 +69,8 @@ async function devinSetupLockOverStalledStorage(holds: {
   }
 }
 
-// Value: protects=a Devin Desktop setup or removal whose setup lock storage never hands over answers with the try-again sentence 15 s after the call, and a lock taken after that answer runs no setup step and is released; fails_when=the call waits for the stalled taking of the lock for ever, so Set Up AI Chat or Remove Devin Desktop Setup never answers (Cycle 0146 task 1a), or a lock taken late runs the steps after the learner was told to try again, or keeps the lock; why_new=Cycle 0145 CodeRabbit H7 to H9 (the setup lock has no deadline); seam=a stand-in of the storage lock whose taking waits until the test lets it go; no_claim=a real stalled disk, and another window's held lock, whose bounded wait devinChatOnboarding.test.ts covers
-test('a Devin Desktop setup whose setup lock storage never hands over refuses with the try-again sentence 15 seconds after the call, and a lock taken after that runs no step and is released', async () => {
+// Value: protects=a Devin Desktop setup or removal whose setup lock storage never hands over, with no other window's lock seen, answers 15 s after the call that storage does not answer or this window is still finishing, and a lock taken after that answer runs no setup step and is released; fails_when=the call waits for the stalled taking of the lock for ever, so Set Up AI Chat or Remove Devin Desktop Setup never answers (Cycle 0146 task 1a), or the answer names another Codebook window that does not exist (Cycle 0146 task 27), or a lock taken late runs the steps after the learner was told to try again, or keeps the lock; why_new=Cycle 0145 CodeRabbit H7 to H9 (the setup lock has no deadline), and the Cycle 0146 review round's ocr-lens4 P2 and ocr-lens1 P3 (the held-lock sentence for a lock no window holds); seam=a stand-in of the storage lock whose taking waits until the test lets it go; no_claim=a real stalled disk, this window's own earlier hold that the queue of withStorageLock keeps the lock for, and another window's held lock, whose bounded wait devinChatOnboarding.test.ts covers
+test('a Devin Desktop setup whose setup lock storage never hands over answers 15 seconds after the call that storage does not answer, and a lock taken after that runs no step and is released', async () => {
   // Arrange
   const storage = await devinSetupLockOverStalledStorage({ acquisition: true })
   let stepRuns = 0
@@ -90,9 +101,55 @@ test('a Devin Desktop setup whose setup lock storage never hands over refuses wi
     { answer, stepRuns, storageLockEvents: storage.storageLockEvents },
     {
       answer:
-        'Another Codebook window is changing the Devin Desktop setup. Try again in a moment.',
+        'Codebook could not take its Devin Desktop setup lock because storage does not answer or this window is still finishing an earlier setup or removal. Try again in a moment, or reload the window.',
       stepRuns: 0,
       storageLockEvents: ['lock taken', 'lock released'],
+    },
+  )
+  assert.ok(
+    answeredAfterMs >= 14_900 && answeredAfterMs < 17_000,
+    `the refusal came ${Math.round(answeredAfterMs)} ms after the call, not at the 15-second acquisition budget`,
+  )
+})
+
+// Value: protects=a Devin Desktop setup or removal whose setup lock was refused by another window's lock and whose next taking storage never hands over answers 15 s after the call that another Codebook window is changing the setup, and runs no step; fails_when=a wait that saw another window's lock is answered as a storage that does not answer, or the call waits for the stalled taking for ever; why_new=Cycle 0146 task 27 (the held-lock sentence only after a held-lock refusal); seam=a stand-in of the storage lock that refuses the first taking with the held-lock error and holds the next until the test lets it go; no_claim=a real other window, whose held lock devinChatOnboarding.test.ts covers with a separate process
+test('a Devin Desktop setup refused once by another window lock whose next taking storage never hands over answers 15 seconds after the call that another window is changing the setup', async () => {
+  // Arrange
+  const storage = await devinSetupLockOverStalledStorage({
+    acquisition: true,
+    heldRefusals: 1,
+  })
+  let stepRuns = 0
+  const calledAtMs = performance.now()
+
+  // Act
+  const answer = await within(
+    storage
+      .withDevinSetupLock('/storage/devin-setup', async () => {
+        stepRuns += 1
+      })
+      .then(
+        () => 'ran',
+        (error: Error) => error.message,
+      ),
+    17_000,
+  )
+  const answeredAfterMs = performance.now() - calledAtMs
+  storage.letAcquisitionGo()
+  await waitUntil(
+    () => storage.storageLockEvents.includes('lock released'),
+    'the release of the lock taken after the answer',
+    2_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { answer, stepRuns, storageLockEvents: storage.storageLockEvents },
+    {
+      answer:
+        'Another Codebook window is changing the Devin Desktop setup. Try again in a moment.',
+      stepRuns: 0,
+      storageLockEvents: ['lock refused', 'lock taken', 'lock released'],
     },
   )
   assert.ok(
