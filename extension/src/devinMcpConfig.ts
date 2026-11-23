@@ -326,12 +326,27 @@ function keptCopyPhrase(copyPath: string): string {
 const LEFTOVER_CLAUSE =
   'but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
-/** The refusal for a config that appeared while Codebook was replacing yours: that config stays, and so does the displaced copy, because a writer may still hold the old file open. */
-function newConfigRefusal({ path, retry }: Context, copyPath: string): Error {
+/**
+ * The refusal for a config that appeared while Codebook was replacing yours: that config stays, and so does the displaced copy, because a writer may still hold the old file open; called by {@link linkInStaged} and by recovery for a copy it handed over.
+ * @param context - The run; gives the config path and the command to run again.
+ * @param copyPath - The displaced copy's private name.
+ * @param isHanded - Whether the handed record was written or the record dropped ({@link handOver}); `false` when the record written before the move-aside stays, so a later run that finds the config name empty puts the copy back there ({@link putBackDisplaced}).
+ * @returns The error, not thrown yet.
+ * @example
+ * newConfigRefusal(context, copyPath, false) // => '… Codebook kept … but it could not record that it leaves that copy to you, so a later run of Codebook moves that copy back to … if no file stands there by then, then run Codebook: Set Up AI Chat again.'
+ */
+function newConfigRefusal(
+  { path, retry }: Context,
+  copyPath: string,
+  isHanded = true,
+): Error {
+  const fate = isHanded
+    ? 'so delete that copy when you no longer need it'
+    : `but it could not record that it leaves that copy to you, so a later run of Codebook moves that copy back to ${path} if no file stands there by then`
   return refusal(
     'a file that changed while Codebook was working on it',
     path,
-    `look at the file; Codebook kept ${keptCopyPhrase(copyPath)}, so delete that copy when you no longer need it`,
+    `look at the file; Codebook kept ${keptCopyPhrase(copyPath)}, ${fate}`,
     retry,
   )
 }
@@ -1542,7 +1557,7 @@ function mismatchRefusal(
  * @param context - The run.
  * @param replacement - The staged file, the displaced file (whose bytes equal what was read), the record and the stale receipt.
  * @param opened - The displaced copy's handle and own mode.
- * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
+ * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
  */
 async function linkInStaged(
   context: Context,
@@ -1557,11 +1572,15 @@ async function linkInStaged(
     const failure = failureOf(error)
     if (codeOf(failure) === 'EEXIST') {
       // A save created the config after the move-aside: it is kept, and the displaced copy is handed to the learner, never deleted by a later run. A receipt that could not go back keeps its mark that nothing was linked.
-      await handOver(
+      const isHanded = await handOver(
         context,
         failure === error ? journal : { ...journal, notLinked: true },
       )
-      throw withUnrestoredNote(newConfigRefusal(context, displaced.path), error)
+      // An unrecorded handover leaves the record that puts the copy back once the config name is empty: the refusal says so.
+      throw withUnrestoredNote(
+        newConfigRefusal(context, displaced.path, isHanded),
+        error,
+      )
     }
     // The config name is empty: the displaced file goes back, else it is named; a receipt that could not go back keeps the record.
     await restoreDisplaced(
