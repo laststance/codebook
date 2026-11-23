@@ -4072,7 +4072,7 @@ function rollbackOutcomeClause(outcome: RollbackResult['outcome']): string {
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
  * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy.
- * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out or found another config at the config path, where the next run hands that copy over instead ({@link keepOriginalUnlessPublished}).
+ * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out, which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
@@ -4095,8 +4095,8 @@ async function takeOutUnrecordedEntry(
     // The rejection below says the entry may still stand.
   }
   const { outcome } = result
-  // The config is no longer the published file after these two outcomes, so the next run hands an untracked copy over instead of deleting it.
-  const isHandedNext = outcome === 'took-out' || outcome === 'replaced-config'
+  // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it; another file found at the config path may still give way to the published one before then.
+  const isHandedNext = outcome === 'took-out'
   const keptCopies = [
     ...(isHandedNext ? asLeft : asTracked),
     ...result.keptLeft,
