@@ -16,11 +16,11 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 
 import {
-  CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS,
   CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS,
   EXTENSION_VERSION,
 } from './constants'
 import { BRIDGE_INPUT_CLOCK } from './utils/bridgeInputClock'
+import { BRIDGE_RELEASE_BOUND } from './utils/bridgeReleaseBound'
 import { holdBridgeInput, type BridgeInputHold } from './utils/holdBridgeInput'
 import {
   readBridgeDescriptor,
@@ -76,7 +76,7 @@ async function connectWithin(
 }
 
 /**
- * Releases the upstream session a transport holds (one a failed or cut handshake may have allocated, or one {@link runCursorMcpBridge} ends), without waiting longer than {@link CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS} for a server that no longer answers; called by {@link runCursorMcpBridge} after it closed a failed client and when it closes a session.
+ * Releases the upstream session a transport holds (one a failed or cut handshake may have allocated, or one {@link runCursorMcpBridge} ends), without waiting longer than {@link CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS} ({@link BRIDGE_RELEASE_BOUND}) for a server that no longer answers; called by {@link runCursorMcpBridge} after it closed a failed client and when it closes a session.
  * The DELETE goes through a transport of its own: when a handshake fails the SDK aborts the handshake's transport at once (`void this.close()` in `Client.connect`), which would abort a DELETE sent through it before it leaves. It carries the same headers (bearer token, the Devin Desktop header, session id and protocol version).
  * The release is best effort: once a take-back rotated the access token, the server refuses this DELETE with 401 before it looks the session up, and the session stays until it expires after {@link SESSION_IDLE_TIMEOUT_MS}.
  * @param http - The transport whose session is released; it may be closed already, which keeps its session id.
@@ -99,7 +99,7 @@ async function releaseHalfOpenSession(
     await Promise.race([
       release.terminateSession().catch(() => undefined),
       // Unreferenced, so a finished release never keeps the process alive.
-      sleep(CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS, undefined, { ref: false }),
+      BRIDGE_RELEASE_BOUND.wait(),
     ])
   } finally {
     // Aborts a DELETE the server never answered, so it cannot keep the process alive.

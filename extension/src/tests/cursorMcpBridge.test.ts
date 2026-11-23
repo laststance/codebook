@@ -1138,6 +1138,10 @@ const STDIN_ERROR_PRELOAD = `process.on('SIGUSR2', () => {
 })
 `
 
+/** Source of a preload that lifts the bound on the bridge's wait for the answer to a session release ({@link BRIDGE_RELEASE_BOUND}), so only the test's answer to the DELETE ends that release. Appended to {@link bridgeStopMarksPreload}. */
+const RELEASE_WITHOUT_BOUND_PRELOAD = `require(${JSON.stringify(require.resolve('../utils/bridgeReleaseBound'))}).BRIDGE_RELEASE_BOUND.wait = () => new Promise(() => undefined)
+`
+
 /** Ends a bridge child the way a stop-path test names the stop. */
 function stopBridgeChild(
   bridge: CursorBridgeChild,
@@ -1257,17 +1261,21 @@ test(
   },
 )
 
-// Value: protects=a first handshake that really failed before the wait at the startup input limit ended keeping Cursor's diagnostic and exit code 1 when that wait's end comes while its session is still being released, and the process ending with Cursor's stdin still open (Cycle 0147 task 8, Codex review F8.1 and D14); fails_when=the wait stays armed through the release and turns the failure into a silent stop with exit code 0, or stdin, which Node reads on into its buffer after a pause at the limit, keeps the failed bridge alive until Cursor closes it; no_claim=a failure after the wait ended (the hold's unit tests), the real clock's timing (the child's input clock is moved by hand)
+// Value: protects=a first handshake that really failed before the wait at the startup input limit ended keeping Cursor's diagnostic and exit code 1 when that wait's end comes while its session is still being released, and the process ending with Cursor's stdin still open (Cycle 0147 task 8, Codex review F8.1 and D14); fails_when=the wait stays armed through the release and turns the failure into a silent stop with exit code 0, or stdin, which Node reads on into its buffer after a pause at the limit, keeps the failed bridge alive until Cursor closes it; no_claim=a failure after the wait ended (the hold's unit tests), the real clock's timing (the child's input clock is moved by hand, and the release ends only at the test's answer to its DELETE, so a stalled runner cannot reorder the two: Cycle 0147 review round), the real 1 s bound on a release nobody answers (the Devin bridge test of a never-answered DELETE)
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(
   'Cursor stdio bridge still says it could not connect, with exit code 1, when its server fails the first handshake before the wait at its startup input limit ends and that wait ends while the session is being released',
   { skip: process.platform === 'win32', timeout: 30_000 },
   async (context) => {
     // Arrange
-    let heldNotification: ScriptedRequest | undefined
+    let heldNotification: ScriptedRequest | undefined,
+      heldRelease: ScriptedRequest | undefined
     const endpoint = await startScriptedEndpoint(context, (request) => {
-      // Every release is held, never answered: the bridge's own 1 s bound ends it.
-      if (request.httpMethod === 'DELETE') return true
+      // The release is held until the test answers it, after the wait at the limit ended.
+      if (request.httpMethod === 'DELETE') {
+        heldRelease = request
+        return true
+      }
       if (request.method !== 'notifications/initialized') return false
       heldNotification = request
       return true
@@ -1275,7 +1283,9 @@ test(
     const inputClock = await handMovedInputClock(context)
     const bridge = await startCursorBridgeChild(
       endpoint,
-      bridgeStopMarksPreload() + inputClock.preloadSource,
+      bridgeStopMarksPreload() +
+        inputClock.preloadSource +
+        RELEASE_WITHOUT_BOUND_PRELOAD,
     )
     bridge.sendInitialize()
     const notification = await waitUntil(
@@ -1296,15 +1306,17 @@ test(
     // Act
     notification.outgoing.writeHead(500)
     notification.outgoing.end()
-    await waitUntil(
-      () => requestsOf(endpoint.received, 'DELETE', 'session-1').length === 1,
+    const release = await waitUntil(
+      () => heldRelease,
       'the release of session-1 held',
       10_000,
       undefined,
       5,
     )
-    // The wait at the limit ends while that release is still held.
+    // The wait at the limit ends while that release is still held; only the answer below ends the release.
     await inputClock.advance(bridge, 12_000)
+    release.outgoing.writeHead(200)
+    release.outgoing.end()
     const exitCode = await within(bridge.exited, 10_000)
     // Assert
     const stderr = bridge.readStderr()

@@ -495,7 +495,7 @@ test('a bridge input handed over after it reached its limit lets a later hold of
   assert.equal(overs, 0)
 })
 
-// Value: protects=a later bridge invocation on the same live input starting its own count after a stop dropped what the earlier hold read (Cycle 0147 task 8, Codex review D14); fails_when=the hold remembers the limit's moment after the release, so a later hold below the limit stops at once with no full input; no_claim=a second bridge in one process (a stopped bridge ends its process)
+// Value: protects=a later bridge invocation on the same live input starting its own count after a stop dropped what the earlier hold read, and keeping what it read for its next reader (Cycle 0147 task 8, Codex review D14; Cycle 0147 review round, CodeRabbit holdBridgeInput.test.ts:532-533); fails_when=the hold remembers the limit's moment after the release, so a later hold below the limit stops at once with no full input, or the later hold drops the chunk it read; no_claim=a second bridge in one process (a stopped bridge ends its process)
 test('a bridge input released after it reached its limit lets a later hold of the same stream start below its limit without a wait', async () => {
   // Arrange
   const input = standInInput()
@@ -516,7 +516,7 @@ test('a bridge input released after it reached its limit lets a later hold of th
   // Act
   firstHold.release()
   time.advance(10_000)
-  holdBridgeInput(input, countOver, 4, time.clock)
+  const laterHold = holdBridgeInput(input, countOver, 4, time.clock)
   const oversAtLaterHold = overs
   input.push(Buffer.from('x'))
   // A hold that reported its input over at once reads nothing, so either outcome ends the wait.
@@ -528,9 +528,20 @@ test('a bridge input released after it reached its limit lets a later hold of th
     5,
   )
   time.advance(60_000)
+  laterHold.putBack()
+  const chunks = readChunks(input)
+  // A dropped chunk never comes: the wait ends at its bound and the assertion below names what the reader got.
+  await waitUntil(
+    () => chunks.length > 0,
+    'the next reader getting the chunk the later hold read',
+    2_000,
+    undefined,
+    5,
+  ).catch(() => undefined)
   // Assert
   assert.equal(oversAtLaterHold, 0)
   assert.equal(overs, 0)
+  assert.deepEqual(chunks, ['x'])
 })
 
 // Value: protects=a later hold of the same stream (the Devin bridge's next attempt) keeping the moment its stream reached the limit when an earlier hold that already handed its input over is handed over, released or put back again, so its wait still ends 5 s after that moment (Cycle 0147 review round, CodeRabbit holdBridgeInput.ts:193-195 and 200); fails_when=a repeated hand-over or release of an ended hold forgets the later hold's moment, so that hold's handshake settling past its wait wins (or its put-back lets the next attempt start a fresh 5 s wait); no_claim=that the bridge ends a hold twice (it ends each hold once)
