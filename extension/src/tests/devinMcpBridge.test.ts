@@ -2574,9 +2574,9 @@ test(
   },
 )
 
-// Value: protects=a window whose descriptor gained its mark and moved to another port after the bridge waited for the mark never being connected on the new port (Cycle 0146 task 10, Cycle 0145 J10); fails_when=a not-set-up wait pins nothing, so the marked descriptor at the new port is connected; no_claim=a marked descriptor that keeps its first port
+// Value: protects=a window whose descriptor gained its mark and moved to another port after the bridge waited for the mark never being connected on the new port, and a wait that then ends without asking for a setup the rejected descriptor already has (Cycle 0146 task 10, Cycle 0145 J10; Cycle 0146 review round, CodeRabbit devinMcpBridge.ts:1217); fails_when=a not-set-up wait pins nothing, so the marked descriptor at the new port is connected, or the exclusion keeps the earlier attempt's not-set-up status, so the wait ends with the run-setup line; no_claim=a marked descriptor that keeps its first port, a descriptor that stays unmarked (the setup line stays)
 test(
-  'a descriptor that gained its mark and moved to another port is not connected after the bridge waited for the mark',
+  'a descriptor that gained its mark and moved to another port is not connected after the bridge waited for the mark, and the wait does not ask for setup',
   { timeout: 20_000 },
   async (context) => {
     // Arrange
@@ -2617,9 +2617,11 @@ test(
       { timeoutMs: 2_000, intervalMs: 20 },
     )
     // Assert
+    // The rewrite ran: without it the descriptor stays unmarked on its first port and the same refusal follows.
+    assert.equal(isMarked, true)
     assert.equal(
       refusal,
-      `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${workspace}. Run Codebook: Set Up AI Chat here, then reload the window.`,
+      `Codebook is not running for ${workspace} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.`,
     )
     assert.equal(connections, 0)
   },

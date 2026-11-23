@@ -1199,8 +1199,12 @@ export async function runDevinMcpBridge(
     // One memory for every selection of this bridge: lookups that never answered are not started again beyond two.
     state = createDevinSelectState()
   const lateAttempt = { isSpent: false },
-    // True while the last attempt found a selected descriptor's setup removed: the refusal at the end of the wait then names the missing setup, not a missing Codebook.
-    wait = { isSetupMissing: false, isSetupUnverified: false },
+    // What the last attempt found, and at which descriptor: a removed setup makes the refusal at the end of the wait name the missing setup, not a missing Codebook.
+    wait: BridgeWait = {
+      isSetupMissing: false,
+      isSetupUnverified: false,
+      attemptPath: undefined,
+    },
     // The endpoint and instance of each descriptor path an attempt waited on for its setup, its receipts, its mark or a file shortage: a later selection of that path must name the same ones, so a port rewritten during the wait is never accepted for this window.
     pinned = new Map<string, PinnedIdentity>()
   for (;;) {
@@ -1215,7 +1219,7 @@ export async function runDevinMcpBridge(
     if (!selection) return endOfWaitLine(cwd, wait)
     // A pinned descriptor that now names another endpoint or instance is not this window's selection any more, whatever its mark says: another descriptor may still connect.
     if (hasPinnedIdentityChanged(pinned, selection)) {
-      excludedPaths.add(selection.descriptorPath)
+      excludeChangedPin(selection, excludedPaths, wait)
       continue
     }
     // This window runs Codebook but its AI chat setup is for another folder or missing: nothing to wait for.
@@ -1239,6 +1243,36 @@ export async function runDevinMcpBridge(
 interface PinnedIdentity {
   instanceId: string
   url: string
+}
+
+/** What the last connection attempt of a bridge's wait found; kept by {@link noteConnectOutcome} and {@link excludeChangedPin}, read by {@link endOfWaitLine}. */
+interface BridgeWait {
+  /** The last attempt found its descriptor's setup missing or removed. */
+  isSetupMissing: boolean
+  /** The last attempt could not read the setup records. */
+  isSetupUnverified: boolean
+  /** The descriptor path of the last attempt, which the two flags are about; `undefined` before the first attempt. */
+  attemptPath: string | undefined
+}
+
+/**
+ * Excludes a pinned descriptor whose endpoint or instance changed, and drops the missing-setup status its own last attempt left; called by {@link runDevinMcpBridge} when {@link hasPinnedIdentityChanged} holds.
+ * That status was about the identity just rejected, which the descriptor no longer names (its replacement may be marked), so a wait that ends without another match says Codebook is not running instead of asking for setup. A status another descriptor left stays, as does `isSetupUnverified`: nothing was checked since.
+ * @param selection - The pinned descriptor whose identity changed.
+ * @param excludedPaths - The descriptors the selection skips from now on; this one is added.
+ * @param wait - The wait's state.
+ * @example
+ * excludeChangedPin(selection, excludedPaths, { isSetupMissing: true, isSetupUnverified: false, attemptPath: selection.descriptorPath })
+ * // excludedPaths now holds that path, and the wait's isSetupMissing is false
+ */
+function excludeChangedPin(
+  selection: DevinDescriptorSelection,
+  excludedPaths: Set<string>,
+  wait: BridgeWait,
+): void {
+  excludedPaths.add(selection.descriptorPath)
+  // Only the status this descriptor's own attempt left is about the identity just rejected.
+  if (wait.attemptPath === selection.descriptorPath) wait.isSetupMissing = false
 }
 
 /**
@@ -1272,7 +1306,7 @@ const PINNING_OUTCOMES: ReadonlySet<ConnectOutcome> = new Set([
 
 /**
  * Records what a failed connection attempt means for the rest of the wait; called by {@link runDevinMcpBridge} after each {@link connectOnce} that did not connect.
- * A dropped descriptor is not selected again. After {@link PINNING_OUTCOMES} it is, but only with the endpoint and instance of the first such attempt (a pin is never overwritten); `busy` pins nothing, so a restarting server is followed to its new port. `wait` follows the last outcome: `isSetupMissing` is set by `not-set-up` and `isSetupUnverified` by `unverified`, each cleared by any other, so a wait that ends after a later attempt was dropped, busy, replaced, remarked or unread says Codebook is not running.
+ * A dropped descriptor is not selected again. After {@link PINNING_OUTCOMES} it is, but only with the endpoint and instance of the first such attempt (a pin is never overwritten); `busy` pins nothing, so a restarting server is followed to its new port. `wait` follows the last outcome: `isSetupMissing` is set by `not-set-up` and `isSetupUnverified` by `unverified`, each cleared by any other, so a wait that ends after a later attempt was dropped, busy, replaced, remarked or unread says Codebook is not running; `attemptPath` names the attempted descriptor, so {@link excludeChangedPin} can tell whose status it is.
  * @param outcome - The attempt's outcome.
  * @param selection - The attempted descriptor.
  * @param excludedPaths - The descriptors the selection skips from now on.
@@ -1285,7 +1319,7 @@ function noteConnectOutcome(
   outcome: Exclude<ConnectOutcome, 'connected'>,
   selection: DevinDescriptorSelection,
   excludedPaths: Set<string>,
-  wait: { isSetupMissing: boolean; isSetupUnverified: boolean },
+  wait: BridgeWait,
   pinned: Map<string, PinnedIdentity>,
 ): void {
   if (outcome === 'dropped') excludedPaths.add(selection.descriptorPath)
@@ -1297,6 +1331,7 @@ function noteConnectOutcome(
     })
   wait.isSetupMissing = outcome === 'not-set-up'
   wait.isSetupUnverified = outcome === 'unverified'
+  wait.attemptPath = selection.descriptorPath
 }
 
 /**
@@ -1318,10 +1353,7 @@ function notSetUpLine(cwd: string): string {
  */
 function endOfWaitLine(
   cwd: string,
-  wait: {
-    readonly isSetupMissing: boolean
-    readonly isSetupUnverified: boolean
-  },
+  wait: Readonly<Pick<BridgeWait, 'isSetupMissing' | 'isSetupUnverified'>>,
 ): string {
   if (wait.isSetupMissing) return notSetUpLine(cwd)
   return wait.isSetupUnverified ? unverifiedLine(cwd) : notRunningLine(cwd)
