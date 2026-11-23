@@ -5518,6 +5518,49 @@ test("A legacy rollback journal decided on two matching reads stays until the se
   })
 })
 
+test("A held legacy rollback journal is deleted only while its name still holds the journal the refresh held, so another journal a backup restores there while the setup's own record is settled stays for the next refresh", async (context) => {
+  // Value: protects=a legacy journal held as another setup's is retired only as the version this run held, so a journal a backup restored at its name while the setup's own record was settled keeps its rollback for the next run; fails_when=the journal's name is empty or holds other bytes than the restored journal after the refresh, a receipt is written, or the refresh answers anything but not-managed; no_claim=a real backup tool (seam.afterStat renames another journal over the journal's name once, at the read of the config right after the one that decided the journal), a restore in the syscall gap after the last look before the unlink, and what the next run does with the restored journal
+  // Arrange
+  const { home, storage, configPath, receiptPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000002',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000003',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let configReadCount = 0
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath) return
+      configReadCount += 1
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      if (configReadCount === 1)
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+      // A backup restores another journal at the journal's name after the journal was held.
+      if (configReadCount === 2) {
+        writeFileSync(backupPath, restoredJournalText)
+        renameSync(backupPath, journalPath)
+      }
+    },
+  })
+
+  // Assert
+  assert.equal(configReadCount >= 2, true)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A legacy rollback journal whose handed copy is refused while the config holds no entry keeps its inode and hash, so the next refresh takes the setup back once the published file is back', async (context) => {
   // Value: protects=a refused leftover never costs the inode and hash that later tell the journal belongs to the failed setup; fails_when=the journal is deleted, the refusal text changes, or the next refresh adopts; no_claim=an older build's handover (the test writes phase handed), a real sync tool (rename of the copy over the config)
   // Arrange

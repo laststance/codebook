@@ -4252,13 +4252,13 @@ type HeldJournal = {
   restoredSha256: string
   /** The journal's evidence, which the refusal of a changed config names. */
   legacy: LegacyJournalEvidence
-  /** Deletes the journal. */
+  /** Deletes the journal, only while its name still shows the version this run held ({@link retireHeldJournal}). */
   retire: () => Promise<void>
 }
 
 /**
  * Keeps a legacy rollback journal that one read decided as another publish's, so the publish record cannot adopt on a later read once the journal is gone; called only by {@link settleRollbackJournal}.
- * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it.
+ * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it. Then its inode and bytes are read: the retirement deletes only that version, so a journal a backup restores at its name meanwhile stays for the next run.
  * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal.
  * @param kept - The journal to write when a leftover is refused.
  * @param legacy - The journal's evidence.
@@ -4279,11 +4279,39 @@ async function holdLegacyJournal(
   // A refused leftover ends this run: the journal keeps what the next run needs to decide again.
   if (isRefused)
     await writeRecord(rollbackContext, rollbackContext.pendingPath, kept)
+  // A journal that cannot be read now is never deleted unseen: the next run reads it again.
+  const version = await inspectCopy(rollbackContext.pendingPath).catch(
+    () => undefined,
+  )
   return {
     restoredSha256: bytesSha256(restoredBytes),
     legacy,
-    retire: (): Promise<void> => retirePending(rollbackContext, undefined),
+    retire: (): Promise<void> => retireHeldJournal(rollbackContext, version),
   }
+}
+
+/**
+ * Deletes a held legacy rollback journal ({@link HeldJournal}) only while its name still shows the version {@link holdLegacyJournal} read: the same inode and bytes, looked at synchronously once more right before the unlink; called by {@link settleAfterRecovery} through the held journal's `retire`, once the publish record can no longer adopt.
+ * A backup or sync tool may restore another journal at that name while the publish record is settled; that journal may hold a rollback this run never settled, so it stays and the next run decides on it.
+ * Limit: a restore between the last look and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
+ * @param held - The journal as it was read when it was held; undefined when it was gone or could not be read then, and nothing is deleted.
+ * @throws What the unlink throws other than for a name that is gone.
+ * @example
+ * await retireHeldJournal(rollbackContext, version) // pending.json.rollback is gone when it still holds the version that was held
+ */
+async function retireHeldJournal(
+  rollbackContext: Context,
+  held: InspectedCopy | undefined,
+): Promise<void> {
+  if (!held) return
+  const journalPath = rollbackContext.pendingPath
+  const now = await inspectCopy(journalPath).catch(() => undefined)
+  // Gone, unreadable or another version: whatever stands at the name now stays for the next run.
+  if (!now || now.ino !== held.ino || now.sha256 !== held.sha256) return
+  // The hash came from the open handle; the unlink acts on the name, which must still show that same file.
+  if (!isLeftoverStill(rollbackContext, journalPath, now)) return
+  await rm(journalPath, { force: true })
 }
 
 /**
