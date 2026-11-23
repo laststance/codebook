@@ -491,7 +491,7 @@ test('a held bridge input whose first handshake settled still reports an end of 
   assert.equal(overs, 1)
 })
 
-// Value: protects=a later bridge invocation on the same live input starting its own count after the first connection took the held input over (Cycle 0147 task 8, Codex review D14); fails_when=the hold remembers the limit's moment after the hand-over, so a later hold below the limit stops at once with no full input; no_claim=a second bridge in one process (the bridge holds its stdin until its first connection is up, once)
+// Value: protects=a later bridge invocation on the same live input starting its own count after the first connection took the held input over, and itself reading and keeping what comes after for its own next reader (Cycle 0147 task 8, Codex review D14; Cycle 0147 ship pass 1, Codex structured review holdBridgeInput.test.ts:493); fails_when=the hold remembers the limit's moment after the hand-over, so a later hold below the limit stops at once with no full input, or the later hold never reads (or drops) what comes after; no_claim=a second bridge in one process (the bridge holds its stdin until its first connection is up, once)
 test('a bridge input handed over after it reached its limit lets a later hold of the same stream start below its limit without a wait', async () => {
   // Arrange
   const input = standInInput()
@@ -512,29 +512,51 @@ test('a bridge input handed over after it reached its limit lets a later hold of
   time.advance(1_000)
   firstHold.settleHandshake()
   firstHold.handOver()
-  const chunks = readChunks(input)
+  const handedOverChunks: string[] = []
+  const readHandedOver = (chunk: Buffer): void => {
+    handedOverChunks.push(chunk.toString('utf8'))
+  }
+  input.on('data', readHandedOver)
+  input.resume()
   await waitUntil(
-    () => chunks.length === 1,
+    () => handedOverChunks.length === 1,
     'the next reader getting the handed-over chunk',
     2_000,
     undefined,
     5,
   )
+  // That reader goes, as a stdio transport that closed, and leaves the input paused: from here on only the later hold can read it.
+  input.off('data', readHandedOver)
+  input.pause()
   time.advance(10_000)
   // Act
-  holdBridgeInput(input, countOver, 4, time.clock)
+  const laterHold = holdBridgeInput(input, countOver, 4, time.clock)
   const oversAtLaterHold = overs
   input.push(Buffer.from('x'))
+  // A hold that never reads leaves the chunk unread: the wait ends at its bound and the assertion below names it.
   await waitUntil(
     () => input.readableLength === 0,
     'the later hold reading the input',
     2_000,
     undefined,
     5,
-  )
+  ).catch(() => undefined)
+  const unreadAfterLaterHold = input.readableLength
   time.advance(60_000)
+  laterHold.putBack()
+  const laterChunks = readChunks(input)
+  // A dropped chunk never comes: the wait ends at its bound and the assertion below names what the reader got.
+  await waitUntil(
+    () => laterChunks.length > 0,
+    'the next reader getting the chunk the later hold read',
+    2_000,
+    undefined,
+    5,
+  ).catch(() => undefined)
   // Assert
-  assert.deepEqual(chunks, ['abcd', 'x'])
+  assert.deepEqual(handedOverChunks, ['abcd'])
+  assert.equal(unreadAfterLaterHold, 0)
+  assert.deepEqual(laterChunks, ['x'])
   assert.equal(oversAtLaterHold, 0)
   assert.equal(overs, 0)
 })
