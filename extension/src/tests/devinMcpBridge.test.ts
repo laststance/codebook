@@ -5380,7 +5380,36 @@ test(
   },
 )
 
-// Value: protects=the Devin bridge's own answer and exit code 1, with no connected line and its session released, when its first handshake completes only after its own time limit and then the wait at its startup input limit ended, before that time limit's timer ran, as on a busy event loop (Cycle 0147 review round, CodeRabbit holdBridgeInput.ts:169); fails_when=a connection completed past its time limit is accepted (the settlement counts it as ended at that limit, before the wait's end), so the bridge serves a connection that finished within neither bound and writes its connected line; no_claim=a completion within its time limit after the wait ended (a stop: the Cursor bridge test), the real clock's timing
+/**
+ * Source of a preload that arms the time limit of every handshake that has one (the Devin bridge's attempt: `connectWithin`'s wait, the one `node:timers/promises` wait that cursorMcpBridge.js starts) on the child's {@link BRIDGE_INPUT_CLOCK} instead of a real timer, and marks `HANDSHAKE_LIMIT_ARMED` on stderr each time, so only the test's `advance` can run that limit, whatever the runner's speed (CodeRabbit final-range pass of Cycle 0147, CR9). Appended after {@link handMovedInputClock}'s preload, whose `set` it arms with; every wait started from another module (the descriptor read's own time limit, the release bound, the pauses between attempts) keeps its real timer.
+ */
+const HANDSHAKE_LIMIT_ON_INPUT_CLOCK_PRELOAD = `{
+  const timersPromises = require('node:timers/promises')
+  const inputClock = require(${JSON.stringify(resolve(__dirname, '../utils/bridgeInputClock.js'))}).BRIDGE_INPUT_CLOCK
+  const realWait = timersPromises.setTimeout
+  timersPromises.setTimeout = (delayMs, value, options) => {
+    // The caller's frame, below this function's own: only a wait cursorMcpBridge.js starts goes on the input clock.
+    const callerFrame = new Error().stack.split('\\n')[2] ?? ''
+    if (!callerFrame.includes(${CURSOR_BRIDGE_MODULE_PATH})) return realWait(delayMs, value, options)
+    require('node:fs').writeSync(2, 'HANDSHAKE_LIMIT_ARMED\\n')
+    const { signal } = options
+    if (signal.aborted) return Promise.reject(signal.reason)
+    return new Promise((resolveWait, rejectWait) => {
+      const onAbort = () => {
+        cancel()
+        rejectWait(signal.reason)
+      }
+      const cancel = inputClock.set(() => {
+        signal.removeEventListener('abort', onAbort)
+        resolveWait(value)
+      }, delayMs)
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+}
+`
+
+// Value: protects=the Devin bridge's own answer and exit code 1, with no connected line and its session released, when its first handshake completes only after its own time limit and then the wait at its startup input limit ended, before that time limit's timer ran, as on a busy event loop (Cycle 0147 review round, CodeRabbit holdBridgeInput.ts:169); the time limit's timer is armed on the hand-moved input clock and never runs, so only the check of the completed handshake against that limit can refuse it, also on a runner slower than the limit's real 15 s (Cycle 0147 final-range CodeRabbit pass, CR9); fails_when=a connection completed past its time limit is accepted (the settlement counts it as ended at that limit, before the wait's end), so the bridge serves a connection that finished within neither bound and writes its connected line; no_claim=a completion within its time limit after the wait ended (a stop: the Cursor bridge test), a time limit that ends the handshake through its own timer (the test above), the real clock's timing
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a Devin bridge whose first handshake completes only after its own time limit and then the wait at its startup input limit ended serves nothing and still says Codebook is not running, with exit code 1',
@@ -5391,7 +5420,10 @@ test(
       releases = 0
     const inputClock = await handMovedInputClock(context)
     const { bridge } = await launchDevinBridge(context, {
-      preloadSource: bridgeStopMarksPreload() + inputClock.preloadSource,
+      preloadSource:
+        bridgeStopMarksPreload() +
+        inputClock.preloadSource +
+        HANDSHAKE_LIMIT_ON_INPUT_CLOCK_PRELOAD,
       decide: async (
         method,
         _initializes,
@@ -5414,8 +5446,8 @@ test(
       undefined,
       5,
     )
-    // The attempt's time limit ends at most 15 s of the input clock after its hold began at 0; the limit is reached at 12 s, so the wait ends at 17 s.
-    await inputClock.advance(bridge, 12_000)
+    // The attempt's time limit ends at most 15 s of the input clock after its hold began at 0; the limit is reached at 12 s, so the wait ends at 17 s. No advance runs a due wait, so the time limit's timer, armed on this clock, never runs.
+    await inputClock.advance(bridge, 12_000, { runsDueWaits: false })
     bridge.write('x'.repeat(1_048_576))
     await waitUntil(
       () => bridge.readStderr().includes('STDIN_PAUSED\n'),
@@ -5432,6 +5464,8 @@ test(
     const exitCode = await within(bridge.exited, 20_000)
     // Assert
     const stderr = bridge.readStderr()
+    // The one attempt's time limit was armed on the input clock, which ran no wait: its timer did not end the handshake.
+    assert.equal(occurrencesOf(stderr, 'HANDSHAKE_LIMIT_ARMED\n'), 1)
     assert.equal(exitCode, 1)
     assert.equal(
       stderr.includes(
