@@ -482,7 +482,7 @@ export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
 export const DEVIN_MCP_RECORD_LIMIT_BYTES = 16_384
 /** The largest Devin Desktop MCP config (`~/.config/devin/mcp_config.json`) that Codebook reads; a larger file is refused before it is read, because a real config of a few servers is a few kilobytes. */
 export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
-/** How many times a first setup's put-back of its moved-aside old record links it again after the link found `receipt.json` taken and the look found that name empty ({@link putBackRetiredReceipt}); past this the name keeps changing and both files stay. */
+/** How many links, at most, a first setup's put-back of its moved-aside old record makes in all: after a link found `receipt.json` taken and the look found that name empty, it links again until this many links were made ({@link putBackRetiredReceipt}); past this the name keeps changing and both files stay. */
 export const DEVIN_RECEIPT_PUT_BACK_ATTEMPTS = 3
 /** What a first setup's pending record puts before its entry hash (`entrySha256`), so an older build, which adopts an entry whose hash equals the record's, never adopts a first setup's entry before its receipt exists; the receipt keeps the plain hash ({@link plainEntryHashOf} strips this). */
 export const FIRST_SETUP_HASH_PREFIX = 'first-setup:'

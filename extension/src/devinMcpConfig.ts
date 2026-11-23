@@ -3438,15 +3438,21 @@ function staleReceiptRefusal(
 }
 
 /**
- * Builds the refusal for a stale receipt that another program saved again between this run's read and its move aside (a sync or backup tool restoring one); called by {@link retireStaleReceipt} once that receipt went back to its name.
+ * Builds the refusal for a stale receipt that another program saved again between this run's read and its move aside (a sync or backup tool restoring one); called by {@link retireStaleReceipt}, which throws it once that receipt went back to its name and hands the other wording to the put-back, whose error carries it when the receipt could not go back ({@link UnrestoredReceiptError}).
  * @param context - The run; gives the receipt's path, the config path and the command to run again.
+ * @param isPutBack - Whether the changed receipt stands at its name again; `false` words the refusal without that claim, and the put-back's own sentence then says where the receipt is.
  * @returns The error, not thrown yet.
  * @example
- * throw changedRecordRefusal(context) // 'Codebook found that its own old record at …/receipt.json changed while it was setting up, so it put that record back and changed nothing in Devin Desktop's MCP config at …; then run Codebook: Set Up AI Chat again.'
+ * throw changedRecordRefusal(context, true) // 'Codebook found that its own old record at …/receipt.json changed while it was setting up, so it put that record back and changed nothing in Devin Desktop's MCP config at …; then run Codebook: Set Up AI Chat again.'
+ * changedRecordRefusal(context, false)       // 'Codebook found that its own old record at …/receipt.json changed while it was setting up, so it changed nothing in Devin Desktop's MCP config at …; then run Codebook: Set Up AI Chat again.'
  */
-function changedRecordRefusal({ receiptPath, path, retry }: Context): Error {
+function changedRecordRefusal(
+  { receiptPath, path, retry }: Context,
+  isPutBack: boolean,
+): Error {
+  const outcome = isPutBack ? 'put that record back and changed' : 'changed'
   return new Error(
-    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it put that record back and changed nothing in Devin Desktop's MCP config at ${path}; ${retry}.`,
+    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it ${outcome} nothing in Devin Desktop's MCP config at ${path}; ${retry}.`,
   )
 }
 
@@ -3486,7 +3492,7 @@ function retiredReceiptPathOf(context: Context, generation: string): string {
  * @param staleReceipt - The receipt this run read.
  * @param generation - The generation of the publish; names the private path.
  * @returns The private path that holds the receipt now; undefined when nothing stood at the receipt's name any more, so nothing is to put back.
- * @throws A {@link staleReceiptRefusal} when the name holds no regular file or the move fails, and a {@link changedRecordRefusal} once another receipt that moved went back; nothing is linked then. An {@link UnrestoredReceiptError} carrying that refusal when the other receipt could not go back.
+ * @throws A {@link staleReceiptRefusal} when the name holds no regular file or the move fails, and a {@link changedRecordRefusal} once another receipt that moved went back; nothing is linked then. An {@link UnrestoredReceiptError} carrying that refusal, worded without the put-back, when the other receipt could not go back.
  * @example
  * await retireStaleReceipt(context, receipt, generation) // => '/storage/devin-mcp/receipt.json.<generation>.retired'
  */
@@ -3507,10 +3513,13 @@ async function retireStaleReceipt(
     throw staleReceiptRefusal(context, cause)
   }
   if (await holdsReceipt(context, retiredPath, staleReceipt)) return retiredPath
-  // Another receipt was saved at that name since the read: it goes back, and nothing is published.
-  const changed = changedRecordRefusal(context)
-  await putBackRetiredReceipt(context, retiredPath, changed)
-  throw changed
+  // Another receipt was saved at that name since the read: it goes back, and nothing is published. A put-back that fails carries the refusal that claims no put-back, and its own sentence says where the receipt is.
+  await putBackRetiredReceipt(
+    context,
+    retiredPath,
+    changedRecordRefusal(context, false),
+  )
+  throw changedRecordRefusal(context, true)
 }
 
 /**
@@ -3538,12 +3547,12 @@ async function holdsReceipt(
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, up to {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} times. The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
+ * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
  * @param attempt - Which link this is, from 1; only the put-back itself passes more.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `unread` when the look there failed or the name kept changing, without any of them for any other link failure; that file stays, and so does the publish record that names it.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, without any of them for any other link failure; that file stays, and so does the publish record that names it.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
  */
@@ -3580,13 +3589,14 @@ async function putBackRetiredReceipt(
 }
 
 /** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken. */
-type StandingReceipt = 'covers' | 'absent' | 'other' | 'foreign' | 'unread'
+type StandingReceipt =
+  'covers' | 'absent' | 'other' | 'foreign' | 'unread' | 'moved-unread'
 
 /**
  * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link putBackRetiredReceipt}.
  * @param standing - What the look found; undefined when the link failed with another error than EEXIST.
  * @returns
- * - `other` for `other`, `foreign` for `foreign`
+ * - `other`, `foreign` and `moved-unread` as they are
  * - `unread` for `unread` and for `absent` past the last attempt (the name kept changing)
  * - undefined without a look, so the error keeps its first sentence
  * @example
@@ -3608,7 +3618,8 @@ function unrestoredStandingOf(
  * - `absent` when the name is empty, or changed between the look and the check
  * - `foreign` when a record of this config stands there and the moved file is a record of another config: neither goes, and the moved one never replaces it
  * - `other` for a folder, a link or another kind of file, bytes that are no record, or a record of another config or entry
- * - `unread` when a look or read failed, at either name
+ * - `unread` when a look at `receipt.json` or the read of what stands there failed
+ * - `moved-unread` when the moved record under its private name could not be read as a receipt
  * @example
  * await standingReceiptOf(context, retiredPath) // => 'other' while a folder stands at receipt.json
  */
@@ -3653,7 +3664,8 @@ async function readStandingReceipt(
   const moved = await readRecordKind(context, retiredPath)
   // Nothing is left under the private name to keep.
   if (moved === undefined) return 'covers'
-  if (typeof moved === 'string') return 'unread'
+  // The private file failed, not receipt.json: its own sentence names that file.
+  if (typeof moved === 'string') return 'moved-unread'
   const { ino, size, mtimeNs, ctimeNs } = before
   const isStill = await isNameStill(context, receiptPath, {
     ino,
