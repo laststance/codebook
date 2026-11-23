@@ -378,7 +378,7 @@ function journalRefusal({ path, pendingPath, retry }: Context): Error {
 }
 
 /**
- * Says that the private name of a copy of the previous config shows another program's file now ({@link KeptFile.isReplaced}), instead of naming that file the previous config; used by {@link keptFileSentence} and {@link alsoKeptSentence}.
+ * Says that the private name of a copy of the previous config shows another program's file now ({@link KeptFile.isReplaced}), instead of naming that file the previous config; used by {@link keptFileSentence}, {@link alsoKeptSentence} and, for a copy recovery handed over ({@link Unsettled.isReplaced}), {@link unsettledRefusal}.
  * @param path - The private name.
  * @returns One sentence that names the path and asks the learner to look at the file before using or deleting it.
  * @example
@@ -2135,6 +2135,8 @@ type Unsettled = {
   isHandedOver?: boolean
   /** The inode the handed copy's name shows when the copy is handed over ({@link unsettledOf}); the handed record names it ({@link handedRecordOf}), because a copy that only its bytes proved, or a name a sync tool swapped meanwhile, has another inode than the recorded one. */
   handedIno?: bigint
+  /** Set when the handed copy's name shows another inode than recovery's first look at it ({@link unsettledOf}): a sync tool swapped another file in at the name while recovery handed the copy over, so the refusal says that the file there is no longer that copy ({@link replacedCopySentence}) instead of calling it the previous config. */
+  isReplaced?: true
   /** Set by {@link inspect} when the handed record could not be written: the refusal then says that a later run may check the copy again ({@link bothFilesRefusal}) instead of promising that both paths stay. */
   isHandoverUnrecorded?: boolean
 }
@@ -2504,9 +2506,10 @@ async function lookPastCutShortDrop(
  * @param leftover - The accepted leftover.
  * @param look - What {@link lookAtLeftover} found at its name.
  * @param cause - What stopped its recovery.
- * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name shows now, which its handed record names ({@link handedRecordOf}): a sync tool may have swapped another file in at the name while recovery checked it, and a record naming the inode of the first look would refuse that file at every later run ({@link otherInodeRefusal}). When the name cannot be looked at (it is gone, for example), the first look's inode stays.
+ * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name shows now, which its handed record names ({@link handedRecordOf}): a sync tool may have swapped another file in at the name while recovery checked it, and a record naming the inode of the first look would refuse that file at every later run ({@link otherInodeRefusal}). That inode differing from the first look's marks the entry {@link Unsettled.isReplaced}, so the refusal never calls that file the previous config. When the name cannot be looked at (it is gone, for example), the first look's inode stays and nothing is marked.
  * @example
- * await unsettledOf(leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath)) // => { leftover, cause, isHandedOver: true, handedIno: 42n } (the inode the name shows now)
+ * await unsettledOf(leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath)) // => { leftover, cause, isHandedOver: true, handedIno: 42n } (the name still shows the first look's inode 42n)
+ * await unsettledOf(leftover, { kind: 'found', copy }, handedCopyError)                     // => { leftover, cause, isHandedOver: true, handedIno: 43n, isReplaced: true } (a sync tool swapped 43n in for 42n)
  * await unsettledOf(leftover, { kind: 'found', copy }, new Error('busy'))                   // => { leftover, cause }
  */
 async function unsettledOf(
@@ -2517,20 +2520,26 @@ async function unsettledOf(
   if (!isHandedCause(cause)) return { leftover, cause }
   // Only a found copy is ever handed over ({@link tidyLeftover}).
   const firstIno = look.kind === 'found' ? look.copy.ino : undefined
-  const handedIno = await lstat(leftover.path, { bigint: true }).then(
+  // A look that fails proves nothing: the first look's inode stays.
+  const shownIno = await lstat(leftover.path, { bigint: true }).then(
     ({ ino }) => ino,
-    () => firstIno,
+    () => undefined,
   )
+  const handedIno = shownIno ?? firstIno
+  // Another inode than the first look's: a file a sync tool swapped in while recovery handed the copy over.
+  const isReplaced =
+    shownIno !== undefined && firstIno !== undefined && shownIno !== firstIno
   return {
     leftover,
     cause,
     isHandedOver: true,
     ...(handedIno !== undefined && { handedIno }),
+    ...(isReplaced && { isReplaced }),
   }
 }
 
 /**
- * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named.
+ * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named. A copy handed over in this run whose name a sync tool swapped meanwhile ({@link Unsettled.isReplaced}) is said to be no longer that copy ({@link replacedCopySentence}), never the previous config to delete.
  * @param context - The run.
  * @param phase - The phase recovery read the pending record in ({@link leftoverPhaseOf}).
  * @param reported - The unsettled leftover to name.
@@ -2539,11 +2548,22 @@ async function unsettledOf(
 function unsettledRefusal(
   context: Context,
   phase: Pending['phase'],
-  { leftover, cause, isHandedOver, isHandoverUnrecorded }: Unsettled,
+  {
+    leftover,
+    cause,
+    isHandedOver,
+    isReplaced,
+    isHandoverUnrecorded,
+  }: Unsettled,
 ): Error {
   // The put-back check's and the changed config's own texts name both paths and the state; the move-back advice would lose a new save.
   if (namesBothFiles(cause))
     return bothFilesRefusal(cause, leftover.path, phase, isHandoverUnrecorded)
+  // Another program's file stands at the handed copy's name: it is never called the previous config or advised for deletion.
+  if (isReplaced)
+    return new Error(
+      `${changedWhileWorking(context).message} ${replacedCopySentence(leftover.path)}`,
+    )
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)

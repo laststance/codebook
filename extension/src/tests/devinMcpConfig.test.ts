@@ -5970,7 +5970,7 @@ test("A legacy rollback journal whose handed copy is refused while its staged co
 })
 
 test("A legacy rollback journal whose displaced copy a sync tool swaps while Codebook hands it over keeps the published file's inode and hash, so the failed first setup is taken back, not installed, once the published file is back", async (context) => {
-  // Value: protects=the held journal keeps the inode and hash that decided it as another setup's apart from the file handed to the learner, so a file swapped in at the private name during the hand-over never becomes that evidence and the failed first setup is taken back, never adopted, once the published file is back at the config name; fails_when=a later refresh writes a receipt, leaves the entry in the config or answers anything but not-managed, the journal after the first refresh holds another inode or hash than the journal did or still names the private file, or the swapped-in file is changed or deleted; no_claim=a real sync tool (seam.beforeRecordWrite moves the published file away and writes another file at its private name once, at the write of the journal's handed record), the first refresh's wording, and a swap after the hand-over was recorded
+  // Value: protects=the held journal keeps the inode and hash that decided it as another setup's apart from the file handed to the learner, so a file swapped in at the private name during the hand-over never becomes that evidence and the failed first setup is taken back, never adopted, once the published file is back at the config name, and the first refresh says that the file at the private name is no longer the copy of the previous config instead of calling it that copy and advising its deletion; fails_when=a later refresh writes a receipt, leaves the entry in the config or answers anything but not-managed, the journal after the first refresh holds another inode or hash than the journal did or still names the private file, the first refresh calls the swapped-in file a private copy of the previous config, advises deleting it or omits its path, or the swapped-in file is changed or deleted; no_claim=a real sync tool (seam.beforeRecordWrite moves the published file away and writes another file at its private name once, at the write of the journal's handed record), and a swap after the hand-over was recorded
   // Arrange
   const { home, storage, configPath, receiptPath, journalPath } =
     await leaveLegacyCutShortSetup(
@@ -6030,7 +6030,7 @@ test("A legacy rollback journal whose displaced copy a sync tool swaps while Cod
   assert.equal(third, 'not-managed')
   assert.equal(
     first,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Another program replaced the private copy of your previous Devin MCP config that Codebook kept at ${keptPath}, so the file at that path is no longer that copy; Codebook left that file untouched, so look at it before you use or delete it.`,
   )
   assert.deepEqual(journalAfterFirst, {
     targetPath: journalBefore.targetPath,
