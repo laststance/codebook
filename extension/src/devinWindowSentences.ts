@@ -10,6 +10,10 @@ export const DEVIN_REFRESH_NODE_FAILURE_LINE =
 export const DEVIN_SERVER_RESTARTED_SENTENCE =
   'Codebook restarted its agent server. Reload this window so Devin Local connects to the new server.'
 
+/** What a Devin Desktop window with chat setup says once it marked its descriptor after the receipts read of its server start answered only after the start's 5-second budget: the bridge Devin Local started at the window load found the unmarked descriptor. */
+export const DEVIN_LATE_MARK_SENTENCE =
+  'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.'
+
 /** The folder of Codebook's global storage whose lock serializes every Devin Desktop setup and removal of the user's windows. */
 export const DEVIN_SETUP_STORAGE_DIRECTORY = 'devin-setup'
 

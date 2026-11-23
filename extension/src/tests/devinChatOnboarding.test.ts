@@ -186,8 +186,8 @@ async function devinWindow(
     receiptReadsHang?: boolean
     failFirstInstallationRead?: boolean
     removalDeletesReceipt?: boolean
-    /** How long each of the first reads of the setup receipts waits before it answers with no answer (`null`), by the read's position; a read past the list answers at once. */
-    receiptReadDelaysMs?: number[]
+    /** How long each of the first reads of the setup receipts waits before it answers with no answer (`null`), by the read's position; a read past the list, or at an `undefined` position, is the real one. */
+    receiptReadDelaysMs?: (number | undefined)[]
     /** Runs once, right after the setup lock's release was awaited and before the setup's success notice (test seam for a folder change in that gap). */
     afterSetupLockRelease?: (window: {
       changeFolder: (folder: string) => void
@@ -3571,6 +3571,160 @@ test('a Devin setup whose first installation-id read never returns ends within 3
     )
     assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
     assert.deepEqual(window.steps.slice(-1), ['remove MCP entry'])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a Devin Desktop window whose receipts read at its first server start answers only after the start's 5-second budget publishes its descriptor unmarked, then marks it once that read settled and a fresh read finds the setup standing, and offers Reload Window once (Cycle 0146 task 1c) / fails_when=the late answer changes nothing, so the descriptor stays unmarked and Devin Local never connects, or the reload is offered twice / no_claim=a read that is between two retries at the deadline (no read to wait for, unchanged); the stand-in read waits 5.5 s and then has no answer, the next read is the real one
+test('a Devin Desktop window whose first receipts read answers after the start budget marks its descriptor then and offers Reload Window once', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+  })
+  try {
+    // Act
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    const fieldAtPublication = await window.readDescriptorField()
+    await waitUntil(
+      async () => (await window.readDescriptorField()) === true,
+      'the late mark of the descriptor',
+      15_000,
+    )
+    await waitUntil(() => window.notices.length > 0, 'the late mark notice')
+    // A stop queues behind every descriptor change, so a second offer would be shown before it ends.
+    await window.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.equal(fieldAtPublication, undefined)
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=after Stop and Start Agent Server, a restarted Devin Desktop server whose receipts read answers only after the start budget is marked once that read settled, and the window offers Reload Window once, although no restart offer came for the unmarked descriptor (Cycle 0146 task 1c) / fails_when=the restarted window stays unmarked and offers no reload, or offers two / no_claim=the first start (the test above); the second read waits 5.5 s and then has no answer, the other reads are the real ones
+test('a restarted Devin Desktop server whose receipts read answers after the start budget is marked then and offers Reload Window once', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [undefined, 5_500],
+  })
+  try {
+    await waitUntil(
+      async () =>
+        (await window.descriptorReadable()) &&
+        (await window.readDescriptorField()) === true,
+      "the reconnect's marked descriptor",
+    )
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    const fieldAtRestart = await window.readDescriptorField()
+    await waitUntil(
+      async () => (await window.readDescriptorField()) === true,
+      'the late mark of the restarted descriptor',
+      15_000,
+    )
+    await waitUntil(() => window.notices.length > 0, 'the late mark notice')
+    // A stop queues behind every descriptor change, so a second offer would be shown before it ends.
+    await window.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.equal(fieldAtRestart, undefined)
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a late receipts read whose fresh read finds the setup removed (another window removed the entry record meanwhile) leaves the window unmarked and shows no notice (Cycle 0146 task 1c) / fails_when=the late mark trusts the old read, or offers a reload for a removed setup / no_claim=the removal command of this window; the stand-in read waits 5.5 s and then has no answer, the fresh read is the real one
+test('a Devin Desktop window whose late receipts read finds the setup removed stays unmarked and offers nothing', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    // Act
+    await rm(join(window.directory, 'devin-mcp/receipt.json'))
+    await waitUntil(
+      () => window.receiptReadCount() >= 2,
+      "the late mark's fresh read",
+      15_000,
+    )
+    const fieldAfterFreshRead = await window.readDescriptorField()
+    // A stop queues behind every descriptor change, so a mark or an offer would come before it ends.
+    await window.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.equal(fieldAfterFreshRead, undefined)
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a late receipts read of a server that was stopped and replaced before the read settled leaves the new server's mark and notices as they are: only its own restart offer is shown (Cycle 0146 task 1c) / fails_when=the late continuation marks or rewrites the new server's descriptor, or offers a second reload / no_claim=the new server's own late read (none here); the stand-in read waits 5.5 s and then has no answer, the other reads are the real ones
+test("a late receipts read of a replaced Devin Desktop server leaves the new server's mark and notices as they are", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    await window.commands.get('codebook.startAgentServer')!()
+    const newDescriptor = JSON.parse(
+      await readFile(await window.descriptorPath(), 'utf8'),
+    )
+    // A stop queues behind every descriptor change, so the late continuation (queued once the first read settled, before the new server published) ends before it.
+    await waitUntil(
+      () => window.notices.length > 0,
+      "the new server's restart offer",
+    )
+    const descriptorBeforeStop = JSON.parse(
+      await readFile(await window.descriptorPath(), 'utf8'),
+    )
+    await window.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.equal(newDescriptor.devinChat, true)
+    assert.deepEqual(descriptorBeforeStop, newDescriptor)
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          'Codebook restarted its agent server. Reload this window so Devin Local connects to the new server.',
+        actions: ['Reload Window'],
+      },
+    ])
   } finally {
     await window.loaded.deactivate()
   }
