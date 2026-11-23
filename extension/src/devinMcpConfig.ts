@@ -3758,7 +3758,7 @@ async function readRecordKind(
 }
 
 /**
- * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} threw; called by {@link readRecordKind} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
  * @param error - What {@link readRecord} threw.
  * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link, no regular file, too many bytes or bytes that are no record.
  * @example
@@ -3775,7 +3775,7 @@ function isFailedRead(error: unknown): boolean {
  * @param context - The run.
  * @param pending - The publish record as read; only one of this config that names the move ({@link Pending.retiresReceipt}) with a valid generation leads to a private name.
  * @returns Resolves once the private name is settled; the caller reads the config afterwards, so a config restored while the old receipt went back is the one its run goes on with.
- * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link lookAtConfig} and {@link retiredReceiptFateOf} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
+ * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link isPublishReceipted}, {@link lookAtConfig} and {@link retiredReceiptFateOf} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
  * @example
  * await settleRetiredReceipt(context, pending) // receipt.json stands again after a setup whose link failed and whose put-back failed too
  */
@@ -3793,7 +3793,7 @@ async function settleRetiredReceipt(
     return
   const retiredPath = retiredReceiptPathOf(context, generation)
   // That setup wrote its own receipt, so its link stood: the old receipt covers nothing, whatever the config shows now.
-  if (await isPublishReceipted(context, generation)) {
+  if (await isPublishReceipted(context, retiredPath, generation)) {
     await unlink(retiredPath).catch(() => undefined)
     return
   }
@@ -3828,16 +3828,30 @@ async function settleRetiredReceipt(
 /**
  * Tells whether the publish a first setup's record names wrote its own receipt, which it does only once its link stood ({@link publishEntry}); called only by {@link settleRetiredReceipt}, before any look at the config.
  * @param context - The run.
+ * @param retiredPath - The private name that holds the old record; the error below names it.
  * @param generation - The publish record's generation.
- * @returns `true` when `receipt.json` holds a receipt of this config with that generation; `false` otherwise, also when that file cannot be read (the put-back's own look then settles what stands there, {@link standingReceiptOf}).
+ * @returns `true` when `receipt.json` holds a receipt of this config with that generation; `false` when nothing, another config's receipt or bytes that are no receipt stand there (the put-back's own look then settles what stands there, {@link standingReceiptOf}).
+ * @throws An {@link UnrestoredReceiptError} marked `unread` when `receipt.json` could not be read: that receipt may be this setup's own, so both records stay and no sentence asks to move one; nothing is changed then.
  * @example
- * await isPublishReceipted(context, pending.generation) // => true after a first setup that wrote its receipt and could not delete its publish record
+ * await isPublishReceipted(context, retiredPath, pending.generation) // => true after a first setup that wrote its receipt and could not delete its publish record
  */
 async function isPublishReceipted(
   context: Context,
+  retiredPath: string,
   generation: string,
 ): Promise<boolean> {
-  const receipt = await readReceipt(context).catch(() => undefined)
+  const receipt = await readReceipt(context).catch((error: unknown) => {
+    // A failed read says nothing about the receipt, which may be this setup's own: the run stops, keeping both records.
+    if (isFailedRead(error))
+      throw new UnrestoredReceiptError(
+        context,
+        retiredPath,
+        undefined,
+        error,
+        'unread',
+      )
+    return undefined
+  })
   return receipt?.generation === generation
 }
 

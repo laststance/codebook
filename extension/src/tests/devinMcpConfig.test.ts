@@ -8719,6 +8719,124 @@ test("A first setup with another bridge path that wrote its own record but could
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+/**
+ * Leaves what a first setup with another bridge path leaves when it finished, writing its own record, but could neither delete its publish record nor the old record it moved aside: `pending.json`, `receipt.json` and the old record under its private name.
+ * @param context - The test context.
+ * @returns The home, storage, config, receipt and publish record paths, the setup's own record, and the private name of the old record (bare and as a path).
+ * @example
+ * const { storage, home, retiredPath } = await arrangeFinishedSetupWithOldRecordLeft(context)
+ * await refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home) // => { status: 'current' }, and the old record is gone
+ */
+async function arrangeFinishedSetupWithOldRecordLeft(context: TestContext) {
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  rmSync(configPath)
+  const busyNames = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm: async (...args: Parameters<typeof rm>) => {
+          if (args[0] === pendingPath)
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return rm(...args)
+        },
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  const setup = await busyNames.writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  )
+  assert.equal(setup.status, 'installed')
+  const setupReceipt = await readRecordFile(storage, 'receipt.json')
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(generation)}.retired`
+  return {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    setupReceipt,
+    retiredName,
+    retiredPath: join(storage, 'devin-mcp', retiredName),
+  }
+}
+
+test("A refresh whose read of a finished first setup's own record fails once keeps both records and never asks to move that record away, and the next refresh deletes the old record", async (context) => {
+  // Value: protects=a failed read of the record a finished first setup wrote decides nothing: both records stay, the refusal advises no move or removal and the next run settles them, so the learner is never told to move the record of the entry that stands; fails_when=the first refresh asks to move a file to another folder, answers without a refusal, changes or deletes a record, or the next refresh answers anything but not-managed or leaves anything but that setup's record; no_claim=a real I/O error (seam.afterStat throws once for receipt.json), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json), a learner deleting mcp_config.json (rmSync)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    setupReceipt,
+    retiredName,
+    retiredPath,
+  } = await arrangeFinishedSetupWithOldRecordLeft(context)
+  // The config is gone for a moment, so nothing but the records decides.
+  rmSync(configPath)
+  let hasFailed = false
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      afterStat: (path) => {
+        if (path !== receiptPath || hasFailed) return
+        hasFailed = true
+        throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordsAfterFirst = await recordsIn(storage)
+  const receiptAfterFirst = await readRecordFile(storage, 'receipt.json')
+  const second = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasFailed, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept both files, so the next run looks again; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterFirst, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.deepEqual(receiptAfterFirst, setupReceipt)
+  assert.equal(second, 'not-managed')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A refresh that cannot read the old record's private file once keeps both records, and the next refresh still refuses", async (context) => {
   // Value: protects=a failed read of the old record decides nothing: no put-back, both records stay, and the refusal names the private file and asks to keep both records, never to delete one; fails_when=receipt.json appears, a record is gone, a refresh answers current, or the first refusal advises removing the record or names another file; no_claim=a real I/O error (seam.afterStat throws once for the private file), a record whose bytes are invalid (that keeps readRecord's own sentence)
   // Arrange
