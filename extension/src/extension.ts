@@ -99,6 +99,7 @@ import {
   DEVIN_SERVER_RESTARTED_SENTENCE,
   DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE,
   DEVIN_SETUP_NODE_FAILURE_SENTENCE,
+  DEVIN_SETUP_NOT_RESTORED_LINE,
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
   DEVIN_SETUP_FOLDER_CHANGED_SENTENCE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
@@ -338,6 +339,12 @@ export function activate(
     step: DevinStorageStep
     reason?: string
   }
+  /** What a Devin Desktop setup's take-back puts back: what its entry write answered, the saved setup from before the run, and the folder generation ({@link devinFolderGeneration}) when the run began. */
+  type DevinTakeBack = {
+    entryWrite: DevinEntryWrite
+    previousSetup: unknown
+    folderGeneration: number
+  }
   let starting: Promise<Running> | undefined,
     running: Running | undefined,
     stopping: Promise<void> | undefined
@@ -354,6 +361,8 @@ export function activate(
   let devinBackgroundWork: DevinLapse | undefined
   /** The last write of this window's saved Devin Desktop setup queued by {@link inSavedSetupQueue}; it never rejects. */
   let savedSetupQueue: Promise<unknown> = Promise.resolve()
+  /** How many changes of the workspace's folders this window has seen; a Devin setup reads it when it begins, so its take-back never puts back a saved setup of a folder that closed meanwhile ({@link restoreSavedDevinSetup}). */
+  let devinFolderGeneration = 0
   let hasStoppedServer = false
   /** The last descriptor change or removal queued by {@link inDescriptorQueue}; it never rejects. */
   let descriptorQueue: Promise<unknown> = Promise.resolve()
@@ -1035,9 +1044,8 @@ export function activate(
         failures.push({ step, thrown })
       }
     }
-    await attempt('chat-setup', () =>
-      context.workspaceState.update('codebook.aiChatSetup', undefined),
-    )
+    // In the queue of the Devin setup's writes, so a take-back's restore that started before it never lands after it.
+    await attempt('chat-setup', () => writeSavedSetup(() => undefined))
     const closingWikiReader = deepWikiReader
     deepWikiReader = undefined
     try {
@@ -1491,9 +1499,16 @@ export function activate(
       )
       isDevinChatMarked ||= isMarked
     })
-  /** The take-back's first step: puts this window's saved setup back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load). @param previousSetup - The saved setup from before the run. @returns Whether the write succeeded; a failure went to the Output. @example await restoreSavedDevinSetup(undefined) */
-  const restoreSavedDevinSetup = (previousSetup: unknown): Promise<boolean> =>
-    saveDevinSetupAs(() => previousSetup, 'restore')
+  /** The take-back's first step: puts this window's saved setup back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load), decided when the write's turn in {@link inSavedSetupQueue} comes: after a change of the workspace's folders since the run began it clears the value instead, because that setup belongs to a folder that closed, and says so in the Output; with the folder change's own clear in the same queue, either order ends with no saved setup. @param previousSetup - The saved setup from before the run. @param folderGeneration - {@link devinFolderGeneration} when the run began. @returns Whether the write succeeded; a failure went to the Output. @example await restoreSavedDevinSetup(undefined, 0) */
+  const restoreSavedDevinSetup = (
+    previousSetup: unknown,
+    folderGeneration: number,
+  ): Promise<boolean> =>
+    saveDevinSetupAs(() => {
+      if (devinFolderGeneration === folderGeneration) return previousSetup
+      diagnostics.info(DEVIN_SETUP_NOT_RESTORED_LINE)
+      return undefined
+    }, 'restore')
   /** The take-back's entry step, only for an entry this setup installed (an updated or current entry is used by other windows): removes it while its receipt still names this setup's generation, so a newer setup's entry stays. @param generation - The generation the setup's entry write answered. @returns Whether the entry and its records are gone; a leftover or a failure went to the Output. @example await takeBackDevinEntry('g1') */
   const takeBackDevinEntry = (generation: string): Promise<boolean> =>
     removeManagedDevinMcpEntry(
@@ -1530,19 +1545,14 @@ export function activate(
   /**
    * Takes back what a failed Devin Desktop setup saved, in three steps under one budget: the saved setup, the entry when this setup installed it, and the descriptor of the server running now. The steps are never cut: once they outlast {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, `onLapse` names the one that waits, so the command can answer while the take-back goes on under the setup lock.
    * Called by {@link takeBackFailedDevinSetup} when a step after the entry write fails.
-   * @param entryWrite - What the setup's entry write answered.
-   * @param previousSetup - The saved setup from before the run.
+   * @param takeBack - What the run's entry write answered, the saved setup from before the run, and the folder generation when the run began.
    * @param onLapse - Hears the step that waits on storage when the budget passed.
    * @returns Whether every step took back what it should; each failure went to the Output.
    * @example
-   * const isComplete = await rollBackDevinSetup({ status: 'installed', generation: 'g1' }, undefined, () => {})
+   * const isComplete = await rollBackDevinSetup({ entryWrite: { status: 'installed', path, generation: 'g1' }, previousSetup: undefined, folderGeneration: 0 }, () => {})
    */
   const rollBackDevinSetup = async (
-    entryWrite: {
-      status: 'installed' | 'updated' | 'current'
-      generation: string
-    },
-    previousSetup: unknown,
+    { entryWrite, previousSetup, folderGeneration }: DevinTakeBack,
     onLapse: (step: DevinStorageStep) => void,
   ): Promise<boolean> => {
     let isComplete = true
@@ -1559,7 +1569,7 @@ export function activate(
     await runStepsWithinBudget(
       [
         takeBackStep('saved setup', () =>
-          restoreSavedDevinSetup(previousSetup),
+          restoreSavedDevinSetup(previousSetup, folderGeneration),
         ),
         // Only an entry this setup installed is taken back.
         ...(entryWrite.status === 'installed'
@@ -1588,19 +1598,17 @@ export function activate(
    * Takes back a failed Devin Desktop setup and words what the command answers; called by the catch of {@link setUpDevinChatLocked}, which awaits it, so the setup lock stays held until the take-back settled.
    * When the take-back outlasts its budget, `onLapse` hears the step that waits and the failure's sentence, so the command answers then; the look at the receipt below is then skipped, because the command has already answered.
    * @param error - What the failed step threw.
-   * @param entryWrite - What the setup's entry write answered.
-   * @param previousSetup - The saved setup from before the run.
+   * @param takeBack - What the run's entry write answered, the saved setup from before the run, and the folder generation when the run began.
    * @param onLapse - Hears the take-back's lapse.
    * @returns The error the setup ends with: the original one, or one that names an incomplete take-back or a retry instead of a repair of a deleted receipt.
-   * @example throw await takeBackFailedDevinSetup(error, entryWrite, undefined, onLapse)
+   * @example throw await takeBackFailedDevinSetup(error, { entryWrite, previousSetup: undefined, folderGeneration: 0 }, onLapse)
    */
   const takeBackFailedDevinSetup = async (
     error: unknown,
-    entryWrite: DevinEntryWrite,
-    previousSetup: unknown,
+    takeBack: DevinTakeBack,
     onLapse: (lapse: DevinLapse) => void,
   ): Promise<unknown> => {
-    revokeFailedSetupMark(entryWrite)
+    revokeFailedSetupMark(takeBack.entryWrite)
     const reason = thrownMessage(error)
     const receiptPath = join(
       context.globalStorageUri.fsPath,
@@ -1608,19 +1616,15 @@ export function activate(
       'receipt.json',
     )
     let hasLapsed = false
-    const isRolledBack = await rollBackDevinSetup(
-      entryWrite,
-      previousSetup,
-      (step) => {
-        hasLapsed = true
-        // A sentence that names the receipt may ask to repair a file the take-back deletes, so the command then names the pending step alone.
-        onLapse({
-          kind: 'take-back',
-          step,
-          reason: reason.includes(receiptPath) ? undefined : reason,
-        })
-      },
-    )
+    const isRolledBack = await rollBackDevinSetup(takeBack, (step) => {
+      hasLapsed = true
+      // A sentence that names the receipt may ask to repair a file the take-back deletes, so the command then names the pending step alone.
+      onLapse({
+        kind: 'take-back',
+        step,
+        reason: reason.includes(receiptPath) ? undefined : reason,
+      })
+    })
     // The command already answered: its end goes to the Output, without a look at the receipt.
     if (hasLapsed)
       return isRolledBack
@@ -1642,6 +1646,8 @@ export function activate(
     cleanupFailure?: string
     disabled?: true
   }> => {
+    // Read before any await: a folder change from here on means the earlier saved setup is not put back.
+    const folderGeneration = devinFolderGeneration
     // The failure's own text can carry the executable's stderr; the learner gets a fixed sentence.
     const nodeExecutable = await resolveExternalNodeExecutable(
       vscode.workspace
@@ -1734,8 +1740,7 @@ export function activate(
       // A different Devin Desktop window may have removed the shared skill during the saved setup.
       throw await takeBackFailedDevinSetup(
         error,
-        entryWrite,
-        previousSetup,
+        { entryWrite, previousSetup, folderGeneration },
         onLapse,
       )
     }
@@ -4291,6 +4296,8 @@ export function activate(
       ),
     ),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      // Counted at once, before any handling: a Devin take-back that decides its restore after this sees the change.
+      devinFolderGeneration += 1
       // One change is handled after the one before it: handled at once, the second would clear the readers the first had just made, without disposing them.
       const replacement = (replacingReaders ?? Promise.resolve()).then(
         replaceReadersAfterFolderChange,

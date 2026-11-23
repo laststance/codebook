@@ -37,6 +37,10 @@ export const DEVIN_ENTRY_MISSING_LINE =
 export const DEVIN_SETUP_SERVER_CHANGED_SENTENCE =
   'Codebook server stopped or changed workspace while Devin Desktop setup was finishing, so the setup did not complete. Run Codebook: Set Up AI Chat again.'
 
+/** The Output line of a failed Devin Desktop setup whose window changed its workspace folder after the setup began: its take-back clears the saved setup instead of putting back the one of the folder that closed. */
+export const DEVIN_SETUP_NOT_RESTORED_LINE =
+  "Codebook did not put back this window's earlier Devin Desktop setup because the folder changed."
+
 /** What a Devin Desktop setup answers when the window's workspace folder changed while the setup saved its final value: the setup did not complete for the folder now open. */
 export const DEVIN_SETUP_FOLDER_CHANGED_SENTENCE =
   'The workspace folder changed while Devin Desktop setup was finishing, so the setup did not complete for this folder. Run Codebook: Set Up AI Chat again.'

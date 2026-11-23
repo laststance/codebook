@@ -3729,3 +3729,111 @@ test("a late receipts read of a replaced Devin Desktop server leaves the new ser
     await window.loaded.deactivate()
   }
 })
+
+// protects=a failed Devin setup re-run whose window changed its workspace folder after the run began, and before the failure, leaves no saved setup of the folder that closed, and the Output says why (Cycle 0146 task 6) / fails_when=the take-back writes the old folder's setup back over the folder change's clear / no_claim=a folder change after the take-back's restore started (the next test); the skill check stand-in, armed after the reconnect at activation, changes the folder as the editor does and then fails
+test('a failed Devin setup re-run whose folder changed after it began leaves no saved setup of the old folder', async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = { savedSetup: true }
+  const window = await devinWindow(context, options)
+  try {
+    await window.whenReconnected()
+    let savedWhenFolderChanged: unknown
+    options.onSkillCheck = async (): Promise<void> => {
+      options.onSkillCheck = undefined
+      savedWhenFolderChanged = window.state.get('codebook.aiChatSetup')
+      window.changeFolder('/other/folder')
+      throw new Error('Injected skill check failure')
+    }
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(setupOutcome, 'Injected skill check failure')
+    assert.deepEqual(savedWhenFolderChanged, {
+      workspace: window.directory,
+      provisional: true,
+      previous: { workspace: window.directory },
+    })
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    assert.equal(
+      window.outputLines.includes(
+        "Codebook did not put back this window's earlier Devin Desktop setup because the folder changed.",
+      ),
+      true,
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a folder change that comes while a failed Devin setup's restore of the earlier saved setup is being written still ends with no saved setup, because the folder change's clear lands after that restore (Cycle 0146 task 6, v2 finding 8) / fails_when=the clear lands first and the held restore writes the old folder's setup back last / no_claim=a folder change before the restore started (the test above); the held stand-in write stands for a slow editor storage
+test("a folder change while a failed Devin setup's restore is written leaves no saved setup", async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    holdSavedSetupWrite: true,
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await window.whenReconnected()
+    options.onSkillCheck = async (): Promise<void> => {
+      options.onSkillCheck = undefined
+      throw new Error('Injected skill check failure')
+    }
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the take-back's restore of the saved setup",
+    )
+    // Act
+    window.changeFolder('/other/folder')
+    window.holds.savedSetupWrite.release()
+    const setupOutcome = await within(setup, 15_000)
+    // Assert
+    assert.equal(setupOutcome, 'Injected skill check failure')
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// protects=a failed Devin setup re-run in the same folder still puts back the setup saved before it and writes no folder line (Cycle 0146 task 6 guard) / fails_when=the folder check clears the earlier setup although no folder changed / no_claim=the folder change cases above; the skill check stand-in is armed after the reconnect at activation
+test('a failed Devin setup re-run without a folder change puts back the setup saved before it', async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = { savedSetup: true }
+  const window = await devinWindow(context, options)
+  try {
+    await window.whenReconnected()
+    options.onSkillCheck = async (): Promise<void> => {
+      options.onSkillCheck = undefined
+      throw new Error('Injected skill check failure')
+    }
+    // Act
+    const setupOutcome = await window.commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(setupOutcome, 'Injected skill check failure')
+    assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
+      workspace: window.directory,
+    })
+    assert.equal(
+      window.outputLines.includes(
+        "Codebook did not put back this window's earlier Devin Desktop setup because the folder changed.",
+      ),
+      false,
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
