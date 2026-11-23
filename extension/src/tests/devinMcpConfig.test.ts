@@ -8284,6 +8284,61 @@ test("A setup whose old record's name is taken at the put-back and empty right a
   assert.deepEqual(receiptAfterRefusal, receiptBefore)
 })
 
+test("A setup whose old record's name is taken at every put-back link yet empty at every look stops after three links, keeps both files and says what stood there kept changing", async (context) => {
+  // Value: protects=the put-back's relinks on a name that is taken at each link and empty at each look are bounded at three links in all, after which the old record and the publish record stay and the refusal says Codebook could not tell what stands there, advising no removal; fails_when=the put-back links more or fewer than three times, the private file or the publish record is gone, receipt.json appears, or the refusal is another sentence; no_claim=a real racing writer (the config module is loaded with a link that answers EEXIST for every link to receipt.json while nothing stands there, and that moves the old config back right before the config link)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let receiptLinks = 0
+  const alwaysTaken = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) moveBack()
+          if (to === receiptPath) {
+            receiptLinks += 1
+            throw Object.assign(new Error('file already exists'), {
+              code: 'EEXIST',
+            })
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await alwaysTaken
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const generation = existsSync(pendingPath)
+    ? String((await readRecordFile(storage, 'pending.json')).generation)
+    : 'absent'
+  const retiredName = `receipt.json.${generation}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+
+  // Assert
+  assert.equal(receiptLinks, 3)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept both files, so the next run looks again; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.deepEqual(JSON.parse(readFileSync(retiredPath, 'utf8')), receiptBefore)
+})
+
 test("A setup whose old record's name changes right after Codebook read a matching record there keeps the old record and names both", async (context) => {
   // Value: protects=the old record is dropped only while receipt.json still shows the record that was read; fails_when=the old record is dropped after the name changed; no_claim=a swap between the last look and the unlink (no Node primitive closes it), a real sync tool (seam.beforeLeftoverCheck swaps a folder in)
   // Arrange
