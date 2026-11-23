@@ -8416,6 +8416,87 @@ test('A refresh whose first look finds no config while the config is back at its
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
 })
 
+test('A refresh whose old record goes back while a backup restores the config it covers answers current on the config it reads after that put-back', async (context) => {
+  // Value: protects=a refresh decides the rest of its run on the config as it stands after the old record went back, so a config restored meanwhile that the old record owns is reconnected in that same run; fails_when=the refresh answers anything but current, receipt.json holds anything but the old record, a record stays, or the restored config changes; no_claim=a real backup tool (the config module is loaded with a link that moves the old config back right after the put-back's link), a real process end (seam.afterPublish throws) and why the private name's unlink failed in that setup (unlink stub EBUSY)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    oldConfigText,
+    moveBack,
+  } = await arrangeMovedAwayConfig(context)
+  const busyRetiredName = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    busyRetiredName.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  // The config the stopped setup published is gone before the next run looks.
+  rmSync(configPath)
+  let hasRestored = false
+  const restoringBackup = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // A backup tool restores the old config right after the old record went back.
+          if (to === receiptPath && !hasRestored) {
+            hasRestored = true
+            moveBack()
+          }
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const result = await restoringBackup
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      ({ status }) => status,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(result, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.equal(readFileSync(configPath, 'utf8'), oldConfigText)
+})
+
 test('A first setup that linked nothing gets its old record back even when the restored config has the inode it had staged', async (context) => {
   // Value: protects=a publish known never to have linked puts its old record back and takes nothing back, whatever inode the config shows; fails_when=the record lacks the mark, the old record is gone, the restored entry is taken out, or the setup answers anything but current; no_claim=a real inode reuse (the test writes the config's inode into stagedIno), why the put-back failed (link stub EIO)
   // Arrange

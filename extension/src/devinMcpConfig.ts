@@ -3702,7 +3702,7 @@ function isFailedRead(error: unknown): boolean {
  * A setup whose own receipt stands (the same generation, {@link isPublishReceipted}) finished: its link stood, so the private name is deleted before any look, whatever the config shows. A record marked {@link Pending.notLinked} linked nothing: the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one, whatever inode the config shows (a freed staged inode may come back as the restored config's). Otherwise, while the config name shows the inode the setup published, its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. Otherwise the config is read once, and that one look decides ({@link retiredReceiptFateOf}): when it holds the setup's own entry and the old receipt does not own it (another bridge path), that entry is the setup's publish saved again, so the private name is deleted as when the link stood; when it holds the entry the old receipt covers, which the setup may have published before it stopped and a sync tool saved again, the run refuses and keeps both records; else nothing of that setup stands, and the receipt goes back. A config name that cannot be looked at, a config that cannot be read and a record that cannot be read decide nothing: the run stops, because a read that works a moment later could settle the publish record and leave the private name for good; the private name and the record stay, so the next run settles them again.
  * @param context - The run.
  * @param pending - The publish record as read; only one of this config that names the move ({@link Pending.retiresReceipt}) with a valid generation leads to a private name.
- * @returns The look at the config that decided the put-back or the deletion, which {@link settleAfterRecovery} goes on with; undefined when no look was taken here.
+ * @returns Resolves once the private name is settled; the caller reads the config afterwards, so a config restored while the old receipt went back is the one its run goes on with.
  * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link lookAtConfig} and {@link retiredReceiptFateOf} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
  * @example
  * await settleRetiredReceipt(context, pending) // receipt.json stands again after a setup whose link failed and whose put-back failed too
@@ -3710,7 +3710,7 @@ function isFailedRead(error: unknown): boolean {
 async function settleRetiredReceipt(
   context: Context,
   pending: Pending | undefined,
-): Promise<ConfigLook | undefined> {
+): Promise<void> {
   const generation = pending?.generation
   if (
     !pending?.retiresReceipt ||
@@ -3718,12 +3718,12 @@ async function settleRetiredReceipt(
     generation === undefined ||
     !GENERATION_PATTERN.test(generation)
   )
-    return undefined
+    return
   const retiredPath = retiredReceiptPathOf(context, generation)
   // That setup wrote its own receipt, so its link stood: the old receipt covers nothing, whatever the config shows now.
   if (await isPublishReceipted(context, generation)) {
     await unlink(retiredPath).catch(() => undefined)
-    return undefined
+    return
   }
   // A failed look decides nothing: the run stops here, so the private name and the record wait for the next run.
   const config = await lstatOrAbsent(context.path).catch((cause: unknown) => {
@@ -3732,7 +3732,7 @@ async function settleRetiredReceipt(
   // Nothing of that publish was linked: the old receipt goes back whatever inode the config shows.
   if (pending.notLinked) {
     await putBackRetiredReceipt(context, retiredPath)
-    return undefined
+    return
   }
   const { stagedIno } = pending
   // The setup's link stood: the old receipt is deleted, never put back beside that entry.
@@ -3742,16 +3742,15 @@ async function settleRetiredReceipt(
     isSameFileId(stagedIno, config.ino)
   ) {
     await unlink(retiredPath).catch(() => undefined)
-    return undefined
+    return
   }
-  // One look decides the put-back, and the run goes on with that same look.
+  // One look decides the put-back; the run goes on with the config as it stands afterwards.
   const look = await lookAtConfig(context)
   const fate = await retiredReceiptFateOf(context, pending, retiredPath, look)
   if (fate === 'undecided') throw undecidedReceiptRefusal(context, retiredPath)
   // The config holds that setup's publish, which the old receipt does not own: it goes, as when the link stood.
   if (fate === 'drop') await unlink(retiredPath).catch(() => undefined)
   else await putBackRetiredReceipt(context, retiredPath)
-  return look
 }
 
 /**
@@ -4805,7 +4804,7 @@ function persistHandover(
 
 /**
  * Reads the config and the receipt once recovery settled the leftovers, finishes the take-back of a cut-short first setup and settles the pending record; called by {@link inspect}, which merges a refusal from here with a leftover that stays ({@link mergeWithLeftover}).
- * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the look that decided its put-back is the look this run goes on with. A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it, and is retired once the publish record is settled, so a refusal or failure before then leaves both records for the next run.
+ * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the config is read after that settlement, so a config that a backup restored while the old receipt went back is the one this run decides on, with the receipt that stands by then. A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it, and is retired once the publish record is settled, so a refusal or failure before then leaves both records for the next run.
  * @param context - The run.
  * @param pending - The pending record as it was read; undefined when there is none.
  * @param retained - What stays of that record after recovery ({@link retainedRecord}); undefined when nothing stays.
@@ -4821,8 +4820,8 @@ async function settleAfterRecovery(
   retained: Pending | undefined,
   held?: HeldJournal,
 ): Promise<Inspection> {
-  const decided = await settleRetiredReceipt(context, pending)
-  let look = decided ?? (await lookAtConfig(context))
+  await settleRetiredReceipt(context, pending)
+  let look = await lookAtConfig(context)
   assertHeldJournalStill(context, held, look)
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
