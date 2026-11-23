@@ -2213,6 +2213,37 @@ test('A removal that cannot write its completed record warns that Codebook still
   })
 })
 
+test('A removal whose record another program replaced with a folder does not promise that Codebook still tracks the moved-aside copy', async (context) => {
+  // Value: protects=a removal whose completed record failed says that Codebook still tracks the moved-aside copy only while its record on disk still names that copy, so a record another program replaced never backs a promise that no journal can keep; fails_when=the refusal says that Codebook still tracks the copy, leaves it to the learner at will, or omits its path, or the copy is gone; no_claim=a real program that replaces the record (seam.afterPublish puts a folder where pending.json was once, right after the publish), and what a later run does with that folder
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const configBeforeRemoval = readFileSync(configPath, 'utf8')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let copyPath = ''
+
+  // Act
+  const removal = removeManagedDevinMcpEntry(storage, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      rmSync(pendingPath, { force: true })
+      mkdirSync(pendingPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(removal, (error: Error) => {
+    assert.equal(
+      error.message,
+      `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; make room for that record, then run Codebook: Remove Devin Desktop Setup again.`,
+    )
+    return true
+  })
+  assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
+})
+
 test('A whole-file removal whose moved-aside file grew past the limit puts the config back and refuses', async (context) => {
   // Value: protects=a removal never leaves mcp_config.json missing when the moved-aside file cannot be compared; fails_when=the removal refuses without linking the file back, so the config stays gone and a retry hits the same limit; why_new=Cycle 0143 /ship last-round finding v3/outside-voice#3; seam=seam.afterMoveAside grows the moved file past 1 MiB through the same inode
   // Arrange

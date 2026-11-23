@@ -326,6 +326,10 @@ function keptCopyPhrase(copyPath: string): string {
 const LEFTOVER_CLAUSE =
   'but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
+/** What may happen next to a kept copy of the previous config whose record could not be read back as one that names it ({@link unrecordedRemovalRefusal}): another program may have replaced or removed that record, so the sentence promises neither the delete nor that the copy stays. */
+const UNCONFIRMED_CLAUSE =
+  'but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it'
+
 /**
  * The refusal for a config that appeared while Codebook was replacing yours: that config stays, and so does the displaced copy, because a writer may still hold the old file open; called by {@link linkInStaged} and by recovery for a copy it handed over.
  * @param context - The run; gives the config path and the command to run again.
@@ -5193,7 +5197,7 @@ async function takeEntryOut(
     { createdFile: false },
   )
   // Without the completed record the receipt stays: success is reported only once the removal is recorded.
-  if (!isRecorded) throw unrecordedRemovalRefusal(context, keptLeft)
+  if (!isRecorded) throw await unrecordedRemovalRefusal(context, keptLeft)
   if (keptLeft.length === 0) await dropPending(context)
   return { status: 'removed', keptLeft }
 }
@@ -5204,18 +5208,50 @@ async function takeEntryOut(
  */
 export class DevinMcpUnrecordedRemovalError extends Error {}
 
-/** Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses. The record written before the move-aside still names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE}. */
-function unrecordedRemovalRefusal(
-  { path, retry }: Context,
+/**
+ * Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses; called by {@link takeEntryOut}.
+ * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back naming the copy ({@link isNamedByRecord}), and the {@link UNCONFIRMED_CLAUSE} when another program replaced or removed the record.
+ * @param context - The run; gives the paths and the command to run again.
+ * @param keptLeft - The files the publish left.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw await unrecordedRemovalRefusal(context, keptLeft) // 'Codebook took its entry out of … but could not write its own record of that step, so it kept its receipt and …'
+ */
+async function unrecordedRemovalRefusal(
+  context: Context,
   keptLeft: KeptFile[],
-): DevinMcpUnrecordedRemovalError {
+): Promise<DevinMcpUnrecordedRemovalError> {
+  const { path, retry } = context
   const previous = keptLeft.find(({ holds }) => holds === 'previous')
-  const copy = previous
-    ? ` and ${keptCopyPhrase(previous.path)}, ${LEFTOVER_CLAUSE}`
-    : ''
+  // Only a record that still names the copy lets a later run delete it.
+  const fate =
+    previous && (await isNamedByRecord(context, previous.path))
+      ? LEFTOVER_CLAUSE
+      : UNCONFIRMED_CLAUSE
+  const copy = previous ? ` and ${keptCopyPhrase(previous.path)}, ${fate}` : ''
   return new DevinMcpUnrecordedRemovalError(
     `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step, so it kept its receipt${copy}; make room for that record, ${retry}.`,
   )
+}
+
+/**
+ * Tells whether the pending record on disk still names a kept copy, read back after the completed record could not be written; called by {@link unrecordedRemovalRefusal}, because another program may have replaced or removed that record, and only a record that names the copy lets a later run delete it.
+ * @param context - The run; gives the pending record's path.
+ * @param copyPath - The copy's private name.
+ * @returns `true` when the record reads back and names that copy; `false` when it is gone, cannot be read as a record (a folder, a link) or names another copy.
+ * @example
+ * await isNamedByRecord(context, copyPath) // => false once another program put a folder where pending.json was
+ */
+async function isNamedByRecord(
+  context: Context,
+  copyPath: string,
+): Promise<boolean> {
+  const pending = await readRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+  ).catch(() => undefined)
+  return pending?.keptName === basename(copyPath)
 }
 
 /**
