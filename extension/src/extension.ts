@@ -329,6 +329,8 @@ type DevinChatFields = {
   devinChat?: true
   devinSetupInstallation?: string
 }
+/** Cursor's MCP registration API on `vscode.cursor.mcp`, which only Cursor provides; the window's Cursor registration steps take it once Cursor was checked to expose it. */
+type CursorMcpApi = NonNullable<NonNullable<typeof vscode.cursor>['mcp']>
 type WikiMarkerChangeEntry = {
   change: () => Promise<boolean>
   timer?: NodeJS.Timeout
@@ -1223,6 +1225,113 @@ export function activate(
       'Codebook connection copied. This credential grants access to the selected workspace; recopy after restart.',
     )
   }
+  /**
+   * Refuses a Cursor MCP registration once its server stopped or was replaced, or once Cursor setup removal began.
+   *
+   * Called by {@link registerCursorConnection} and {@link registerCursorBridge} after each awaited step, before the next one touches Cursor's shared catalog.
+   *
+   * @param server - The server the registration was started for.
+   * @throws When that server no longer runs, a stop began, or Cursor setup is being removed.
+   * @example
+   * assertCursorRegistrationCurrent(server) // throws "Codebook server or Cursor setup changed before MCP registration. …" after a stop
+   */
+  const assertCursorRegistrationCurrent = (server: Running): void => {
+    if (running !== server || stopping || cursorRemoving)
+      throw new Error(
+        `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
+      )
+  }
+  /**
+   * Registers this server's stdio bridge in Cursor under the server's instance name, replacing this window's earlier registration.
+   *
+   * Called by {@link registerCursorConnection} when the window's registered name differs from the current server's.
+   *
+   * @param cursorMcp - Cursor's MCP registration API.
+   * @param server - The server whose private descriptor the bridge reads.
+   * @param name - The registration name, `codebook-<instance id>`.
+   * @param validatedNodeExecutable - The Node executable setup already validated; resolved from `codebook.nodeExecutable` when absent.
+   * @throws When the shared skill fails its check, or the server or Cursor setup changed meanwhile.
+   * @example
+   * await registerCursorBridge(cursorMcp, server, 'codebook-1f2e', '/usr/local/bin/node') // Cursor lists codebook-1f2e
+   */
+  const registerCursorBridge = async (
+    cursorMcp: CursorMcpApi,
+    server: Running,
+    name: string,
+    validatedNodeExecutable: string | undefined,
+  ): Promise<void> => {
+    const nodeExecutable =
+      validatedNodeExecutable ??
+      (await resolveExternalNodeExecutable(
+        vscode.workspace
+          .getConfiguration('codebook')
+          .get<string>('nodeExecutable', 'node'),
+      ))
+    await verifyManagedCursorSkill(
+      context.extensionPath,
+      context.globalStorageUri.fsPath,
+    )
+    assertCursorRegistrationCurrent(server)
+    if (registeredCursorServer)
+      cursorMcp.unregisterServer(registeredCursorServer)
+    // Cursor's installed HTTP integration omits configured headers; a local stdio child reads only this window's private descriptor.
+    cursorMcp.registerServer({
+      name,
+      server: {
+        command: nodeExecutable,
+        args: [
+          join(context.extensionPath, 'dist/cursorMcpBridge.js'),
+          server.descriptorPath,
+        ],
+        env: {},
+      },
+    })
+    registeredCursorServer = name
+  }
+  /**
+   * Undoes a Cursor registration whose catalog refresh was followed by a failed skill check: unregisters that name and, unless the skill is back, retires this refresh's catalog.
+   *
+   * Called by {@link registerCursorConnection} when the check after its catalog refresh fails; the caller then rethrows that check's error.
+   *
+   * @param cursorMcp - Cursor's MCP registration API.
+   * @param name - The registration name this attempt used.
+   * @param refreshId - The id {@link refreshCursorMcpCatalog} returned for this refresh, if it wrote one.
+   * @throws When the owned catalog's cleanup fails, with a repair sentence that replaces the check's error.
+   * @example
+   * await retireFailedCursorRefresh(cursorMcp, 'codebook-1f2e', 'refresh-7') // Cursor no longer lists codebook-1f2e
+   */
+  const retireFailedCursorRefresh = async (
+    cursorMcp: CursorMcpApi,
+    name: string,
+    refreshId: string | undefined,
+  ): Promise<void> => {
+    if (registeredCursorServer === name) {
+      cursorMcp.unregisterServer(name)
+      registeredCursorServer = undefined
+    }
+    // A different window may have removed the skill and catalog before this refresh recreated the empty file.
+    try {
+      await verifyManagedCursorSkill(
+        context.extensionPath,
+        context.globalStorageUri.fsPath,
+      )
+    } catch {
+      // A newer setup changes the receipt generation, so only this failed refresh may be retired.
+      try {
+        if (refreshId)
+          await removeOwnedCursorMcpCatalog(
+            context.globalStorageUri.fsPath,
+            undefined,
+            refreshId,
+          )
+      } catch (cleanupError) {
+        throw new Error(
+          `Cursor skill changed and its owned MCP catalog cleanup is incomplete. Run ${SET_UP_AI_CHAT_COMMAND} to repair the connection.`,
+          { cause: cleanupError },
+        )
+      }
+    }
+  }
   /** Shares a current-server registration across simultaneous starts and refuses a retired descriptor after Node validation. @example await registerCursorConnection() */
   const registerCursorConnection = (
     validatedNodeExecutable?: string,
@@ -1246,52 +1355,21 @@ export function activate(
     const attempt = (async () => {
       // A newer server waits for any older registration to finish before touching Cursor's shared catalog.
       if (previous) await previous.attempt.catch(() => {})
-      if (running !== server || stopping || cursorRemoving)
-        throw new Error(
-          `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-        )
+      assertCursorRegistrationCurrent(server)
       // Another Cursor window may remove the shared skill while this window starts its server.
       await verifyManagedCursorSkill(
         context.extensionPath,
         context.globalStorageUri.fsPath,
       )
-      if (running !== server || stopping || cursorRemoving)
-        throw new Error(
-          `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-        )
+      assertCursorRegistrationCurrent(server)
       const name = `codebook-${server.service.instanceId}`
-      if (registeredCursorServer !== name) {
-        const nodeExecutable =
-          validatedNodeExecutable ??
-          (await resolveExternalNodeExecutable(
-            vscode.workspace
-              .getConfiguration('codebook')
-              .get<string>('nodeExecutable', 'node'),
-          ))
-        await verifyManagedCursorSkill(
-          context.extensionPath,
-          context.globalStorageUri.fsPath,
-        )
-        if (running !== server || stopping || cursorRemoving)
-          throw new Error(
-            `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-          )
-        if (registeredCursorServer)
-          cursorMcp.unregisterServer(registeredCursorServer)
-        // Cursor's installed HTTP integration omits configured headers; a local stdio child reads only this window's private descriptor.
-        cursorMcp.registerServer({
+      if (registeredCursorServer !== name)
+        await registerCursorBridge(
+          cursorMcp,
+          server,
           name,
-          server: {
-            command: nodeExecutable,
-            args: [
-              join(context.extensionPath, 'dist/cursorMcpBridge.js'),
-              server.descriptorPath,
-            ],
-            env: {},
-          },
-        })
-        registeredCursorServer = name
-      }
+          validatedNodeExecutable,
+        )
       const refreshId = await refreshCursorMcpCatalog(
         context.globalStorageUri.fsPath,
       )
@@ -1301,32 +1379,7 @@ export function activate(
           context.globalStorageUri.fsPath,
         )
       } catch (error) {
-        if (registeredCursorServer === name) {
-          cursorMcp.unregisterServer(name)
-          registeredCursorServer = undefined
-        }
-        // A different window may have removed the skill and catalog before this refresh recreated the empty file.
-        try {
-          await verifyManagedCursorSkill(
-            context.extensionPath,
-            context.globalStorageUri.fsPath,
-          )
-        } catch {
-          // A newer setup changes the receipt generation, so only this failed refresh may be retired.
-          try {
-            if (refreshId)
-              await removeOwnedCursorMcpCatalog(
-                context.globalStorageUri.fsPath,
-                undefined,
-                refreshId,
-              )
-          } catch (cleanupError) {
-            throw new Error(
-              `Cursor skill changed and its owned MCP catalog cleanup is incomplete. Run ${SET_UP_AI_CHAT_COMMAND} to repair the connection.`,
-              { cause: cleanupError },
-            )
-          }
-        }
+        await retireFailedCursorRefresh(cursorMcp, name, refreshId)
         throw error
       }
     })()
