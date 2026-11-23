@@ -23,6 +23,40 @@ const DEVIN_SETUP_LOCK_WAIT: StorageLockWait = {
   delayMs: DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
 }
 
+/** The last taking of the setup lock this process started, settled or not, by lock folder as the caller names it; the next taking of that folder waits for it ({@link afterEarlierTaking}). */
+const lastTakings = new Map<string, Promise<void>>()
+
+/**
+ * Starts one taking of the setup lock only once this process's taking before it of the same folder settled, so that storage that stops answering keeps one taking waiting on it, not one more for each try of a setup or removal; called by {@link withDevinSetupLock} for each of its attempts.
+ * Why: a taking cut by the acquisition budget goes on ({@link withStorageLock} creates the folder and reads its real path before its own queue), and each such wait holds one of the four threads of Node's file pool, which every file read of the window shares. A taking waits for the whole earlier one, its release included, as {@link withStorageLock}'s queue would make it wait all the same.
+ * The folder is keyed as the caller names it: reading its real path is file work too, and the window always names the same folder.
+ * @param lockDirectory - The `devin-setup` folder.
+ * @param taking - The taking; called once the earlier one settled, whatever it answered.
+ * @returns What `taking` returns.
+ * @throws What `taking` throws.
+ * @example
+ * await afterEarlierTaking('/storage/devin-setup', () => withStorageLock('/storage/devin-setup', steps)) // starts once the earlier taking of that folder settled
+ */
+function afterEarlierTaking<Value>(
+  lockDirectory: string,
+  taking: () => Promise<Value>,
+): Promise<Value> {
+  const current = (lastTakings.get(lockDirectory) ?? Promise.resolve()).then(
+    taking,
+  )
+  const ended = current.then(
+    () => undefined,
+    () => undefined,
+  )
+  lastTakings.set(lockDirectory, ended)
+  // The folder's entry goes with its last taking, so a folder no longer taken keeps nothing.
+  void ended.then(() => {
+    if (lastTakings.get(lockDirectory) === ended)
+      lastTakings.delete(lockDirectory)
+  })
+  return current
+}
+
 /** What {@link withDevinSetupLock} tells its caller about the setup lock besides the operation's result. */
 export type DevinSetupLockReports = {
   /** Called once when the lock's release has not ended {@link DEVIN_SETUP_LOCK_RELEASE_MS} after the operation settled: the result is answered then, and the release goes on. */
@@ -31,7 +65,7 @@ export type DevinSetupLockReports = {
 
 /**
  * Runs one Devin Desktop setup or removal alone across every window of the user: it waits a bounded time for a setup lock that another extension host process holds ({@link withStorageLock} queues only inside one process and refuses at once otherwise), then refuses with one fixed sentence, and with another when storage never handed the lock over and no other window's lock was seen; called by the Devin Desktop setup and removal of {@link activate}.
- * Only the taking of the lock is retried: the operation runs once, and a held-lock refusal of a lock it takes itself reaches the caller as it is.
+ * Only the taking of the lock is retried: the operation runs once, and a held-lock refusal of a lock it takes itself reaches the caller as it is. Each taking starts only once this process's earlier taking of the folder settled ({@link afterEarlierTaking}), so a setup run again after a taking that storage did not answer waits for that taking instead of starting another.
  * Each wait has its own timer, so storage that stops answering never holds the caller: the taking of the lock, from the call, at most {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} (a lock taken later runs nothing and is released at once); the operation as long as it needs; the release, from the operation's end, at most {@link DEVIN_SETUP_LOCK_RELEASE_MS} (it goes on afterwards, and this process's next hold of the lock waits for it in {@link withStorageLock}'s queue).
  * @param lockDirectory - The `devin-setup` folder of Codebook's global storage.
  * @param operation - The setup or removal steps.
@@ -40,7 +74,7 @@ export type DevinSetupLockReports = {
  * @returns What the operation returns, once the lock is released or its release outlasted its bound.
  * @throws
  * - An error with {@link DEVIN_SETUP_LOCK_HELD_SENTENCE} when the lock stays held, or is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} after another window's lock refused it
- * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE} when the lock is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} and no held-lock refusal came: storage did not answer, or this process's own earlier hold still has the lock
+ * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE} when the lock is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} and no held-lock refusal came: storage did not answer, or this process's own earlier taking or hold has not ended
  * - What the operation throws, also when it throws before it returns a promise, and what the lock throws otherwise
  * @example
  * await withDevinSetupLock('/storage/devin-setup', () => removeDevinSetupLocked())
@@ -68,24 +102,28 @@ export async function withDevinSetupLock<Value>(
   let didRun = false
   let isAbandoned = false
   let wasRefusedByHeldLock = false
-  const locking = retryWhileStorageLockHeld(() => {
-    // A wait the caller gave up on takes no further attempt: this is no held-lock refusal, so the retry ends.
-    if (isAbandoned) throw new Error(DEVIN_SETUP_LOCK_HELD_SENTENCE)
-    return withStorageLock(lockDirectory, async () => {
-      // A lock taken after the caller gave up runs nothing and is released at once.
-      if (isAbandoned) return
-      didRun = true
-      resolveAcquired()
-      // A throw before the operation returns a promise becomes its rejection, so it settles the result and is never retried as a refusal of this lock.
-      await Promise.resolve()
-        .then(operation)
-        .then(resolveOperation, rejectOperation)
-    }).catch((error: unknown) => {
-      // Another window's lock refused this taking: a wait that runs out later names that window.
-      if (error instanceof StorageLockHeldError) wasRefusedByHeldLock = true
-      throw error
-    })
-  }, wait)
+  const locking = retryWhileStorageLockHeld(
+    () =>
+      afterEarlierTaking(lockDirectory, () => {
+        // A wait the caller gave up on, also while it waited for an earlier taking, takes no further attempt: this is no held-lock refusal, so the retry ends.
+        if (isAbandoned) throw new Error(DEVIN_SETUP_LOCK_HELD_SENTENCE)
+        return withStorageLock(lockDirectory, async () => {
+          // A lock taken after the caller gave up runs nothing and is released at once.
+          if (isAbandoned) return
+          didRun = true
+          resolveAcquired()
+          // A throw before the operation returns a promise becomes its rejection, so it settles the result and is never retried as a refusal of this lock.
+          await Promise.resolve()
+            .then(operation)
+            .then(resolveOperation, rejectOperation)
+        })
+      }).catch((error: unknown) => {
+        // Another window's lock refused this taking: a wait that runs out later names that window.
+        if (error instanceof StorageLockHeldError) wasRefusedByHeldLock = true
+        throw error
+      }),
+    wait,
+  )
   // Awaited below; a failure after the caller stopped waiting (an abandoned wait, a stalled release) is nobody's.
   locking.catch(() => {})
   const isAcquiredInTime = await settledWithin(

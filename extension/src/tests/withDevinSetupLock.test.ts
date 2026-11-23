@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
+import { setTimeout as delay, setImmediate } from 'node:timers/promises'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
@@ -14,12 +14,13 @@ import { within } from './utils/within'
 /**
  * Loads {@link lockModule.withDevinSetupLock} over a stand-in of the storage lock it takes (the module `./withStorageLock`), whose taking of the lock and whose release wait while the test holds them, as on a disk that stops answering.
  * Called by the tests of the setup lock's bounds below; each test loads its own copy, so no hold of one test reaches another.
- * @param holds - Which step of the storage lock waits for the test: `acquisition` before the lock is taken, `release` after the locked steps ended; a step left out goes on at once. `heldRefusals`: how many takings refuse first with a {@link StorageLockHeldError}, as while another window holds the lock; none when left out.
- * @returns The loaded lock; `storageLockEvents`, what the storage lock did in order (`lock refused`, `lock taken`, `lock released`); and `letAcquisitionGo` and `letReleaseGo`, which let the held step go on.
+ * @param holds - Which step of the storage lock waits for the test: `acquisition` before the lock is taken, `release` after the locked steps ended; a step left out goes on at once. `heldRefusals`: how many takings refuse first with a {@link StorageLockHeldError}, as while another window holds the lock (`Infinity` for every taking); none when left out.
+ * @returns The loaded lock; `storageLockEvents`, what the storage lock did in order (`lock refused`, `lock taken`, `lock released`); `takingsStarted`, how many takings of the storage lock were started so far, also those still waiting; and `letAcquisitionGo` and `letReleaseGo`, which let the held step go on.
  * @example
  * const storage = await devinSetupLockOverStalledStorage({ acquisition: true })
  * storage.letAcquisitionGo() // the lock is taken now
  * await devinSetupLockOverStalledStorage({ acquisition: true, heldRefusals: 1 }) // one refusal, then a taking that waits
+ * storage.takingsStarted() // => 1 while the first taking waits
  */
 async function devinSetupLockOverStalledStorage(holds: {
   acquisition?: boolean
@@ -33,6 +34,7 @@ async function devinSetupLockOverStalledStorage(holds: {
   if (!holds.release) release.resolve()
   let heldRefusalsLeft = holds.heldRefusals ?? 0
   const storageLockEvents: string[] = []
+  let takingsStarted = 0
   const loaded = await loadModule<typeof lockModule>(
     resolve(__dirname, '../utils/withDevinSetupLock.js'),
     {
@@ -41,6 +43,7 @@ async function devinSetupLockOverStalledStorage(holds: {
           _directory: string,
           locked: () => Promise<Value>,
         ): Promise<Value> => {
+          takingsStarted += 1
           // Another window's lock refuses the first takings, as the real storage lock does while it is held.
           if (heldRefusalsLeft > 0) {
             heldRefusalsLeft -= 1
@@ -64,6 +67,7 @@ async function devinSetupLockOverStalledStorage(holds: {
   return {
     withDevinSetupLock: loaded.withDevinSetupLock,
     storageLockEvents,
+    takingsStarted: (): number => takingsStarted,
     letAcquisitionGo: (): void => acquisition.resolve(),
     letReleaseGo: (): void => release.resolve(),
   }
@@ -109,6 +113,56 @@ test('a Devin Desktop setup whose setup lock storage never hands over answers 15
   assert.ok(
     answeredAfterMs >= 14_900 && answeredAfterMs < 17_000,
     `the refusal came ${Math.round(answeredAfterMs)} ms after the call, not at the 15-second acquisition budget`,
+  )
+})
+
+// Value: protects=a Devin Desktop setup or removal run again after the 15-second answer of a setup lock taking that still waits on storage starts no second taking while the first one waits, and once storage answers it takes the lock after the first taking was released and runs its steps once; fails_when=each try of the command starts another taking on the stalled disk (each creates the folder and reads its real path before the lock's own queue), so four tries hold the four threads of Node's file pool and every other file read of the window stops (Cycle 0146 /ship pass 1, Codex structured review P1 on withDevinSetupLock.ts:74); why_new=that finding; seam=a stand-in of the storage lock whose taking waits until the test lets it go and that counts the takings started; no_claim=a real stalled disk and Node's file pool itself, another window's takings, which its own process starts, and two lock folders, which never wait for each other
+test('a Devin Desktop setup run again while the first setup lock taking still waits on storage starts no second taking and runs its steps once storage answers', async () => {
+  // Arrange
+  const storage = await devinSetupLockOverStalledStorage({ acquisition: true })
+  const firstAnswer = await within(
+    storage
+      .withDevinSetupLock('/storage/devin-setup', async () => 'first ran')
+      .catch((error: Error) => error.message),
+    17_000,
+  )
+  let secondStepRuns = 0
+
+  // Act
+  const second = storage
+    .withDevinSetupLock('/storage/devin-setup', async () => {
+      secondStepRuns += 1
+      return 'second ran'
+    })
+    .catch((error: Error) => error.message)
+  // One turn of the event loop: a second taking would have started by now.
+  await setImmediate()
+  const takingsWhileTheFirstWaits = storage.takingsStarted()
+  storage.letAcquisitionGo()
+  const secondAnswer = await within(second, 2_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstAnswer,
+      takingsWhileTheFirstWaits,
+      secondAnswer,
+      secondStepRuns,
+      storageLockEvents: storage.storageLockEvents,
+    },
+    {
+      firstAnswer:
+        'Codebook could not take its Devin Desktop setup lock because storage does not answer or this window is still finishing an earlier setup or removal. Try again in a moment, or reload the window.',
+      takingsWhileTheFirstWaits: 1,
+      secondAnswer: 'second ran',
+      secondStepRuns: 1,
+      storageLockEvents: [
+        'lock taken',
+        'lock released',
+        'lock taken',
+        'lock released',
+      ],
+    },
   )
 })
 
