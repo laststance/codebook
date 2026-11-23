@@ -102,6 +102,7 @@ import {
   DEVIN_SETUP_NOT_RESTORED_LINE,
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
   DEVIN_SETUP_FOLDER_CHANGED_SENTENCE,
+  DEVIN_OWED_TAKE_BACK_LINE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
   REMOVE_DEVIN_SETUP_COMMAND,
@@ -220,6 +221,11 @@ import { listWikiCandidates } from './utils/listWikiCandidates'
 import { createLlmWikiView } from './utils/llmWikiView'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
+import {
+  clearOwedDevinTakeBack,
+  readOwedDevinTakeBack,
+  recordOwedDevinTakeBack,
+} from './utils/owedDevinTakeBack'
 import { readDevinInstallationId } from './utils/readDevinInstallationId'
 import { readDevinInstallationIdWithin } from './utils/readDevinInstallationIdWithin'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
@@ -1675,7 +1681,7 @@ export function activate(
       diagnostics.info(DEVIN_SETUP_NOT_RESTORED_LINE)
       return undefined
     }, 'restore')
-  /** The take-back's entry step, only for an entry this setup installed (an updated or current entry is used by other windows): removes it while its receipt still names this setup's generation, so a newer setup's entry stays. @param generation - The generation the setup's entry write answered. @returns Whether the entry and its records are gone; a leftover or a failure went to the Output. @example await takeBackDevinEntry('g1') */
+  /** The take-back's entry step, only for an entry this setup installed (an updated or current entry is used by other windows): removes it while its receipt still names this setup's generation, so a newer setup's entry stays; once the removal answered, the record of the owed take-back goes ({@link recordTakeBackOwed}). Also run by {@link finishOwedDevinTakeBack}. @param generation - The generation the setup's entry write answered. @returns Whether the entry and its records are gone; a leftover or a failure went to the Output. @example await takeBackDevinEntry('g1') */
   const takeBackDevinEntry = (generation: string): Promise<boolean> =>
     removeManagedDevinMcpEntry(
       context.globalStorageUri.fsPath,
@@ -1683,7 +1689,15 @@ export function activate(
       undefined,
       { expectedGeneration: generation },
     ).then(
-      (removal) => {
+      async (removal) => {
+        // The removal answered: nothing of this entry is owed any more, whatever it left; a removal that failed keeps the record for the next run.
+        await clearOwedDevinTakeBack(context.globalStorageUri.fsPath).catch(
+          (error: unknown) => {
+            diagnostics.info(
+              `Codebook could not delete its record of the Devin Desktop take-back it finished: ${thrownMessage(error)}`,
+            )
+          },
+        )
         // A removal that resolved may still have left a receipt, a copy or an edited entry.
         const leftover = devinRollbackLeftoverLine(removal)
         if (leftover === undefined) return true
@@ -1703,6 +1717,51 @@ export function activate(
       `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
     )
   }
+  /** The take-back's first step, only for an entry this setup installed: records that this entry is still to be taken back, before any other step waits on storage, so a reload, a crash or a closed window before the entry step ended leaves it to the next run ({@link finishOwedDevinTakeBack}). A failed write only goes to the Output and leaves the take-back complete, because the entry step still takes the entry back in this run. @param generation - The generation the setup's entry write answered. @returns `true`, also after a failed write. @example await recordTakeBackOwed('g1') */
+  const recordTakeBackOwed = (generation: string): Promise<boolean> =>
+    recordOwedDevinTakeBack(context.globalStorageUri.fsPath, generation).then(
+      () => true,
+      (error: unknown) => {
+        diagnostics.info(
+          `Codebook could not record that the Devin Desktop MCP entry of this setup is still to be taken back, so a reload before the take-back ends leaves that entry: ${thrownMessage(error)}`,
+        )
+        return true
+      },
+    )
+  /**
+   * Finishes the take-back of a failed Devin Desktop setup that a reload, a crash or a closed window stopped before its entry step ended ({@link recordTakeBackOwed}): takes that entry back by the generation its record names, so a newer setup's entry stays, and writes one line to the Output.
+   * Run under the setup lock, first, by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads ({@link finishOwedDevinTakeBackAtLoad}), so no later run adopts or refreshes the failed setup's entry.
+   * @returns Once the record was read and, when it named an entry, that entry's take-back answered; a failure went to the Output, and a failed removal keeps the record.
+   * @example await finishOwedDevinTakeBack()
+   */
+  const finishOwedDevinTakeBack = async (): Promise<void> => {
+    const generation = await readOwedDevinTakeBack(
+      context.globalStorageUri.fsPath,
+    )
+    if (generation === undefined) return
+    diagnostics.info(DEVIN_OWED_TAKE_BACK_LINE)
+    await takeBackDevinEntry(generation)
+  }
+  /**
+   * Finishes, once when a Devin Desktop window loads, a take-back that a reload, a crash or a closed window stopped ({@link finishOwedDevinTakeBack}), under the setup lock, so the window a reload opened takes that entry back even when it has no setup to reconnect; called by {@link activate}, which does not wait for it.
+   * Another editor, a refused window (Windows, a remote) and a window without such a record take no lock.
+   * @returns Nothing; a lock that stays held or a failure goes to the Output, and the record then stays for the next run.
+   * @example void finishOwedDevinTakeBackAtLoad()
+   */
+  const finishOwedDevinTakeBackAtLoad = async (): Promise<void> => {
+    if (
+      !isDevinHost ||
+      devinWindowRefusal(process.platform, vscode.env.remoteName)
+    )
+      return
+    const owed = await readOwedDevinTakeBack(context.globalStorageUri.fsPath)
+    if (owed === undefined) return
+    await underDevinLock(finishOwedDevinTakeBack).catch((error: unknown) => {
+      diagnostics.info(
+        `Codebook could not finish the take-back of a failed Devin Desktop setup: ${thrownMessage(error)}`,
+      )
+    })
+  }
   /** The take-back's last step: gives the server running now, which may be one started during the setup, the mark its restored setup earns; the take-back stops taking the mark off in the turn right before it ({@link handDevinMarkToDescriptorStep}). A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the take-back is incomplete; the window's in-memory mark is already off ({@link revokeFailedSetupMark}), so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too. @returns Whether the descriptor was rewritten; a failure went to the Output. @example await syncRolledBackDescriptor() */
   const syncRolledBackDescriptor = (): Promise<boolean> => {
     handDevinMarkToDescriptorStep('take-back')
@@ -1715,7 +1774,7 @@ export function activate(
     )
   }
   /**
-   * Takes back what a failed Devin Desktop setup saved, in three steps under one budget: the saved setup, the entry when this setup installed it, and the descriptor of the server running now. The steps are never cut: once they outlast {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, `onLapse` names the one that waits, so the command can answer while the take-back goes on under the setup lock.
+   * Takes back what a failed Devin Desktop setup saved, in three steps under one budget: the saved setup, the entry when this setup installed it, and the descriptor of the server running now; an entry this setup installed is first recorded as owed ({@link recordTakeBackOwed}), so the next run finishes a take-back that a reload stopped. The steps are never cut: once they outlast {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, `onLapse` names the one that waits, so the command can answer while the take-back goes on under the setup lock.
    * Called by {@link takeBackFailedDevinSetup} when a step after the entry write fails.
    * @param takeBack - What the run's entry write answered, the saved setup from before the run, and the folder generation when the run began.
    * @param onLapse - Hears the step that waits on storage when the budget passed.
@@ -1740,6 +1799,14 @@ export function activate(
     })
     await runStepsWithinBudget(
       [
+        // Recorded before any step waits: a reload or a closed window during the take-back leaves the entry to the next run.
+        ...(entryWrite.status === 'installed'
+          ? [
+              takeBackStep('MCP entry', () =>
+                recordTakeBackOwed(entryWrite.generation),
+              ),
+            ]
+          : []),
         takeBackStep('saved setup', () =>
           restoreSavedDevinSetup(previousSetup, folderGeneration),
         ),
@@ -1845,6 +1912,8 @@ export function activate(
   }> => {
     // Read when the command ran: a folder change since then means the earlier saved setup is not put back.
     const { folderGeneration } = invocation
+    // A failed setup's entry that a reload left is taken back first, so this setup never adopts it as its own.
+    await runSetupStep('MCP entry', finishOwedDevinTakeBack, onLapse)
     // The failure's own text can carry the executable's stderr; the learner gets a fixed sentence.
     const nodeExecutable = await resolveExternalNodeExecutable(
       vscode.workspace
@@ -2112,14 +2181,16 @@ export function activate(
     }
     try {
       // Under the setup lock, so the refresh never rewrites the entry between another window's entry write and that setup's take-back, which would then find a newer entry and leave the failed one installed; windows opened together may hold the entry's lock one after the other.
-      const refresh = await underDevinLock(() =>
-        retryWhileStorageLockHeld(() =>
+      const refresh = await underDevinLock(async () => {
+        // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed.
+        await finishOwedDevinTakeBack()
+        return retryWhileStorageLockHeld(() =>
           refreshManagedDevinMcpEntry(
             storageRoot,
             devinMcpEntry(nodeExecutable),
           ),
-        ),
-      )
+        )
+      })
       // An entry edited after setup stays as the learner left it; the bridge it names may still connect.
       if (refresh.status === 'changed')
         diagnostics.info(
@@ -2197,6 +2268,8 @@ export function activate(
     let entryRemoval!: NonNullable<DevinRemovalProgress['entry']>
     await runStepsWithinBudget<DevinStorageStep>(
       [
+        // A failed setup's entry that a reload left is taken back by its own generation first.
+        { name: 'MCP entry', run: finishOwedDevinTakeBack },
         {
           name: 'skill',
           run: async (): Promise<void> => {
@@ -4691,6 +4764,8 @@ export function activate(
   // Register lazy readers before restored captured documents or contributed views request their providers.
   workspace()
   repository()
+  // A take-back that a reload or a closed window stopped is finished by the next Devin Desktop window that loads, with or without a setup to reconnect.
+  void finishOwedDevinTakeBackAtLoad()
   // Settles when the reconnect at activation ended (started the server or decided not to); tests wait on it.
   let reconnectSettled: Promise<void> = Promise.resolve()
   if (

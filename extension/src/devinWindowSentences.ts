@@ -104,25 +104,29 @@ export type DevinStorageStep =
 /** What a Devin Desktop window still runs after its command answered because storage did not: a setup, the take-back of a failed setup, or a removal; the window refuses a new setup and removal meanwhile. */
 export type DevinBackgroundWorkKind = 'setup' | 'take-back' | 'removal'
 
-/** How the sentences below name each kind of work: as a subject, as the work going on, and what it does once storage answers. */
+/** How the sentences below name each kind of work: as a subject, as the work going on, what it does once storage answers, and what a reload of the window does to it. */
 const BACKGROUND_WORK: Record<
   DevinBackgroundWorkKind,
-  { subject: string; doing: string; ending: string }
+  { subject: string; doing: string; ending: string; reload: string }
 > = {
   setup: {
     subject: "Codebook's Devin Desktop setup",
     doing: 'setting up Devin Desktop',
     ending: 'it finishes when storage answers and then shows its result',
+    reload: 'or reload the window',
   },
   'take-back': {
     subject: "Codebook's take-back of this Devin Desktop setup",
     doing: 'taking back an earlier Devin Desktop setup',
     ending: "it finishes when storage answers, and Codebook's Output says when",
+    reload:
+      'or reload the window, which finishes that take-back when it loads again',
   },
   removal: {
     subject: "Codebook's removal of the Devin Desktop setup",
     doing: 'removing the Devin Desktop setup',
     ending: 'it finishes when storage answers and then shows its result',
+    reload: 'or reload the window',
   },
 }
 
@@ -144,13 +148,13 @@ export const devinStorageWaitSentence = (
  * @param kind - The work still going on.
  * @param command - The title of the command that refused, which the learner runs again.
  * @returns One sentence that says what still runs, then how to go on.
- * @example devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat') // => 'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window.'
+ * @example devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat') // => 'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which finishes that take-back when it loads again.'
  */
 export const devinBackgroundWorkSentence = (
   kind: DevinBackgroundWorkKind,
   command: string,
 ): string =>
-  `Codebook is still ${BACKGROUND_WORK[kind].doing} because storage does not answer. Run ${command} again once it finishes, or reload the window.`
+  `Codebook is still ${BACKGROUND_WORK[kind].doing} because storage does not answer. Run ${command} again once it finishes, ${BACKGROUND_WORK[kind].reload}.`
 
 /**
  * The Output line once a setup, take-back or removal that answered its command early has ended, so the window takes setup and removal again; written whether the work succeeded or failed (a failure gets its own line, {@link devinLateFailureLine}), so it says only that the work ended.
@@ -175,6 +179,10 @@ export const devinLateFailureLine = (
   reason: string,
 ): string =>
   `${BACKGROUND_WORK[kind].subject} ended after storage answered: ${reason}`
+
+/** The Output line when a Devin Desktop window, setup, removal or activation refresh finishes the take-back of a failed setup that a reload, a crash or a closed window stopped before it took the entry out ({@link recordOwedDevinTakeBack}). */
+export const DEVIN_OWED_TAKE_BACK_LINE =
+  "Codebook is finishing the take-back of a failed Devin Desktop setup that a reload or a closed window stopped: it takes the codebook entry that setup wrote out of Devin Desktop's MCP config."
 
 /** The Output line when a Devin Desktop setup or removal ended but its setup lock was not released within 3 seconds ({@link DEVIN_SETUP_LOCK_RELEASE_MS}): the command answers, and this window's next setup or removal waits for the release. */
 export const DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE =

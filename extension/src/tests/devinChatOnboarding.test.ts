@@ -30,6 +30,11 @@ import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { continueAfterLateRead } from '../utils/continueAfterLateRead'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
+import {
+  clearOwedDevinTakeBack,
+  readOwedDevinTakeBack,
+  recordOwedDevinTakeBack,
+} from '../utils/owedDevinTakeBack'
 import { readDevinInstallationId } from '../utils/readDevinInstallationId'
 import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
 import { setDescriptorDevinChat } from '../utils/setDescriptorDevinChat'
@@ -80,6 +85,37 @@ async function descriptorPath(
         entry.startsWith(`${instanceLabel}-`) &&
         entry.endsWith(CONNECTION_DESCRIPTOR_SUFFIX),
     )!,
+  )
+}
+
+/**
+ * Reads the record of an owed Devin Desktop take-back as a window that loads would find it.
+ * @param directory - The window's global storage folder.
+ * @returns The parsed `devin-setup/take-back.json`, or `undefined` when there is none.
+ * @example await owedTakeBackRecord(window.directory) // => { schemaVersion: 1, generation: 'generation-of-this-setup' }
+ */
+async function owedTakeBackRecord(directory: string): Promise<unknown> {
+  return readFile(join(directory, 'devin-setup/take-back.json'), 'utf8').then(
+    (text) => JSON.parse(text),
+    () => undefined,
+  )
+}
+
+/**
+ * Leaves the record of an owed Devin Desktop take-back in a storage folder, as a window that a reload stopped during a failed setup's take-back leaves it.
+ * @param directory - The global storage folder.
+ * @param generation - The generation of the failed setup's entry.
+ * @example await leaveOwedTakeBack(directory, 'generation-of-a-failed-setup')
+ */
+async function leaveOwedTakeBack(
+  directory: string,
+  generation: string,
+): Promise<void> {
+  await mkdir(join(directory, 'devin-setup'), { recursive: true })
+  await writeFile(
+    join(directory, 'devin-setup/take-back.json'),
+    JSON.stringify({ schemaVersion: 1, generation }),
+    { mode: 0o600 },
   )
 }
 
@@ -342,6 +378,8 @@ async function devinWindow(
   let receiptReadCount = 0
   // What each late mark's continuation answered once it settled (whether it marked, or its failure's message), in order; a test waits for it instead of for the start of the fresh read.
   const lateMarkDecisions: unknown[] = []
+  // How many looks for an owed take-back have answered; the window's load makes the first.
+  let owedTakeBackReads = 0
   // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
   let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
@@ -750,6 +788,16 @@ async function devinWindow(
           return stands
         },
       },
+      // The real record of an owed take-back; each look that answered is counted, so a test knows the window's load has looked.
+      './utils/owedDevinTakeBack': {
+        recordOwedDevinTakeBack,
+        clearOwedDevinTakeBack,
+        readOwedDevinTakeBack: async (storageRoot: string) => {
+          const generation = await readOwedDevinTakeBack(storageRoot)
+          owedTakeBackReads += 1
+          return generation
+        },
+      },
       // The real continuation of a late mark, held at `holds.lateMark` before it runs when a test asks for it; each decision it settles with is recorded, before the window's own handler runs.
       './utils/continueAfterLateRead': {
         continueAfterLateRead: (
@@ -968,6 +1016,8 @@ async function devinWindow(
     receiptReadCount: (): number => receiptReadCount,
     /** What each late mark's continuation settled with, in order: `true` when it marked the descriptor, `false` when it left it as it was, or its failure's message. */
     lateMarkDecisions,
+    /** How many looks for an owed take-back have answered; the window's load makes the first. */
+    owedTakeBackReads: (): number => owedTakeBackReads,
     /** Whether a read of the setup records is waiting for {@link releaseReceipts}; a test polls it with a time budget, so a hold that is never reached fails instead of hanging. */
     hasReceiptsReached: (): boolean => isReceiptsReached,
     releaseReceipts,
@@ -3459,17 +3509,109 @@ test('a Devin setup and a removal refuse at once while an earlier take-back stil
     assert.notEqual(firstOutcome, 'still waiting')
     assert.equal(
       setupRefusal,
-      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window.',
+      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which finishes that take-back when it loads again.',
     )
     assert.equal(
       removalRefusal,
-      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window.',
+      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window, which finishes that take-back when it loads again.',
     )
     assert.deepEqual(window.modalQuestions, [])
     assert.equal(
       window.steps.filter((step) => step === 'resolve Node').length,
       1,
     )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a failed first Devin setup records that its entry is still to be taken back before its take-back's first step waits on storage, and drops that record once its entry step answered, so a reload or a closed window during the take-back leaves the entry to the next run (Cycle 0146 /ship pass 1, outside-voice 4 and red-team 1); fails_when=only the window's memory knows the take-back is owed, so a reload while the saved setup's restore waits drops the entry step and the failed setup's entry and receipt stay installed; why_new=the take-back's steps were tested only within one window's life; seam=a held take-back restore of the saved setup; no_claim=what the next window does with the record (the next tests); the held stand-in write stands for the stalled editor storage, and the record is the real file
+test('a failed first Devin setup records its owed take-back before its first step waits on storage and drops it once the entry step answered', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    failSetupCommit: true,
+    holdSavedSetupWrite: true,
+  })
+  try {
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the take-back's restore of the saved setup",
+    )
+    // Act
+    const recordWhileRestoreHeld = await owedTakeBackRecord(window.directory)
+    window.holds.savedSetupWrite.release()
+    const setupOutcome = await within(setup, 9_000)
+    // Assert
+    assert.deepEqual(recordWhileRestoreHeld, {
+      schemaVersion: 1,
+      generation: 'generation-of-this-setup',
+    })
+    assert.equal(setupOutcome, 'Injected workspace state commit failure')
+    assert.deepEqual(window.entryRemovals, [
+      { expectedGeneration: 'generation-of-this-setup' },
+    ])
+    assert.equal(await owedTakeBackRecord(window.directory), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop window that loads on a storage with an owed take-back (a reload stopped a failed setup's take-back) takes that entry back by the failed setup's generation, says so in the Output and drops the record, also without a setup of its own to reconnect (Cycle 0146 /ship pass 1, outside-voice 4 and red-team 1); fails_when=nothing reads the record, so the failed first setup's entry and receipt stay installed until the learner runs setup or removal again; why_new=no run finished a take-back that a reload stopped; seam=none; no_claim=a record whose generation a newer setup replaced (the removal by generation then touches nothing, the config module's own tests); the record is the real file, left as a stopped take-back leaves it
+test('a Devin Desktop window that loads with an owed take-back takes that entry back by its generation and drops the record', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await leaveOwedTakeBack(storageDirectory, 'generation-of-a-failed-setup')
+  // Act
+  const window = await devinWindow(context, { storageDirectory })
+  try {
+    await waitUntil(
+      async () =>
+        window.steps.includes('remove MCP entry') &&
+        (await owedTakeBackRecord(storageDirectory)) === undefined,
+      "the window load's take-back of the owed entry",
+      5_000,
+    )
+    // Assert
+    assert.deepEqual(window.steps, ['remove MCP entry'])
+    assert.deepEqual(window.entryRemovals, [
+      { expectedGeneration: 'generation-of-a-failed-setup' },
+    ])
+    assert.deepEqual(window.outputLines, [
+      "Codebook is finishing the take-back of a failed Devin Desktop setup that a reload or a closed window stopped: it takes the codebook entry that setup wrote out of Devin Desktop's MCP config.",
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Set Up AI Chat that runs while a take-back is owed takes that failed setup's entry back by its generation before it writes its own entry, so it never adopts the failed entry as current and no later run takes back the entry this setup reported ready (Cycle 0146 /ship pass 1, outside-voice 4); fails_when=the setup writes its entry over the owed record, keeps the failed setup's generation, and the record later removes the new setup's entry; why_new=no run finished a take-back that a reload stopped; seam=a count of the looks for an owed take-back, so the record is left only after the window's own load looked; no_claim=the removal and the activation refresh, which finish it the same way first; the record is the real file
+test('a Devin setup that runs while a take-back is owed takes that entry back before it writes its own', async (context) => {
+  // Arrange
+  const window = await devinWindow(context)
+  try {
+    await waitUntil(
+      () => window.owedTakeBackReads() >= 1,
+      "the window load's look for an owed take-back",
+    )
+    await leaveOwedTakeBack(window.directory, 'generation-of-a-failed-setup')
+    // Act
+    await window.commands.get('codebook.setupAiChat')!()
+    // Assert
+    assert.deepEqual(window.steps.slice(0, 3), [
+      'remove MCP entry',
+      'resolve Node',
+      'deploy Devin skill',
+    ])
+    assert.equal(window.steps.includes('write MCP entry'), true)
+    assert.deepEqual(window.entryRemovals, [
+      { expectedGeneration: 'generation-of-a-failed-setup' },
+    ])
+    assert.equal(await owedTakeBackRecord(window.directory), undefined)
   } finally {
     await window.loaded.deactivate()
   }
