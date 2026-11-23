@@ -2233,14 +2233,36 @@ async function isNameStill(
   path: string,
   checked: LeftoverLookback,
 ): Promise<boolean> {
+  return (await nameStateOf(context, path, checked)) === 'still'
+}
+
+/**
+ * Looks at a name as {@link isNameStill} does, and tells a name found empty from one that shows another file; called by {@link isNameStill} and by {@link stillnessOf}, for which an empty private name means that nothing is left there to keep.
+ * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
+ * @param path - The name to look at.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns
+ * - `still` when the name shows that inode (and size and times when given)
+ * - `gone` when nothing stands at the name
+ * - `changed` when it shows another file
+ * @throws What the look throws other than for a missing name.
+ * @example
+ * await nameStateOf(context, retiredPath, movedLook) // => 'gone' after another program deleted the old record
+ */
+async function nameStateOf(
+  context: Context,
+  path: string,
+  checked: LeftoverLookback,
+): Promise<'still' | 'gone' | 'changed'> {
   context.seam?.beforeLeftoverCheck?.(path)
   const now = await lstat(path, { bigint: true }).catch((error: unknown) => {
     if (codeOf(error) === 'ENOENT') return undefined
     throw error
   })
-  const isStill = showsChecked(now, checked)
-  if (isStill) context.seam?.afterLeftoverCheck?.(path)
-  return isStill
+  if (now === undefined) return 'gone'
+  if (!showsChecked(now, checked)) return 'changed'
+  context.seam?.afterLeftoverCheck?.(path)
+  return 'still'
 }
 
 /**
@@ -3746,7 +3768,7 @@ function unrestoredStandingOf(
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
- * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read; or the moved record is gone
+ * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read; or the moved record is gone, by its first look or by the last: nothing is left there to keep
  * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
  * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry
  * - `absent` when the name is empty, or changed between the look and the check
@@ -3754,7 +3776,7 @@ function unrestoredStandingOf(
  * - `other` for a folder, a link or another kind of file, bytes that are no record, a record of another config, or a record of another entry that owns nothing the config holds
  * - `unread` when a look at `receipt.json` or the read of what stands there failed
  * - `moved-unread` when the look at the moved record's private name or its read failed (an I/O failure, never bytes of another shape)
- * - `moved-changed` when the private name no longer shows the file that was read there: what the read compared is not what an unlink would delete
+ * - `moved-changed` when the private name shows another file than the one that was read there: what the read compared is not what an unlink would delete
  * @example
  * await standingReceiptOf(context, retiredPath) // => 'other' while a folder stands at receipt.json
  */
@@ -3907,7 +3929,8 @@ async function readLookedRecord(
  * @returns
  * - `still` when both names show the files that were read
  * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
- * - `moved-changed` when the private name shows another file or none; `moved-unread` when that look failed
+ * - `moved-changed` when the private name shows another file; `moved-unread` when that look failed
+ * - `covers` when nothing stands at the private name any more: nothing is left there to keep, as when its first look found it empty ({@link readStandingReceipt})
  * @example
  * await stillnessOf(context, retiredPath, standingLook, movedLook) // => 'moved-changed' after a sync tool put another file at the private name during the read
  */
@@ -3916,7 +3939,9 @@ async function stillnessOf(
   retiredPath: string,
   standingLook: LeftoverLookback,
   movedLook: LeftoverLookback,
-): Promise<'still' | 'absent' | 'unread' | 'moved-changed' | 'moved-unread'> {
+): Promise<
+  'still' | 'absent' | 'unread' | 'covers' | 'moved-changed' | 'moved-unread'
+> {
   const isStandingStill = await isNameStill(
     context,
     context.receiptPath,
@@ -3924,12 +3949,14 @@ async function stillnessOf(
   ).catch(() => undefined)
   if (isStandingStill === undefined) return 'unread'
   if (!isStandingStill) return 'absent'
-  const isMovedStill = await isNameStill(context, retiredPath, movedLook).catch(
-    () => undefined,
+  const movedState = await nameStateOf(context, retiredPath, movedLook).catch(
+    (): 'unread' => 'unread',
   )
-  if (isMovedStill === undefined) return 'moved-unread'
+  if (movedState === 'unread') return 'moved-unread'
+  // The private name is empty by now: no file is left there to keep or to name.
+  if (movedState === 'gone') return 'covers'
   // Another file at the private name since the look: what the read compared is not what an unlink would delete.
-  return isMovedStill ? 'still' : 'moved-changed'
+  return movedState === 'still' ? 'still' : 'moved-changed'
 }
 
 /**
