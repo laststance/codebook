@@ -50,6 +50,7 @@ import {
   readBridgeDescriptor,
 } from '../utils/readBridgeDescriptor'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
+import { createPathReadGate } from '../utils/shareReceiptRead'
 
 import { createHarness } from './helpers'
 import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
@@ -2703,6 +2704,7 @@ test(
         },
       },
     })
+    const stalledReads = createPathReadGate()
     const bridgeModule = await loadModule<typeof DevinMcpBridgeModule>(
       resolve(__dirname, '../devinMcpBridge.js'),
       {
@@ -2723,12 +2725,18 @@ test(
         './utils/checkDevinBridgeReceipts': {
           // The first check is the connection's own and stands; every later one reads the stalled disk.
           checkDevinBridgeReceipts: (
-            ...parameters: Parameters<typeof checkDevinBridgeReceipts>
+            descriptorPath: string,
+            binding: Parameters<typeof checkDevinBridgeReceipts>[1],
           ) => {
             checks += 1
+            // A gate of its own: the reads left hung hold no slot of the gate the rest of this process shares.
             return checks === 1
               ? Promise.resolve({ answer: 'stands' })
-              : realCheck.checkDevinBridgeReceipts(...parameters)
+              : realCheck.checkDevinBridgeReceipts(
+                  descriptorPath,
+                  binding,
+                  stalledReads,
+                )
           },
         },
       },
@@ -3766,6 +3774,23 @@ async function startConnectedBridge(
 }
 
 /**
+ * Arms a receipt-hold preload and waits until its SIGUSR2 listener ran, so the receipts read the test triggers next is held; the arrange step of the tests whose preload holds receipt reads once armed.
+ * The signal alone does not wait for the child: a read that started before the listener ran would bypass the hold, and the test would time out waiting for a held read instead of testing the stop.
+ * @param bridge - A bridge whose preload writes `RECEIPT_HOLD_ARMED` on stderr once it is armed.
+ * @example await armReceiptHold(bridge) // receipt reads that start from now on are held
+ */
+async function armReceiptHold(bridge: ConnectedBridge): Promise<void> {
+  bridge.arm()
+  await waitUntil(
+    () => bridge.readStderr().includes('RECEIPT_HOLD_ARMED\n'),
+    "the preload's acknowledgment that receipt reads are held",
+    10_000,
+    undefined,
+    5,
+  )
+}
+
+/**
  * Rewrites the connection descriptor of the bridge's window so that it names another installation, keeping everything else (the endpoint and the token the bridge connected with).
  * @param agentDir - The agent folder holding the descriptor.
  * @param installationId - The installation id the descriptor's mark names from now on; none removes the mark.
@@ -4163,12 +4188,7 @@ test(
     await bridge.expireSession()
     // Act
     bridge.askToolsList(1)
-    const exitCode = await Promise.race([
-      bridge.exited,
-      new Promise<string>((done) =>
-        setTimeout(() => done('still running'), 15_000),
-      ),
-    ])
+    const exitCode = await within(bridge.exited, 15_000)
     // Assert
     assert.equal(exitCode, 1)
     assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
@@ -4193,12 +4213,7 @@ test(
     await bridge.expireSession()
     // Act
     bridge.askToolsList(1)
-    const exitCode = await Promise.race([
-      bridge.exited,
-      new Promise<string>((done) =>
-        setTimeout(() => done('still running'), 15_000),
-      ),
-    ])
+    const exitCode = await within(bridge.exited, 15_000)
     // Assert
     assert.equal(exitCode, 1)
     assert.equal(bridge.readStderr().includes('AI chat is not set up'), true)
@@ -4212,12 +4227,12 @@ test(
   { skip: process.platform === 'win32', timeout: 40_000 },
   async (context) => {
     // Arrange
-    // The preload holds the receipt reads that start after it is armed for a moment and says when the first one started.
+    // The preload holds the receipt reads that start after it is armed for a moment and says when it was armed and when the first one started.
     const preload = `const fsPromises = require('node:fs/promises')
 const { writeSync } = require('node:fs')
 const originalOpen = fsPromises.open
 let isArmed = false
-process.on('SIGUSR2', () => { isArmed = true })
+process.on('SIGUSR2', () => { isArmed = true; writeSync(2, 'RECEIPT_HOLD_ARMED\\n') })
 fsPromises.open = async (path, ...rest) => {
   if (isArmed && String(path).endsWith('receipt.json')) {
     writeSync(2, 'RECEIPT_READ_HELD\\n')
@@ -4228,7 +4243,7 @@ fsPromises.open = async (path, ...rest) => {
 `
     const bridge = await startConnectedBridge(context, preload)
     await writeSetupReceipts(bridge.root, { installed: false }, false)
-    bridge.arm()
+    await armReceiptHold(bridge)
     bridge.proxy.refuseWith = 403
     bridge.handshake()
     bridge.askToolsList(1)
@@ -4256,11 +4271,12 @@ test(
   { skip: process.platform === 'win32', timeout: 40_000 },
   async (context) => {
     // Arrange
-    // The preload holds the receipt reads that start after it is armed, so the check outlives the release.
+    // The preload holds the receipt reads that start after it is armed, so the check outlives the release, and says when it was armed.
     const preload = `const fsPromises = require('node:fs/promises')
+const { writeSync } = require('node:fs')
 const originalOpen = fsPromises.open
 let isArmed = false
-process.on('SIGUSR2', () => { isArmed = true })
+process.on('SIGUSR2', () => { isArmed = true; writeSync(2, 'RECEIPT_HOLD_ARMED\\n') })
 fsPromises.open = async (path, ...rest) => {
   if (isArmed && String(path).endsWith('receipt.json'))
     await new Promise((done) => setTimeout(done, 700))
@@ -4269,7 +4285,7 @@ fsPromises.open = async (path, ...rest) => {
 `
     const bridge = await startConnectedBridge(context, preload)
     await writeSetupReceipts(bridge.root, { installed: false }, false)
-    bridge.arm()
+    await armReceiptHold(bridge)
     // The proxy holds the tools/list request until the test says and tells when it holds it; the session release is recognised by its HTTP DELETE, which is then forwarded.
     let releaseToolsList: () => void = () => undefined,
       markToolsListHeld: () => void = () => undefined,
@@ -4398,7 +4414,7 @@ test(
 )
 
 /**
- * Source of a preload that holds every setup receipts read of the bridge, once the test armed it (SIGUSR2), until the bridge's stop itself, and marks on stderr when a read is held (`RECEIPT_READ_HELD`), when the stop came (`STOP_SEEN <end|SIGTERM|SIGINT>`) and what the reconnect check answered (`SETUP_CHECK_ANSWERED <true|false>`, `SETUP_CHECK_FAILED`).
+ * Source of a preload that holds every setup receipts read of the bridge, once the test armed it (SIGUSR2, acknowledged with `RECEIPT_HOLD_ARMED`), until the bridge's stop itself, and marks on stderr when a read is held (`RECEIPT_READ_HELD`), when the stop came (`STOP_SEEN <end|SIGTERM|SIGINT>`) and what the reconnect check answered (`SETUP_CHECK_ANSWERED <true|false>`, `SETUP_CHECK_FAILED`).
  * Its stop listeners are registered before the bridge's, so a held read continues only after the bridge's own handler ran in the same emit. They also keep a signalled process alive by themselves: only the bridge's own shutdown ends it.
  */
 const HOLD_RECEIPTS_UNTIL_STOP_PRELOAD = `const fsPromises = require('node:fs/promises')
@@ -4406,7 +4422,7 @@ const { writeSync } = require('node:fs')
 const cursorBridge = require(${CURSOR_BRIDGE_MODULE_PATH})
 const originalOpen = fsPromises.open
 let isArmed = false
-process.on('SIGUSR2', () => { isArmed = true })
+process.on('SIGUSR2', () => { isArmed = true; writeSync(2, 'RECEIPT_HOLD_ARMED\\n') })
 const stopped = new Promise((done) => {
   const stopOn = (name) => () => { writeSync(2, 'STOP_SEEN ' + name + '\\n'); done() }
   process.stdin.once('end', stopOn('end'))
@@ -4452,7 +4468,7 @@ test(
       context,
       HOLD_RECEIPTS_UNTIL_STOP_PRELOAD,
     )
-    bridge.arm()
+    await armReceiptHold(bridge)
     bridge.handshake()
     await bridge.expireSession()
     bridge.askToolsList(1)
@@ -4489,7 +4505,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
         context,
         HOLD_RECEIPTS_UNTIL_STOP_PRELOAD,
       )
-      bridge.arm()
+      await armReceiptHold(bridge)
       bridge.handshake()
       await bridge.expireSession()
       bridge.askToolsList(1)
@@ -4530,7 +4546,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
           HOLD_RECEIPTS_UNTIL_STOP_PRELOAD,
         )
         await writeSetupReceipts(bridge.root, { installed: false }, false)
-        bridge.arm()
+        await armReceiptHold(bridge)
         if (check === '403 refusal') bridge.proxy.refuseWith = 403
         bridge.handshake()
         if (check === 'reconnect setup') await bridge.expireSession()
@@ -4650,7 +4666,7 @@ for (const [setup, title] of [
       oldRelease.resolve()
       const exitCode = await bridge.exited
       // Assert
-      // The release was still pending after stdin closed, so both requests were still waiting for the reconnect then.
+      // The endpoint had not seen the bridge drop the release of the old session when the bridge saw the end of its input; the flag says nothing more about where the two requests were waiting.
       assert.equal(wasReleasePending, true)
       assert.equal(exitCode, setup === 'was removed' ? 1 : 0)
       assert.deepEqual(bridge.counts.toolsListBySession, {
@@ -4703,12 +4719,7 @@ for (const stop of ['stdin closes', 'it gets SIGTERM'] as const) {
       // Act
       if (stop === 'stdin closes') bridge.closeStdin()
       else bridge.signal('SIGTERM')
-      const exitCode = await Promise.race([
-        bridge.exited,
-        new Promise<string>((done) =>
-          setTimeout(() => done('still running'), 8_000),
-        ),
-      ])
+      const exitCode = await within(bridge.exited, 8_000)
       // Assert
       assert.equal(exitCode, 0)
       assert.deepEqual(releasedSessions, [oldSessionId ?? 'none'])
@@ -4764,12 +4775,7 @@ for (const [change, stop, title] of [
       // Act
       if (stop === 'stdin closes') bridge.closeStdin()
       else bridge.signal('SIGTERM')
-      const exitCode = await Promise.race([
-        bridge.exited,
-        new Promise<string>((done) =>
-          setTimeout(() => done('still running'), 15_000),
-        ),
-      ])
+      const exitCode = await within(bridge.exited, 15_000)
       // Assert
       const directory = await realpath(bridge.directory)
       assert.equal(exitCode, 1)
@@ -4826,12 +4832,7 @@ test(
     )
     // Act
     bridge.closeStdin()
-    const exitCode = await Promise.race([
-      bridge.exited,
-      new Promise<string>((done) =>
-        setTimeout(() => done('still running'), 15_000),
-      ),
-    ])
+    const exitCode = await within(bridge.exited, 15_000)
     // Assert
     assert.equal(exitCode, 1)
     assert.equal(

@@ -21,6 +21,7 @@ import { readBridgeDescriptor } from '../utils/readBridgeDescriptor'
 import { createHarness } from './helpers'
 import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
 import { removeTestFolder } from './utils/removeTestFolder'
+import { within } from './utils/within'
 
 test('Cursor stdio bridge exposes the current authenticated Codebook instance without a credential in its command', async (context) => {
   // Arrange
@@ -706,19 +707,6 @@ async function startCursorBridgeChild(
   }
 }
 
-/** Resolves with the exit code when the bridge ended within `budgetMs`, else with `still running`. */
-function exitWithin(
-  exited: Promise<number | null>,
-  budgetMs: number,
-): Promise<number | null | 'still running'> {
-  return Promise.race([
-    exited,
-    new Promise<'still running'>((done) => {
-      setTimeout(() => done('still running'), budgetMs).unref()
-    }),
-  ])
-}
-
 /** The requests of `method` (a JSON-RPC method, or `DELETE`) the endpoint received for `sessionId`, or for every session when it is left out. */
 function requestsOf(
   received: ScriptedRequest[],
@@ -793,9 +781,9 @@ test(
     const wasReleasePending = !release.isClientGone()
     release.outgoing.writeHead(200)
     release.outgoing.end()
-    const exitCode = await exitWithin(bridge.exited, 10_000)
+    const exitCode = await within(bridge.exited, 10_000)
     // Assert
-    // The release was still pending after stdin closed, so both requests were still waiting for the reconnect then.
+    // The endpoint had not seen the bridge drop the release of the old session when the bridge saw the end of its input; the flag says nothing more about where the two requests were waiting.
     assert.equal(wasReleasePending, true)
     assert.equal(exitCode, 0)
     assert.equal(
@@ -844,7 +832,7 @@ for (const stop of ['stdin closes', 'it gets SIGTERM'] as const) {
       // Act
       if (stop === 'stdin closes') bridge.closeStdin()
       else bridge.signal('SIGTERM')
-      const exitCode = await exitWithin(bridge.exited, 5_000)
+      const exitCode = await within(bridge.exited, 5_000)
       // Assert
       assert.equal(exitCode, 0)
       assert.equal(
@@ -896,10 +884,18 @@ test(
     )
     // Act
     bridge.closeStdin()
-    const exitCode = await exitWithin(bridge.exited, 5_000)
+    const exitCode = await within(bridge.exited, 5_000)
+    // The child's exit does not wait for the endpoint to see that connection close, so that is observed on its own, within a bound.
+    const isNotificationGone = await waitUntil(
+      () => notification.isClientGone(),
+      'the endpoint seeing the held notification closed',
+      5_000,
+      undefined,
+      5,
+    ).catch(() => false)
     // Assert
     assert.equal(exitCode, 0)
-    assert.equal(notification.isClientGone(), true)
+    assert.equal(isNotificationGone, true)
     assert.deepEqual(
       requestsOf(endpoint.received, 'DELETE')
         .map((request) => request.sessionId)
@@ -935,7 +931,7 @@ test(
   },
 )
 
-// Value: protects=no initialized notification reaching Cursor's server after Cursor ended the bridge, for a replacement session whose initialize answer was still arriving (Cycle 0146 task 7, Codex review of v3); fails_when=the cut handshake's client stays open while its session is released, so an answer that finishes meanwhile lets the SDK send the notification after the stop; no_claim=an initialize the server never answered (no session to release, the tests above)
+// Value: protects=no initialized notification reaching Cursor's server after Cursor ended the bridge, for a replacement session whose initialize answer was still arriving, because the cut handshake's connection closes before its session's release completes (Cycle 0146 task 7, Codex review of v3; Cycle 0146 review round, CodeRabbit cursorMcpBridge.test.ts:1003-1023); fails_when=the cut handshake's client stays open while its session is released (the initialize connection is still open while the endpoint holds the DELETE), so an answer that finishes meanwhile lets the SDK send the notification after the stop; no_claim=an initialize the server never answered (no session to release, the tests above), an answer whose body arrived before the stop
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(
   'Cursor stdio bridge sends no initialized notification for a replacement session whose initialize answer was still arriving when stdin closed, and releases that session',
@@ -957,7 +953,7 @@ test(
         request.httpMethod === 'DELETE' &&
         request.sessionId === 'session-2'
       ) {
-        // The release is held until the test has finished the initialize answer.
+        // The release is held until the test has seen the initialize connection close.
         heldRelease = request
         return true
       }
@@ -999,19 +995,6 @@ test(
       undefined,
       5,
     )
-    // The answer finishes after the stop, while the release of session-2 is held; a bridge that already closed that connection reads none of it.
-    if (!initialize.isClientGone())
-      initialize.outgoing.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: 0,
-          result: {
-            protocolVersion: '2025-03-26',
-            capabilities: { tools: {} },
-            serverInfo: { name: 'scripted', version: '1' },
-          },
-        }),
-      )
     const release = await waitUntil(
       () => heldRelease,
       'the release of session-2',
@@ -1019,10 +1002,21 @@ test(
       undefined,
       5,
     )
+    // The bridge gives a held release up after its own bound; the initialize connection must close before that, while the bridge still waits for the release, so its answer can never finish into an initialized notification.
+    await waitUntil(
+      () => initialize.isClientGone() || release.isClientGone(),
+      'the initialize connection closing, or the bridge giving the release of session-2 up',
+      5_000,
+      undefined,
+      5,
+    ).catch(() => false)
+    const wasInitializeGoneWhileReleaseHeld =
+      initialize.isClientGone() && !release.isClientGone()
     release.outgoing.writeHead(200)
     release.outgoing.end()
-    const exitCode = await exitWithin(bridge.exited, 5_000)
+    const exitCode = await within(bridge.exited, 5_000)
     // Assert
+    assert.equal(wasInitializeGoneWhileReleaseHeld, true)
     assert.equal(exitCode, 0)
     assert.equal(
       requestsOf(endpoint.received, 'notifications/initialized', 'session-2')
@@ -1071,7 +1065,7 @@ test(
     )
     release.outgoing.writeHead(200)
     release.outgoing.end()
-    const exitCode = await exitWithin(bridge.exited, 5_000)
+    const exitCode = await within(bridge.exited, 5_000)
     // Assert
     assert.equal('error' in answer, true)
     assert.equal(requestsOf(endpoint.received, 'tools/list').length, 0)
