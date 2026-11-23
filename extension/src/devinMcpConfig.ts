@@ -3742,6 +3742,7 @@ function unrestoredStandingOf(
 
 /**
  * Tells what stands at `receipt.json` when a put-back's link found that name taken, or the put-back was chosen only beside what stands there, so the moved record is dropped only beside a record that covers the same entry of the same config; called only by {@link settleTakenName}.
+ * Both names are looked at again only after the comparison ({@link stillnessOf}), whose read of the config ({@link ownerOfConfigEntry}) takes time, so the unlink that follows a `covers` deletes only the file that was read.
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
@@ -3763,7 +3764,33 @@ async function standingReceiptOf(
 ): Promise<StandingReceipt> {
   const records = await readStandingReceipt(context, retiredPath)
   if (typeof records === 'string') return records
-  const { standing, moved } = records
+  const comparison = await compareStandingReceipt(context, records)
+  // The looks come last: a file put at either name during the comparison's config read is never what the put-back acts on.
+  const stillness = await stillnessOf(
+    context,
+    retiredPath,
+    records.standingLook,
+    records.movedLook,
+  )
+  return stillness === 'still' ? comparison : stillness
+}
+
+/**
+ * Compares the record that stands at `receipt.json` with the moved one; called only by {@link standingReceiptOf}, which then looks at both names again before the put-back acts on the answer.
+ * @param context - The run.
+ * @param records - Both records as read ({@link StandingRecords}).
+ * @returns
+ * - `other` when the record at `receipt.json` is a record of another config
+ * - `foreign` when the moved file holds no record, or a record of another config
+ * - `covers` when both hold the same entry hash
+ * - what {@link ownerOfConfigEntry} answers for two records of this config with different entry hashes
+ * @example
+ * await compareStandingReceipt(context, { standing: newerReceipt, standingLook, moved: oldReceipt, movedLook }) // => 'covers' while both hold the same entry hash
+ */
+async function compareStandingReceipt(
+  context: Context,
+  { standing, moved }: StandingRecords,
+): Promise<'covers' | 'superseded' | 'other' | 'foreign' | 'config-unread'> {
   // Only what stands there decides while it is no record of this config: moving it away lets the moved file go back.
   if (standing.targetPath !== context.path) return 'other'
   // A moved file read as bytes that are no record, or as a record of another config: that file is the one to move.
@@ -3773,7 +3800,7 @@ async function standingReceiptOf(
 }
 
 /**
- * Compares two records of this config whose entry hashes differ against the entry the config holds, so the put-back never names a record that owns that entry as the one to move; called only by {@link standingReceiptOf}.
+ * Compares two records of this config whose entry hashes differ against the entry the config holds, so the put-back never names a record that owns that entry as the one to move; called only by {@link compareStandingReceipt}.
  * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}).
  * @param context - The run.
  * @param standing - The record of this config at `receipt.json`.
@@ -3799,18 +3826,26 @@ async function ownerOfConfigEntry(
   return ownsEntry(current, moved) ? 'covers' : 'superseded'
 }
 
+/** The two records {@link readStandingReceipt} read, each with its name's look right before its read, so {@link stillnessOf} can tell after the comparison whether both names still show those files. */
+type StandingRecords = {
+  standing: Receipt
+  standingLook: LeftoverLookback
+  moved: LookedRecord['read']
+  movedLook: LeftoverLookback
+}
+
 /**
- * Reads the record that stands at `receipt.json` and the moved one, and checks that both names still show the files that were read; called only by {@link standingReceiptOf}, which compares the two.
+ * Reads the record that stands at `receipt.json` and the moved one, each right after a look at its name; called only by {@link standingReceiptOf}, which compares the two and then looks at both names again ({@link stillnessOf}).
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
- * @returns Both records once every look passed; otherwise the answer the looks already give ({@link StandingReceipt}).
+ * @returns Both records with their looks ({@link StandingRecords}); otherwise the answer these looks and reads already give ({@link StandingReceipt}).
  * @example
- * await readStandingReceipt(context, retiredPath) // => { standing: newerReceipt, moved: oldReceipt }
+ * await readStandingReceipt(context, retiredPath) // => { standing: newerReceipt, standingLook, moved: oldReceipt, movedLook }
  */
 async function readStandingReceipt(
   context: Context,
   retiredPath: string,
-): Promise<StandingReceipt | { standing: Receipt; moved: Receipt | 'other' }> {
+): Promise<StandingReceipt | StandingRecords> {
   const standing = await readLookedRecord(context, context.receiptPath)
   // A name that is empty, or empty again by the read, counts as empty.
   if (standing === undefined) return 'absent'
@@ -3821,15 +3856,12 @@ async function readStandingReceipt(
   if (moved === undefined) return 'covers'
   // The private file could not be read, not receipt.json: its own sentence names that file. One that was read and holds no record goes on, so the comparison can name it.
   if (moved === 'unread') return 'moved-unread'
-  const stillness = await stillnessOf(
-    context,
-    retiredPath,
-    standing.look,
-    moved.look,
-  )
-  return stillness === 'still'
-    ? { standing: standing.read, moved: moved.read }
-    : stillness
+  return {
+    standing: standing.read,
+    standingLook: standing.look,
+    moved: moved.read,
+    movedLook: moved.look,
+  }
 }
 
 /** A record file as {@link readLookedRecord} read it: the receipt, or `other` for a file that holds none, and its name's inode, size and times at the look right before the read. */
@@ -3867,7 +3899,7 @@ async function readLookedRecord(
 }
 
 /**
- * Tells whether `receipt.json` and the moved record's private name still show the files that were read, right before the put-back decides on them; called only by {@link readStandingReceipt}.
+ * Tells whether `receipt.json` and the moved record's private name still show the files that were read, after the comparison and right before the put-back acts on it; called only by {@link standingReceiptOf}.
  * @param context - The run; its seam is called around each look ({@link isNameStill}).
  * @param retiredPath - The private name that holds the moved record.
  * @param standingLook - `receipt.json`'s look before its read.
