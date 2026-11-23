@@ -3673,17 +3673,22 @@ type ConfigEntryHash =
  * Bytes that are no valid JSON config are told apart from a config without the entry: a file an editor is still saving proves nothing, while a config that holds no entry or another one is another publish's.
  * @param bytes - The config's bytes.
  * @returns
- * - `invalid` for bytes that are no JSON, an object that names one member twice, a top level that is no object, or an `mcpServers` that is no object (what {@link parseConfig} refuses as well)
+ * - `invalid` for bytes that are not valid UTF-8 or no JSON, an object that names one member twice, a top level that is no object, or an `mcpServers` that is no object (what {@link parseConfig} refuses as well)
  * - `valid` with the hash; the hash is undefined for a config without `mcpServers` or without an entry, or an entry that is no object
  * @example
  * configEntryHashOf(Buffer.from('{"mcpServers":{}}'))                     // => { kind: 'valid', hash: undefined }
  * configEntryHashOf(Buffer.from('{"mcpServ'))                             // => { kind: 'invalid' }
  * configEntryHashOf(Buffer.from('{"mcpServers":{"codebook":{}},"mcpServers":{}}')) // => { kind: 'invalid' }
+ * configEntryHashOf(Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d])) // => { kind: 'invalid' } ('{"\xff":1}')
  */
 function configEntryHashOf(bytes: Buffer): ConfigEntryHash {
-  const text = bytes.toString('utf8')
+  let text: string
   let root: unknown
   try {
+    // Decoded as strictly as {@link parseConfig} decodes: a byte that is not valid UTF-8 would become U+FFFD and could hide the "mcpServers" key; `ignoreBOM` keeps a BOM in the text, so the parse refuses it.
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    )
     root = JSON.parse(text)
   } catch {
     return { kind: 'invalid' }
