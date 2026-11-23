@@ -3112,7 +3112,7 @@ test('A put-back by bytes whose private name cannot be deleted after its link ke
 })
 
 test('A recovery whose look at a put-back by bytes stalls keeps the window running until storage answers, then keeps the record handed and unverified', async (context) => {
-  // Value: protects=the look that decides whether a put-back by bytes left an unverified second name of the config waits for the file system without holding the extension host's thread, so a stalled disk never freezes the window (its timers and other commands keep running), and the record still keeps its handed, unverified mark once storage answers; fails_when=that look never reaches the file system's asynchronous call while the refresh runs (it blocked the thread instead), the refresh settles while the look is held, or the record that stays is not handed and unverified or a name is deleted; no_claim=a real stalled disk (an lstat of the displaced name held until the test releases it stands for it), and the synchronous looks right before each link and unlink, which this cycle did not add; seam=hand-written pending record of a put-back by bytes (another inode) with the config name empty, and the config module loaded with an unlink that fails for the displaced name and an lstat that holds every look at the displaced name until the test releases it
+  // Value: protects=the look that decides whether a put-back by bytes left an unverified second name of the config waits for the file system without holding the extension host's thread, so a stalled disk never freezes the window (its timers and other commands keep running), and the record still keeps its handed, unverified mark once storage answers; fails_when=that look never reaches the file system's asynchronous call while the refresh runs (it blocked the thread instead), the refresh settles while the look is held, or the record that stays is not handed and unverified or a name is deleted; no_claim=a real stalled disk (an lstat of the displaced name held until the test releases it stands for it), and the synchronous looks right before each link and unlink, which this cycle did not add; seam=hand-written pending record of a put-back by bytes (another inode) with the config name empty, and the config module loaded with an unlink and a rename that fail for the displaced name and an lstat that holds every look at the displaced name until the test releases it
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
@@ -3132,7 +3132,11 @@ test('A recovery whose look at a put-back by bytes stalls keeps the window runni
         },
         mkdir,
         open,
-        rename,
+        rename: async (from: string, to: string) => {
+          if (from.endsWith('.codebook-displaced'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return rename(from, to)
+        },
         rm,
         unlink: async (path: string) => {
           if (path.endsWith('.codebook-displaced'))
