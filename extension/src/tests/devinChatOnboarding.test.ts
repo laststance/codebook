@@ -5028,11 +5028,26 @@ test('a Devin removal refused before it changed the setup, whose records read an
       () => true,
       () => false,
     )
+    // The mark serves the Devin bridge before the bridge's own check after it answers; the decision and its notice follow that check (up to 3 s).
+    const isNoticeShown = await waitUntil(
+      () =>
+        window.notices.some(
+          (notice) =>
+            notice.message ===
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        ),
+      "the late mark's Reload Window notice",
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
     // Assert
     assert.equal(outcome, 'Injected skill removal failure')
     assert.equal(statusBefore, 200)
     assert.equal(statusWhileUnmarked, 403)
     assert.equal(isServedAgain, true)
+    assert.equal(isNoticeShown, true)
     assert.equal(await window.readDescriptorField(), true)
     assert.equal(await window.readDescriptorInstallation(), 'installation-test')
     assert.deepEqual(window.lateMarkDecisions, [true])
@@ -5115,6 +5130,20 @@ test('a failed re-run of a standing Devin setup whose take-back records read ans
       () => true,
       () => false,
     )
+    // The mark serves the Devin bridge before the bridge's own check after it answers; the decision and its notice follow that check (up to 3 s).
+    const isNoticeShown = await waitUntil(
+      () =>
+        window.notices.some(
+          (notice) =>
+            notice.message ===
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        ),
+      "the late mark's Reload Window notice",
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
     // Assert
     assert.equal(statusBefore, 200)
     assert.equal(statusWhileUnmarked, 403)
@@ -5123,6 +5152,7 @@ test('a failed re-run of a standing Devin setup whose take-back records read ans
     assert.deepEqual(decisionsWhileSetupRuns, [])
     assert.equal(setupOutcome, 'Injected skill check failure')
     assert.equal(isServedAgain, true)
+    assert.equal(isNoticeShown, true)
     assert.equal(await window.readDescriptorInstallation(), 'installation-test')
     assert.deepEqual(window.lateMarkDecisions, [true])
     assert.deepEqual(
@@ -5186,6 +5216,20 @@ test('a Devin removal refused before it changed the setup serves the Devin bridg
       () => true,
       () => false,
     )
+    // The mark serves the Devin bridge before the bridge's own check after it answers; the decision and its notice follow that check (up to 3 s).
+    const isNoticeShown = await waitUntil(
+      () =>
+        window.notices.some(
+          (notice) =>
+            notice.message ===
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        ),
+      "the late mark's Reload Window notice",
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
     const inodeAfter = (await stat(descriptorFile)).ino
     // Assert
     assert.equal(outcome, 'Injected skill removal failure')
@@ -5199,6 +5243,7 @@ test('a Devin removal refused before it changed the setup serves the Devin bridg
     )
     assert.equal(statusWhileUnmarked, 403)
     assert.equal(isServedAgain, true)
+    assert.equal(isNoticeShown, true)
     assert.deepEqual(window.lateMarkDecisions, [true])
     assert.notEqual(inodeAfter, inodeBefore)
     assert.equal(await window.readDescriptorInstallation(), 'installation-test')
@@ -5765,6 +5810,20 @@ test("a sync's late Devin mark whose fresh read answers while a setup of this wi
       () => true,
       () => false,
     )
+    // The mark serves the Devin bridge before the bridge's own check after it answers; the decision and its notice follow that check (up to 3 s).
+    const isNoticeShown = await waitUntil(
+      () =>
+        window.notices.some(
+          (notice) =>
+            notice.message ===
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        ),
+      "the late mark's Reload Window notice",
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
     // Assert
     assert.equal(statusBefore, 200)
     assert.equal(removalOutcome, 'Injected skill removal failure')
@@ -5774,6 +5833,7 @@ test("a sync's late Devin mark whose fresh read answers while a setup of this wi
       'Codebook could not use the Node.js named by codebook.nodeExecutable, so it did not set up Devin Desktop. Check that setting, then run Codebook: Set Up AI Chat again.',
     )
     assert.equal(isServedAgain, true)
+    assert.equal(isNoticeShown, true)
     assert.deepEqual(decisionsWhileSetupRuns, [])
     assert.deepEqual(window.lateMarkDecisions, [true])
     assert.equal(await window.readDescriptorField(), true)
