@@ -9,6 +9,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -229,6 +230,8 @@ async function devinWindow(
     failDescriptorMark?: boolean
     /** Makes the first dispose of the Study reader throw, as a reader whose panes could not be closed. */
     failStudyReaderDispose?: boolean
+    /** Holds every late mark's continuation, once its late read settled and before it reads afresh, until `holds.lateMark` is released. */
+    holdLateMark?: boolean
   } = {},
 ) {
   const directory =
@@ -320,6 +323,7 @@ async function devinWindow(
     provisionalSave: createGate(),
     skillCheck: createGate(),
     descriptorPublish: createGate(),
+    lateMark: createGate(),
   }
   // Whether the one held write of the saved setup was reached; the writes after it are not held.
   let isSavedSetupWriteHeld = false
@@ -742,12 +746,15 @@ async function devinWindow(
           return stands
         },
       },
-      // The real continuation of a late mark; each decision it settles with is recorded, before the window's own handler runs.
+      // The real continuation of a late mark, held at `holds.lateMark` before it runs when a test asks for it; each decision it settles with is recorded, before the window's own handler runs.
       './utils/continueAfterLateRead': {
         continueAfterLateRead: (
-          ...parameters: Parameters<typeof continueAfterLateRead>
+          ...[lateRead, apply]: Parameters<typeof continueAfterLateRead>
         ) => {
-          const decision = continueAfterLateRead(...parameters)
+          const decision = continueAfterLateRead(lateRead, async () => {
+            if (options.holdLateMark) await holds.lateMark.wait()
+            return apply()
+          })
           void decision.then(
             (isMarked) => lateMarkDecisions.push(isMarked),
             (error: Error) => lateMarkDecisions.push(error.message),
@@ -928,7 +935,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`, `holdLateMark`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -3583,7 +3590,7 @@ const REMOVAL_HOLD_CASES = [
 ] as const
 
 for (const holdCase of REMOVAL_HOLD_CASES) {
-  // Value: protects=a Remove Devin Desktop Setup whose step waits on storage answers within the removal budget with a warning that names only the changes made so far and the step that waits, offers no reload, refuses a setup meanwhile, holds the setup lock until its last step, and shows its own notice with Reload Window once storage answers (Cycle 0146 task 1a, v2 finding 11); fails_when=the removal waits for ever, its warning claims a change that has not happened (the skill case names no entry), it offers a reload too early, a setup joins it, or another window's setup runs before the removal's last step; no_claim=a removal whose step fails (a refusal); a stand-in step held at a gate stands for the stalled storage, and both windows share one extension host and one storage folder
+  // Value: protects=a Remove Devin Desktop Setup whose step waits on storage answers within the removal budget with a warning that names only the changes made so far and the step that waits, offers no reload, refuses a setup and a second removal meanwhile (the second removal before its question), holds the setup lock until its last step, and shows its own notice with Reload Window once storage answers (Cycle 0146 task 1a, v2 finding 11; /ship pass 1, specialist testing 3); fails_when=the removal waits for ever, its warning claims a change that has not happened (the skill case names no entry), it offers a reload too early, a setup joins it, a second removal asks its question again, or another window's setup runs before the removal's last step; no_claim=a removal whose step fails (a refusal); a stand-in step held at a gate stands for the stalled storage, and both windows share one extension host and one storage folder
   test(`a Devin removal whose ${holdCase.step} step waits on storage answers within the budget with only the changes made so far, then shows its own notice once storage answers`, async (context) => {
     // Arrange
     const first = await devinWindow(context, {
@@ -3618,6 +3625,13 @@ for (const holdCase of REMOVAL_HOLD_CASES) {
       const noticesWhileWaiting = structuredClone(first.notices)
       const setupRefusal = await within(
         first.commands.get('codebook.setupAiChat')!().then(
+          () => 'resolved',
+          (error: Error) => error.message,
+        ),
+        2_000,
+      )
+      const secondRemovalRefusal = await within(
+        first.commands.get('codebook.removeManagedDevinSetup')!().then(
           () => 'resolved',
           (error: Error) => error.message,
         ),
@@ -3664,6 +3678,12 @@ for (const holdCase of REMOVAL_HOLD_CASES) {
         setupRefusal,
         'Codebook is still removing the Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window.',
       )
+      // The second removal refuses before its question: only the first one asked.
+      assert.equal(
+        secondRemovalRefusal,
+        'Codebook is still removing the Devin Desktop setup because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window.',
+      )
+      assert.equal(first.modalQuestions.length, 1)
       assert.deepEqual(first.notices[1], {
         severity: 'information',
         message: `Codebook removed its Devin Desktop skill. Codebook removed its codebook entry from ${first.configPath} and kept the file's other entries. Reload this window so Devin Local stops Codebook's MCP server. Codebook: Set Up AI Chat installs the skill and the entry again.`,
@@ -3887,12 +3907,13 @@ test('a late Devin mark whose descriptor rewrite fails writes one Output line, s
   }
 })
 
-// protects=a late receipts read of a server that was stopped and replaced before the read settled leaves the new server's mark and notices as they are: only its own restart offer is shown (Cycle 0146 task 1c) / fails_when=the late continuation marks or rewrites the new server's descriptor, or offers a second reload / no_claim=the new server's own late read (none here); the stand-in read waits 5.5 s and then has no answer, the other reads are the real ones
+// Value: protects=a late receipts read of a server that was stopped and replaced before the read settled leaves the new server's descriptor and notices as they are: its continuation, held until the new server's marked descriptor was captured, writes nothing (the file keeps its bytes and its inode) and decides `false`, and only the new server's restart offer is shown (Cycle 0146 task 1c; /ship pass 1, specialist testing 2 and Codex structured P2 at this test); fails_when=the late continuation marks or rewrites the new server's descriptor (also with identical bytes, which the rename of a rewrite gives a new inode), offers a second reload, or decides only after the assertions ran; no_claim=the new server's own late read (none here); the stand-in first read waits 5.5 s and then has no answer, the held continuation runs the real one once released, the other reads are the real ones
 test("a late receipts read of a replaced Devin Desktop server leaves the new server's mark and notices as they are", async (context) => {
   // Arrange
   const window = await devinWindow(context, {
     savedSetup: true,
     receiptReadDelaysMs: [5_500],
+    holdLateMark: true,
   })
   try {
     await waitUntil(
@@ -3900,24 +3921,41 @@ test("a late receipts read of a replaced Devin Desktop server leaves the new ser
       "the reconnect's connection descriptor",
       15_000,
     )
-    // Act
     await window.commands.get('codebook.stopAgentServer')!()
     await window.commands.get('codebook.startAgentServer')!()
-    const newDescriptor = JSON.parse(
-      await readFile(await window.descriptorPath(), 'utf8'),
-    )
-    // A stop queues behind every descriptor change, so the late continuation (queued once the first read settled, before the new server published) ends before it.
+    const newDescriptorFile = await window.descriptorPath()
+    const newDescriptorText = await readFile(newDescriptorFile, 'utf8')
+    const { ino: newDescriptorInode } = await stat(newDescriptorFile, {
+      bigint: true,
+    })
     await waitUntil(
       () => window.notices.length > 0,
       "the new server's restart offer",
     )
-    const descriptorBeforeStop = JSON.parse(
-      await readFile(await window.descriptorPath(), 'utf8'),
+    await waitUntil(
+      () => window.holds.lateMark.reachedAtMs(),
+      "the first server's late continuation, held before it reads afresh",
     )
+    // Act
+    window.holds.lateMark.release()
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the first server's late mark decision",
+    )
+    const descriptorTextAfterDecision = await readFile(
+      newDescriptorFile,
+      'utf8',
+    )
+    const { ino: inodeAfterDecision } = await stat(newDescriptorFile, {
+      bigint: true,
+    })
+    // A stop queues behind every descriptor change, so a second offer would be shown before it ends.
     await window.commands.get('codebook.stopAgentServer')!()
     // Assert
-    assert.equal(newDescriptor.devinChat, true)
-    assert.deepEqual(descriptorBeforeStop, newDescriptor)
+    assert.equal(JSON.parse(newDescriptorText).devinChat, true)
+    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(descriptorTextAfterDecision, newDescriptorText)
+    assert.equal(inodeAfterDecision, newDescriptorInode)
     assert.deepEqual(window.notices, [
       {
         severity: 'information',
