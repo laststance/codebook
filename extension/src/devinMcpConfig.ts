@@ -3921,15 +3921,19 @@ async function readRecordKind(
 }
 
 /**
- * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
  * @param error - What {@link readRecord} threw.
- * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link, no regular file, too many bytes or bytes that are no record.
+ * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link (whose open without following it fails with `ELOOP`), no regular file, too many bytes or bytes that are no record.
  * @example
- * isFailedRead(new Error('…', { cause: Object.assign(new Error('i/o error'), { code: 'EIO' }) })) // => true
- * isFailedRead(new Error('… is unreadable …'))                                                   // => false
+ * isFailedRead(new Error('…', { cause: Object.assign(new Error('i/o error'), { code: 'EIO' }) }))       // => true
+ * isFailedRead(new Error('…', { cause: Object.assign(new Error('too many links'), { code: 'ELOOP' }) })) // => false
+ * isFailedRead(new Error('… is unreadable …'))                                                         // => false
  */
 function isFailedRead(error: unknown): boolean {
-  return error instanceof Error && codeOf(error.cause) !== undefined
+  if (!(error instanceof Error)) return false
+  const code = codeOf(error.cause)
+  // A link at the name fails the open that follows no link (ELOOP): it holds no record, which the learner can move away, so it is no failed read.
+  return code !== undefined && code !== 'ELOOP'
 }
 
 /**
@@ -4052,7 +4056,7 @@ async function isStagedNameLinked(
  * @param context - The run.
  * @param retiredPath - The private name that holds the old record; the error below names it.
  * @param generation - The publish record's generation.
- * @returns `true` when `receipt.json` holds a receipt of this config with that generation; `false` when nothing, another config's receipt or bytes that are no receipt stand there (the put-back's own look then settles what stands there, {@link standingReceiptOf}).
+ * @returns `true` when `receipt.json` holds a receipt of this config with that generation; `false` when nothing, a link, another config's receipt or bytes that are no receipt stand there (the put-back's own look then settles what stands there, {@link standingReceiptOf}).
  * @throws An {@link UnrestoredReceiptError} marked `unread` when `receipt.json` could not be read: that receipt may be this setup's own, so both records stay and no sentence asks to move one; nothing is changed then.
  * @example
  * await isPublishReceipted(context, retiredPath, pending.generation) // => true after a first setup that wrote its receipt and could not delete its publish record
@@ -4197,7 +4201,7 @@ type RetiredReceiptFate = 'put-back' | 'compare' | 'drop' | 'undecided'
  * - `undecided` when the config holds the setup's own entry, the old record owns it too and nothing stands at `receipt.json`
  * - `compare` in that same case while something stands at `receipt.json`: the put-back's own look settles it ({@link standingReceiptOf}) and never links the old record, so a name found empty by then is undecided again
  * - `put-back` otherwise: the config holds no entry of that setup, or the old record is gone or of another config
- * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the old record could not be read (it names that file and asks to delete neither record), what {@link readRecord} throws when its bytes are no record, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
+ * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the old record could not be read (it names that file and asks to delete neither record), what {@link readRecord} throws when its name holds a link or bytes that are no record, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
  * @example
  * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'undecided' after a setup that stopped after its link and a config saved again with the same entry
  * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'drop' when that setup wrote another bridge path than the old record covers
@@ -4219,7 +4223,7 @@ async function retiredReceiptFateOf(
     context.retry,
     context.seam,
   ).catch((error: unknown) => {
-    // A failed read says nothing about the record: both records stay, and no sentence asks to delete one. Bytes that are no record keep readRecord's own sentence.
+    // A failed read says nothing about the record: both records stay, and no sentence asks to delete one. A link or bytes that are no record keep readRecord's own sentence.
     if (isFailedRead(error))
       throw new UnrestoredReceiptError(
         context,

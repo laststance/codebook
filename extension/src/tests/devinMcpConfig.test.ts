@@ -9318,6 +9318,70 @@ test("A refresh whose read of a finished first setup's own record fails once kee
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test('A refresh after a finished first setup that finds a link at receipt.json asks to move that link to another folder, never to make it readable, and the refresh after the link is moved away settles the old record', async (context) => {
+  // Value: protects=a link at receipt.json is no failed read: the refusal names receipt.json as something to move to another folder, the way out the learner can act on, keeps every record and follows no link, and once the learner moves the link away the next refresh settles the old record; fails_when=the first refresh says Codebook could not tell what stands at receipt.json or asks to make a file readable, answers without a refusal, changes a record, the link or the file it points to, or the next refresh refuses, answers anything but not-managed or leaves anything but the old record put back at receipt.json; no_claim=a real sync tool (renameSync and symlinkSync put the setup's own record elsewhere and a link to it at receipt.json), a learner deleting mcp_config.json (rmSync), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+  } = await arrangeFinishedSetupWithOldRecordLeft(context)
+  // The config is gone for a moment, so nothing but the records decides.
+  rmSync(configPath)
+  const oldRecord = await readRecordFile(storage, retiredName)
+  const linkedRecordPath = join(home, 'synced-receipt.json')
+  renameSync(receiptPath, linkedRecordPath)
+  symlinkSync(linkedRecordPath, receiptPath)
+  const linkedRecordText = readFileSync(linkedRecordPath, 'utf8')
+  const movedLinkPath = join(home, 'moved-link.json')
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordsAfterFirst = await recordsIn(storage)
+  const isLinkLeftAfterFirst = (await lstat(receiptPath)).isSymbolicLink()
+  // The learner follows the refusal: the link goes to another folder.
+  renameSync(receiptPath, movedLinkPath)
+  const second = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because something that is not Codebook's record of that entry stands at ${receiptPath}, and it could not note in its publish record at ${pendingPath} that nothing of this setup was linked; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.`,
+  )
+  assert.deepEqual(recordsAfterFirst, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(isLinkLeftAfterFirst, true)
+  assert.equal(readFileSync(linkedRecordPath, 'utf8'), linkedRecordText)
+  assert.equal(second, 'not-managed')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), oldRecord)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A refresh after a finished first setup never deletes a file that a backup put at the old record's private name when that file is no record of this config", async (context) => {
   // Value: protects=a finished first setup's proof (its own record) says nothing about the file at the old record's private name, so a file there that is no record of this config is never deleted and the refresh still settles that setup; fails_when=that file is gone or changed, the refresh answers anything but current, the setup's own record changes, or the publish record stays; no_claim=a real backup tool (swapFile puts a record of another config at the private name), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
   // Arrange
@@ -9500,6 +9564,41 @@ test("A refresh that cannot read the old record's private file once keeps both r
   )
   assert.equal(isReceiptLeftAfterSecond, false)
   assert.deepEqual(recordsAfterSecond, ['pending.json', retiredName])
+})
+
+test("A refresh that finds a link at the old record's private name names that path as a link to remove, never as a file to make readable", async (context) => {
+  // Value: protects=a link at the old record's private name is no failed read: the refusal is the one for a name that holds no record, which names that path and the way out, follows no link and changes nothing; fails_when=the refusal says Codebook could not read its old record or asks to make a file readable, receipt.json appears, a record is gone, or the file the link points to changes; no_claim=a real sync tool (renameSync and symlinkSync put the old record elsewhere and a link to it at its private name), a real process end (seam.afterPublish throws), why the private name's unlink failed in that setup (unlink stub EBUSY)
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, receiptPath, retiredName, retiredPath } =
+    await arrangeResavedAfterStoppedFirstSetup(context)
+  const linkedRecordPath = join(home, 'synced-old-receipt.json')
+  renameSync(retiredPath, linkedRecordPath)
+  symlinkSync(linkedRecordPath, retiredPath)
+  const linkedRecordText = readFileSync(linkedRecordPath, 'utf8')
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook's Devin Desktop MCP record at ${retiredPath} is a link, no regular file, larger than 16384 bytes or not readable, so the config was left untouched; remove that record, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal((await lstat(retiredPath)).isSymbolicLink(), true)
+  assert.equal(readFileSync(linkedRecordPath, 'utf8'), linkedRecordText)
 })
 
 test("A refresh whose folder at the old record's name is moved away right after the refresh decided to compare with it never links the old record into that name and refuses instead of guessing", async (context) => {
