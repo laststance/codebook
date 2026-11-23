@@ -20,6 +20,9 @@ export const DEVIN_SERVER_RESTARTED_SENTENCE =
 export const DEVIN_LATE_MARK_SENTENCE =
   'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.'
 
+/** What a Devin Desktop window says instead of {@link DEVIN_LATE_MARK_SENTENCE} when the bridge's own check, right after the late mark, finds the setup removed or changed meanwhile (the late mark's read came before another window's removal): a reload starts a bridge that refuses that setup, so only Set Up AI Chat connects Devin Local again. */
+export const DEVIN_LATE_MARK_SETUP_GONE_SENTENCE = `Codebook checked this window's Devin Desktop setup after storage answered late and found it removed or changed meanwhile (for example from another window), so reloading this window would not connect Devin Local. Run ${SET_UP_AI_CHAT_COMMAND} to set it up again.`
+
 /** The folder of Codebook's global storage whose lock serializes every Devin Desktop setup and removal of the user's windows. */
 export const DEVIN_SETUP_STORAGE_DIRECTORY = 'devin-setup'
 

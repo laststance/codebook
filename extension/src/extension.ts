@@ -64,6 +64,8 @@ import {
   NODE_SERVER_SHUTDOWN_GRACE_MS,
   DEVIN_MARK_READ_RETRY_BUDGET_MS,
   DEVIN_MARK_READ_RETRY_DELAY_MS,
+  DEVIN_LATE_MARK_RUN_CHECK_MS,
+  DEVIN_LATE_MARK_UNANSWERED_READS_MAX,
   DEVIN_SETUP_FINAL_CHECK_MS,
   DEVIN_SETUP_ROLLBACK_BUDGET_MS,
   DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
@@ -99,6 +101,7 @@ import {
 import {
   DEVIN_ENTRY_MISSING_LINE,
   DEVIN_LATE_MARK_SENTENCE,
+  DEVIN_LATE_MARK_SETUP_GONE_SENTENCE,
   DEVIN_REFRESH_NODE_FAILURE_LINE,
   DEVIN_SERVER_RESTARTED_SENTENCE,
   DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE,
@@ -328,6 +331,8 @@ type DevinChatFields = {
   devinChat?: true
   devinSetupInstallation?: string
 }
+/** Cursor's MCP registration API on `vscode.cursor.mcp`, which only Cursor provides; the window's Cursor registration steps take it once Cursor was checked to expose it. */
+type CursorMcpApi = NonNullable<NonNullable<typeof vscode.cursor>['mcp']>
 type WikiMarkerChangeEntry = {
   change: () => Promise<boolean>
   timer?: NodeJS.Timeout
@@ -364,6 +369,14 @@ export function activate(
     service: StudyService
     /** Whether the descriptor was written with the `devinChat` mark ({@link devinChatField}); a later unmark by a removal does not change it. */
     devinChat: boolean
+  }
+  /** What one turn of a late mark answered ({@link markLateInQueue}): whether it marked the window, the fresh read still in flight at its own deadline with that read's own answer, whether it gave way to a setup, take-back or removal of this window that runs ({@link isLateMarkWaitingForRun}), and the number of the turn ({@link descriptorTurns}). */
+  type LateMarkTurn = {
+    isMarked: boolean
+    lateRead?: Promise<unknown>
+    lateFields?: Promise<DevinChatFields | undefined>
+    hasGivenWay?: boolean
+    turn: number
   }
   /** A step of a Devin Desktop take-back or removal that outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: the work it belongs to, the step that waits on storage, and the failure's sentence a take-back's command still gives (none when it names a file the take-back may delete). */
   type DevinLapse = {
@@ -412,6 +425,12 @@ export function activate(
   let hasStoppedServer = false
   /** The last descriptor change or removal queued by {@link inDescriptorQueue}; it never rejects. */
   let descriptorQueue: Promise<unknown> = Promise.resolve()
+  /** How many turns of {@link inDescriptorQueue} have started; a late mark compares it across two of its turns to tell that no descriptor change of this window came between them ({@link markLateInQueue}). */
+  let descriptorTurns = 0
+  /** How many late marks this window has scheduled ({@link markDevinChatLate}); only the newest one goes on ({@link isLateMarkTarget}), so two late marks of one server (the start's and a sync's) never take turns that each make the other's late answer stale. */
+  let lateMarksScheduled = 0
+  /** How many Devin Desktop setups of this window have succeeded and offered their Reload Window ({@link offerDevinSetupReady}); a late mark reads it when it marked the window and again once its bridge check answered, so a setup that succeeded meanwhile, whose mark and final check replaced the mark that check looked at, is followed by no late-mark notice ({@link isLateMarkStillOn}). */
+  let devinSetupsReady = 0
   let notifyMcpDefinitions: () => void = () => {}
   let savedSessionInstall: InstalledSavedSessions | undefined
   /** Shows every non-modal notification of this window through {@link showPlainNotice}, so no outside text in it becomes a link; `actions` are its buttons and the pressed one is returned. @example void showNotice('error', `Codebook could not open DeepWiki: ${String(error)}`) */
@@ -550,11 +569,11 @@ export function activate(
   let standingRead: Promise<unknown> | undefined
   /** Whether {@link standingRead} outlived the bound a caller waited for it: then no new read starts (each would hold two more threads of the editor's small file pool) and a call that comes meanwhile gets no answer, until that read settles. */
   let isStandingReadAbandoned = false
-  /** Marks the read in flight as outlived by its caller's bound; called by {@link devinChatField} and {@link devinChatFieldAtStart} when their bound passed. @example abandonStandingRead() */
+  /** Marks the read in flight as outlived by its caller's bound; called by {@link devinChatField} and {@link readFieldsAtStart} when their bound passed. @example abandonStandingRead() */
   const abandonStandingRead = (): void => {
     isStandingReadAbandoned = standingRead !== undefined
   }
-  /** Reads the mark fields once and tells a read that could not look from a setup that does not stand; used by {@link devinChatField} (no answer counts as unmarked) and by {@link devinChatFieldAtStart} (no answer is asked again). @returns The fields, `{}` when the setup does not stand, or `undefined` when the receipts could not be read at all. @example await readDevinChatField() // => undefined during a moment of descriptor exhaustion */
+  /** Reads the mark fields once and tells a read that could not look from a setup that does not stand; used by {@link devinChatField} (no answer counts as unmarked) and by {@link readFieldsAtStart} (no answer is asked again). @returns The fields, `{}` when the setup does not stand, or `undefined` when the receipts could not be read at all. @example await readDevinChatField() // => undefined during a moment of descriptor exhaustion */
   const readDevinChatField = async (): Promise<DevinChatFields | undefined> => {
     if (!isDevinHost || !setupMatchesCurrentWorkspace()) return {}
     // A read that outlived its caller's bound still holds its threads: no second one starts, and the caller gets no answer (Cycle 0145 last-round O4).
@@ -576,12 +595,16 @@ export function activate(
       ? { devinChat: true, devinSetupInstallation: installationId }
       : {}
   }
-  /** The mark fields for a server that starts now, with the read still in flight when the deadline passed: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, which the start's late mark waits for instead ({@link markDevinChatLate}). An observed removal answers at once. Called by {@link startServer}'s start and by {@link devinChatFieldAtStart}. @returns `fields`, and `lateRead` when a read was in flight at the deadline (none when the retry was between two reads). @example const { fields, lateRead } = await readFieldsAtStart() */
+  /** The mark fields for a server that starts now, with the read still in flight when the deadline passed: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, which the start's late mark waits for instead ({@link markDevinChatLate}). An observed removal answers at once. Called by {@link startServer}'s start, by {@link syncDevinChatDescriptor} and by {@link markLateInQueue}. @returns `fields`, and `lateRead` when a read was in flight at the deadline (none when the retry was between two reads), with `lateFields`, the own answer of the read this call started when that read was in flight at the deadline; a late mark decides on it ({@link markLateUntilAnswered}). @example const { fields, lateRead } = await readFieldsAtStart() */
   const readFieldsAtStart = async (): Promise<{
     fields: DevinChatFields
     lateRead?: Promise<unknown>
+    lateFields?: Promise<DevinChatFields | undefined>
   }> => {
     let lateRead: Promise<unknown> | undefined
+    // The own answer of this call's latest read; one that returned at once with no answer (another caller's abandoned read held the window) is a settled `undefined`, so a late mark never adopts another caller's read.
+    let reading: Promise<DevinChatFields | undefined> | undefined
+    let lateFields: Promise<DevinChatFields | undefined> | undefined
     const deadline = Date.now() + DEVIN_MARK_READ_RETRY_BUDGET_MS
     const stopWaiting = new AbortController()
     /** Whether the deadline passed or the answer came: no read starts after it. */
@@ -590,7 +613,8 @@ export function activate(
     const readUntilAnswered = async (): Promise<
       DevinChatFields | undefined
     > => {
-      let field = await readDevinChatField()
+      reading = readDevinChatField()
+      let field = await reading
       // Only a read with no answer is asked again, and only within the budget.
       while (field === undefined && !isOver()) {
         // The deadline ends the wait too, so no read starts after the descriptor was published unmarked.
@@ -598,7 +622,8 @@ export function activate(
           signal: stopWaiting.signal,
         }).catch(() => undefined)
         if (isOver()) break
-        field = await readDevinChatField()
+        reading = readDevinChatField()
+        field = await reading
       }
       return field
     }
@@ -610,21 +635,19 @@ export function activate(
         stopWaiting.abort()
         abandonStandingRead()
         lateRead = standingRead
+        lateFields = reading
         return undefined
       },
       () => undefined,
     )
     try {
       const fields = (await Promise.race([readUntilAnswered(), expiry])) ?? {}
-      return { fields, lateRead }
+      return { fields, lateRead, lateFields }
     } finally {
       // The answer came first: the timer must not keep the process alive.
       stopWaiting.abort()
     }
   }
-  /** The mark fields for the sync of a rollback, as {@link readFieldsAtStart} reads them; a read that settles after the deadline changes nothing here. Called by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
-  const devinChatFieldAtStart = async (): Promise<DevinChatFields> =>
-    (await readFieldsAtStart()).fields
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -1041,11 +1064,14 @@ export function activate(
       if (starting === attempt) starting = undefined
     }
   }
-  /** Runs one change of a connection descriptor after every one queued before it: the Devin rewrite of {@link markDevinChatDescriptor} and the removal at a stop, so a stop between a rewrite's read and its write can never be followed by a write that brings the stopped instance's descriptor back. @example await inDescriptorQueue(async () => unlink(path)) */
+  /** Runs one change of a connection descriptor after every one queued before it: the Devin rewrite of {@link markDevinChatDescriptor} and the removal at a stop, so a stop between a rewrite's read and its write can never be followed by a write that brings the stopped instance's descriptor back, and counts each turn as it starts ({@link descriptorTurns}). @example await inDescriptorQueue(async () => unlink(path)) */
   const inDescriptorQueue = <Value>(
     task: () => Promise<Value>,
   ): Promise<Value> => {
-    const result = descriptorQueue.then(task)
+    const result = descriptorQueue.then(() => {
+      descriptorTurns += 1
+      return task()
+    })
     descriptorQueue = result.catch(() => {})
     return result
   }
@@ -1203,6 +1229,113 @@ export function activate(
       'Codebook connection copied. This credential grants access to the selected workspace; recopy after restart.',
     )
   }
+  /**
+   * Refuses a Cursor MCP registration once its server stopped or was replaced, or once Cursor setup removal began.
+   *
+   * Called by {@link registerCursorConnection} and {@link registerCursorBridge} after each awaited step, before the next one touches Cursor's shared catalog.
+   *
+   * @param server - The server the registration was started for.
+   * @throws When that server no longer runs, a stop began, or Cursor setup is being removed.
+   * @example
+   * assertCursorRegistrationCurrent(server) // throws "Codebook server or Cursor setup changed before MCP registration. …" after a stop
+   */
+  const assertCursorRegistrationCurrent = (server: Running): void => {
+    if (running !== server || stopping || cursorRemoving)
+      throw new Error(
+        `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
+      )
+  }
+  /**
+   * Registers this server's stdio bridge in Cursor under the server's instance name, replacing this window's earlier registration.
+   *
+   * Called by {@link registerCursorConnection} when the window's registered name differs from the current server's.
+   *
+   * @param cursorMcp - Cursor's MCP registration API.
+   * @param server - The server whose private descriptor the bridge reads.
+   * @param name - The registration name, `codebook-<instance id>`.
+   * @param validatedNodeExecutable - The Node executable setup already validated; resolved from `codebook.nodeExecutable` when absent.
+   * @throws When the shared skill fails its check, or the server or Cursor setup changed meanwhile.
+   * @example
+   * await registerCursorBridge(cursorMcp, server, 'codebook-1f2e', '/usr/local/bin/node') // Cursor lists codebook-1f2e
+   */
+  const registerCursorBridge = async (
+    cursorMcp: CursorMcpApi,
+    server: Running,
+    name: string,
+    validatedNodeExecutable: string | undefined,
+  ): Promise<void> => {
+    const nodeExecutable =
+      validatedNodeExecutable ??
+      (await resolveExternalNodeExecutable(
+        vscode.workspace
+          .getConfiguration('codebook')
+          .get<string>('nodeExecutable', 'node'),
+      ))
+    await verifyManagedCursorSkill(
+      context.extensionPath,
+      context.globalStorageUri.fsPath,
+    )
+    assertCursorRegistrationCurrent(server)
+    if (registeredCursorServer)
+      cursorMcp.unregisterServer(registeredCursorServer)
+    // Cursor's installed HTTP integration omits configured headers; a local stdio child reads only this window's private descriptor.
+    cursorMcp.registerServer({
+      name,
+      server: {
+        command: nodeExecutable,
+        args: [
+          join(context.extensionPath, 'dist/cursorMcpBridge.js'),
+          server.descriptorPath,
+        ],
+        env: {},
+      },
+    })
+    registeredCursorServer = name
+  }
+  /**
+   * Undoes a Cursor registration whose catalog refresh was followed by a failed skill check: unregisters that name and, unless the skill is back, retires this refresh's catalog.
+   *
+   * Called by {@link registerCursorConnection} when the check after its catalog refresh fails; the caller then rethrows that check's error.
+   *
+   * @param cursorMcp - Cursor's MCP registration API.
+   * @param name - The registration name this attempt used.
+   * @param refreshId - The id {@link refreshCursorMcpCatalog} returned for this refresh, if it wrote one.
+   * @throws When the owned catalog's cleanup fails, with a repair sentence that replaces the check's error.
+   * @example
+   * await retireFailedCursorRefresh(cursorMcp, 'codebook-1f2e', 'refresh-7') // Cursor no longer lists codebook-1f2e
+   */
+  const retireFailedCursorRefresh = async (
+    cursorMcp: CursorMcpApi,
+    name: string,
+    refreshId: string | undefined,
+  ): Promise<void> => {
+    if (registeredCursorServer === name) {
+      cursorMcp.unregisterServer(name)
+      registeredCursorServer = undefined
+    }
+    // A different window may have removed the skill and catalog before this refresh recreated the empty file.
+    try {
+      await verifyManagedCursorSkill(
+        context.extensionPath,
+        context.globalStorageUri.fsPath,
+      )
+    } catch {
+      // A newer setup changes the receipt generation, so only this failed refresh may be retired.
+      try {
+        if (refreshId)
+          await removeOwnedCursorMcpCatalog(
+            context.globalStorageUri.fsPath,
+            undefined,
+            refreshId,
+          )
+      } catch (cleanupError) {
+        throw new Error(
+          `Cursor skill changed and its owned MCP catalog cleanup is incomplete. Run ${SET_UP_AI_CHAT_COMMAND} to repair the connection.`,
+          { cause: cleanupError },
+        )
+      }
+    }
+  }
   /** Shares a current-server registration across simultaneous starts and refuses a retired descriptor after Node validation. @example await registerCursorConnection() */
   const registerCursorConnection = (
     validatedNodeExecutable?: string,
@@ -1226,52 +1359,21 @@ export function activate(
     const attempt = (async () => {
       // A newer server waits for any older registration to finish before touching Cursor's shared catalog.
       if (previous) await previous.attempt.catch(() => {})
-      if (running !== server || stopping || cursorRemoving)
-        throw new Error(
-          `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-        )
+      assertCursorRegistrationCurrent(server)
       // Another Cursor window may remove the shared skill while this window starts its server.
       await verifyManagedCursorSkill(
         context.extensionPath,
         context.globalStorageUri.fsPath,
       )
-      if (running !== server || stopping || cursorRemoving)
-        throw new Error(
-          `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-        )
+      assertCursorRegistrationCurrent(server)
       const name = `codebook-${server.service.instanceId}`
-      if (registeredCursorServer !== name) {
-        const nodeExecutable =
-          validatedNodeExecutable ??
-          (await resolveExternalNodeExecutable(
-            vscode.workspace
-              .getConfiguration('codebook')
-              .get<string>('nodeExecutable', 'node'),
-          ))
-        await verifyManagedCursorSkill(
-          context.extensionPath,
-          context.globalStorageUri.fsPath,
-        )
-        if (running !== server || stopping || cursorRemoving)
-          throw new Error(
-            `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-          )
-        if (registeredCursorServer)
-          cursorMcp.unregisterServer(registeredCursorServer)
-        // Cursor's installed HTTP integration omits configured headers; a local stdio child reads only this window's private descriptor.
-        cursorMcp.registerServer({
+      if (registeredCursorServer !== name)
+        await registerCursorBridge(
+          cursorMcp,
+          server,
           name,
-          server: {
-            command: nodeExecutable,
-            args: [
-              join(context.extensionPath, 'dist/cursorMcpBridge.js'),
-              server.descriptorPath,
-            ],
-            env: {},
-          },
-        })
-        registeredCursorServer = name
-      }
+          validatedNodeExecutable,
+        )
       const refreshId = await refreshCursorMcpCatalog(
         context.globalStorageUri.fsPath,
       )
@@ -1281,32 +1383,7 @@ export function activate(
           context.globalStorageUri.fsPath,
         )
       } catch (error) {
-        if (registeredCursorServer === name) {
-          cursorMcp.unregisterServer(name)
-          registeredCursorServer = undefined
-        }
-        // A different window may have removed the skill and catalog before this refresh recreated the empty file.
-        try {
-          await verifyManagedCursorSkill(
-            context.extensionPath,
-            context.globalStorageUri.fsPath,
-          )
-        } catch {
-          // A newer setup changes the receipt generation, so only this failed refresh may be retired.
-          try {
-            if (refreshId)
-              await removeOwnedCursorMcpCatalog(
-                context.globalStorageUri.fsPath,
-                undefined,
-                refreshId,
-              )
-          } catch (cleanupError) {
-            throw new Error(
-              `Cursor skill changed and its owned MCP catalog cleanup is incomplete. Run ${SET_UP_AI_CHAT_COMMAND} to repair the connection.`,
-              { cause: cleanupError },
-            )
-          }
-        }
+        await retireFailedCursorRefresh(cursorMcp, name, refreshId)
         throw error
       }
     })()
@@ -1458,10 +1535,33 @@ export function activate(
     hasStoppedServer = false
     offerDevinReload('information', DEVIN_SERVER_RESTARTED_SENTENCE)
   }
-  /** Offers the Reload Window button once a late mark marked this Devin Desktop window: the bridge Devin Local started at the window load found the unmarked descriptor; also at the window's first start, unlike {@link offerReloadAfterServerRestart}, and not while a removal runs. @example offerDevinReloadAfterLateMark() */
-  const offerDevinReloadAfterLateMark = (): void => {
+  /** Offers the Reload Window button once a late mark marked this Devin Desktop window: the bridge Devin Local started at the window load found the unmarked descriptor; also at the window's first start, unlike {@link offerReloadAfterServerRestart}, and not while a removal runs. When the setup was removed or changed meanwhile ({@link isSetupGoneAfterLateMark}), a reload starts a bridge that refuses it, so the notice names Set Up AI Chat instead and offers no reload. @param isSetupGone - Whether the bridge's own check after the mark found the setup removed or changed. @example offerDevinReloadAfterLateMark(false) */
+  const offerDevinReloadAfterLateMark = (isSetupGone: boolean): void => {
     if (!isDevinHost || devinRemoving) return
+    // Only Set Up AI Chat connects Devin Local to a setup removed after the late mark's read.
+    if (isSetupGone) {
+      void showNotice('information', DEVIN_LATE_MARK_SETUP_GONE_SENTENCE)
+      return
+    }
     offerDevinReload('information', DEVIN_LATE_MARK_SENTENCE)
+  }
+  /**
+   * Whether the setup a late mark just marked this Devin Desktop window for is gone, as the bridge's own check of the marked descriptor and both records sees it ({@link checkDevinBridgeReceipts}): the late mark's read may have come before another window's removal, which never unmarks this window, and a reload then starts a bridge that refuses the removed setup. Called by {@link markDevinChatLate} once its late mark marked the window, before the decision settles, so the one notice says what a reload does.
+   * @param server - The server the late mark marked.
+   * @returns
+   * - `true` when the check observed a removed or changed setup record (skill or MCP receipt) within {@link DEVIN_SETUP_FINAL_CHECK_MS};
+   * - `false` when the setup stands, when the removal it saw is on this window's own descriptor (a stop or an unmark of this window, which changes no setup), or when the check had no answer by then (the read that marked the window decides).
+   * @example await isSetupGoneAfterLateMark(server) // => true after another window removed the setup during the late mark's read
+   */
+  const isSetupGoneAfterLateMark = async (
+    server: Running,
+  ): Promise<boolean> => {
+    const check = checkDevinBridgeReceipts(server.descriptorPath)
+    const answer = (await settledWithin(check, DEVIN_SETUP_FINAL_CHECK_MS))
+      ? await check
+      : undefined
+    // Only a record of the setup counts: a removal seen on this window's own descriptor is this window's stop or unmark.
+    return answer?.answer === 'removed' && answer.path !== server.descriptorPath
   }
   /**
    * Whether a removal of this window, or the take-back of a failed setup or of an owed entry that takes the mark off, counts as taking the window's Devin mark off now ({@link devinMarkTakeOffs}): the server start's queue turn then leaves the in-memory mark off whatever it decided, and no mark, sync or late mark turns it on, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn, {@link markDevinChatDescriptor}, {@link syncDevinChatDescriptor} and {@link isDevinSetupChanging}. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
@@ -1499,7 +1599,7 @@ export function activate(
     void syncDevinChatDescriptor().catch(reportDescriptorUpdateFailure)
   }
   /**
-   * Whether a Devin Desktop setup, its take-back, a removal of this window or the take-back of an owed entry that takes the mark off runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-backs and the removal rewrite the descriptor), so a late mark gives way to it; read by {@link isLateMarkTarget}.
+   * Whether a Devin Desktop setup, its take-back, a removal of this window or the take-back of an owed entry that takes the mark off runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-backs and the removal rewrite the descriptor), so a late mark waits for it to end ({@link afterDevinRunsSettled}) and offers no notice while it runs ({@link isLateMarkStillOn}); read by {@link isLateMarkTarget}, {@link isLateMarkWaitingForRun} and {@link isLateMarkStillOn}.
    * @returns `true` while such a run goes on.
    * @example isDevinSetupChanging() // => true while Set Up AI Chat runs
    */
@@ -1508,33 +1608,104 @@ export function activate(
     devinSetup !== undefined ||
     devinBackgroundWork !== undefined ||
     isDevinMarkBeingTakenOff()
-  /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
-  const isLateMarkTarget = (server: Running): boolean =>
-    running === server &&
-    !stopping &&
+  /** Whether the late mark `lateMark` of `server` still goes on: it is the newest late mark of this window ({@link lateMarksScheduled}), its server is the one running now and no stop is under way; read by {@link isLateMarkTarget} and {@link isLateMarkWaitingForRun}. @param server - The server whose start or sync read answered late. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @example isLateMarkCurrent(server, 1) // => false after Stop Agent Server */
+  const isLateMarkCurrent = (server: Running, lateMark: number): boolean =>
+    lateMark === lateMarksScheduled && running === server && !stopping
+  /** Whether the mark a late mark gave `server` still stands once the bridge's check after it answered ({@link isSetupGoneAfterLateMark}, which can wait on storage for up to {@link DEVIN_SETUP_FINAL_CHECK_MS}): the late mark still goes on ({@link isLateMarkCurrent}), this window's mark is on, no setup, take-back, removal or take-off of the mark of this window runs ({@link isDevinSetupChanging}) and no setup of this window succeeded since the mark ({@link devinSetupsReady}); a stop, a newer late mark or a removal of this window during that check leaves the server's record and the notices as they are, a setup that succeeded meanwhile already said what the window needs, and a setup still running then ends with its own notice, so no Reload Window comes in the middle of it. Read by {@link markDevinChatLate} before it records the mark and offers its notice. @param server - The server the late mark marked. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @param setupsReadyAtMark - {@link devinSetupsReady} when the late mark marked the window. @example isLateMarkStillOn(server, 1, 0) // => false after Stop Agent Server during the bridge check */
+  const isLateMarkStillOn = (
+    server: Running,
+    lateMark: number,
+    setupsReadyAtMark: number,
+  ): boolean =>
+    isLateMarkCurrent(server, lateMark) &&
+    isDevinChatMarked &&
+    !isDevinSetupChanging() &&
+    devinSetupsReady === setupsReadyAtMark
+  /** Whether a late mark may still mark `server`: it still goes on ({@link isLateMarkCurrent}), no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start or sync read answered late. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @example isLateMarkTarget(server, 1) // => false after Stop Agent Server */
+  const isLateMarkTarget = (server: Running, lateMark: number): boolean =>
+    isLateMarkCurrent(server, lateMark) &&
     !isDevinSetupChanging() &&
     setupMatchesCurrentWorkspace()
+  /** Whether a late mark that still goes on ({@link isLateMarkCurrent}) waits for a setup, take-back or removal of this window that runs now ({@link isDevinSetupChanging}) rather than ending: that run decides the mark itself, but one that ends without writing the descriptor (a setup refused at its Node check) leaves the decision to the late mark; a window marked meanwhile needs no late mark. @param server - The server whose start or sync read answered late. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @example isLateMarkWaitingForRun(server, 1) // => true while Set Up AI Chat runs */
+  const isLateMarkWaitingForRun = (
+    server: Running,
+    lateMark: number,
+  ): boolean =>
+    !isDevinChatMarked &&
+    isLateMarkCurrent(server, lateMark) &&
+    isDevinSetupChanging()
   /**
-   * Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read ({@link readFieldsAtStart}, bounded by its own deadline) finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. Called by {@link markLateUntilAnswered}.
-   * @param server - The server whose start read answered late.
+   * Waits, without reading storage, while the late mark waits for a run of this window ({@link isLateMarkWaitingForRun}): until no Devin Desktop setup, take-back or removal of this window runs, the window got marked, `server` is no longer the one running (a stop or a new start ends the wait, and the late mark then ends), or a newer late mark of this window took over ({@link lateMarksScheduled}); called by {@link markLateUntilAnswered} before each of its turns, because the run that ran a sync, or one started while a read of the late mark was in flight, may still be settling when that read answered.
+   * Why polled: a setup or removal whose command answered at a lapse goes on as {@link devinBackgroundWork}, which keeps no promise of its run here.
+   * @param server - The server the late mark is for.
+   * @param lateMark - The number {@link markDevinChatLate} gave this late mark.
+   * @returns Whether it waited, so the late mark decides with a fresh read: an answer read before or during that run may be stale.
+   * @example await afterDevinRunsSettled(server, 2) // => true once a setup that ran when it was called ended
+   */
+  const afterDevinRunsSettled = async (
+    server: Running,
+    lateMark: number,
+  ): Promise<boolean> => {
+    let hasWaited = false
+    // Each check reads only this window's state; the late mark decides once no run of it is left.
+    while (isLateMarkWaitingForRun(server, lateMark)) {
+      hasWaited = true
+      await delay(DEVIN_LATE_MARK_RUN_CHECK_MS)
+    }
+    return hasWaited
+  }
+  /**
+   * What a turn of a late mark answers when the mark is not its to give now: it gave way, and decides again once the run of this window it waits for ended ({@link isLateMarkWaitingForRun}), or it ends because the window is marked, its server stopped or was replaced, a newer late mark took over, or the window's setup no longer stands for its workspace; called by {@link markLateInQueue}.
+   * @param server - The server whose start or sync read answered late.
+   * @param lateMark - The number {@link markDevinChatLate} gave this late mark.
+   * @param turn - The number of the turn ({@link descriptorTurns}).
+   * @returns `{ isMarked: false, hasGivenWay, turn }`.
+   * @example lateMarkSetAside(server, 1, 4) // => { isMarked: false, hasGivenWay: true, turn: 4 } while Set Up AI Chat runs
+   */
+  const lateMarkSetAside = (
+    server: Running,
+    lateMark: number,
+    turn: number,
+  ): LateMarkTurn => ({
+    isMarked: false,
+    hasGivenWay: isLateMarkWaitingForRun(server, lateMark),
+    turn,
+  })
+  /**
+   * Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read ({@link readFieldsAtStart}, bounded by its own deadline), or the late answer of the fresh read its previous turn started, finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give (a newer late mark of this window took over included), and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. Called by {@link markLateUntilAnswered}.
+   * @param server - The server whose start or sync read answered late.
+   * @param lateMark - The number {@link markDevinChatLate} gave this late mark.
+   * @param earlier - The own answer of the fresh read an earlier turn started, which answered after its deadline, and that turn's number; it decides only when that turn was the one right before this one.
    * @returns
-   * - `{ isMarked: true }` when it marked the window;
-   * - `{ isMarked: false, lateRead }` when the fresh read was still in flight at its own deadline, so nothing was decided yet;
-   * - `{ isMarked: false }` otherwise.
-   * @example await markLateInQueue(server) // => { isMarked: true }
+   * - `{ isMarked: true, turn }` when it marked the window;
+   * - `{ isMarked: false, lateRead, lateFields, turn }` when the fresh read was still in flight at its own deadline, so nothing was decided yet;
+   * - `{ isMarked: false, hasGivenWay: true, turn }` when a setup, take-back or removal of this window runs, so the mark is decided once it ended ({@link lateMarkSetAside});
+   * - `{ isMarked: false, turn }` otherwise (`hasGivenWay: false` when the mark is no longer its to give).
+   * @example await markLateInQueue(server, 1) // => { isMarked: true, turn: 4 }
    */
   const markLateInQueue = (
     server: Running,
-  ): Promise<{ isMarked: boolean; lateRead?: Promise<unknown> }> =>
-    inDescriptorQueue(async () => {
-      // A window marked since its start (by its setup) already carries the mark and offered its reload.
-      if (isDevinChatMarked || !isLateMarkTarget(server))
-        return { isMarked: false }
-      // A fresh read decides, never the late read's own answer; one still in flight at its own deadline decides nothing yet.
-      const { fields, lateRead } = await readFieldsAtStart()
-      if (lateRead) return { isMarked: false, lateRead }
-      if (fields.devinChat !== true || !isLateMarkTarget(server))
-        return { isMarked: false }
+    lateMark: number,
+    earlier?: { fields: DevinChatFields | undefined; turn: number },
+  ): Promise<LateMarkTurn> =>
+    inDescriptorQueue(async (): Promise<LateMarkTurn> => {
+      const turn = descriptorTurns
+      // A window marked since its start (by its setup) already carries the mark and offered its reload; a newer late mark decides instead of this one; a run of this window decides first.
+      if (isDevinChatMarked || !isLateMarkTarget(server, lateMark))
+        return lateMarkSetAside(server, lateMark, turn)
+      // The late mark's own read, answered after its deadline, decides only when no descriptor turn of this window came since the turn that started it; a turn means a stop, a start, a setup's mark, a removal's unmark or a sync may have changed what that read saw.
+      const earlierFields =
+        earlier?.turn === turn - 1 ? earlier.fields : undefined
+      const read: Awaited<ReturnType<typeof readFieldsAtStart>> = earlierFields
+        ? { fields: earlierFields }
+        : await readFieldsAtStart()
+      const { fields, lateRead, lateFields } = read
+      // A fresh read still in flight at its own deadline decides nothing yet; its own answer may decide in the next turn.
+      if (lateRead) return { isMarked: false, lateRead, lateFields, turn }
+      // A read that finds no standing setup ends the late mark.
+      if (fields.devinChat !== true) return { isMarked: false, turn }
+      if (!isLateMarkTarget(server, lateMark))
+        return lateMarkSetAside(server, lateMark, turn)
       await writeSyncedDescriptor(
         server,
         true,
@@ -1542,32 +1713,50 @@ export function activate(
         false,
       )
       // The write waited on storage: a removal, take-back, stop or folder change meanwhile keeps the in-memory mark off, and its own step rewrites the file.
-      if (!isLateMarkTarget(server)) return { isMarked: false }
+      if (!isLateMarkTarget(server, lateMark))
+        return lateMarkSetAside(server, lateMark, turn)
       isDevinChatMarked = true
-      return { isMarked: true }
+      return { isMarked: true, turn }
     })
   /**
-   * Gives `server` its late mark in turns of {@link markLateInQueue} until a fresh read answers in time: a fresh read still in flight at its own deadline is waited for outside the descriptor queue, then read afresh, so a storage that answers only after two deadlines still marks the window while each read stays bounded inside the queue; called by {@link markDevinChatLate} once the start's late read settled.
-   * @param server - The server whose start read answered late.
-   * @returns Whether it marked the window.
-   * @example await markLateUntilAnswered(server) // => true once a fresh read found the setup standing
+   * Gives `server` its late mark in turns of {@link markLateInQueue} until a read answers: a fresh read still in flight at its own deadline is waited for outside the descriptor queue; its own answer then decides in the next turn when no descriptor turn came between, otherwise a fresh read decides, so a storage that answers every read only after its deadline still marks the window after two reads while each read stays bounded inside the queue. A fresh read whose own late answer is no answer at all (or a failure) decides nothing either, and after {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} of them the late mark ends with the window unmarked, so a storage that never answers in time does not hold the queue turn after turn for the whole run. Before each turn it waits, outside the queue too, while a setup, take-back or removal of this window runs ({@link afterDevinRunsSettled}), and a turn that finds one started meanwhile gives way to it; after such a wait a fresh read decides. Called by {@link markDevinChatLate} once the start's or the sync's late read settled.
+   * @param server - The server whose start or sync read answered late.
+   * @param lateMark - The number {@link markDevinChatLate} gave this late mark; a newer one takes over and this one ends at its next turn.
+   * @returns Whether it marked the window: `false` also once {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} fresh reads answered late with no answer.
+   * @example await markLateUntilAnswered(server, 1) // => true once a read found the setup standing
    */
-  const markLateUntilAnswered = async (server: Running): Promise<boolean> => {
-    let answer = await markLateInQueue(server)
-    // Only the settling of the read in flight counts; it holds no turn of the queue while it is waited for.
-    while (answer.lateRead) {
-      await answer.lateRead.then(
-        () => undefined,
-        () => undefined,
-      )
-      answer = await markLateInQueue(server)
-    }
+  const markLateUntilAnswered = async (
+    server: Running,
+    lateMark: number,
+  ): Promise<boolean> => {
+    let earlier: Parameters<typeof markLateInQueue>[2]
+    let answer: LateMarkTurn
+    let unansweredReads = 0
+    // A turn that waits for its read in flight, or that gave way to a run of this window, decides nothing yet; none of these waits holds a turn of the queue.
+    do {
+      // A run of this window may change the records (a take-back, a removal), so an answer read before it ended decides nothing.
+      if (await afterDevinRunsSettled(server, lateMark)) earlier = undefined
+      answer = await markLateInQueue(server, lateMark, earlier)
+      earlier = undefined
+      if (answer.lateRead) {
+        await answer.lateRead.then(
+          () => undefined,
+          () => undefined,
+        )
+        // A late answer of "no answer" (or a failed read) falls back to a fresh read in the next turn, until the bound ends the late mark unmarked.
+        const fields = await answer.lateFields?.catch(() => undefined)
+        if (fields === undefined) unansweredReads += 1
+        if (unansweredReads >= DEVIN_LATE_MARK_UNANSWERED_READS_MAX)
+          return false
+        earlier = { fields, turn: answer.turn }
+      }
+    } while (answer.lateRead || answer.hasGivenWay)
     return answer.isMarked
   }
   /**
-   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline), and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start.
-   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a setup, take-back or removal of this window that runs ({@link isLateMarkTarget}) is left as it is and shows nothing.
-   * @param server - The server that just started.
+   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once, or names Set Up AI Chat instead when the bridge's own check finds the setup gone by then ({@link isSetupGoneAfterLateMark}); called by {@link startServer}'s queue turn, once per start, and by {@link syncDevinChatDescriptor}, once per sync whose read was still in flight at its deadline.
+   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a window whose fresh reads answered late with no answer {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} times is left as it is and shows nothing, also when the stop, a newer late mark or this window's removal comes during the bridge check after the mark ({@link isLateMarkStillOn}), and a setup of this window that succeeds during that check, or still runs when it answers, is followed by its own notice alone; while a setup, take-back or removal of this window runs (the one that ran the sync included), the mark waits for it to end and then reads afresh ({@link afterDevinRunsSettled}), because a run that ends without rewriting the descriptor leaves the mark to it. Only the newest late mark of the window goes on ({@link lateMarksScheduled}): it reads afresh once its own late read settled, so it decides everything an older one would have.
+   * @param server - The server that just started, or the one the sync rewrote.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
    * @example markDevinChatLate(server, lateRead)
    */
@@ -1576,13 +1765,28 @@ export function activate(
     lateRead: Promise<unknown> | undefined,
   ): void => {
     if (!lateRead) return
-    void continueAfterLateRead(lateRead, () =>
-      markLateUntilAnswered(server),
-    ).then(
+    // The newest late mark takes over: an older one of this window ends at its next turn instead of reading afresh in turns between this one's.
+    lateMarksScheduled += 1
+    const lateMark = lateMarksScheduled
+    let isSetupGone = false
+    let setupsReadyAtMark = 0
+    void continueAfterLateRead(lateRead, async () => {
+      const isMarked = await markLateUntilAnswered(server, lateMark)
+      // Read before the bridge check: a setup that succeeds during it replaces the mark that check looks at.
+      setupsReadyAtMark = devinSetupsReady
+      // The read that marked may have come before another window's removal: the bridge's own check decides the notice before the decision settles.
+      if (isMarked) isSetupGone = await isSetupGoneAfterLateMark(server)
+      return isMarked
+    }).then(
       (isMarked) => {
-        if (!isMarked) return
+        // The bridge check may have waited on storage: a stop, a newer late mark, a removal of this window, or a setup of this window that runs or succeeded meanwhile gets no record and no notice from this mark.
+        if (
+          !isMarked ||
+          !isLateMarkStillOn(server, lateMark, setupsReadyAtMark)
+        )
+          return
         server.devinChat = true
-        offerDevinReloadAfterLateMark()
+        offerDevinReloadAfterLateMark(isSetupGone)
       },
       (error: unknown) => {
         diagnostics.info(
@@ -1686,16 +1890,18 @@ export function activate(
     rotation?.commit()
     notifyMcpDefinitions()
   }
-  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, or once a removal ended before its own descriptor step ({@link endDevinMarkTakeOff}), in the turn of {@link inDescriptorQueue}, and turns the in-memory mark on only while no other removal or take-back takes it off ({@link isDevinMarkBeingTakenOff}). @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, or once a removal ended before its own descriptor step ({@link endDevinMarkTakeOff}), in the turn of {@link inDescriptorQueue}, and turns the in-memory mark on only while no other removal or take-back takes it off ({@link isDevinMarkBeingTakenOff}); a read still in flight at its deadline gets a late mark ({@link markDevinChatLate}), handed over before the rewrite, so a failed rewrite cannot drop it and the late mark can wait for the run that ran this sync while the rewrite still waits on storage; it decides once this window's runs ended, in a turn after this one. @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
   const syncDevinChatDescriptor = (rotateWhenUnmarked = false): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
       // A read that gets no answer is asked again like at server start, so one moment of exhaustion does not take the mark of a setup that stands.
-      const field = await devinChatFieldAtStart()
+      const { fields: field, lateRead } = await readFieldsAtStart()
       const isMarked = field.devinChat === true
       // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
       isDevinChatMarked &&= isMarked
+      // Handed over before the rewrite, so a failed rewrite cannot drop it: the in-memory mark is already off, and only the late mark can give it back once storage answers; its turns come after this one.
+      markDevinChatLate(target, lateRead)
       await writeSyncedDescriptor(
         target,
         isMarked,
@@ -2169,7 +2375,7 @@ export function activate(
       ),
     )
   }
-  /** Offers the reload that ends a Devin Desktop setup; a kept copy of the previous config holds other servers' settings, so the notice names it. @param outcome - What the setup's steps answered. @example offerDevinSetupReady({ disabled: undefined }) */
+  /** Offers the reload that ends a Devin Desktop setup, and counts the setup as succeeded ({@link devinSetupsReady}), so a late mark whose bridge check still waits shows nothing after it; a kept copy of the previous config holds other servers' settings, so the notice names it. @param outcome - What the setup's steps answered. @example offerDevinSetupReady({ disabled: undefined }) */
   const offerDevinSetupReady = ({
     cleanupFailure,
     disabled,
@@ -2177,6 +2383,7 @@ export function activate(
     cleanupFailure?: string
     disabled?: true
   }): void => {
+    devinSetupsReady += 1
     offerDevinReload(
       'information',
       [

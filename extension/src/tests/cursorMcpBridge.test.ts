@@ -16,10 +16,12 @@ import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
 import { runCursorMcpBridge } from '../cursorMcpBridge'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { BRIDGE_RELEASE_BOUND } from '../utils/bridgeReleaseBound'
 import { readBridgeDescriptor } from '../utils/readBridgeDescriptor'
 
 import { createHarness } from './helpers'
 import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
+import { handMovedInputClock } from './utils/handMovedInputClock'
 import { removeTestFolder } from './utils/removeTestFolder'
 import { within } from './utils/within'
 
@@ -1137,6 +1139,24 @@ const STDIN_ERROR_PRELOAD = `process.on('SIGUSR2', () => {
 })
 `
 
+/** Source of a preload that lifts the bound on the bridge's wait for the answer to a session release ({@link BRIDGE_RELEASE_BOUND}), so only the test's answer to the DELETE ends that release. Appended to {@link bridgeStopMarksPreload}. */
+const RELEASE_WITHOUT_BOUND_PRELOAD = `require(${JSON.stringify(require.resolve('../utils/bridgeReleaseBound'))}).BRIDGE_RELEASE_BOUND.wait = () => new Promise(() => undefined)
+`
+
+/** Source of a preload that lifts the bound on the bridge's wait for the answer to a session release ({@link BRIDGE_RELEASE_BOUND}), as {@link RELEASE_WITHOUT_BOUND_PRELOAD} does, and marks `RELEASE_BOUND_CANCELLED <n>` each time the bridge ends that wait through the signal it passed, so only the release's own end can produce the mark. Appended to {@link bridgeStopMarksPreload}. */
+const RELEASE_BOUND_CANCEL_MARKS_PRELOAD = `{
+  let releaseBoundsCancelled = 0
+  require(${JSON.stringify(require.resolve('../utils/bridgeReleaseBound'))}).BRIDGE_RELEASE_BOUND.wait = (releaseEnded) =>
+    new Promise((resolve) => {
+      releaseEnded?.addEventListener('abort', () => {
+        releaseBoundsCancelled += 1
+        require('node:fs').writeSync(2, 'RELEASE_BOUND_CANCELLED ' + releaseBoundsCancelled + '\\n')
+        resolve()
+      })
+    })
+}
+`
+
 /** Ends a bridge child the way a stop-path test names the stop. */
 function stopBridgeChild(
   bridge: CursorBridgeChild,
@@ -1199,6 +1219,240 @@ for (const stop of [
     },
   )
 }
+
+// Value: protects=Cursor's bridge ending as a stop, with one bounded DELETE attempted for the session id it knows, when Cursor closes it after writing past the startup input limit during the first handshake (Cycle 0147 task 8); fails_when=the end that came past the limit is never seen (stdin is paused with unread input, so Node emits no end) and the bridge waits for undici's 300 s, then exits 1 with could-not-connect; no_claim=that the server reclaims the session, the wait's exact length, a client still connected (the Devin bridge test and the hold's unit tests)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge whose stdin closes after more than 1 MiB of input during its first handshake ends with exit code 0 and asks the server to end the session it named',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    let heldNotification: ScriptedRequest | undefined
+    const endpoint = await startScriptedEndpoint(context, (request) => {
+      if (request.method !== 'notifications/initialized') return false
+      // Held through the bridge's exit: never answered.
+      heldNotification = request
+      return true
+    })
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload(),
+    )
+    bridge.sendInitialize()
+    const notification = await waitUntil(
+      () => heldNotification,
+      'the first initialized notification held',
+      10_000,
+      undefined,
+      5,
+    )
+    bridge.write('x'.repeat(1_048_576))
+    // The first pause of stdin is the hold's at the startup input limit: nothing pauses it before.
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // Stays unread on any OS, so the end below comes past the limit.
+    bridge.write('y')
+    // Act
+    bridge.closeStdin()
+    const exitCode = await within(bridge.exited, 15_000)
+    // The child's exit does not wait for the endpoint to see that connection close, so that is observed on its own, within a bound.
+    const isNotificationGone = await waitUntil(
+      () => notification.isClientGone(),
+      'the endpoint seeing the held notification closed',
+      5_000,
+      undefined,
+      5,
+    ).catch(() => false)
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(isNotificationGone, true)
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+    assert.equal(bridge.readStderr().includes('could not connect'), false)
+  },
+)
+
+// Value: protects=a first handshake that really failed before the wait at the startup input limit ended keeping Cursor's diagnostic and exit code 1 when that wait's end comes while its session is still being released, and the process ending with Cursor's stdin still open (Cycle 0147 task 8, Codex review F8.1 and D14); fails_when=the wait stays armed through the release and turns the failure into a silent stop with exit code 0, or stdin, which Node reads on into its buffer after a pause at the limit, keeps the failed bridge alive until Cursor closes it; no_claim=a failure after the wait ended (the hold's unit tests), the real clock's timing (the child's input clock is moved by hand, and the release ends only at the test's answer to its DELETE, so a stalled runner cannot reorder the two: Cycle 0147 review round), the real 1 s bound on a release nobody answers (the Devin bridge test of a never-answered DELETE)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge still says it could not connect, with exit code 1, when its server fails the first handshake before the wait at its startup input limit ends and that wait ends while the session is being released',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    let heldNotification: ScriptedRequest | undefined,
+      heldRelease: ScriptedRequest | undefined
+    const endpoint = await startScriptedEndpoint(context, (request) => {
+      // The release is held until the test answers it, after the wait at the limit ended.
+      if (request.httpMethod === 'DELETE') {
+        heldRelease = request
+        return true
+      }
+      if (request.method !== 'notifications/initialized') return false
+      heldNotification = request
+      return true
+    })
+    const inputClock = await handMovedInputClock(context)
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload() +
+        inputClock.preloadSource +
+        RELEASE_WITHOUT_BOUND_PRELOAD,
+    )
+    bridge.sendInitialize()
+    const notification = await waitUntil(
+      () => heldNotification,
+      'the first initialized notification held',
+      10_000,
+      undefined,
+      5,
+    )
+    bridge.write('x'.repeat(1_048_576))
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // Act
+    notification.outgoing.writeHead(500)
+    notification.outgoing.end()
+    const release = await waitUntil(
+      () => heldRelease,
+      'the release of session-1 held',
+      10_000,
+      undefined,
+      5,
+    )
+    // The wait at the limit ends while that release is still held; only the answer below ends the release.
+    await inputClock.advance(bridge, 12_000)
+    release.outgoing.writeHead(200)
+    release.outgoing.end()
+    const exitCode = await within(bridge.exited, 10_000)
+    // Assert
+    const stderr = bridge.readStderr()
+    assert.equal(exitCode, 1)
+    assert.equal(
+      stderr.includes(
+        'Codebook Cursor MCP bridge could not connect. Run Codebook: Set Up AI Chat in this Cursor window.\n',
+      ),
+      true,
+    )
+    // The child marked the clock's advance before it gave the connection up, so the wait's end came during the release, not after it.
+    assert.equal(
+      stderr.indexOf('INPUT_CLOCK_ADVANCED 1\n') <
+        stderr.indexOf('Codebook Cursor MCP bridge could not connect.'),
+      true,
+    )
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+  },
+)
+
+// Value: protects=Cursor's bridge ending as a stop with exit code 0, its first session released, when its first handshake is still not up 5 s after its stdin reached the startup input limit while Cursor is still connected (Cycle 0147 task 8, acceptance criterion 10); fails_when=the bridge waits for an end of stdin it cannot see, or it releases the session but stdin, which Node reads on into its buffer after a pause at the limit, keeps the process alive until Cursor closes it; no_claim=the real clock's timing (the child's input clock is moved by hand; the stdin-close test above runs on the real clock)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge whose first handshake is still not up 5 seconds after its stdin reached the startup input limit ends with exit code 0 and asks the server to end the session it named, while Cursor is still connected',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    let heldNotification: ScriptedRequest | undefined
+    const endpoint = await startScriptedEndpoint(context, (request) => {
+      if (request.method !== 'notifications/initialized') return false
+      // Held through the bridge's exit: never answered.
+      heldNotification = request
+      return true
+    })
+    const inputClock = await handMovedInputClock(context)
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload() + inputClock.preloadSource,
+    )
+    bridge.sendInitialize()
+    const notification = await waitUntil(
+      () => heldNotification,
+      'the first initialized notification held',
+      10_000,
+      undefined,
+      5,
+    )
+    bridge.write('x'.repeat(1_048_576))
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // Act
+    await inputClock.advance(bridge, 5_000)
+    const exitCode = await within(bridge.exited, 5_000)
+    // The child's exit does not wait for the endpoint to see that connection close, so that is observed on its own, within a bound.
+    const isNotificationGone = await waitUntil(
+      () => notification.isClientGone(),
+      'the endpoint seeing the held notification closed',
+      5_000,
+      undefined,
+      5,
+    ).catch(() => false)
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(isNotificationGone, true)
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+    assert.equal(bridge.readStderr().includes('could not connect'), false)
+  },
+)
+
+// Value: protects=Cursor's bridge ending as a stop with exit code 0, its first session released, when its first handshake comes up only after the wait at its startup input limit ended but before that wait's timer ran (a busy event loop), so it never hands Cursor's stdin to a server it already marked closed (Cycle 0147 review round, OCR lens 4 cursorMcpBridge.ts:268); fails_when=the late success is accepted because the settlement's answer is ignored or the stop it began is not raised, so the bridge serves while closed: it keeps running and releases no session; no_claim=the real clock's timing (the child's input clock is moved by hand), a late failure (the hold's unit test of the settlement)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge whose first handshake comes up only after the wait at its startup input limit ended, before that wait ran, ends with exit code 0 and asks the server to end the session it named',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    let heldNotification: ScriptedRequest | undefined
+    const endpoint = await startScriptedEndpoint(context, (request) => {
+      if (request.method !== 'notifications/initialized') return false
+      // Answered by the test once the wait at the limit has ended.
+      heldNotification = request
+      return true
+    })
+    const inputClock = await handMovedInputClock(context)
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload() + inputClock.preloadSource,
+    )
+    bridge.sendInitialize()
+    const notification = await waitUntil(
+      () => heldNotification,
+      'the first initialized notification held',
+      10_000,
+      undefined,
+      5,
+    )
+    bridge.write('x'.repeat(1_048_576))
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // The wait at the limit has ended and its timer has not run, as on a busy event loop.
+    await inputClock.advance(bridge, 5_000, { runsDueWaits: false })
+    // Act
+    notification.outgoing.writeHead(202)
+    notification.outgoing.end()
+    const exitCode = await within(bridge.exited, 5_000)
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+    assert.equal(bridge.readStderr().includes('could not connect'), false)
+  },
+)
 
 // Value: protects=a prompt end of Cursor's bridge, without an initialized notification, when Cursor closes it while the server has not answered its first initialize at all (Cycle 0146 /ship pass 1, outside-voice 9); fails_when=the bridge waits for the SDK's 60 s initialize timeout, then prints that it could not connect; no_claim=a session the server may have opened for that initialize (no answer named one, so the bridge has no id to release; the server closes idle sessions itself)
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
@@ -1470,5 +1724,52 @@ test(
       true,
     )
     assert.equal(requestsOf(endpoint.received, 'initialize').length, 1)
+  },
+)
+
+// Value: protects=the bound on a bridge's session release ending, its timer with it, as soon as the release it bounds ended, so a promptly answered DELETE leaves no one-second timer behind in a running bridge (Cycle 0147 ship pass 1, Codex structured review bridgeReleaseBound.ts:19); fails_when=the wait ignores its release's end and runs its full second; no_claim=that the bridge passes that end (the Cursor bridge child-process test below), a release nobody answers (the Devin bridge test of a never-answered DELETE)
+test("the bound on a bridge's session release ends as soon as that release ended, without waiting out its second", async () => {
+  // Arrange
+  const releaseEnded = new AbortController()
+  const waiting = BRIDGE_RELEASE_BOUND.wait(releaseEnded.signal).then(
+    () => 'ended',
+  )
+  // Act
+  releaseEnded.abort()
+  // The abort settles the wait in microtasks, which all run before setImmediate.
+  const outcome = await Promise.race([
+    waiting,
+    new Promise((resolve) => setImmediate(() => resolve('still waiting'))),
+  ])
+  // Assert
+  assert.equal(outcome, 'ended')
+})
+
+// Value: protects=Cursor's bridge ending the bound on its session release once the server answered that release's DELETE, so the bound's timer goes with the release (Cycle 0147 ship pass 1, Codex structured review bridgeReleaseBound.ts:19); fails_when=the release waits for its bound without telling it the DELETE settled, so each answered release leaves the bound's timer running; no_claim=that the real bound clears its timer (the unit test above), a release nobody answers (the Devin bridge test of a never-answered DELETE)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge whose stdin closes ends the wait on its session release once the server answered the DELETE',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const endpoint = await startScriptedEndpoint(context, () => false)
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload() + RELEASE_BOUND_CANCEL_MARKS_PRELOAD,
+    )
+    await bridge.handshake()
+    // Act
+    bridge.closeStdin()
+    const exitCode = await within(bridge.exited, 5_000)
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+    assert.equal(
+      bridge
+        .readStderr()
+        .split('\n')
+        .filter((line) => line.startsWith('RELEASE_BOUND_CANCELLED ')).length,
+      1,
+    )
   },
 )

@@ -323,6 +323,14 @@
       "reason": "the loopback development-server address in a react-scripts helper's JSDoc example; no private host"
     },
     {
+      "finding": "internal.url_private",
+      "paths": [
+        "extension/test-timings.json"
+      ],
+      "pattern": "https?://(?:127\\.0\\.0\\.1|localhost(?:\\.example\\.com)?):\\d+/",
+      "reason": "a test title naming a loopback address that test:shard --record copies into the timings file; no private host"
+    },
+    {
       "finding": "internal.hostname",
       "paths": [
         "extension/src/utils/readReactScriptsAppSettings.ts"

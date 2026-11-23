@@ -17,9 +17,6 @@
     "skills/codebook/render-wiki.mjs": {
       "complexity_high": {
         "count": 1
-      },
-      "complexity_moderate": {
-        "count": 1
       }
     },
     "src/configuredBrowserRun.ts": {
@@ -48,7 +45,7 @@
         "count": 1
       },
       "complexity_moderate": {
-        "count": 2
+        "count": 1
       }
     },
     "src/nativeRepositoryBootstrap.ts": {
@@ -195,11 +192,8 @@
       }
     },
     "src/utils/answerDeepWikiQuestion.ts": {
-      "complexity_high": {
-        "count": 1
-      },
       "complexity_moderate": {
-        "count": 2
+        "count": 3
       }
     },
     "src/utils/assertDevelopmentWorkspace.ts": {
@@ -297,11 +291,6 @@
         "count": 2
       }
     },
-    "src/utils/resolveNextClientManifest.ts": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/utils/validateConfiguredStudyEvidence.ts": {
       "complexity_critical": {
         "count": 1
@@ -344,11 +333,6 @@
         "count": 1
       }
     },
-    "skills/codebook/render-wiki.mjs\u0000sourceLink": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
     "skills/codebook/render-wiki.mjs\u0000validatePages": {
       "complexity_high": {
         "count": 1
@@ -380,11 +364,6 @@
       }
     },
     "src/deepWikiReader.ts\u0000readDeepWikiManifest": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "src/extension.ts\u0000attempt": {
       "complexity_moderate": {
         "count": 1
       }
@@ -688,7 +667,7 @@
       }
     },
     "src/utils/answerDeepWikiQuestion.ts\u0000answerDeepWikiQuestionWithPrompt": {
-      "complexity_high": {
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -807,11 +786,6 @@
         "count": 1
       }
     },
-    "src/utils/resolveNextClientManifest.ts\u0000resolveNextClientManifest": {
-      "complexity_high": {
-        "count": 1
-      }
-    },
     "src/utils/validateConfiguredStudyEvidence.ts\u0000validateConfiguredStudyEvidence": {
       "complexity_critical": {
         "count": 1
@@ -829,5 +803,6 @@
     }
   },
   "runtime_coverage_findings": [],
-  "target_keys": []
+  "target_keys": [],
+  "file_lines_categories": true
 }

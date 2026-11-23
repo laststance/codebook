@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.143.0] - 2026-11-24 (development candidate)
+
+Cycle 0147 ([Issue #367](https://github.com/laststance/codebook/issues/367)), a bug-fix cycle. **Codebook's Devin Desktop window mark, its records and the private copies of your MCP config now hold under slow storage and other programs' writes, and a bridge whose startup input fills up ends on time.** It fixes the nine defects that Cycle 0146's review limit carried and the defects that this cycle's reviews found in the same code.
+
+### Fixed
+- **A Devin Desktop window whose records answer only after 5 seconds is marked once those answers come**, also after a removal that ended without changing the setup and after a setup that failed while the mark waited. It offers Reload Window once and then stops reading the records; when three of those reads give no answer at all, it stops reading and the window stays unmarked. When another window removed the setup meanwhile, it names **Codebook: Set Up AI Chat** instead of offering a reload, and after a stop meanwhile it shows nothing.
+- **A copy of your previous config is never deleted while a notice leaves it to you.** When Codebook still tracks a copy, which a later run deletes while it holds exactly your previous config, the notice says so. A file that another program put at a copy's private name is never called your previous config: the notice says that the file there is no longer that copy. A notice that names a copy Codebook could not settle asks you to look at both files and never to move that copy over a config that stands.
+- **Codebook's old setup record is kept until it can safely go back.** When something that is not Codebook's record of that entry stands at `receipt.json` (a folder, a link or another file), the notice asks you to move it to another folder. When Codebook cannot read what stands there, it keeps both records and asks you to move nothing. It never brings the old record back beside an entry that a setup which stopped early may have published, and it never deletes a file that a backup or sync tool put at the old record's private name while Codebook was working.
+- **A rollback record from a version before 0.2.141.0 is settled only on Codebook's own look at the config**, so a failed setup's entry is still taken back when the config changes between two of Codebook's reads.
+- **A Cursor or Devin Desktop bridge whose startup input reaches its limit ends on time.** If its first connection is not up 5 seconds after it stopped reading, it ends with exit code 0 and asks Codebook's server to end the session, also while Cursor or Devin is still connected.
+
 ## [0.2.142.0] - 2026-11-23 (development candidate)
 
 Cycle 0146 ([Issue #365](https://github.com/laststance/codebook/issues/365)), a bug-fix cycle. **Codebook's Devin Desktop setup now answers on a stalled disk, survives an interrupted setup, and keeps your MCP config and its private copies safe.** It fixes the twelve defects that Cycle 0145's review limit carried and the defects that this cycle's reviews found in the same code.

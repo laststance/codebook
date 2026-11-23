@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.142'
+export const EXTENSION_VERSION = '0.2.143'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -482,6 +482,8 @@ export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
 export const DEVIN_MCP_RECORD_LIMIT_BYTES = 16_384
 /** The largest Devin Desktop MCP config (`~/.config/devin/mcp_config.json`) that Codebook reads; a larger file is refused before it is read, because a real config of a few servers is a few kilobytes. */
 export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
+/** How many links, at most, a first setup's put-back of its moved-aside old record makes in all: after a link found `receipt.json` taken and the look found that name empty, it links again until this many links were made ({@link putBackRetiredReceipt}); past this the name keeps changing and both files stay. */
+export const DEVIN_RECEIPT_PUT_BACK_ATTEMPTS = 3
 /** What a first setup's pending record puts before its entry hash (`entrySha256`), so an older build, which adopts an entry whose hash equals the record's, never adopts a first setup's entry before its receipt exists; the receipt keeps the plain hash ({@link plainEntryHashOf} strips this). */
 export const FIRST_SETUP_HASH_PREFIX = 'first-setup:'
 /** The largest connection descriptor (`<instanceId>.connection.json`) the Devin Desktop bridge reads; a real one is a few hundred bytes, so a larger file is skipped before it is parsed. */
@@ -516,8 +518,10 @@ export const DEVIN_BRIDGE_HEADER_NAME = 'x-codebook-bridge'
 export const DEVIN_BRIDGE_HEADER_VALUE = 'devin'
 /** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
 export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
-/** The most input Codebook's Cursor and Devin Desktop bridges keep from their client while their first connection to Codebook's server is not up yet (they read it only to see the client end them): at this size they stop reading, keep the chunk that reached it whole, and read on once they serve. An MCP client sends only `initialize`, a few hundred bytes, and pings before it is answered. */
+/** The most input Codebook's Cursor and Devin Desktop bridges keep from their client while their first connection to Codebook's server is not up yet (they read it only to see the client end them): at this size they stop reading, keep the chunk that reached it whole, and read on once they serve. An MCP client sends only `initialize`, a few hundred bytes, and pings before it is answered. Past it a bridge no longer sees its client end it, so it ends as stopped once {@link BRIDGE_STARTUP_INPUT_FULL_WAIT_MS} passed without its first connection up. */
 export const BRIDGE_STARTUP_INPUT_LIMIT_BYTES = 1_048_576
+/** How long a bridge whose startup input reached {@link BRIDGE_STARTUP_INPUT_LIMIT_BYTES} waits for its first connection, from the first time a hold of that input reached it (counted across the Devin Desktop bridge's attempts), before it ends as stopped: past the limit it no longer reads its input, so Node emits no end of it and the bridge cannot see its client close it. Above {@link DEVIN_CONNECT_FLOOR_MS}, far below the SDK's 60 s initialize timeout and undici's 300 s header timeout. */
+export const BRIDGE_STARTUP_INPUT_FULL_WAIT_MS = 5_000
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
 export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
 /** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */
@@ -540,6 +544,10 @@ export const DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS = 3_000
 export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 /** How long a Devin Desktop window's server start waits before it reads the setup receipts again after a read that could not look (descriptor exhaustion, `EIO`), so a moment of exhaustion does not leave the descriptor unmarked for the whole run. */
 export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
+/** How often a late mark of a Devin Desktop window's descriptor (the server start's or a sync's) checks, without reading storage, whether the setup, take-back or removal of the window it waits for (the one that ran that sync included) has ended before it decides the mark. */
+export const DEVIN_LATE_MARK_RUN_CHECK_MS = 500
+/** How many of a late mark's fresh reads of the setup receipts may give no answer at all, each only after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS} (a storage that stays out of file descriptors), before the late mark ends and leaves the window's descriptor unmarked, as a server start does when no read answered within that budget: each such read holds the descriptor queue, which a stop, a setup's mark and a removal's unmark wait behind, for up to that budget. */
+export const DEVIN_LATE_MARK_UNANSWERED_READS_MAX = 3
 /** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */
 export const DEVIN_MARK_READ_RETRY_BUDGET_MS = 5_000
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
