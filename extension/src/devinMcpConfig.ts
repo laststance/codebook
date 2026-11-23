@@ -4168,7 +4168,7 @@ async function settleRollbackJournal(
     belonging === 'another-config' && legacy?.restoredBytes
       ? await holdLegacyJournal(
           rollbackContext,
-          retained ?? legacyEvidenceOf(pending),
+          heldJournalOf(pending, retained),
           legacy,
           legacy.restoredBytes,
           reported !== undefined,
@@ -4191,7 +4191,7 @@ type HeldJournal = {
 
 /**
  * Keeps a legacy rollback journal that one read decided as another publish's, so the publish record cannot adopt on a later read once the journal is gone; called only by {@link settleRollbackJournal}.
- * When a leftover is refused in this run, the journal is rewritten to what stays ({@link retainedRecord}), or to its evidence alone ({@link legacyEvidenceOf}) when nothing stays tracked, so the next run still decides on its inode and hash; otherwise it stays as recovery left it.
+ * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it.
  * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal.
  * @param kept - The journal to write when a leftover is refused.
  * @param legacy - The journal's evidence.
@@ -4220,7 +4220,28 @@ async function holdLegacyJournal(
 }
 
 /**
- * Reduces a legacy rollback journal to the evidence that tells whether it belongs to the publish record ({@link legacyBelonging}): its displaced file's inode and hash, without names, so no later recovery acts on a leftover from it; called by {@link settleRollbackJournal} when nothing of the journal stays tracked.
+ * Gives the journal that a legacy rollback journal held as another publish's is rewritten to when a leftover is refused ({@link holdLegacyJournal}): what stays tracked ({@link retainedRecord}) together with the inode and hash that decided it ({@link legacyEvidenceOf}), so the next run decides on the same evidence ({@link legacyBelonging}) instead of reading a journal without them as the setup's own; called only by {@link settleRollbackJournal}.
+ * A displaced copy that stays tracked keeps its own name, inode and hash, which its next look checks (a handed record names the inode its name shows now, {@link handedRecordOf}); otherwise the evidence comes without a name, so a copy dropped from tracking (the one reported once) never comes back as a leftover.
+ * @param journal - The journal as read.
+ * @param retained - What stays tracked after recovery; undefined when nothing does.
+ * @returns
+ * - `retained` itself while it still names the displaced copy
+ * - Otherwise what stays tracked, if anything, with the journal's `keptIno` and `keptSha256` and no displaced name
+ * @example
+ * heldJournalOf(journal, { targetPath, createdFile: false, generation, phase: 'handed', stagedName, stagedIno: 7, stagedSha256: 'c' }) // => { targetPath, createdFile: false, generation, phase: 'handed', stagedName, stagedIno: 7, stagedSha256: 'c', keptIno: 5, keptSha256: 'b' }
+ * heldJournalOf(journal, undefined) // => { targetPath, createdFile: false, generation, keptIno: 5, keptSha256: 'b' }
+ */
+function heldJournalOf(
+  journal: Pending,
+  retained: Pending | undefined,
+): Pending {
+  // A displaced copy that stays tracked names the inode and hash its next look checks.
+  if (retained?.keptName !== undefined) return retained
+  return { ...retained, ...legacyEvidenceOf(journal) }
+}
+
+/**
+ * Reduces a legacy rollback journal to the evidence that tells whether it belongs to the publish record ({@link legacyBelonging}): its displaced file's inode and hash, without names, so no later recovery acts on a leftover from it; called by {@link heldJournalOf}.
  * @param journal - The journal as read.
  * @returns A journal of the same config and generation with only `keptIno` and `keptSha256`.
  * @example

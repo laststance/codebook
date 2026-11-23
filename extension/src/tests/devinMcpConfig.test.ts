@@ -5584,6 +5584,102 @@ test('A legacy rollback journal whose handed copy is refused while the config ho
   })
 })
 
+test("A legacy rollback journal whose handed copy is refused while its staged copy stays keeps its inode and hash, so the next refresh still finds it another setup's and the one after takes the setup back once the published file is back", async (context) => {
+  // Value: protects=a legacy journal held as another publish's keeps the inode and hash that decided it also when a leftover stays tracked beside the refused one, and the copy reported once never comes back by name, so the next run decides on the same evidence; fails_when=the journal after the first refresh lacks keptIno or keptSha256 or names the reported copy, the second refresh marks the publish record for take-back (pending.json changes) or answers another refusal, or the third refresh adopts or leaves the entry; no_claim=an older build's handover (the test writes phase handed), why a staged copy differs (the test appends to it), a real sync tool (rename of the copy over the config)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(
+      context,
+      (journal, { keptPath, configPath: restoredConfigPath }) => {
+        appendFileSync(keptPath, '\n')
+        journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+        journal.phase = 'handed'
+        // The staged copy no longer holds the bytes the journal names, so recovery keeps it tracked.
+        appendFileSync(
+          join(dirname(restoredConfigPath), String(journal.stagedName)),
+          '\n',
+        )
+        // A config without the entry stands at the config name; the published file stays under its private name.
+        writeFileSync(
+          restoredConfigPath,
+          '{"mcpServers":{"alpha":{"command":"a"}}}\n',
+        )
+      },
+    )
+  const journalBefore = JSON.parse(readFileSync(journalPath, 'utf8'))
+  const keptPath = join(dirname(configPath), String(journalBefore.keptName))
+  const stagedPath = join(dirname(configPath), String(journalBefore.stagedName))
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const readJournal = (): unknown =>
+    existsSync(journalPath)
+      ? JSON.parse(readFileSync(journalPath, 'utf8'))
+      : 'absent'
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const journalAfterFirst = readJournal()
+  const secondError = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const journalAfterSecond = readJournal()
+  // A record the second refresh retired reads as 'absent', so the assertion below names it.
+  const pendingAfterSecond = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  // A sync tool puts the published file back at the config name.
+  renameSync(keptPath, configPath)
+  const third = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook found a private file at ${keptPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(journalAfterFirst, {
+    targetPath: journalBefore.targetPath,
+    createdFile: false,
+    generation: journalBefore.generation,
+    phase: 'handed',
+    stagedIno: journalBefore.stagedIno,
+    stagedSha256: journalBefore.stagedSha256,
+    stagedName: journalBefore.stagedName,
+    keptIno: journalBefore.keptIno,
+    keptSha256: journalBefore.keptSha256,
+  })
+  assert.equal(
+    secondError instanceof Error ? secondError.message : secondError,
+    `Codebook found a private file at ${stagedPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(journalAfterSecond, {
+    targetPath: journalBefore.targetPath,
+    createdFile: false,
+    generation: journalBefore.generation,
+    keptIno: journalBefore.keptIno,
+    keptSha256: journalBefore.keptSha256,
+  })
+  assert.equal(pendingAfterSecond, pendingText)
+  assert.equal(third, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test('A legacy rollback journal whose restored config names "mcpServers" twice keeps both records, and the next refresh still takes the failed first setup back once the config is fixed', async (context) => {
   // Value: protects=a config that a legacy rollback journal's recovery put back and that names a member twice (the last "mcpServers" empty) is no valid config and no evidence of another publish, as the config read refuses it too, so both records stay and the next run, which reads the fixed config, still takes the failed first setup back instead of installing it; fails_when=the first refresh answers anything but the refusal naming both records and that config, changes either record or writes a receipt, or the second refresh answers anything but not-managed, writes a receipt or leaves the entry in the config; no_claim=a real editor's save (seam.afterStat rewrites the config in place with the setup's entry under a first "mcpServers" and an empty second one, once, at the first read of the config, and the test writes the whole bytes back before the second refresh); seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; a line break appended to the displaced file, and its new hash in keptSha256, stand for the in-place append the rollback saw
   // Arrange
