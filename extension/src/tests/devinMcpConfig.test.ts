@@ -6101,6 +6101,123 @@ test('A held legacy rollback journal that the refresh itself rewrote while it pu
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('Another rollback journal a backup restores at the journal name while a refresh settles a cut-short rollback whose setup record is gone stays for the next refresh instead of being deleted as the settled one', async (context) => {
+  // Value: protects=the rollback journal a refresh deletes once it settled a cut-short rollback of this build is only the version its recovery read, so a journal a backup restored at its name after that read keeps its rollback for the next run; fails_when=the journal's name is empty or holds other bytes than the restored journal after the refresh, the config is not the published file the journal's recovery put back, a receipt is written, or the refresh answers anything but not-managed; no_claim=a real backup tool (seam.afterLeftoverCheck renames another journal over the journal's name once, at the first leftover look after the journal was read, which comes before its retirement), a restore in the syscall gap after the last look before the unlink, the take-back of a setup whose publish record stands (it writes its own rollback journal at that name later in the same run), and what the next run does with the restored journal
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  // Without the setup's publish record no take-back follows the settlement, so this refresh writes no journal of its own.
+  rmSync(pendingPath)
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000006',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000007',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasReadJournal = false
+  let hasRestoredJournal = false
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === journalPath) hasReadJournal = true
+    },
+    afterLeftoverCheck: () => {
+      if (!hasReadJournal || hasRestoredJournal) return
+      hasRestoredJournal = true
+      // A backup restores another journal at the journal's name after recovery read the cut-short rollback's journal and before it is retired.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(result.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('Another rollback journal a backup restores at the journal name after a refresh settled a cut-short rollback whose staged copy stays is not overwritten with what stays of the settled journal', async (context) => {
+  // Value: protects=the rollback journal a refresh rewrites to the leftovers that stay once it settled a cut-short rollback of this build is only the version its recovery read, so a journal a backup restored at its name after that read keeps its rollback for the next run; fails_when=the journal's name holds other bytes than the restored journal after the refresh (the settled journal's staged copy written over it), the staged copy is gone or changed, the refusal does not name the staged copy, or a receipt is written; no_claim=a real backup tool (seam.afterStat renames another journal over the journal's name once, at the read of the setup's publish record that comes after the journal's recovery and before its rewrite), a restore in the syscall gap after the last look before the rename, the wording of the refusal beyond the staged copy's path, and what the next run does with the restored journal or the staged copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const stagedPath = join(
+    dirname(configPath),
+    JSON.parse(readFileSync(journalPath, 'utf8')).stagedName,
+  )
+  // A space appended to the rollback's staged file makes it a file Codebook cannot delete, so the settled journal keeps it and the run stops with a refusal.
+  appendFileSync(stagedPath, ' ')
+  const stagedText = readFileSync(stagedPath, 'utf8')
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000008',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000009',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasReadJournal = false
+  let hasRestoredJournal = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path === journalPath) hasReadJournal = true
+      if (path !== pendingPath || !hasReadJournal || hasRestoredJournal) return
+      hasRestoredJournal = true
+      // A backup restores another journal at the journal's name after recovery settled the cut-short rollback and before the journal is rewritten.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, (error: Error) =>
+    error.message.includes(stagedPath),
+  )
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  assert.equal(readFileSync(stagedPath, 'utf8'), stagedText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A legacy rollback journal whose handed copy is refused while the config holds no entry keeps its inode and hash, so the next refresh takes the setup back once the published file is back', async (context) => {
   // Value: protects=a refused leftover never costs the inode and hash that later tell the journal belongs to the failed setup; fails_when=the journal is deleted, the refusal text changes, or the next refresh adopts; no_claim=an older build's handover (the test writes phase handed), a real sync tool (rename of the copy over the config)
   // Arrange

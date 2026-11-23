@@ -170,7 +170,7 @@ type Context = {
   retry: string
   /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
   rollbackOf?: string
-  /** Set only on the context {@link settleRollbackJournal} settles a journal with: the version of the journal that run read, replaced by each version it writes at its pending path ({@link writeRecord}), so the held journal it may retire is the one it settled ({@link retireHeldJournal}). */
+  /** Set only on the context {@link settleRollbackJournal} settles a journal with: the version of the journal that run read, replaced by each version it writes at its pending path ({@link writeRecord}), so the journal it may retire or rewrite is the one it settled ({@link retireHeldJournal}, {@link retirePending}). */
   journalVersion?: { current: RecordVersion | undefined }
 }
 
@@ -2769,11 +2769,17 @@ function retainedRecord(
   }
 }
 
-/** Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay. */
+/** Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay. A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link showsSettledJournal}); another journal a backup restored there stays for the next run. */
 async function retirePending(
   context: Context,
   retained: Pending | undefined,
 ): Promise<void> {
+  // Another journal at a settled journal's name is not this run's to delete or overwrite.
+  if (
+    context.journalVersion &&
+    !(await showsSettledJournal(context, context.journalVersion.current))
+  )
+    return
   if (retained) await writeRecord(context, context.pendingPath, retained)
   else await rm(context.pendingPath, { force: true })
 }
@@ -4841,7 +4847,7 @@ function currentEntryOf(look: ConfigLook): unknown {
 
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
- * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
+ * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read, only while its name still shows the version this run settled ({@link retirePending}).
  * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
  * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
@@ -4962,14 +4968,31 @@ async function retireHeldJournal(
   rollbackContext: Context,
   held: RecordVersion | undefined,
 ): Promise<void> {
-  if (!held) return
+  if (await showsSettledJournal(rollbackContext, held))
+    await rm(rollbackContext.pendingPath, { force: true })
+}
+
+/**
+ * Tells whether a rollback journal's name still shows the version this run settled ({@link Context.journalVersion}): the same inode and bytes, looked at synchronously once more at the end; called right before the journal is deleted or rewritten, by {@link retireHeldJournal} and {@link retirePending}, so a journal a backup or sync tool restored at that name since stays for the next run.
+ * Limit: a restore between the last look and the unlink or rename that follows is not seen.
+ * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
+ * @param settled - The version of the journal this run settled; undefined when its name showed nothing right after this run's last write.
+ * @returns `true` while the name shows that version; `false` when it is gone, unreadable or shows another version, or no version is known.
+ * @example
+ * await showsSettledJournal(rollbackContext, version) // => false once a backup restored another journal at pending.json.rollback
+ */
+async function showsSettledJournal(
+  rollbackContext: Context,
+  settled: RecordVersion | undefined,
+): Promise<boolean> {
+  if (!settled) return false
   const journalPath = rollbackContext.pendingPath
   const now = await inspectCopy(journalPath).catch(() => undefined)
   // Gone, unreadable or another version: whatever stands at the name now stays for the next run.
-  if (!now || now.ino !== held.ino || now.sha256 !== held.sha256) return
-  // The hash came from the open handle; the unlink acts on the name, which must still show that same file.
-  if (!isLeftoverStill(rollbackContext, journalPath, now)) return
-  await rm(journalPath, { force: true })
+  if (!now || now.ino !== settled.ino || now.sha256 !== settled.sha256)
+    return false
+  // The hash came from the open handle; the unlink or rename acts on the name, which must still show that same file.
+  return isLeftoverStill(rollbackContext, journalPath, now)
 }
 
 /**
