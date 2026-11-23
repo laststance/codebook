@@ -191,7 +191,7 @@ async function holdSetupLockInOtherProcess(
 /**
  * Loads the real activation boundary as Devin Desktop (`uriScheme` `devin`) with every skill, MCP config, Node and server effect replaced, so a test reads which setup steps ran, in which order, without touching a user profile.
  * @param context - The test, which removes the temporary folder afterwards.
- * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam); `removalResult` what the entry removal resolves with (a plain removal when left out); `onSetupCommit` runs inside the write of the committed setup, before it lands (test seam); `failSetupCommit` makes a write of a setup value (not a clearing) that follows a provisional one fail; `failSetupRestore` makes every write that follows a provisional one fail (the commit and the restore); `skillReceiptMode` the mode the skill deployment leaves its receipt with (private when left out). The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`hasReceiptsReached` says it waits).
+ * @param options - `platform` the window's system (macOS when left out); `savedSetup` a setup saved for this workspace before the window opened; `skillManaged` whether the Devin skill still has its receipt; `entryRefresh` what the MCP entry's refresh answers; `noticeChoice` the button every information notice answers; `confirmRemoval` whether the removal's modal question is confirmed; `holdRefresh` holds the entry's refresh until the test releases it; `failSetupClear` makes clearing the saved setup fail; `entryWrite` what the entry's write answers (`installed` when left out); `remoteName` the editor's `env.remoteName`; `receiptMode` the mode the entry write leaves its receipt with (private when left out); `entryReceipt` whether Codebook's entry receipt is left for a saved setup (it is when left out); `nodeFailure` makes resolving Node fail with raw text; `entryRefreshBusy` how many times the entry's refresh meets a held storage lock first; `failSetupSave` makes saving the setup fail; `storageDirectory` an existing folder shared as global storage with another window; `holdDeploy` holds the skill deployment until the test releases it; `cleanupFailure` the sentence the entry's write and refresh answer for a kept copy that could not be deleted; `skillReceipt` whether Codebook's skill record is left for a saved setup (it is when left out); `afterRefresh` runs inside the entry's refresh, before it answers; `holdDescriptorRewrite` makes the descriptor rewrite wait, after it read the file, until the test releases it; `entryDisabled` makes the entry's write answer that the entry stays turned off in Devin's Customize; `onSkillCheck` runs inside the setup's final skill check, before it answers; `failEntryRemoval` makes removing the entry fail; `realServer` runs the real MCP server (with the window's mark as its gate) instead of the descriptor stand-in; `failDescriptorUnmark` makes the descriptor rewrite that removes the mark fail (the other rewrites run the real one); `afterInstallationRead` runs once right after the first read of the receipt's installation id (test seam); `removalResult` what the entry removal resolves with (a plain removal when left out); `onSetupCommit` runs inside the write of the committed setup, before it lands (test seam); `failSetupCommit` makes a write of a setup value (not a clearing) that follows a provisional one fail; `failSetupRestore` makes every write that follows a provisional one fail (the commit and the restore); `skillReceiptMode` the mode the skill deployment leaves its receipt with (private when left out); `receiptReadAnswerDelaysMs` how long each of the first reads of the setup receipts waits, after it read the real records, before it answers what it read. The window also returns `armReceiptsHold`, which makes the next read of the setup records answer what it read and then wait until `releaseReceipts` (`hasReceiptsReached` says it waits).
  * @returns The window's commands, saved state, recorded steps, notices, Output lines and executed editor commands.
  * @example const window = await devinWindow(context, { savedSetup: true, entryRefresh: 'refreshed' })
  */
@@ -242,6 +242,8 @@ async function devinWindow(
     removalDeletesReceipt?: boolean
     /** How long each of the first reads of the setup receipts waits before it answers with no answer (`null`), by the read's position; a read past the list, or at an `undefined` position, is the real one. */
     receiptReadDelaysMs?: (number | undefined)[]
+    /** How long each of the first reads of the setup receipts waits after it read the real records before it answers what it read, by the read's position; a read past the list, or at an `undefined` position, is the real one. */
+    receiptReadAnswerDelaysMs?: (number | undefined)[]
     /** Runs once, right after the setup lock's release was awaited and before the setup's success notice (test seam for a folder change in that gap). */
     afterSetupLockRelease?: (window: {
       changeFolder: (folder: string) => void
@@ -802,6 +804,14 @@ async function devinWindow(
               await readStandingDevinInstallationId(storageRoot)
             await holds.receiptRead.wait()
             return standsBeforeHold
+          }
+          // A read that answers late with what it read, as a slow storage whose every answer comes after the start budget.
+          const answerDelayMs =
+            options.receiptReadAnswerDelaysMs?.[receiptReadCount - 1]
+          if (answerDelayMs !== undefined) {
+            const stands = await readStandingDevinInstallationId(storageRoot)
+            await delay(answerDelayMs)
+            return stands
           }
           // A read that answers late with no answer, as a slow storage that then fails.
           const delayMs = options.receiptReadDelaysMs?.[receiptReadCount - 1]
@@ -4995,7 +5005,7 @@ test("Stop and Start Agent Server in a failed setup take-back's first seconds st
   }
 })
 
-// Value: protects=a late Devin mark whose fresh read is itself still in flight at its own start budget waits for that read too and reads afresh once it settled, so a window whose storage answers only after two budgets is still marked and offers Reload Window once (/ship pass 1, Codex outside voice 10); fails_when=the late mark takes the fresh read's missed deadline for an unmarked setup, so the window stays unmarked for the rest of its server's run although its setup stands; no_claim=a fresh read that gets no answer at all within its budget (no read is in flight then, and the mark gives up as before) and a stop meanwhile; the first stand-in read waits 5.5 s and then has no answer, the second reads the real records and waits at its gate until the test released it after that read's own budget passed, the later reads are the real ones
+// Value: protects=a late Devin mark whose fresh read is itself still in flight at its own start budget waits for that read too and decides on that read's own answer once it settled (Cycle 0147 task 7), so a window whose storage answers only after two budgets is still marked and offers Reload Window once (/ship pass 1, Codex outside voice 10); fails_when=the late mark takes the fresh read's missed deadline for an unmarked setup, so the window stays unmarked for the rest of its server's run although its setup stands; no_claim=a fresh read that gets no answer at all within its budget (no read is in flight then, and the mark gives up as before) and a stop meanwhile; the first stand-in read waits 5.5 s and then has no answer, the second reads the real records and waits at its gate until the test released it after that read's own budget passed, the later reads are the real ones
 test('a late Devin mark whose fresh read also outlasts the start budget marks the window once that read answers and offers Reload Window once', async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -5047,6 +5057,201 @@ test('a late Devin mark whose fresh read also outlasts the start budget marks th
     ])
   } finally {
     await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a window whose storage answers every records read after the 5-second budget is marked once the late mark's first fresh read answers, with two reads in all, still two 6 s later while its server runs, and offers Reload Window once (Cycle 0147 task 7); fails_when=each late answer is discarded and reads and 5-second queue holds repeat for the whole run, or a read starts after the mark; no_claim=a read that never answers, a read with no answer, another window's removal during the read (test 7c); the stand-in reads the real records and answers them after 5.5 s
+test("a Devin Desktop window whose every records read answers after the start budget is marked once the late mark's first fresh read answers, after two reads in all", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadAnswerDelaysMs: Array.from({ length: 6 }, () => 5_500),
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    const fieldAtPublication = await window.readDescriptorField()
+    // Act
+    const isMarkedInTime = await waitUntil(
+      async () => (await window.readDescriptorField()) === true,
+      'the late mark',
+      15_000,
+    ).then(
+      () => true,
+      () => false,
+    )
+    const readsAtMark = window.receiptReadCount()
+    // The server keeps running through a wait longer than one delayed read, so a read started after the mark would be counted.
+    const quietWait = await waitUntil(
+      () => window.receiptReadCount() > readsAtMark,
+      'a receipts read after the late mark',
+      6_000,
+    ).then(
+      () => 'a read started',
+      (error: Error) => error.message,
+    )
+    const readsAfterQuiet = window.receiptReadCount()
+    // Assert
+    assert.equal(fieldAtPublication, undefined)
+    assert.equal(isMarkedInTime, true)
+    assert.deepEqual(window.lateMarkDecisions, [true])
+    assert.equal(readsAtMark, 2)
+    assert.equal(
+      quietWait,
+      'Timed out waiting for a receipts read after the late mark',
+    )
+    assert.equal(readsAfterQuiet, 2)
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a late mark's own late answer is not trusted across this window's finished removal: the decision reads the records again, finds the entry record removed, leaves the window unmarked (403) and offers nothing (Cycle 0147 task 7); fails_when=the late mark decides on the answer read before the removal and marks a removed setup; no_claim=a removal still running at the decision (the take-off decides then), another window's removal (test 7c); failSetupClear keeps the saved setup so only the turn check decides, the stand-in entry removal deletes the receipt as the real one does, the first read answers no answer after 5.5 s, the second reads the real records and waits at its gate
+test("a late Devin mark whose slow fresh read answered across this window's removal reads the records again and leaves the window unmarked", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    failSetupClear: true,
+    removalDeletesReceipt: true,
+    receiptReadDelaysMs: [5_500],
+    holdReceiptReadAt: 2,
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    await waitUntil(
+      () => window.holds.receiptRead.reachedAtMs(),
+      "the late mark's fresh read",
+      15_000,
+    )
+    // Act
+    // The command answers once its descriptor unmark ran, a queue turn after the late mark's turn ended at its own deadline.
+    const removal = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      16_000,
+    )
+    const readsBeforeRelease = window.receiptReadCount()
+    // The held read answers the setup standing with installation-test, as it read it before the receipt was deleted.
+    window.holds.receiptRead.release()
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision",
+      15_000,
+    )
+    const readsAtDecision = window.receiptReadCount()
+    const status = await postInitialize(await window.descriptorPath(), true)
+    // Assert
+    assert.equal(removal, 'resolved')
+    assert.equal(readsBeforeRelease, 2)
+    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(readsAtDecision, readsBeforeRelease + 1)
+    assert.equal(await window.readDescriptorField(), undefined)
+    assert.equal(status, 403)
+    assert.equal(
+      window.notices.some(
+        (notice) =>
+          notice.message ===
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+      ),
+      false,
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a window that a late mark marked for a setup another window removed meanwhile is refused by the bridge's own check of both records (removed, naming the missing entry record), so Devin Local opens no session on a removed setup; the stale mark and its one Reload Window are the designed state of any window marked before another window's removal (Cycle 0147 task 7, D13); fails_when=the check stands for that descriptor, or the late mark names another installation than its read found; no_claim=the late-mark notice is shown although the setup is gone (README line 95 says so; later candidate), a new setup in another window (the stand-in entry write reuses one installation id), the real removal's skill deletion; both windows share one extension host and storage folder, the second read of the first window reads the real records and waits at its gate
+test("another window's removal during a late Devin mark's fresh read leaves Devin Local refused by the bridge's own setup check", async (context) => {
+  // Arrange
+  const first = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+    holdReceiptReadAt: 2,
+  })
+  try {
+    const second = await devinWindow(context, {
+      storageDirectory: first.directory,
+      instanceLabel: 'second',
+      savedSetup: true,
+      confirmRemoval: true,
+      removalDeletesReceipt: true,
+    })
+    try {
+      await second.whenReconnected()
+      const readReachedAtMs = await waitUntil(
+        () => first.holds.receiptRead.reachedAtMs(),
+        "the first window's fresh read",
+        15_000,
+      )
+      // Act
+      const removal = await within(
+        second.commands.get('codebook.removeManagedDevinSetup')!().then(
+          () => 'resolved',
+          (error: Error) => error.message,
+        ),
+        3_000,
+      )
+      const removalEndedAfterMs = performance.now() - readReachedAtMs
+      // The held read answers the setup standing with installation-test, as it read it before the other window's removal.
+      first.holds.receiptRead.release()
+      await waitUntil(
+        () => first.lateMarkDecisions.length > 0,
+        "the first window's late mark decision",
+        15_000,
+      )
+      const bridgeAnswer = await checkDevinBridgeReceipts(
+        await first.descriptorPath(),
+        { installationId: 'installation-test' },
+      )
+      // Assert
+      assert.equal(removal, 'resolved')
+      // The removal ended within the fresh read's own budget, so the decision takes the in-turn path that the source before this cycle also takes.
+      assert.ok(
+        removalEndedAfterMs < 4_500,
+        `the removal ended ${Math.round(removalEndedAfterMs)} ms after the fresh read started`,
+      )
+      assert.deepEqual(first.lateMarkDecisions, [true])
+      assert.equal(
+        await first.readDescriptorInstallation(),
+        'installation-test',
+      )
+      assert.deepEqual(bridgeAnswer, {
+        answer: 'removed',
+        reason: 'missing',
+        path: join(first.directory, 'devin-mcp/receipt.json'),
+      })
+      assert.deepEqual(first.notices, [
+        {
+          severity: 'information',
+          message:
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+          actions: ['Reload Window'],
+        },
+      ])
+    } finally {
+      await second.loaded.deactivate()
+    }
+  } finally {
+    await first.loaded.deactivate()
   }
 })
 
