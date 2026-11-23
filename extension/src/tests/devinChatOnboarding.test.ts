@@ -5046,7 +5046,7 @@ test('a Devin removal refused before it changed the setup, whose records read an
   }
 })
 
-// Value: protects=a failed re-run of a setup that still stands, whose take-back's records read answers after the 5-second budget, serves that setup again once the setup ended: the late mark waits for the run that ran the sync, then a fresh read marks the descriptor, the server answers 200 and Reload Window is offered once (Cycle 0147 task 1, Codex T1-F1); fails_when=the late mark gives way to the setup that ran the sync, or none is scheduled, so the window stays unmarked (403, token rotated) while its setup stands; no_claim=a take-back of a first setup (its records go, nothing to mark), a run that never settles; the final skill check stand-in throws once, the take-back sync's read reads the real records and waits at its gate, the held unmark write then runs the real one, the server is the real one
+// Value: protects=a failed re-run of a setup that still stands, whose take-back's records read answers after the 5-second budget, serves that setup again once the setup ended: the late mark, handed over before the take-back's rewrite, reaches its check while that rewrite and so the setup still wait, decides nothing then, waits for the run that ran the sync, then a fresh read marks the descriptor, the server answers 200 and Reload Window is offered once (Cycle 0147 task 1, Codex T1-F1; review round W3: CodeRabbit at devinChatOnboarding.test.ts:5053); fails_when=the late mark gives way to the setup that ran the sync and ends (a decision while the setup's rewrite still waits, or none that marks after it), or none is scheduled, so the window stays unmarked (403, token rotated) while its setup stands; no_claim=a take-back of a first setup (its records go, nothing to mark), a run that never settles; the final skill check stand-in throws once, the take-back sync's read reads the real records and waits at its gate, the late mark's continuation waits at its gate until the test saw it during the setup, the held unmark write then runs the real one, the server is the real one
 test('a failed re-run of a standing Devin setup whose take-back records read answers late serves the Devin bridge again once the setup ended and offers Reload Window once', async (context) => {
   // Arrange
   const options: Parameters<typeof devinWindow>[1] = {
@@ -5054,6 +5054,7 @@ test('a failed re-run of a standing Devin setup whose take-back records read ans
     realServer: true,
     entryWrite: 'current',
     holdDescriptorUnmark: true,
+    holdLateMark: true,
   }
   const window = await devinWindow(context, options)
   try {
@@ -5067,10 +5068,14 @@ test('a failed re-run of a standing Devin setup whose take-back records read ans
       throw new Error('Injected skill check failure')
     }
     // Act
+    let hasSetupEnded = false
     const setup = window.commands.get('codebook.setupAiChat')!().then(
       () => 'resolved',
       (error: Error) => error.message,
     )
+    void setup.then(() => {
+      hasSetupEnded = true
+    })
     await waitUntil(
       () => window.holds.descriptorUnmark.reachedAtMs(),
       "the take-back sync's unmark at its read's deadline",
@@ -5079,6 +5084,16 @@ test('a failed re-run of a standing Devin setup whose take-back records read ans
     const statusWhileUnmarked = await postInitialize(descriptorFile, true)
     // The late answer comes while the setup still holds its take-back's descriptor step.
     window.holds.receiptRead.release()
+    // The sync handed its late read over before its rewrite, so the late mark's continuation comes while that rewrite, the setup's take-back step, still waits.
+    await waitUntil(
+      () => window.holds.lateMark.reachedAtMs(),
+      "the late mark's continuation while the setup's rewrite waits",
+    )
+    window.holds.lateMark.release()
+    // A request takes I/O, so the late mark's check after its gate has run by its answer, while the setup still waits at the rewrite.
+    const statusWhileSetupRuns = await postInitialize(descriptorFile, true)
+    const decisionsWhileSetupRuns = [...window.lateMarkDecisions]
+    const hadSetupEndedAtCheck = hasSetupEnded
     window.holds.descriptorUnmark.release()
     const setupOutcome = await within(setup, 10_000)
     // The unmark rotated the token; each request reads the descriptor's current one.
@@ -5093,6 +5108,9 @@ test('a failed re-run of a standing Devin setup whose take-back records read ans
     // Assert
     assert.equal(statusBefore, 200)
     assert.equal(statusWhileUnmarked, 403)
+    assert.equal(statusWhileSetupRuns, 403)
+    assert.equal(hadSetupEndedAtCheck, false)
+    assert.deepEqual(decisionsWhileSetupRuns, [])
     assert.equal(setupOutcome, 'Injected skill check failure')
     assert.equal(isServedAgain, true)
     assert.equal(await window.readDescriptorInstallation(), 'installation-test')
@@ -5675,6 +5693,78 @@ test("a sync's late Devin mark whose fresh read answers while a setup of this wi
           actions: ['Reload Window'],
         },
       ],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a late mark that waits for this window's removal, whose entry step waits on storage past its 10-second lapse, ends once Stop Agent Server stopped its server: it decides without reading the records while the removal still holds the setup lock, and offers nothing (Cycle 0147 review round, W4: OCR lens 1 P3 at extension.ts:1542); fails_when=the wait ignores the stop and goes on until the removal ends, or the late mark reads the records or marks a stopped server; no_claim=a new start ending the wait (the same check of the running server), the removal's own end and notice; the server start's read waits at its gate, the late mark's continuation waits at its gate until the removal answered at its lapse, the held stand-in entry removal stands for the stalled storage
+test("a late Devin mark that waits for this window's removal ends at Stop Agent Server without reading the records while the removal still waits on storage", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    confirmRemoval: true,
+    holdReceiptReadAt: 1,
+    holdLateMark: true,
+    holdEntryRemoval: true,
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    const removalOutcome = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      15_000,
+    )
+    window.holds.receiptRead.release()
+    await waitUntil(
+      () => window.holds.lateMark.reachedAtMs(),
+      "the late mark's continuation while the removal waits",
+    )
+    window.holds.lateMark.release()
+    // A file read takes I/O, so the late mark has begun its wait for the removal by its answer.
+    await window.readDescriptorField()
+    const decisionsBeforeStop = [...window.lateMarkDecisions]
+    const readsBeforeStop = window.receiptReadCount()
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    const decisionAfterStop = await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision after the stop",
+      3_000,
+    ).then(
+      () => 'decided',
+      (error: Error) => error.message,
+    )
+    const isRemovalWaitingAtDecision = await isSetupLockHeld(window.directory)
+    const readsAfterDecision = window.receiptReadCount()
+    window.holds.entryRemoval.release()
+    await waitUntil(
+      async () => !(await isSetupLockHeld(window.directory)),
+      "the removal's end once its entry step answered",
+      5_000,
+    )
+    // Assert
+    assert.equal(removalOutcome, 'resolved')
+    assert.deepEqual(decisionsBeforeStop, [])
+    assert.equal(decisionAfterStop, 'decided')
+    assert.equal(isRemovalWaitingAtDecision, true)
+    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(readsBeforeStop, 1)
+    assert.equal(readsAfterDecision, 1)
+    assert.deepEqual(
+      window.notices.filter(
+        (notice) =>
+          notice.message ===
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+      ),
+      [],
     )
   } finally {
     await window.loaded.deactivate()
