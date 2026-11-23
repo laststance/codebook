@@ -64,6 +64,7 @@ import {
   NODE_SERVER_SHUTDOWN_GRACE_MS,
   DEVIN_MARK_READ_RETRY_BUDGET_MS,
   DEVIN_MARK_READ_RETRY_DELAY_MS,
+  DEVIN_LATE_MARK_RUN_CHECK_MS,
   DEVIN_SETUP_FINAL_CHECK_MS,
   DEVIN_SETUP_ROLLBACK_BUDGET_MS,
   DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
@@ -559,11 +560,11 @@ export function activate(
   let standingRead: Promise<unknown> | undefined
   /** Whether {@link standingRead} outlived the bound a caller waited for it: then no new read starts (each would hold two more threads of the editor's small file pool) and a call that comes meanwhile gets no answer, until that read settles. */
   let isStandingReadAbandoned = false
-  /** Marks the read in flight as outlived by its caller's bound; called by {@link devinChatField} and {@link devinChatFieldAtStart} when their bound passed. @example abandonStandingRead() */
+  /** Marks the read in flight as outlived by its caller's bound; called by {@link devinChatField} and {@link readFieldsAtStart} when their bound passed. @example abandonStandingRead() */
   const abandonStandingRead = (): void => {
     isStandingReadAbandoned = standingRead !== undefined
   }
-  /** Reads the mark fields once and tells a read that could not look from a setup that does not stand; used by {@link devinChatField} (no answer counts as unmarked) and by {@link devinChatFieldAtStart} (no answer is asked again). @returns The fields, `{}` when the setup does not stand, or `undefined` when the receipts could not be read at all. @example await readDevinChatField() // => undefined during a moment of descriptor exhaustion */
+  /** Reads the mark fields once and tells a read that could not look from a setup that does not stand; used by {@link devinChatField} (no answer counts as unmarked) and by {@link readFieldsAtStart} (no answer is asked again). @returns The fields, `{}` when the setup does not stand, or `undefined` when the receipts could not be read at all. @example await readDevinChatField() // => undefined during a moment of descriptor exhaustion */
   const readDevinChatField = async (): Promise<DevinChatFields | undefined> => {
     if (!isDevinHost || !setupMatchesCurrentWorkspace()) return {}
     // A read that outlived its caller's bound still holds its threads: no second one starts, and the caller gets no answer (Cycle 0145 last-round O4).
@@ -585,7 +586,7 @@ export function activate(
       ? { devinChat: true, devinSetupInstallation: installationId }
       : {}
   }
-  /** The mark fields for a server that starts now, with the read still in flight when the deadline passed: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, which the start's late mark waits for instead ({@link markDevinChatLate}). An observed removal answers at once. Called by {@link startServer}'s start and by {@link devinChatFieldAtStart}. @returns `fields`, and `lateRead` when a read was in flight at the deadline (none when the retry was between two reads), with `lateFields`, the own answer of the read this call started when that read was in flight at the deadline; a late mark decides on it ({@link markLateUntilAnswered}). @example const { fields, lateRead } = await readFieldsAtStart() */
+  /** The mark fields for a server that starts now, with the read still in flight when the deadline passed: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, which the start's late mark waits for instead ({@link markDevinChatLate}). An observed removal answers at once. Called by {@link startServer}'s start, by {@link syncDevinChatDescriptor} and by {@link markLateInQueue}. @returns `fields`, and `lateRead` when a read was in flight at the deadline (none when the retry was between two reads), with `lateFields`, the own answer of the read this call started when that read was in flight at the deadline; a late mark decides on it ({@link markLateUntilAnswered}). @example const { fields, lateRead } = await readFieldsAtStart() */
   const readFieldsAtStart = async (): Promise<{
     fields: DevinChatFields
     lateRead?: Promise<unknown>
@@ -638,9 +639,6 @@ export function activate(
       stopWaiting.abort()
     }
   }
-  /** The mark fields for the sync of a rollback, as {@link readFieldsAtStart} reads them; a read that settles after the deadline changes nothing here. Called by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
-  const devinChatFieldAtStart = async (): Promise<DevinChatFields> =>
-    (await readFieldsAtStart()).fields
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -1009,7 +1007,7 @@ export function activate(
           // A stop that is under way owns the instance through `starting`; the checks after the wait refuse it.
           if (!stopping && startedEndpoint.listening) running = server
           // A read that answers after the deadline can still mark this server once it settled.
-          markDevinChatLate(server, lateRead)
+          markDevinChatLate(server, lateRead, false)
           return server
         })
       } catch (error) {
@@ -1527,15 +1525,26 @@ export function activate(
     devinSetup !== undefined ||
     devinBackgroundWork !== undefined ||
     isDevinMarkBeingTakenOff()
-  /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
+  /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start or sync read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
   const isLateMarkTarget = (server: Running): boolean =>
     running === server &&
     !stopping &&
     !isDevinSetupChanging() &&
     setupMatchesCurrentWorkspace()
   /**
+   * Waits, without reading storage, until no Devin Desktop setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), or `server` is no longer the one running (a stop or a new start ends the wait, and the late mark then gives way); called by {@link markLateUntilAnswered} for the late mark of a sync, whose own run (the removal that ended, or the failed setup whose take-back ran the sync) may still be settling when that read answered.
+   * Why polled: a setup or removal whose command answered at a lapse goes on as {@link devinBackgroundWork}, which keeps no promise of its run here.
+   * @param server - The server the late mark is for.
+   * @example await afterDevinRunsSettled(server)
+   */
+  const afterDevinRunsSettled = async (server: Running): Promise<void> => {
+    // Each check reads only this window's state; the late mark decides once no run of it is left.
+    while (isDevinSetupChanging() && running === server && !stopping)
+      await delay(DEVIN_LATE_MARK_RUN_CHECK_MS)
+  }
+  /**
    * Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read ({@link readFieldsAtStart}, bounded by its own deadline), or the late answer of the fresh read its previous turn started, finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. Called by {@link markLateUntilAnswered}.
-   * @param server - The server whose start read answered late.
+   * @param server - The server whose start or sync read answered late.
    * @param earlier - The own answer of the fresh read an earlier turn started, which answered after its deadline, and that turn's number; it decides only when that turn was the one right before this one.
    * @returns
    * - `{ isMarked: true, turn }` when it marked the window;
@@ -1575,12 +1584,18 @@ export function activate(
       return { isMarked: true, turn }
     })
   /**
-   * Gives `server` its late mark in turns of {@link markLateInQueue} until a read answers: a fresh read still in flight at its own deadline is waited for outside the descriptor queue; its own answer then decides in the next turn when no descriptor turn came between, otherwise a fresh read decides, so a storage that answers every read only after its deadline still marks the window after two reads while each read stays bounded inside the queue; called by {@link markDevinChatLate} once the start's late read settled.
-   * @param server - The server whose start read answered late.
+   * Gives `server` its late mark in turns of {@link markLateInQueue} until a read answers: a fresh read still in flight at its own deadline is waited for outside the descriptor queue; its own answer then decides in the next turn when no descriptor turn came between, otherwise a fresh read decides, so a storage that answers every read only after its deadline still marks the window after two reads while each read stays bounded inside the queue; called by {@link markDevinChatLate} once the start's or the sync's late read settled.
+   * @param server - The server whose start or sync read answered late.
+   * @param afterRuns - Whether the mark is decided only once this window's setups, take-backs and removals have ended ({@link afterDevinRunsSettled}): the sync's late mark, whose own run may still be settling; the start's late mark gives way to such a run instead.
    * @returns Whether it marked the window.
-   * @example await markLateUntilAnswered(server) // => true once a read found the setup standing
+   * @example await markLateUntilAnswered(server, false) // => true once a read found the setup standing
    */
-  const markLateUntilAnswered = async (server: Running): Promise<boolean> => {
+  const markLateUntilAnswered = async (
+    server: Running,
+    afterRuns: boolean,
+  ): Promise<boolean> => {
+    // A sync's late read may answer while the removal or failed setup that ran the sync is still settling; the mark is decided once it ended.
+    if (afterRuns) await afterDevinRunsSettled(server)
     let answer = await markLateInQueue(server)
     // Only the settling of the read in flight counts; it holds no turn of the queue while it is waited for.
     while (answer.lateRead) {
@@ -1595,19 +1610,21 @@ export function activate(
     return answer.isMarked
   }
   /**
-   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start.
+   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start, and by {@link syncDevinChatDescriptor}, once per sync whose read was still in flight at its deadline (`afterRuns`: decided once this window's setups, take-backs and removals have ended, because the run that called the sync may still be settling).
    * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a setup, take-back or removal of this window that runs ({@link isLateMarkTarget}) is left as it is and shows nothing.
-   * @param server - The server that just started.
+   * @param server - The server that just started, or the one the sync rewrote.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
-   * @example markDevinChatLate(server, lateRead)
+   * @param afterRuns - Whether the mark waits for this window's runs to end first ({@link markLateUntilAnswered}); the start passes `false`, the sync `true`.
+   * @example markDevinChatLate(server, lateRead, false)
    */
   const markDevinChatLate = (
     server: Running,
     lateRead: Promise<unknown> | undefined,
+    afterRuns: boolean,
   ): void => {
     if (!lateRead) return
     void continueAfterLateRead(lateRead, () =>
-      markLateUntilAnswered(server),
+      markLateUntilAnswered(server, afterRuns),
     ).then(
       (isMarked) => {
         if (!isMarked) return
@@ -1716,22 +1733,27 @@ export function activate(
     rotation?.commit()
     notifyMcpDefinitions()
   }
-  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, or once a removal ended before its own descriptor step ({@link endDevinMarkTakeOff}), in the turn of {@link inDescriptorQueue}, and turns the in-memory mark on only while no other removal or take-back takes it off ({@link isDevinMarkBeingTakenOff}). @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, or once a removal ended before its own descriptor step ({@link endDevinMarkTakeOff}), in the turn of {@link inDescriptorQueue}, and turns the in-memory mark on only while no other removal or take-back takes it off ({@link isDevinMarkBeingTakenOff}); a read still in flight at its deadline gets a late mark ({@link markDevinChatLate}) once this window's runs ended, also after a failed rewrite. @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
   const syncDevinChatDescriptor = (rotateWhenUnmarked = false): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
       if (!target) return
       // A read that gets no answer is asked again like at server start, so one moment of exhaustion does not take the mark of a setup that stands.
-      const field = await devinChatFieldAtStart()
+      const { fields: field, lateRead } = await readFieldsAtStart()
       const isMarked = field.devinChat === true
       // An unmark clears the in-memory mark before the file is rewritten; a mark sets it after.
       isDevinChatMarked &&= isMarked
-      await writeSyncedDescriptor(
-        target,
-        isMarked,
-        field.devinSetupInstallation,
-        rotateWhenUnmarked && !isMarked,
-      )
+      try {
+        await writeSyncedDescriptor(
+          target,
+          isMarked,
+          field.devinSetupInstallation,
+          rotateWhenUnmarked && !isMarked,
+        )
+      } finally {
+        // Also after a failed rewrite: the in-memory mark is already off, so only the late mark can give it back once storage answers.
+        markDevinChatLate(target, lateRead, true)
+      }
       // Another run that takes the mark off keeps it off; that run's own descriptor step decides.
       isDevinChatMarked ||= isMarked && !isDevinMarkBeingTakenOff()
     })

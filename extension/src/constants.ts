@@ -540,6 +540,8 @@ export const DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS = 3_000
 export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 /** How long a Devin Desktop window's server start waits before it reads the setup receipts again after a read that could not look (descriptor exhaustion, `EIO`), so a moment of exhaustion does not leave the descriptor unmarked for the whole run. */
 export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
+/** How often the late mark of a Devin Desktop window's descriptor sync checks, without reading storage, whether the setup, take-back or removal that ran that sync (or any other of the window) has ended before it decides the mark. */
+export const DEVIN_LATE_MARK_RUN_CHECK_MS = 500
 /** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */
 export const DEVIN_MARK_READ_RETRY_BUDGET_MS = 5_000
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
