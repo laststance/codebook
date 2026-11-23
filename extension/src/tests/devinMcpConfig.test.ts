@@ -3395,6 +3395,166 @@ test('A rollback journal left unverified by a put-back by bytes stays when its p
   assert.equal(readFileSync(keptPath, 'utf8'), editedBytes)
 })
 
+test('A put-back by bytes does not write its unchecked mark over another rollback journal a backup restores at the journal name, and links nothing', async (context) => {
+  // Value: protects=recovery writes the rollback journal only while its name shows the version this run settled, so a put-back whose unchecked mark meets another journal links nothing, and the run then says so after the copy (Cycle 0148 task 8); fails_when=the restored journal changes or is deleted, a config is linked under the refused mark, the copy changes, or the message differs; no_claim=a real backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the put-back's unchecked mark), a restore after the final look before the rename, which leftover a later run reports
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const keptText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeFile(keptPath, keptText)
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  await writeRecordFile(storage, 'pending.json.rollback', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000154',
+    keptName: basename(keptPath),
+    // Another inode than the file's: only its bytes prove it, so recovery puts it back by bytes.
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(keptText),
+  })
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000155',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000156',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasRestoredJournal = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath || hasRestoredJournal) return
+      hasRestoredJournal = true
+      // A backup restores another journal at the journal's name while the put-back's unchecked mark waits to be renamed over it.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again. While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(readFileSync(journalPath, 'utf8'), restoredJournalText)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), keptText)
+})
+
+test('A put-back by bytes that finished does not write its record back over another rollback journal a backup restores at the journal name, and the refresh says so', async (context) => {
+  // Value: protects=recovery writes the rollback journal back only while its name shows the version this run wrote, and the run then says so (Cycle 0148 task 8); fails_when=the restored journal changes or is deleted, the refresh resolves or words it otherwise, the config does not hold the copy's bytes, or the private name stays; no_claim=a real backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the put-back's second journal write), a restore after the final look before the rename, which leftover a later run reports
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const keptText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeFile(keptPath, keptText)
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  await writeRecordFile(storage, 'pending.json.rollback', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000157',
+    keptName: basename(keptPath),
+    // Another inode than the file's: only its bytes prove it, so recovery puts it back by bytes.
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(keptText),
+  })
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000158',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000159',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let journalWriteCount = 0
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath) return
+      journalWriteCount += 1
+      if (journalWriteCount !== 2) return
+      // A backup restores another journal at the journal's name while the finished put-back's record waits to be renamed over it.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.equal(journalWriteCount, 2)
+  assert.equal(readFileSync(journalPath, 'utf8'), restoredJournalText)
+  assert.equal(readFileSync(configPath, 'utf8'), keptText)
+  assert.equal(existsSync(keptPath), false)
+})
+
+test('A put-back by bytes that failed does not write its record back over another rollback journal a backup restored at the journal name', async (context) => {
+  // Value: protects=recovery writes the rollback journal back after a failed put-back only while its name shows the version this run wrote, and the run then says so after the copy (Cycle 0148 task 8); fails_when=the restored journal changes or is deleted, a config is linked, the copy changes beyond the writer's byte, or the message differs; no_claim=a real writer and backup tool (seam.beforeLeftoverCheck appends one byte to the copy once, after the unchecked mark, so the look before the link fails; seam.beforeRecordWrite renames another journal over the journal's name once, at the second journal write), a restore after the final look before the rename, which leftover a later run reports
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const keptText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeFile(keptPath, keptText)
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  await writeRecordFile(storage, 'pending.json.rollback', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    publishGeneration: 'c0ffee00-0000-4000-8000-00000000015a',
+    keptName: basename(keptPath),
+    // Another inode than the file's: only its bytes prove it, so recovery puts it back by bytes.
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256(keptText),
+  })
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-00000000015b',
+    publishGeneration: 'c0ffee00-0000-4000-8000-00000000015c',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let journalWriteCount = 0
+  let hasChangedCopy = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath) return
+      journalWriteCount += 1
+      if (journalWriteCount !== 2) return
+      // A backup restores another journal at the journal's name while the failed put-back's record waits to be renamed over it.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || journalWriteCount !== 1 || hasChangedCopy) return
+      hasChangedCopy = true
+      // A writer appends one byte to the copy after the unchecked mark, so the look right before the link fails.
+      appendFileSync(keptPath, ' ')
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again. While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.equal(hasChangedCopy, true)
+  assert.equal(journalWriteCount, 2)
+  assert.equal(readFileSync(journalPath, 'utf8'), restoredJournalText)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(
+    readFileSync(keptPath, 'utf8'),
+    '{"mcpServers":{"alpha":{"command":"a"}}}\n ',
+  )
+})
+
 test('A copy handed over after a failed shared-bytes check is named once by the next run, which then answers', async (context) => {
   // Value: protects=the handed record of a put-back that only the bytes proved names the inode of the copy it hands over, so the next run reports that copy once and the run after it answers, instead of refusing every run as if another file stood at the private name; fails_when=the second run refuses with the other-file sentence or does not name the copy, the third run refuses, or a run deletes either name; no_claim=what an older build does with the record (read from its code), and the wording of the second run's sentence; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, then an in-place append that keeps valid JSON, standing for a writer between the link and the check
   // Arrange
@@ -5600,6 +5760,127 @@ test('A refresh after a first setup whose rollback was cut short takes the entry
     existsSync(join(storage, 'devin-mcp', 'pending.json.rollback')),
     false,
   )
+})
+
+test('A displaced copy recovery hands over while a backup restores another rollback journal at the journal name does not write the handed record over that journal', async (context) => {
+  // Value: protects=recovery writes the handed record of a rollback journal only while its name shows the version this run settled, and the run then says so after the copy (Cycle 0148 task 8); fails_when=the restored journal changes or is deleted, the copy or the config changes, a receipt is written, or the message differs; no_claim=a real backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the handed record's write), a restore after the final look before the rename, which leftover a later run reports
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  // An editor saves another config at the empty config name, so recovery hands the rollback's displaced copy over.
+  const savedText = '{"mcpServers":{"beta":{"command":"b"}}}\n'
+  await writeConfig(configPath, savedText)
+  const keptPath = join(
+    dirname(configPath),
+    JSON.parse(readFileSync(journalPath, 'utf8')).keptName,
+  )
+  const keptText = readFileSync(keptPath, 'utf8')
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-00000000015d',
+    publishGeneration: 'c0ffee00-0000-4000-8000-00000000015e',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasRestoredJournal = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath || hasRestoredJournal) return
+      hasRestoredJournal = true
+      // A backup restores another journal at the journal's name while the handed record waits to be renamed over it.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again. While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  assert.equal(readFileSync(keptPath, 'utf8'), keptText)
+  assert.equal(readFileSync(configPath, 'utf8'), savedText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A handed record whose write fails does not delete the journal name where a backup restored another rollback journal meanwhile', async (context) => {
+  // Value: protects=a handed record whose write fails drops the rollback journal only while its name shows the version this run settled, and the run then says so after the copy (Cycle 0148 task 8); fails_when=the restored journal changes or is deleted, the copy or the config changes, a receipt is written, or the message differs; no_claim=a real full disk and backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the handed record's write, and then fails that write with ENOSPC), a restore after the final look before the unlink, which leftover a later run reports
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  // An editor saves another config at the empty config name, so recovery hands the rollback's displaced copy over.
+  const savedText = '{"mcpServers":{"beta":{"command":"b"}}}\n'
+  await writeConfig(configPath, savedText)
+  const keptPath = join(
+    dirname(configPath),
+    JSON.parse(readFileSync(journalPath, 'utf8')).keptName,
+  )
+  const keptText = readFileSync(keptPath, 'utf8')
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-00000000015f',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000160',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasRestoredJournal = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath || hasRestoredJournal) return
+      hasRestoredJournal = true
+      // A backup restores another journal at the journal's name, and the handed record's write then fails on a full disk.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+      throw Object.assign(new Error('no space left on device'), {
+        code: 'ENOSPC',
+      })
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again. While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  assert.equal(readFileSync(keptPath, 'utf8'), keptText)
+  assert.equal(readFileSync(configPath, 'utf8'), savedText)
+  assert.equal(existsSync(receiptPath), false)
 })
 
 test('A refresh that fails after settling a cut-short rollback does not let the next refresh turn the failed setup into an installed one', async (context) => {

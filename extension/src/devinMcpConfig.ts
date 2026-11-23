@@ -760,7 +760,7 @@ function dropPending(context: Context): Promise<void> {
 }
 
 /**
- * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending} and {@link retirePending}.
+ * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending}, {@link retirePending} and {@link handOver}.
  * @param context - The run; its pending path is deleted.
  * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (nothing is deleted then); what the delete throws other than for a name that is gone.
  * @example
@@ -798,8 +798,8 @@ async function markCompleted(
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
  * @returns
- * - `true` when no record lets a later run delete the copy: the handed record was written, or, when that write failed (a full disk), the record was dropped, so the copy is no longer tracked and stays for good
- * - `false` when the record stays as it is on disk: a first setup's record or one marked for take-back whose handed write failed (it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte), or another record that could not be dropped either; a caller whose record on disk is completed keeps the copy out of a later run's reach ({@link keepFromRecovery})
+ * - `true` when no record lets a later run delete the copy: the handed record was written, or, when that write failed (a full disk), the record was dropped, so the copy is no longer tracked and stays for good; a tracked rollback journal ({@link Context.journalVersion}) is dropped only while its name still shows the version this run settled or wrote ({@link removeRecord})
+ * - `false` when the record stays as it is on disk: a first setup's record or one marked for take-back whose handed write failed (it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte), a tracked rollback journal whose name shows another file or cannot be read again ({@link JournalConflictError}: nothing is written or dropped there), or another record that could not be dropped either; a caller whose record on disk is completed keeps the copy out of a later run's reach ({@link keepFromRecovery})
  * @example
  * await handOver(context, journal) // => true; pending.json now says handed
  */
@@ -810,10 +810,12 @@ async function handOver(context: Context, journal: Pending): Promise<boolean> {
       phase: 'handed',
     } satisfies Pending)
     return true
-  } catch {
+  } catch (error) {
+    // Another file at a tracked journal's name is not this run's: nothing was written there, and nothing is dropped.
+    if (error instanceof JournalConflictError) return false
     // Dropping this record would let a stop before the receipt leave an entry that no record owns: it stays, and the caller says what becomes of the copy.
     if (isFirstSetupRecord(journal) || journal.takeBack) return false
-    return rm(context.pendingPath, { force: true }).then(
+    return removeRecord(context).then(
       () => true,
       () => false,
     )
