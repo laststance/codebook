@@ -15,15 +15,17 @@ function standInInput(): Readable {
 
 /**
  * A clock the test moves by hand for the wait at a held input's limit.
- * @returns The clock to hand to {@link holdBridgeInput}; `advance`, which moves it and runs every wait that falls due by then ({@link createManualClock}); and `readLaterBy`, which moves only what the clock reads, as a busy event loop that has not run a due timer yet.
+ * @returns The clock to hand to {@link holdBridgeInput}; `advance`, which moves it and runs every wait that falls due by then ({@link createManualClock}); `readLaterBy`, which moves only what the clock reads, as a busy event loop that has not run a due timer yet; and `readEarlierBy`, which moves what the clock reads back, as Node running a timer a little before the monotonic clock reads its end.
  * @example
  * const time = handMovedClock()
  * time.readLaterBy(5_000) // now() reads 5_000, no wait has run
+ * time.readEarlierBy(2) // now() reads 4_998; a wait due at 5_000 runs when advance reaches 5_000
  */
 function handMovedClock(): {
   clock: RunClock
   advance: (milliseconds: number) => void
   readLaterBy: (milliseconds: number) => void
+  readEarlierBy: (milliseconds: number) => void
 } {
   const manual = createManualClock()
   let readAheadMs = 0
@@ -38,6 +40,9 @@ function handMovedClock(): {
     advance: (milliseconds): void => manual.advance(milliseconds),
     readLaterBy: (milliseconds): void => {
       readAheadMs += milliseconds
+    },
+    readEarlierBy: (milliseconds): void => {
+      readAheadMs -= milliseconds
     },
   }
 }
@@ -165,6 +170,45 @@ test('a held bridge input that stays at its limit while its client is still conn
   time.advance(60_000)
   // Assert
   assert.equal(input.isPaused(), true)
+  assert.equal(oversAt4999Ms, 0)
+  assert.equal(oversAt5000Ms, 1)
+  assert.equal(overs, 1)
+})
+
+// Value: protects=the promised 5 s after the input reached its limit holding when Node runs the wait's timer before the monotonic clock reads its end (measured with the production clock: 57 of 64 holds reported early, the earliest at 4,998.29 ms), so a first handshake that completes within those 5 s is not stopped (Cycle 0147 ship pass 1, Codex structured review holdBridgeInput.ts:132, outside-voice#9); fails_when=the timer's callback reports the input over without reading the clock again; no_claim=how early Node's real timer runs (the clock here is moved by hand)
+test('a held bridge input whose limit wait timer runs before the clock reads 5 seconds reports its input over only once the clock reads 5 seconds', async () => {
+  // Arrange
+  const input = standInInput()
+  const time = handMovedClock()
+  let overs = 0
+  holdBridgeInput(
+    input,
+    () => {
+      overs += 1
+    },
+    4,
+    time.clock,
+  )
+  input.push(Buffer.from('abcd'))
+  await waitUntil(
+    () => input.isPaused(),
+    'the hold stopping at its limit',
+    2_000,
+    undefined,
+    5,
+  )
+  // The wait's timer, due at 5,000 ms, runs while the clock reads 4,998 ms.
+  time.readEarlierBy(2)
+  // Act
+  time.advance(5_000)
+  const oversWhenTimerRanAt4998Ms = overs
+  time.advance(1)
+  const oversAt4999Ms = overs
+  time.advance(1)
+  const oversAt5000Ms = overs
+  time.advance(60_000)
+  // Assert
+  assert.equal(oversWhenTimerRanAt4998Ms, 0)
   assert.equal(oversAt4999Ms, 0)
   assert.equal(oversAt5000Ms, 1)
   assert.equal(overs, 1)

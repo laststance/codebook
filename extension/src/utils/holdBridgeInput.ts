@@ -126,10 +126,21 @@ export function holdBridgeInput(
     decideWait()
     onOver()
   }
+  // Node can run the timer a little before the clock reads the wait's end (measured: 4,998.29 ms for 5,000 ms), so the wait reads the clock again and waits for what is left: it never reports before its end.
+  const armWait = (waitEndsAtMs: number): void => {
+    const reportWhenDue = (): void => {
+      if (clock.now() < waitEndsAtMs) armWait(waitEndsAtMs)
+      else reportOver()
+    }
+    cancelWait = clock.set(
+      reportWhenDue,
+      Math.max(0, waitEndsAtMs - clock.now()),
+    )
+  }
   // One wait per hold, none once it was decided; the clock's timer is unreferenced, so it never keeps the process alive by itself.
   const startWait = (waitEndsAtMs: number): void => {
     if (isWaitDecided || cancelWait) return
-    cancelWait = clock.set(reportOver, Math.max(0, waitEndsAtMs - clock.now()))
+    armWait(waitEndsAtMs)
   }
   const keep = (chunk: Buffer): void => {
     kept.push(chunk)
