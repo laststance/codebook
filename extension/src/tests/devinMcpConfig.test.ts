@@ -9452,6 +9452,70 @@ test('A first setup whose old record could not go back and whose mark could not 
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A first setup whose old record could not go back and whose mark could not be written never takes the restored entry out or drops the old record when the restored config has the inode it had staged', async (context) => {
+  // Value: protects=without proof that a first setup's link stood (no completed publish record, its staged file gone), the inode it staged proves nothing, so a restored config that took that freed inode number keeps its entry and both records stay behind the undecided refusal; fails_when=the next setup answers without the undecided refusal, the old record is deleted, a receipt stands, or the restored config changes; no_claim=a real inode reuse (the test writes the restored config's inode into the record's stagedIno), a real full disk (seam fails the second pending.json write), why the put-back failed (link stub EIO), a real sync tool (seam.afterCheck moves the old config back right before the link)
+  // Arrange
+  const { home, storage, configPath, receiptPath, oldConfigText, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const failingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let pendingWrites = 0
+  await assert.rejects(
+    failingPutBack.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: moveBack,
+      beforeRecordWrite: ({ path }) => {
+        if (path !== pendingPath) return
+        pendingWrites += 1
+        // The second write of pending.json is the mark that nothing was linked.
+        if (pendingWrites === 2) throw noSpaceLeft()
+      },
+    }),
+    /could not put it back/,
+  )
+  const recordAfterRefusal = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(recordAfterRefusal.generation)}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  // The restored config shows the inode the setup had staged, as a freed inode number used again does.
+  await writeRecordFile(storage, 'pending.json', {
+    ...recordAfterRefusal,
+    stagedIno: statSync(configPath).ino,
+  })
+
+  // Act
+  const nextError = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(recordAfterRefusal.notLinked, undefined)
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    `Codebook found a "codebook" entry in Devin Desktop's MCP config at ${configPath} that a setup which ended early may have written, and its own old record at ${retiredPath} covers that same entry, so it cannot tell which setup the entry belongs to. Codebook changed nothing and kept both records (${pendingPath}, ${retiredPath}); remove that entry by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), oldConfigText)
+})
+
 test("A first setup whose old record's name was taken by a folder and whose mark could not be written promises no put-back, and the next run refuses instead of guessing", async (context) => {
   // Value: protects=a setup that could not write the mark that nothing was linked never promises that the run after the folder is moved away puts the old record back, because that run cannot tell and refuses; fails_when=the refusal promises the put-back, either record or the publish record is gone, or the next setup after the folder was moved away puts the old record back or answers anything but the undecided refusal; no_claim=a real full disk (seam fails the second pending.json write), a real sync tool (the link stub makes the folder and moves the old config back right before the config link)
   // Arrange

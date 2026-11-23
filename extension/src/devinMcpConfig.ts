@@ -3771,17 +3771,19 @@ function isFailedRead(error: unknown): boolean {
 
 /**
  * Settles the private name of a stale receipt that a first setup moved aside and did not settle itself (it stopped between the move and the link, or right after the link, or the put-back failed); called by {@link settleAfterRecovery} before the receipt is read.
- * A setup whose own receipt stands (the same generation, {@link isPublishReceipted}) finished: its link stood, so the old record is deleted before any look, whatever the config shows; every such delete acts only on a record of this config that the private name still shows as read ({@link dropRetiredReceipt}). A record marked {@link Pending.notLinked} linked nothing: the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one, whatever inode the config shows (a freed staged inode may come back as the restored config's). Otherwise, while the config name shows the inode the setup published, its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. Otherwise the config is read once, and that one look decides ({@link retiredReceiptFateOf}): when it holds the setup's own entry and the old receipt does not own it (another bridge path), that entry is the setup's publish saved again, so the private name is deleted as when the link stood, but only while the config still holds the bytes of that look (a backup may restore the config the old receipt covers meanwhile, and the run then stops); when it holds the entry the old receipt covers, which the setup may have published before it stopped and a sync tool saved again, the run refuses and keeps both records; else nothing of that setup stands, and the receipt goes back. A config name that cannot be looked at, a config that cannot be read and a record that cannot be read decide nothing: the run stops, because a read that works a moment later could settle the publish record and leave the private name for good; the private name and the record stay, so the next run settles them again.
+ * A setup whose own receipt stands (the same generation, {@link isPublishReceipted}) finished: its link stood, so the old record is deleted before any look, whatever the config shows; every such delete acts only on a record of this config that the private name still shows as read ({@link dropRetiredReceipt}). A record marked {@link Pending.notLinked} linked nothing: the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one, whatever inode the config shows (a freed staged inode may come back as the restored config's). Otherwise, while the config name shows the inode the setup staged and its link is proven ({@link isProvenLink}), its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. That inode alone proves nothing: a setup whose link failed unlinks its staged file, and a restored config may take that freed number, so without that proof the one look below decides. Otherwise the config is read once, and that one look decides ({@link retiredReceiptFateOf}): when it holds the setup's own entry and the old receipt does not own it (another bridge path), that entry is the setup's publish saved again, so the private name is deleted as when the link stood, but only while the config still holds the bytes of that look (a backup may restore the config the old receipt covers meanwhile, and the run then stops); when it holds the entry the old receipt covers, which the setup may have published before it stopped and a sync tool saved again, the run refuses and keeps both records; else nothing of that setup stands, and the receipt goes back. A config name that cannot be looked at, a config that cannot be read and a record that cannot be read decide nothing: the run stops, because a read that works a moment later could settle the publish record and leave the private name for good; the private name and the record stay, so the next run settles them again.
  * @param context - The run.
  * @param pending - The publish record as read; only one of this config that names the move ({@link Pending.retiresReceipt}) with a valid generation leads to a private name.
+ * @param isStagedLinked - Whether the setup's staged name and the config name showed its staged inode before recovery dropped that staged name ({@link isStagedNameLinked}).
  * @returns Resolves once the private name is settled; the caller reads the config afterwards, so a config restored while the old receipt went back is the one its run goes on with.
  * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link isPublishReceipted}, {@link lookAtConfig}, {@link retiredReceiptFateOf} and {@link dropRetiredReceipt} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
  * @example
- * await settleRetiredReceipt(context, pending) // receipt.json stands again after a setup whose link failed and whose put-back failed too
+ * await settleRetiredReceipt(context, pending, false) // receipt.json stands again after a setup whose link failed and whose put-back failed too
  */
 async function settleRetiredReceipt(
   context: Context,
   pending: Pending | undefined,
+  isStagedLinked: boolean,
 ): Promise<void> {
   const generation = pending?.generation
   if (
@@ -3806,13 +3808,8 @@ async function settleRetiredReceipt(
     await putBackRetiredReceipt(context, retiredPath)
     return
   }
-  const { stagedIno } = pending
   // The setup's link stood: the old receipt is deleted, never put back beside that entry.
-  if (
-    config &&
-    stagedIno !== undefined &&
-    isSameFileId(stagedIno, config.ino)
-  ) {
+  if (isProvenLink(pending, config, isStagedLinked)) {
     await dropRetiredReceipt(context, retiredPath)
     return
   }
@@ -3823,6 +3820,64 @@ async function settleRetiredReceipt(
   // The config holds that setup's publish, which the old receipt does not own: it goes, as when the link stood.
   if (fate === 'drop') await dropRetiredReceipt(context, retiredPath, look)
   else await putBackRetiredReceipt(context, retiredPath)
+}
+
+/**
+ * Tells whether the config name shows the inode a first setup staged and that setup's link is proven, so its config is that setup's publish; called only by {@link settleRetiredReceipt}.
+ * The inode alone proves nothing once the staged file is gone: a setup whose link failed unlinks it, and a restored config may then take that freed number. The completed publish record ({@link markCompleted}), written only once the link stood, or the staged name and the config name that both showed that inode at the start of this run ({@link isStagedNameLinked}) prove the link.
+ * @param pending - The publish record as read.
+ * @param config - The config name's status; undefined when nothing stands there.
+ * @param isStagedLinked - What {@link isStagedNameLinked} found before recovery.
+ * @returns `true` when the config shows the staged inode and the record or the staged name proves the link; `false` otherwise.
+ * @example
+ * isProvenLink({ ...pending, phase: 'completed' }, config, false) // => true while the config shows the staged inode
+ * isProvenLink(pending, config, false)                            // => false: that inode may be a freed number used again
+ */
+function isProvenLink(
+  pending: Pending,
+  config: BigIntStats | undefined,
+  isStagedLinked: boolean,
+): boolean {
+  const { stagedIno } = pending
+  if (
+    !config ||
+    stagedIno === undefined ||
+    !isSameFileId(stagedIno, config.ino)
+  )
+    return false
+  return pending.phase === 'completed' || isStagedLinked
+}
+
+/**
+ * Tells whether a first setup's staged name and the config name both show the inode that setup staged, looked at before recovery drops that staged name as a second name of the config ({@link recoverLeftovers}); called by {@link inspect}, whose answer {@link settleRetiredReceipt} takes as proof that the setup's link stood ({@link isProvenLink}).
+ * While the staged file still has a name, no other file can have its inode, so a config name that shows it is that file linked in; the config name is looked at only while the staged file has a second name, which it then must.
+ * @param context - The run.
+ * @param pending - The publish record as read; only one that names a moved-aside receipt ({@link Pending.retiresReceipt}) with a valid generation and a staged inode is looked at.
+ * @returns `true` when both names show the staged inode; `false` otherwise, also when either look fails.
+ * @example
+ * await isStagedNameLinked(context, pending) // => true after a first setup that stopped right after its link
+ */
+async function isStagedNameLinked(
+  context: Context,
+  pending: Pending | undefined,
+): Promise<boolean> {
+  const generation = pending?.generation
+  const stagedIno = pending?.stagedIno
+  if (
+    !pending?.retiresReceipt ||
+    stagedIno === undefined ||
+    generation === undefined ||
+    !GENERATION_PATTERN.test(generation)
+  )
+    return false
+  const staged = await lstatOrAbsent(
+    journalPathOf(context.path, generation, 'staged'),
+  ).catch(() => undefined)
+  // Only a staged file that has a second name can be the config linked in: the config is looked at only then.
+  if (!staged || staged.nlink < 2n || !isSameFileId(stagedIno, staged.ino))
+    return false
+  const config = await lstatOrAbsent(context.path).catch(() => undefined)
+  return config !== undefined && isSameFileId(stagedIno, config.ino)
 }
 
 /**
@@ -4914,6 +4969,8 @@ async function inspect(context: Context): Promise<Inspection> {
     context.retry,
     context.seam,
   )
+  // Looked at before recovery drops a staged name that is a second name of the config: both names showing the staged inode prove a first setup's link.
+  const isStagedLinked = await isStagedNameLinked(context, pending)
   // A copy an interrupted run kept comes back, or is deleted, or stays and is named, before the config is read.
   const unsettled = await recoverOwnLeftovers(context, pending)
   // An unverified put-back's handed record is read as the change in progress it is.
@@ -4943,6 +5000,7 @@ async function inspect(context: Context): Promise<Inspection> {
     pending,
     retained,
     held,
+    isStagedLinked,
   ).catch((cause: unknown) => {
     throw mergeWithLeftover(context, cause, phase, reported, isHandedNow)
   })
@@ -5034,18 +5092,20 @@ function persistHandover(
  * @param pending - The pending record as it was read; undefined when there is none.
  * @param retained - What stays of that record after recovery ({@link retainedRecord}); undefined when nothing stays.
  * @param held - The legacy rollback journal {@link settleRollbackJournal} held; undefined when none is held.
+ * @param isStagedLinked - What {@link isStagedNameLinked} found before recovery; it proves a first setup's link to {@link settleRetiredReceipt}.
  * @returns The {@link Inspection}.
  * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, {@link settlePending} and the held journal's retirement throw.
  * @example
- * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held)
+ * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held, false)
  */
 async function settleAfterRecovery(
   context: Context,
   pending: Pending | undefined,
   retained: Pending | undefined,
-  held?: HeldJournal,
+  held: HeldJournal | undefined,
+  isStagedLinked: boolean,
 ): Promise<Inspection> {
-  await settleRetiredReceipt(context, pending)
+  await settleRetiredReceipt(context, pending, isStagedLinked)
   let look = await lookAtConfig(context)
   assertHeldJournalStill(context, held, look)
   const stored = await readReceipt(context)
