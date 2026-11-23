@@ -1923,14 +1923,55 @@ function isLeftoverStill(
 ): boolean {
   context.seam?.beforeLeftoverCheck?.(path)
   const now = lstatSync(path, { bigint: true, throwIfNoEntry: false })
-  const isStill =
+  const isStill = showsChecked(now, checked)
+  if (isStill) context.seam?.afterLeftoverCheck?.(path)
+  return isStill
+}
+
+/**
+ * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed.
+ * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
+ * @param path - The name to look at.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns `true` when the name shows that inode (and size and times when given); `false` when it is gone or shows another file.
+ * @throws What the look throws other than for a missing name.
+ * @example
+ * if (!(await isNameStill(context, keptPath, privateLook))) throw sharedBytesError(context, keptPath)
+ */
+async function isNameStill(
+  context: Context,
+  path: string,
+  checked: LeftoverLookback,
+): Promise<boolean> {
+  context.seam?.beforeLeftoverCheck?.(path)
+  const now = await lstat(path, { bigint: true }).catch((error: unknown) => {
+    if (codeOf(error) === 'ENOENT') return undefined
+    throw error
+  })
+  const isStill = showsChecked(now, checked)
+  if (isStill) context.seam?.afterLeftoverCheck?.(path)
+  return isStill
+}
+
+/**
+ * Compares what a look at a name found with what was checked; used by {@link isLeftoverStill} and {@link isNameStill}.
+ * @param now - The name's status, undefined when nothing stands there.
+ * @param checked - The inode that was checked and, when given, the size and times of the last read.
+ * @returns `true` when the name shows that inode with those size and times.
+ * @example
+ * showsChecked(undefined, { ino: 42n }) // => false
+ */
+function showsChecked(
+  now: Pick<BigIntStats, 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'> | undefined,
+  checked: LeftoverLookback,
+): boolean {
+  return (
     now !== undefined &&
     checked.ino === now.ino &&
     (checked.size === undefined || checked.size === now.size) &&
     (checked.mtimeNs === undefined || checked.mtimeNs === now.mtimeNs) &&
     (checked.ctimeNs === undefined || checked.ctimeNs === now.ctimeNs)
-  if (isStill) context.seam?.afterLeftoverCheck?.(path)
-  return isStill
+  )
 }
 
 /** Throws the error for a leftover whose name shows another file than the one checked; the file stays untouched and {@link recoverLeftovers} names it. */
@@ -1940,9 +1981,14 @@ function assertLeftoverStill(
   checked: LeftoverLookback,
 ): void {
   if (!isLeftoverStill(context, path, checked))
-    throw new Error(
-      `The private file at ${path} is no longer the file Codebook checked (another program replaced it just now), so Codebook left it untouched.`,
-    )
+    throw leftoverReplacedError(path)
+}
+
+/** The error for a leftover whose name shows another file than the one checked ({@link assertLeftoverStill}, {@link dropPutBackName}); the file stays untouched and {@link recoverLeftovers} names it. */
+function leftoverReplacedError(path: string): Error {
+  return new Error(
+    `The private file at ${path} is no longer the file Codebook checked (another program replaced it just now), so Codebook left it untouched.`,
+  )
 }
 
 /**
@@ -2381,13 +2427,13 @@ function isSharedBytesPutBack(
 
 /**
  * Checks, before it deletes the private name, the bytes of a put-back by bytes alone that stopped after its link; called by {@link dropSecondName}.
- * Both names show one inode, so the unlink loses no data; what must never happen is that the config keeps bytes Codebook did not verify while the private name, the only sign of that, goes. The first look's hash must be the recorded one, a read of the config name and then of the private name must both show that inode and hash, and synchronous looks, the config name first and the private name last, must still see the size and times of those reads.
- * Limit: a write between the last look and the unlink is not seen; no Node primitive unlinks by inode or content.
+ * Both names show one inode, so the unlink loses no data; what must never happen is that the config keeps bytes Codebook did not verify while the private name, the only sign of that, goes. The first look's hash must be the recorded one, a read of the config name and then of the private name must both show that inode and hash, and looks at both names, the config name first and the private name last, must still see the size and times of those reads. The looks wait for the file system without holding the extension host's thread ({@link isNameStill}); the private name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again.
+ * Limit: a write into the shared file after the drop's last read is not seen; no Node primitive unlinks by inode or content.
  * @param context - The run.
  * @param path - The private name.
  * @param copy - What {@link lookAtLeftover} found at it.
  * @param expectedSha256 - The recorded hash.
- * @throws A {@link PutBackCheckError} (handed) naming both names when a hash differs from the record, a read fails or shows another inode, or a name changed after its read; both names stay. What the unlink throws.
+ * @throws A {@link PutBackCheckError} (handed) naming both names when a hash differs from the record, a read fails or shows another inode, or a name changed after its read; both names stay. What {@link dropCheckedName} throws.
  * @example
  * await assertSharedPutBackBytes(context, keptPath, copy, pending.keptSha256)
  */
@@ -2412,10 +2458,10 @@ async function assertSharedPutBackBytes(
     privateLook.sha256 !== expectedSha256
   )
     throw sharedBytesError(context, path)
-  // Synchronous looks follow: the config name first, the private name last, right before that name is dropped.
+  // Looks at both names again, the config name first and the private name last, right before that name is dropped; the drop checks the moved file once more.
   if (
-    !isLeftoverStill(context, context.path, configLook) ||
-    !isLeftoverStill(context, path, privateLook)
+    !(await isNameStill(context, context.path, configLook)) ||
+    !(await isNameStill(context, path, privateLook))
   )
     throw sharedBytesError(context, path)
   await dropCheckedName(context, path, privateLook, () =>
@@ -2664,11 +2710,11 @@ async function putBackDisplaced(
 
 /**
  * Drops the displaced name of a put-back once the file went back to the config name; called by {@link putBackDisplaced}.
- * Synchronous looks come first, the config name before the displaced name, each against what the put-back last read: for a put-back by bytes the inode, size and times of its check's read, because an in-place write after that read keeps the inode; for a put-back by inode the inode alone. The name then goes only through {@link dropCheckedName}, which also checks the bytes of a put-back by bytes again.
+ * Looks come first, the config name before the displaced name, each against what the put-back last read: for a put-back by bytes the inode, size and times of its check's read, because an in-place write after that read keeps the inode; for a put-back by inode the inode alone. They wait for the file system without holding the extension host's thread ({@link isNameStill}): the name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, also the bytes of a put-back by bytes, so no synchronous look right before that step is needed.
  * @param context - The run.
  * @param path - The displaced name; it stays whenever a check fails.
  * @param checked - What the put-back last read: the config as {@link assertLinkedBytes} read it, or only the linked inode.
- * @throws A {@link ConfigChangedError} naming both files when the config name changed; the error of {@link assertLeftoverStill} when the displaced name changed; what {@link dropCheckedName} throws, with a {@link sharedBytesError} once the moved file went back.
+ * @throws A {@link ConfigChangedError} naming both files when the config name changed; a {@link leftoverReplacedError} when the displaced name changed; what {@link dropCheckedName} throws, with a {@link sharedBytesError} once the moved file went back.
  * @example
  * await dropPutBackName(context, keptPath, { ino: copy.ino })
  */
@@ -2677,9 +2723,10 @@ async function dropPutBackName(
   path: string,
   checked: LeftoverLookback & { sha256?: string },
 ): Promise<void> {
-  if (!isLeftoverStill(context, context.path, checked))
+  if (!(await isNameStill(context, context.path, checked)))
     throw configChangedError(context, path)
-  assertLeftoverStill(context, path, checked)
+  if (!(await isNameStill(context, path, checked)))
+    throw leftoverReplacedError(path)
   await dropCheckedName(context, path, checked, () =>
     sharedBytesError(context, path),
   )

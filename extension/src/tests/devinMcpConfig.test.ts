@@ -2679,6 +2679,115 @@ test('A content-only put-back cut short before its check keeps a file that a syn
   assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
 })
 
+test('A content-only put-back cut short before its check keeps the window running while its last look at the private name stalls, and finishes once storage answers', async (context) => {
+  // Value: protects=the shared-bytes check of an interrupted put-back looks at the config name and the private name without holding the extension host's thread, so a stalled disk never freezes the window (its timers and other commands keep running), and once storage answers the check still drops the private name only after both looks, the config's first; fails_when=the look at the private name never reaches the file system's asynchronous call while the refresh runs (it blocked the thread instead), the refresh settles while the look is held, or after the release the private name stays, the config changes or the record stays; no_claim=a real stalled disk (an lstat of the private name held until the test releases it stands for it), and the synchronous looks right before the put-back's link, which this cycle did not add; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name standing for a put-back that ended after its link, and the config module loaded with an lstat that holds every look at the private name until the test releases it
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  const release = defer<void>()
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          if (args[0] === keptPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    'the held look at the private name',
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const result = await attempt
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(existsSync(keptPath), false)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
+test('A put-back keeps the window running while its look at the displaced name before that name goes stalls, and finishes once storage answers', async (context) => {
+  // Value: protects=the looks a put-back takes after its link, before the displaced name goes, wait for the file system without holding the extension host's thread, so a stalled disk never freezes the window, and once storage answers the displaced name goes only after those looks; fails_when=the look at the displaced name never reaches the file system's asynchronous call while the refresh runs, the refresh settles while the look is held, or after the release the config is not the original, the displaced name stays or the record stays; no_claim=a real stalled disk (an lstat of the displaced name held until the test releases it stands for it), and the synchronous look right before the link, which this cycle did not add; seam=a write whose run ended right after its move-aside, so the config name is empty, and the config module loaded with an lstat that holds every look at the displaced name until the test releases it
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  const release = defer<void>()
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          if (args[0] === keptPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    'the held look at the displaced name',
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const result = await attempt
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"a":1}\n')
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('A content-only put-back that stopped right before it deleted the private name leaves a handed, unverified record, and the next run checks the bytes and finishes', async (context) => {
   // Value: protects=a put-back that only the bytes proved records itself as handed and unverified before its link, so a run that stops before the private name is deleted leaves a record older builds never delete from, and the next run of this build checks the shared bytes and finishes the put-back; fails_when=the record at the stop is not handed or not marked unverified, the next run refuses, keeps the private name, changes the config or leaves the record; no_claim=what an older build does with that record (read from its code); seam=hand-written pending record of a put-back by bytes with the config name empty, seam.afterLeftoverCheck reads pending.json at the last look at the private name and throws there (the process ends), and that record is written back afterwards because a process that ended there never rewrote it
   // Arrange
