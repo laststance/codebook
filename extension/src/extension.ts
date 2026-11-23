@@ -1833,15 +1833,16 @@ export function activate(
       disabled: entryWrite.disabled,
     }
   }
-  /** Ends this window's background Devin Desktop work once the run that answered its command early settled, so setup and removal are taken again, and says so in the Output; a run that answered in time ran nothing in the background. @example void run.then(endDevinBackgroundWork, endDevinBackgroundWork) */
-  const endDevinBackgroundWork = (): void => {
-    if (!devinBackgroundWork) return
-    diagnostics.info(devinBackgroundWorkEndedLine(devinBackgroundWork.kind))
+  /** Ends this window's background Devin Desktop work once the run that answered its command early settled, so setup and removal are taken again, and says so in the Output; called by {@link runUntilDevinLapse} for each run that settled, with the lapse that run set last. A run that answered in time ran nothing in the background, and a run never ends the background work of another run (a removal that refused while a setup still goes on under the lock). @param ownLapse - The lapse the settled run set last, or `undefined` when it set none. @example endDevinBackgroundWork(ownLapse) */
+  const endDevinBackgroundWork = (ownLapse: DevinLapse | undefined): void => {
+    // Only the run whose lapse is the current one ends it.
+    if (ownLapse === undefined || devinBackgroundWork !== ownLapse) return
+    diagnostics.info(devinBackgroundWorkEndedLine(ownLapse.kind))
     devinBackgroundWork = undefined
   }
   /**
    * Starts one Devin Desktop setup or removal run and waits for it only until it settles or one of its budgeted steps lapses ({@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}), whichever comes first, so a storage that stops answering never holds the command; called by {@link performDevinSetup} and {@link removeDevinSetup}.
-   * Each lapse names the step the window waits on now in {@link devinBackgroundWork} and in the Output, and only the first ends the command's wait; the run goes on under the setup lock, and once it settled the window takes setup and removal again.
+   * Each lapse names the step the window waits on now in {@link devinBackgroundWork} and in the Output, and only the first ends the command's wait; the run goes on under the setup lock, and once it settled the window takes setup and removal again, unless another run's lapse is the current one by then.
    * @param start - Starts the run with the callback its budgeted steps call on a lapse.
    * @returns `{ value }` when the run ended first; `{ lapse, run }` when a step lapsed first, with the run still going on.
    * @throws What the run threw when it ended first.
@@ -1854,18 +1855,22 @@ export function activate(
     const lapsed = new Promise<DevinLapse>((resolve) => {
       announceLapse = resolve
     })
+    // The lapse this run set last, a copy of its own, so the run's end clears that one and never one another run set.
+    let ownLapse: DevinLapse | undefined
     const run = start((lapse) => {
-      devinBackgroundWork = lapse
+      ownLapse = { ...lapse }
+      devinBackgroundWork = ownLapse
       diagnostics.info(devinStorageWaitSentence(lapse.kind, lapse.step))
       announceLapse(lapse)
     })
-    void run.then(endDevinBackgroundWork, endDevinBackgroundWork)
+    const endOwnBackgroundWork = (): void => endDevinBackgroundWork(ownLapse)
+    void run.then(endOwnBackgroundWork, endOwnBackgroundWork)
     return await Promise.race([
       run.then((value) => ({ value })),
       lapsed.then((lapse) => ({ lapse, run })),
     ])
   }
-  /** Refuses a Devin Desktop setup or removal at once while this window still runs one whose command answered because storage did not; called first by {@link setupDevinChat}, and by {@link removeDevinSetup} before its question. @param command - The title of the command that refuses, which the sentence asks to run again. @throws With {@link devinBackgroundWorkSentence}. @example assertNoDevinBackgroundWork(SET_UP_AI_CHAT_COMMAND) */
+  /** Refuses a Devin Desktop setup or removal at once while this window still runs one whose command answered because storage did not; called first by {@link setupDevinChat}, and by {@link removeDevinSetup} before its question, after it, and once a setup it waited for answered. @param command - The title of the command that refuses, which the sentence asks to run again. @throws With {@link devinBackgroundWorkSentence}. @example assertNoDevinBackgroundWork(SET_UP_AI_CHAT_COMMAND) */
   const assertNoDevinBackgroundWork = (command: string): void => {
     if (devinBackgroundWork)
       throw new Error(
@@ -2091,13 +2096,17 @@ export function activate(
     )
     if (choice !== DEVIN_REMOVAL_ACTION) return
     if (devinRemoval) return devinRemoval
+    // A step of this window's setup or take-back may have waited its budget on storage while the question was open: that work goes on under the lock.
+    assertNoDevinBackgroundWork(REMOVE_DEVIN_SETUP_COMMAND)
     const attempt = (async () => {
       devinRemoving = true
       const progress: DevinRemovalProgress = {}
       const answer = await runUntilDevinLapse(async (onLapse) => {
         try {
-          // A setup still running would write the skill and the entry again after they are removed.
+          // A setup still running would write the skill and the entry again after they are removed. Its command answers once its run settled or one of its steps waited its budget on storage, whichever came first.
           await devinSetup?.catch(() => {})
+          // A setup that answered because its step waits on storage still holds the lock: the removal refuses as at its start, and that setup's background state stays ({@link endDevinBackgroundWork}).
+          assertNoDevinBackgroundWork(REMOVE_DEVIN_SETUP_COMMAND)
           return await underDevinLock(() =>
             removeDevinSetupLocked(progress, (step) =>
               onLapse({ kind: 'removal', step }),
