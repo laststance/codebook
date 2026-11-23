@@ -2246,6 +2246,42 @@ test('A retry after a removal that could not record its completion still reports
   assert.equal(existsSync(pendingPath), false)
 })
 
+test('A removal retry answers removed when a put-back by bytes left the earlier removal’s record handed and unverified, as it does for that record without the mark', async (context) => {
+  // Value: protects=the removal reads a record that a put-back by bytes marked handed and unverified as the removal in progress it is, as recovery does, so a retry that finds the config gone and the receipt standing answers removed and the window is offered its reload; fails_when=the retry answers not-managed, or the receipt or the record stays; no_claim=how the record got its mark (hand-written here: a put-back whose write-back failed, after the learner deleted the private file the refusal named), and what an older build answers; seam=a receipt of another generation that stands, a removal's pending record (no entry hash) with phase handed and bytesUnverified whose displaced file is gone, and no file at the config name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  await writeRecordFile(storage, 'receipt.json', {
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    installed: true,
+    generation: 'c0ffee00-0000-4000-8000-000000000365',
+    installationId: 'c0ffee00-0000-4000-8000-000000000366',
+    config: { ino: 1 },
+  })
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'handed',
+    bytesUnverified: true,
+    keptName: basename(keptPath),
+    keptIno: 1,
+    keptSha256: sha256('{"mcpServers":{"alpha":{"command":"a"}}}\n'),
+  })
+
+  // Act
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'receipt.json')), false)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('Recovery puts a displaced file with another inode but the recorded bytes back when the config name is still empty and deletes nothing', async (context) => {
   // Value: protects=a displaced file that still holds the recorded bytes is not lost when its inode changed and the run ended before the comparison; fails_when=the file with another inode but the recorded bytes is deleted, left aside or refused while the config name is empty; why_new=recovery refused every file whose inode differed from the record; seam=hand-written pending record whose recorded inode is not the file's, with no config at the config name
   // Arrange

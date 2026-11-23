@@ -2805,16 +2805,20 @@ async function assertLinkedBytes(
 }
 
 /**
- * Tells whether a pending record is that of a removal of this config that took the entry out and never recorded its completion; called by {@link settlePending}.
+ * Tells whether a pending record is that of a removal of this config that took the entry out and never recorded its completion; called by {@link settlePending} and {@link hasUnrecordedRemoval}.
+ * The phase is the one recovery reads ({@link leftoverPhaseOf}): a removal's record that a put-back by bytes marked handed and unverified ({@link Pending.bytesUnverified}) is still that removal in progress, so both readers answer for it as for the record without the mark.
  * @param context - The run.
  * @param pending - The pending record.
- * @returns `true` for a record of this config with no entry hash (a removal) and no phase.
+ * @returns `true` for a record of this config with no entry hash (a removal) whose phase, as recovery reads it, is absent; `false` for a write, a finished or handed record, and a record of another config.
+ * @example
+ * isUnrecordedRemoval(context, { targetPath: context.path, createdFile: false, phase: 'handed', bytesUnverified: true }) // => true
+ * isUnrecordedRemoval(context, { targetPath: context.path, createdFile: false, phase: 'completed' })                     // => false
  */
 function isUnrecordedRemoval(context: Context, pending: Pending): boolean {
   return (
     pending.targetPath === context.path &&
     pending.entrySha256 === undefined &&
-    pending.phase === undefined
+    leftoverPhaseOf(pending) === undefined
   )
 }
 
@@ -4300,7 +4304,7 @@ export type DevinMcpRemovalOptions = {
 /**
  * Tells whether the pending record is that of a removal that was started and never recorded as completed, which a retry finds after the entry was already taken out ({@link DevinMcpUnrecordedRemovalError}); called by {@link removeManagedDevinMcpEntry} before {@link inspect} retires the record.
  * @param context - The run.
- * @returns `true` for a record of this config that holds no entry hash (a removal) and no phase (never completed).
+ * @returns `true` for a record of this config that holds no entry hash (a removal) and no phase as recovery reads it (never completed; {@link isUnrecordedRemoval}).
  * @throws The refusal of {@link readRecord} for a record that cannot be read.
  */
 async function hasUnrecordedRemoval(context: Context): Promise<boolean> {
