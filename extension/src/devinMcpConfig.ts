@@ -1238,7 +1238,7 @@ type Replacement = {
  * @param temporary - The staged file.
  * @param staleReceipt - The receipt of an entry that is gone, which a first setup retires; undefined for an update, a removal, a rollback and a first setup without a receipt.
  * @param journal - The publish record as written; its generation names the receipt's private name ({@link retiredReceiptPathOf}).
- * @throws A {@link staleReceiptRefusal} when that receipt cannot be moved aside, a {@link changedRecordRefusal} when another receipt stood at its name by then (nothing was linked); what the link throws, once the receipt is back. An {@link UnrestoredReceiptError} carrying that failure when the receipt could not go back; the publish record is then marked {@link Pending.notLinked}, best effort, so the next run puts the receipt back whatever inode the config shows.
+ * @throws A {@link staleReceiptRefusal} when that receipt cannot be moved aside, a {@link changedRecordRefusal} when another receipt stood at its name by then (nothing was linked); what the link throws, once the receipt is back. An {@link UnrestoredReceiptError} carrying that failure when the receipt could not go back; the publish record is then marked {@link Pending.notLinked}, best effort, so the next run puts the receipt back whatever inode the config shows. When that mark cannot be written, the error promises no put-back: the next run cannot tell that nothing was linked and decides again ({@link retiredReceiptFateOf}).
  * @example
  * await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal) // the config stands and receipt.json is gone
  */
@@ -1251,13 +1251,17 @@ async function linkWithoutStaleReceipt(
   try {
     await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal)
   } catch (error) {
+    if (!(error instanceof UnrestoredReceiptError)) throw error
     // Nothing of this setup was linked and the old record waits under its private name: the record says so, so the next run puts it back whatever inode the config shows.
-    if (error instanceof UnrestoredReceiptError)
-      await writeRecord(context, context.pendingPath, {
-        ...journal,
-        notLinked: true,
-      } satisfies Pending).catch(() => undefined)
-    throw error
+    const isMarked = await writeRecord(context, context.pendingPath, {
+      ...journal,
+      notLinked: true,
+    } satisfies Pending).then(
+      () => true,
+      () => false,
+    )
+    // Without that mark the next run cannot tell, so the sentence promises no put-back.
+    throw isMarked ? error : error.withoutMark(context)
   }
 }
 
@@ -1292,53 +1296,85 @@ async function linkRetiringStaleReceipt(
   if (retiredPath) await unlink(retiredPath).catch(() => undefined)
 }
 
-/** Why a put-back that found `receipt.json` taken kept the moved record ({@link standingReceiptOf}): `other` when what stands there is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell. */
-type UnrestoredStanding = 'other' | 'foreign' | 'unread'
+/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; or `moved-unread` when the moved record itself could not be read. */
+type UnrestoredStanding = 'other' | 'foreign' | 'unread' | 'moved-unread'
 
 /**
- * Thrown by {@link putBackRetiredReceipt} when a receipt a first setup moved aside could not go back to `receipt.json`: its text names the private file and the way out, and it carries what made the put-back necessary (`failure`: the link's failure or a {@link changedRecordRefusal}), which the caller words as before and puts in front ({@link withUnrestoredNote}). The callers keep the publish record that names the private file ({@link Pending.retiresReceipt}), so the next run puts the receipt back ({@link settleRetiredReceipt}).
+ * Thrown by {@link putBackRetiredReceipt} when a receipt a first setup moved aside could not go back to `receipt.json`, and by {@link retiredReceiptFateOf} when that receipt could not be read: its text names the private file and the way out, and it carries what made the put-back necessary (`failure`: the link's failure or a {@link changedRecordRefusal}), which the caller words as before and puts in front ({@link withUnrestoredNote}). The callers keep the publish record that names the private file ({@link Pending.retiresReceipt}), so the next run puts the receipt back ({@link settleRetiredReceipt}), or decides again when the record could not be marked {@link Pending.notLinked} ({@link UnrestoredReceiptError.withoutMark}).
  */
 class UnrestoredReceiptError extends Error {
   constructor(
     context: Context,
-    retiredPath: string,
+    readonly retiredPath: string,
     readonly failure: unknown,
     cause: unknown,
-    standing?: UnrestoredStanding,
+    readonly standing?: UnrestoredStanding,
+    isMarked = true,
   ) {
-    super(unrestoredSentence(context, retiredPath, standing), { cause })
+    super(unrestoredSentence(context, retiredPath, standing, isMarked), {
+      cause,
+    })
+  }
+
+  /**
+   * Gives the same error worded for a publish record that could not be marked {@link Pending.notLinked}; called by {@link linkWithoutStaleReceipt} when that write failed.
+   * @param context - The run; gives the paths and the command to run again.
+   * @returns An error with the same private file, failure, cause and standing, whose sentence promises no put-back.
+   * @example
+   * throw error.withoutMark(context) // '… and it could not note in its publish record at …/pending.json that nothing of this setup was linked, so it kept both files and the next run decides again whether that record goes back; …'
+   */
+  withoutMark(context: Context): UnrestoredReceiptError {
+    return new UnrestoredReceiptError(
+      context,
+      this.retiredPath,
+      this.failure,
+      this.cause,
+      this.standing,
+      false,
+    )
   }
 }
 
 /**
  * Words why a receipt a first setup moved aside could not go back, with the way out that fits what stood at its name; called only by {@link UnrestoredReceiptError}.
- * @param context - The run; gives the config's and the receipt's paths and the command to run again.
+ * @param context - The run; gives the config's, the receipt's and the publish record's paths and the command to run again.
  * @param retiredPath - The private name that holds the old record.
- * @param standing - What stood at `receipt.json` when the link found it taken ({@link standingReceiptOf}); undefined when the link failed otherwise.
+ * @param standing - What stood at `receipt.json` when the link found it taken ({@link standingReceiptOf}), or `moved-unread` when the old record could not be read; undefined when the link failed otherwise.
+ * @param isMarked - Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}), or the error comes from a later run; `false` only from {@link UnrestoredReceiptError.withoutMark}, and then no sentence promises that a later run puts the record back, because that run cannot tell and decides again.
  * @returns
- * - Without `standing`: the sentence that the next run puts the record back
- * - `other`: the sentence that asks the learner to move what stands there to another folder
+ * - Without `standing`: the sentence that the next run puts the record back; unmarked, that it decides again whether it goes back
+ * - `other`: the sentence that asks the learner to move what stands there to another folder, after which that run puts the old record back (unmarked: decides again)
  * - `foreign`: the sentence that asks the learner to move the moved file, which is no record of this config, to another folder, and never what stands at `receipt.json`
  * - `unread`: the sentence that Codebook kept both files and looks again, which advises no removal
+ * - `moved-unread`: the sentence that names the private file Codebook could not read and asks to delete neither record
  * @example
- * unrestoredSentence(context, retiredPath, 'other') // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
+ * unrestoredSentence(context, retiredPath, 'other', true) // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
  */
 function unrestoredSentence(
-  { path, receiptPath, retry }: Context,
+  { path, receiptPath, pendingPath, retry }: Context,
   retiredPath: string,
   standing: UnrestoredStanding | undefined,
+  isMarked: boolean,
 ): string {
   // The moved file is no record of this config, so it is not called Codebook's old record, and the record of this config that stands stays where it is.
   if (standing === 'foreign')
     return `Codebook moved a file that is no record of Devin Desktop's MCP config at ${path} from ${receiptPath} to ${retiredPath} and kept it there, because its record of that config stands at ${receiptPath} again; move that file to another folder, ${retry}.`
+  // The private file failed, not receipt.json: a failed read says nothing about the record, so both records stay and none is to be deleted.
+  if (standing === 'moved-unread')
+    return `Codebook could not read its own old record of a setup whose entry is gone, which it had moved from ${receiptPath} to ${retiredPath}, so it kept that file and the publish record at ${pendingPath} and the next run reads it again; delete neither, make that file readable by you if it is not, ${retry}.`
   const lead = `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back`
+  const unmarked = `it could not note in its publish record at ${pendingPath} that nothing of this setup was linked`
   // A folder, another file or a record of another entry: moving it away frees the name without deleting anything.
   if (standing === 'other')
-    return `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}; move it to another folder, ${retry}, and that run puts the old record back.`
+    return isMarked
+      ? `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}; move it to another folder, ${retry}, and that run puts the old record back.`
+      : `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}, and ${unmarked}; move what stands there to another folder, ${retry}, and that run decides again whether the old record goes back.`
   // Nothing is known about what stands there, so nothing is to be moved or removed.
   if (standing === 'unread')
     return `${lead}, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept both files, so the next run looks again; make that file readable by you if it is not, ${retry}.`
-  return `${lead}, so the next run puts it back; if that fails too, move that file back by hand, ${retry}.`
+  return isMarked
+    ? `${lead}, so the next run puts it back; if that fails too, move that file back by hand, ${retry}.`
+    : `${lead}, and ${unmarked}, so it kept both files and the next run decides again whether that record goes back; ${retry}.`
 }
 
 /**
@@ -3645,11 +3681,20 @@ async function readRecordKind(
   path: string,
 ): Promise<Receipt | undefined | 'other' | 'unread'> {
   return readRecord(path, receiptSchema, context.retry, context.seam).catch(
-    (error: unknown) =>
-      error instanceof Error && codeOf(error.cause) !== undefined
-        ? 'unread'
-        : 'other',
+    (error: unknown) => (isFailedRead(error) ? 'unread' : 'other'),
   )
+}
+
+/**
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} threw; called by {@link readRecordKind} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
+ * @param error - What {@link readRecord} threw.
+ * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link, no regular file, too many bytes or bytes that are no record.
+ * @example
+ * isFailedRead(new Error('…', { cause: Object.assign(new Error('i/o error'), { code: 'EIO' }) })) // => true
+ * isFailedRead(new Error('… is unreadable …'))                                                   // => false
+ */
+function isFailedRead(error: unknown): boolean {
+  return error instanceof Error && codeOf(error.cause) !== undefined
 }
 
 /**
@@ -3739,7 +3784,7 @@ type RetiredReceiptFate = 'put-back' | 'drop' | 'undecided'
  * - `drop` when the config holds the setup's own entry and the old record is a receipt of this config that does not own it (another bridge path, as after an update moved Codebook's folder)
  * - `undecided` when the config holds the setup's own entry, the old record owns it too and nothing stands at `receipt.json`
  * - `put-back` otherwise: the config holds no entry of that setup, the old record is gone or of another config, or something stands at `receipt.json`, which the put-back's own look settles ({@link standingReceiptOf})
- * @throws What {@link readRecord} throws when the old record cannot be read, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
+ * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the old record could not be read (it names that file and asks to delete neither record), what {@link readRecord} throws when its bytes are no record, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
  * @example
  * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'undecided' after a setup that stopped after its link and a config saved again with the same entry
  * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'drop' when that setup wrote another bridge path than the old record covers
@@ -3760,7 +3805,18 @@ async function retiredReceiptFateOf(
     receiptSchema,
     context.retry,
     context.seam,
-  )
+  ).catch((error: unknown) => {
+    // A failed read says nothing about the record: both records stay, and no sentence asks to delete one. Bytes that are no record keep readRecord's own sentence.
+    if (isFailedRead(error))
+      throw new UnrestoredReceiptError(
+        context,
+        retiredPath,
+        undefined,
+        error,
+        'moved-unread',
+      )
+    throw error
+  })
   // Gone, or no record of this config: the put-back settles it as before.
   if (retired?.targetPath !== context.path) return 'put-back'
   // That setup's publish stands and the old record owns none of it.

@@ -8288,7 +8288,7 @@ test("A first setup with another bridge path that wrote its own record but could
 })
 
 test("A refresh that cannot read the old record's private file once keeps both records, and the next refresh still refuses", async (context) => {
-  // Value: protects=a failed read of the old record decides nothing: no put-back, both records stay; fails_when=receipt.json appears, a record is gone, or a refresh answers current; no_claim=a real I/O error (seam.afterStat throws once for the private file)
+  // Value: protects=a failed read of the old record decides nothing: no put-back, both records stay, and the refusal names the private file and asks to keep both records, never to delete one; fails_when=receipt.json appears, a record is gone, a refresh answers current, or the first refusal advises removing the record or names another file; no_claim=a real I/O error (seam.afterStat throws once for the private file), a record whose bytes are invalid (that keeps readRecord's own sentence)
   // Arrange
   const {
     home,
@@ -8329,7 +8329,7 @@ test("A refresh that cannot read the old record's private file once keeps both r
   assert.equal(hasFailed, true)
   assert.equal(
     firstError instanceof Error ? firstError.message : firstError,
-    `Codebook's Devin Desktop MCP record at ${retiredPath} is a link, no regular file, larger than 16384 bytes or not readable, so the config was left untouched; remove that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook could not read its own old record of a setup whose entry is gone, which it had moved from ${receiptPath} to ${retiredPath}, so it kept that file and the publish record at ${pendingPath} and the next run reads it again; delete neither, make that file readable by you if it is not, then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(isReceiptLeftAfterFirst, false)
   assert.deepEqual(recordsAfterFirst, ['pending.json', retiredName])
@@ -8339,6 +8339,26 @@ test("A refresh that cannot read the old record's private file once keeps both r
   )
   assert.equal(isReceiptLeftAfterSecond, false)
   assert.deepEqual(recordsAfterSecond, ['pending.json', retiredName])
+})
+
+test("A refresh after the old record's private file was deleted by hand never keeps the stopped first setup's entry as installed", async (context) => {
+  // Value: protects=a learner who deletes the old record's private file anyway (against the refusal's advice) never gets the stopped first setup's entry adopted or the old installation back: the publish record of a first setup is taken back, never adopted; fails_when=the refresh answers current or changed, any receipt stands, or a record stays; no_claim=a real learner (rmSync deletes the private file), a real process end (seam.afterPublish throws), why the private name's unlink failed (unlink stub EBUSY), a real sync tool (swapFile); guard of the first-setup take-back that already holds at the unfixed source, so it shows no red run
+  // Arrange
+  const { home, storage, configPath, receiptPath, retiredPath, configText } =
+    await arrangeResavedAfterStoppedFirstSetup(context)
+  rmSync(retiredPath)
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(result, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(await recordsIn(storage), [])
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
 test('A refresh whose first look finds no config while the config is back at its read decides on that read and refuses', async (context) => {
@@ -8455,7 +8475,7 @@ test('A first setup that linked nothing gets its old record back even when the r
 })
 
 test('A first setup whose old record could not go back and whose mark could not be written keeps both records and refuses at the next run instead of guessing', async (context) => {
-  // Value: protects=an unmarked record whose old receipt owns the entry the config holds is preserved and refused, never guessed either way; fails_when=the next run puts the old record back or deletes either record; no_claim=a real full disk (seam fails the second pending.json write)
+  // Value: protects=an unmarked record whose old receipt owns the entry the config holds is preserved and refused, never guessed either way, and the setup that could not write the mark promises no put-back and no move by hand; fails_when=the first refusal promises that the next run puts the old record back or asks to move it back by hand, the next run puts the old record back or deletes either record; no_claim=a real full disk (seam fails the second pending.json write)
   // Arrange
   const { home, storage, configPath, receiptPath, moveBack } =
     await arrangeMovedAwayConfig(context)
@@ -8507,7 +8527,7 @@ test('A first setup whose old record could not go back and whose mark could not 
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, so the next run puts it back; if that fails too, move that file back by hand, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, and it could not note in its publish record at ${pendingPath} that nothing of this setup was linked, so it kept both files and the next run decides again whether that record goes back; then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(recordAfterRefusal.notLinked, undefined)
   assert.equal(
@@ -8516,6 +8536,78 @@ test('A first setup whose old record could not go back and whose mark could not 
   )
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
   assert.equal(existsSync(receiptPath), false)
+})
+
+test("A first setup whose old record's name was taken by a folder and whose mark could not be written promises no put-back, and the next run refuses instead of guessing", async (context) => {
+  // Value: protects=a setup that could not write the mark that nothing was linked never promises that the run after the folder is moved away puts the old record back, because that run cannot tell and refuses; fails_when=the refusal promises the put-back, either record or the publish record is gone, or the next setup after the folder was moved away puts the old record back or answers anything but the undecided refusal; no_claim=a real full disk (seam fails the second pending.json write), a real sync tool (the link stub makes the folder and moves the old config back right before the config link)
+  // Arrange
+  const { home, storage, configPath, receiptPath, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const makingFolder = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            mkdirSync(receiptPath)
+            moveBack()
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let pendingWrites = 0
+
+  // Act
+  const setupError = await makingFolder
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path !== pendingPath) return
+        pendingWrites += 1
+        // The second write of pending.json is the mark that nothing was linked.
+        if (pendingWrites === 2) throw noSpaceLeft()
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const recordAfterRefusal = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(recordAfterRefusal.generation)}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  const recordsAfterRefusal = await recordsIn(storage)
+  // The way out the refusal names: what stands at receipt.json goes to another folder.
+  rmSync(receiptPath, { recursive: true })
+  const nextError = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because something that is not Codebook's record of that entry stands at ${receiptPath}, and it could not note in its publish record at ${pendingPath} that nothing of this setup was linked; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.`,
+  )
+  assert.equal(recordAfterRefusal.notLinked, undefined)
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    `Codebook found a "codebook" entry in Devin Desktop's MCP config at ${configPath} that a setup which ended early may have written, and its own old record at ${retiredPath} covers that same entry, so it cannot tell which setup the entry belongs to. Codebook changed nothing and kept both records (${pendingPath}, ${retiredPath}); remove that entry by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
 })
 
 test('A removal retry after a first setup that could not write its own record still answers removed', async (context) => {
