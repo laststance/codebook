@@ -3680,10 +3680,10 @@ function unrestoredStandingOf(
  * @returns
  * - `covers` when the moved record and a record that stands there are both records of this config with the same entry and the name still shows what was read, or the moved record is gone
  * - `absent` when the name is empty, or changed between the look and the check
- * - `foreign` when a record of this config stands there and the moved file is a record of another config: neither goes, and the moved one never replaces it
+ * - `foreign` when a record of this config stands there and the moved file, read in full, is no record (no regular file, too many bytes or bytes of another shape) or a record of another config: neither goes, and the moved one never replaces it
  * - `other` for a folder, a link or another kind of file, bytes that are no record, or a record of another config or entry
  * - `unread` when a look at `receipt.json` or the read of what stands there failed
- * - `moved-unread` when the moved record under its private name could not be read as a receipt
+ * - `moved-unread` when the look at the moved record's private name or its read failed (an I/O failure, never bytes of another shape)
  * - `moved-changed` when the private name no longer shows the file that was read there: what the read compared is not what an unlink would delete
  * @example
  * await standingReceiptOf(context, retiredPath) // => 'other' while a folder stands at receipt.json
@@ -3697,7 +3697,8 @@ async function standingReceiptOf(
   const { standing, moved } = records
   // Only what stands there decides while it is no record of this config: moving it away lets the moved file go back.
   if (standing.targetPath !== context.path) return 'other'
-  if (moved.targetPath !== context.path) return 'foreign'
+  // A moved file read as bytes that are no record, or as a record of another config: that file is the one to move.
+  if (moved === 'other' || moved.targetPath !== context.path) return 'foreign'
   return standing.entrySha256 === moved.entrySha256 ? 'covers' : 'other'
 }
 
@@ -3712,7 +3713,7 @@ async function standingReceiptOf(
 async function readStandingReceipt(
   context: Context,
   retiredPath: string,
-): Promise<StandingReceipt | { standing: Receipt; moved: Receipt }> {
+): Promise<StandingReceipt | { standing: Receipt; moved: Receipt | 'other' }> {
   const standing = await readLookedRecord(context, context.receiptPath)
   // A name that is empty, or empty again by the read, counts as empty.
   if (standing === undefined) return 'absent'
@@ -3721,8 +3722,8 @@ async function readStandingReceipt(
   const moved = await readLookedRecord(context, retiredPath)
   // Nothing is left under the private name to keep.
   if (moved === undefined) return 'covers'
-  // The private file failed, not receipt.json: its own sentence names that file.
-  if (moved === 'unread' || moved.read === 'other') return 'moved-unread'
+  // The private file could not be read, not receipt.json: its own sentence names that file. One that was read and holds no record goes on, so the comparison can name it.
+  if (moved === 'unread') return 'moved-unread'
   const stillness = await stillnessOf(
     context,
     retiredPath,

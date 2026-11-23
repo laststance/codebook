@@ -8517,6 +8517,87 @@ test("A setup that moved aside a record of another config while a record of this
   )
 })
 
+test("A setup that moved aside a readable file of another shape while a record of this config appeared at the old record's name names the moved file as the one to move, and the next setup runs once it is moved away", async (context) => {
+  // Value: protects=a moved file that Codebook read and verified as no record (valid JSON of another shape) is kept apart from one it could not read: the refusal names that moved file as the one to move to another folder, keeps the record of this config at receipt.json, and the way out ends the refusals; fails_when=the refusal asks to make the file readable or advises moving what stands at receipt.json, the moved file or the record of this config is gone or changed, the publish record is gone, or the next setup after the moved file was moved away answers anything but installed; no_claim=a real sync or backup tool (seam.afterCheck saves the file of another shape at receipt.json right before the move aside, and the config module is loaded with a link that saves the record of this config at receipt.json right before the put-back's link)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedAwayPath = join(home, 'moved-file.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptBefore = await readRecordFile(storage, 'receipt.json')
+  rmSync(configPath)
+  const otherShape = { note: 'a settings file of another program' }
+  const thisConfigReceipt = {
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000000151',
+  }
+  let hasSavedThisConfig = false
+  const savingThisConfig = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath && !hasSavedThisConfig) {
+            hasSavedThisConfig = true
+            writeFileSync(receiptPath, JSON.stringify(thisConfigReceipt))
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await savingThisConfig
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: () => writeFileSync(receiptPath, JSON.stringify(otherShape)),
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const generation = existsSync(pendingPath)
+    ? String((await readRecordFile(storage, 'pending.json')).generation)
+    : 'absent'
+  const retiredName = `receipt.json.${generation}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  const recordsAfterRefusal = await recordsIn(storage)
+  const movedAfterRefusal = existsSync(retiredPath)
+    ? JSON.parse(readFileSync(retiredPath, 'utf8'))
+    : 'absent'
+  const standingAfterRefusal = await readRecordFile(storage, 'receipt.json')
+  // The way out the refusal names: the moved file goes to another folder.
+  if (existsSync(retiredPath)) renameSync(retiredPath, movedAwayPath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasSavedThisConfig, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it changed nothing in Devin Desktop's MCP config at ${configPath}; then run Codebook: Set Up AI Chat again. Codebook moved a file that is no record of Devin Desktop's MCP config at ${configPath} from ${receiptPath} to ${retiredPath} and kept it there, because its record of that config stands at ${receiptPath} again; move that file to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.deepEqual(movedAfterRefusal, otherShape)
+  assert.deepEqual(standingAfterRefusal, thisConfigReceipt)
+  assert.equal(next, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(movedAwayPath, 'utf8')), otherShape)
+})
+
 test('A setup whose old record changed right before it moves that record aside puts the changed record back and changes nothing', async (context) => {
   // Value: protects=a first setup takes away only the record it read: a record saved at that name since its read (a sync or backup tool restoring one) goes back where it was, nothing is published, and the learner is told what happened and how to go on; fails_when=the setup publishes its entry, deletes or changes the changed record, leaves a config, a pending record or a private name, or rejects with another sentence; no_claim=a real sync or backup tool (seam.afterCheck saves the changed record right before the receipt is moved aside, in its place)
   // Arrange
