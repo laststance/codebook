@@ -116,6 +116,53 @@ test('a Devin Desktop setup whose setup lock storage never hands over answers 15
   )
 })
 
+// Value: protects=the activation refresh's shorter acquisition budget bounds a setup lock taking that storage never hands over (or that this window's own earlier taking still holds), so the refresh refuses at that budget and the window's server still starts while the Devin bridge waits (Cycle 0146 /ship pass 2, red-team 2); fails_when=the budget the caller passes is ignored and the refresh waits the setup's 15 seconds; no_claim=another window's held lock (devinChatOnboarding covers the refresh's shorter wait for it); seam=a stand-in of the storage lock whose taking waits until the test lets it go
+test('a Devin Desktop setup lock taking that storage never hands over answers at the shorter budget its caller passes', async () => {
+  // Arrange
+  const storage = await devinSetupLockOverStalledStorage({ acquisition: true })
+  let stepRuns = 0
+  const calledAtMs = performance.now()
+
+  // Act
+  const answer = await within(
+    storage
+      .withDevinSetupLock(
+        '/storage/devin-setup',
+        async () => {
+          stepRuns += 1
+        },
+        undefined,
+        { acquireBudgetMs: 5_000 },
+      )
+      .then(
+        () => 'ran',
+        (error: Error) => error.message,
+      ),
+    7_000,
+  )
+  const answeredAfterMs = performance.now() - calledAtMs
+  storage.letAcquisitionGo()
+  await waitUntil(
+    () => storage.storageLockEvents.includes('lock released'),
+    'the release of the lock taken after the answer',
+    2_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { answer, stepRuns },
+    {
+      answer:
+        'Codebook could not take its Devin Desktop setup lock because storage does not answer or this window is still finishing an earlier setup or removal. Try again in a moment, or reload the window.',
+      stepRuns: 0,
+    },
+  )
+  assert.ok(
+    answeredAfterMs >= 4_900 && answeredAfterMs < 7_000,
+    `the refusal came ${Math.round(answeredAfterMs)} ms after the call, not at the 5-second budget the caller passed`,
+  )
+})
+
 // Value: protects=a Devin Desktop setup or removal run again after the 15-second answer of a setup lock taking that still waits on storage starts no second taking while the first one waits, and once storage answers it takes the lock after the first taking was released and runs its steps once; fails_when=each try of the command starts another taking on the stalled disk (each creates the folder and reads its real path before the lock's own queue), so four tries hold the four threads of Node's file pool and every other file read of the window stops (Cycle 0146 /ship pass 1, Codex structured review P1 on withDevinSetupLock.ts:74); why_new=that finding; seam=a stand-in of the storage lock whose taking waits until the test lets it go and that counts the takings started; no_claim=a real stalled disk and Node's file pool itself, another window's takings, which its own process starts, and two lock folders, which never wait for each other
 test('a Devin Desktop setup run again while the first setup lock taking still waits on storage starts no second taking and runs its steps once storage answers', async () => {
   // Arrange

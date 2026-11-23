@@ -1716,6 +1716,50 @@ test("a Devin Desktop window's activation refresh waits for another window's set
   }
 })
 
+// Value: protects=a Devin Desktop window that loads on a set-up workspace while another window holds the setup lock for about 14 seconds (a long setup, or a take-back on slow storage) gives up on that lock within seconds, says so in the Output and publishes its server's descriptor within 6 seconds of its load, well inside the 15 seconds the Devin bridge waits for it (Cycle 0146 /ship pass 2, red-team 2); fails_when=the activation refresh waits a setup's 7 to 14 seconds (up to 15) for the lock before the server starts, so the bridge Devin Local started at the window load gives up and the window's chat has no Codebook until a reload; no_claim=the bridge's own wait (its tests) and a lock this window's own take-back holds while storage stalls (the same acquisition budget bounds it, not run here); a separate Node process holds the real setup lock
+test("a Devin Desktop window's activation refresh gives up within seconds on a setup lock another window holds and still publishes its descriptor", async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  const holder = await holdSetupLockInOtherProcess(context, storageDirectory)
+  try {
+    const loadedAtMs = performance.now()
+    // Act
+    const window = await devinWindow(context, {
+      storageDirectory,
+      savedSetup: true,
+    })
+    try {
+      // The other window keeps the lock for up to 14 seconds, past the bridge's wait: only a refresh that gives up first publishes in time.
+      const publishedAtMs = await waitUntil(
+        async () =>
+          (await window.descriptorReadable()) ? performance.now() : undefined,
+        "the reconnected server's descriptor while the other window holds the setup lock",
+        14_000,
+      )
+      await window.whenReconnected()
+      // Assert
+      const publishedAfterMs = publishedAtMs - loadedAtMs
+      assert.ok(
+        publishedAfterMs < 6_000,
+        `the descriptor was published ${Math.round(publishedAfterMs)} ms after the window loaded`,
+      )
+      assert.deepEqual(window.steps, [
+        'verify Devin skill',
+        'resolve Node',
+        'start server',
+      ])
+      assert.deepEqual(window.outputLines, [
+        'Codebook did not refresh its Devin Desktop MCP entry: Another Codebook window is changing the Devin Desktop setup. Try again in a moment.',
+      ])
+    } finally {
+      await window.loaded.deactivate()
+    }
+  } finally {
+    await holder.release()
+  }
+})
+
 // Value: protects=a removal from a second Devin Desktop window of the same extension host queues behind a setup that is deploying the skill, so it never lands between that setup's skill deployment and entry write; fails_when=the removal runs while the other window's setup is mid-way and leaves an entry with no skill; why_new=review finding C1 (one lock for setup and removal), renamed in Cycle 0143 /ship pass 2 because both windows run in one process here and the cross-process wait has its own tests below; seam=two windows on one storage folder, a held skill deployment
 test('a removal from a second Devin Desktop window in the same extension host queues behind a running setup', async (context) => {
   // Arrange

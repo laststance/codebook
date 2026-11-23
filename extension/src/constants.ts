@@ -530,6 +530,10 @@ export const DEVIN_SETUP_LOCK_RETRY_DELAY_MS = 100
 export const DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS = 15_000
 /** The longest a Devin Desktop setup or removal waits for its setup lock's release once its steps ended, before it answers with their result and lets the release go on; this window's next hold of the lock still waits for that release. */
 export const DEVIN_SETUP_LOCK_RELEASE_MS = 3_000
+/** How often the activation refresh of a Devin Desktop window checks the setup lock while another window holds it: with {@link DEVIN_SETUP_LOCK_RETRY_DELAY_MS} and its random share, a wait of about two to four seconds (1.9 to 3.8 s), not the ten of a setup, so the window's server still starts well inside the 15 seconds the Devin bridge waits for its descriptor. */
+export const DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS = 20
+/** The longest the activation refresh of a Devin Desktop window waits, from its call, until it holds the setup lock: above its wait for another window's lock ({@link DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS}), so a held lock is refused with the held sentence, and, with the server start's receipts read ({@link DEVIN_MARK_READ_RETRY_BUDGET_MS}), well inside the 15 seconds the Devin bridge waits for the window's descriptor. */
+export const DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS = 5_000
 /** How long a forward step of a Devin Desktop setup (the skill's deployment, the entry's write, the final skill check), the take-back of a failed setup, or the steps of a removal may wait on storage before the command answers with the step still waiting: the work goes on under the setup lock until storage answers, and the window refuses setup and removal meanwhile. Above a healthy take-back's worst case, the descriptor sync's mark read ({@link DEVIN_MARK_READ_RETRY_BUDGET_MS}) plus milliseconds of writes, so it is an answer deadline, never a cut. */
 export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 /** How long a Devin Desktop window's server start waits before it reads the setup receipts again after a read that could not look (descriptor exhaustion, `EIO`), so a moment of exhaustion does not leave the descriptor unmarked for the whole run. */

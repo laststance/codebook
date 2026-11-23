@@ -59,7 +59,7 @@ function afterEarlierTaking<Value>(
 }
 
 /**
- * Says why a Devin Desktop setup or removal did not get the setup lock within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS}, from what its takings saw; called by {@link withDevinSetupLock} at that bound.
+ * Says why a Devin Desktop setup, removal or activation refresh did not get the setup lock within its acquisition budget ({@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} unless the caller passes a shorter one), from what its takings saw; called by {@link withDevinSetupLock} at that bound.
  * Why: a held-lock refusal tells who held the lock at one moment, so another window is named as changing the setup only while such a refusal is the last answer; a taking still under way after one means that window may have released the lock while storage did not answer.
  * @param wasRefusedByHeldLock - Whether another window's lock refused one of the takings.
  * @param isTakingUnderWay - Whether a taking was under way at the bound (waiting on storage or on this process's earlier taking), rather than the retry pausing after a refusal.
@@ -83,8 +83,10 @@ function untakenLockSentence(
     : DEVIN_SETUP_LOCK_HELD_SENTENCE
 }
 
-/** What {@link withDevinSetupLock} tells its caller about the setup lock besides the operation's result. */
-export type DevinSetupLockReports = {
+/** How long {@link withDevinSetupLock} waits for the setup lock, and what it tells its caller about the lock besides the operation's result. */
+export type DevinSetupLockOptions = {
+  /** The longest the taking of the lock may take from the call, {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} when left out; the activation refresh passes a shorter one, so its window's server still starts while the Devin bridge waits for it. */
+  acquireBudgetMs?: number
   /** Called once when the lock's release has not ended {@link DEVIN_SETUP_LOCK_RELEASE_MS} after the operation settled: the result is answered then, and the release goes on. */
   onReleaseStalled?: () => void
 }
@@ -92,26 +94,30 @@ export type DevinSetupLockReports = {
 /**
  * Runs one Devin Desktop setup or removal alone across every window of the user: it waits a bounded time for a setup lock that another extension host process holds ({@link withStorageLock} queues only inside one process and refuses at once otherwise), then refuses with one fixed sentence, with another when storage never handed the lock over and no other window's lock was seen, and with a third when a taking after another window's refusal had no answer ({@link untakenLockSentence}); called by the Devin Desktop setup and removal of {@link activate}.
  * Only the taking of the lock is retried: the operation runs once, and a held-lock refusal of a lock it takes itself reaches the caller as it is. Each taking starts only once this process's earlier taking of the folder settled ({@link afterEarlierTaking}), so a setup run again after a taking that storage did not answer waits for that taking instead of starting another.
- * Each wait has its own timer, so storage that stops answering never holds the caller: the taking of the lock, from the call, at most {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} (a lock taken later runs nothing and is released at once); the operation as long as it needs; the release, from the operation's end, at most {@link DEVIN_SETUP_LOCK_RELEASE_MS} (it goes on afterwards, and this process's next hold of the lock waits for it in {@link withStorageLock}'s queue).
+ * Each wait has its own timer, so storage that stops answering never holds the caller: the taking of the lock, from the call, at most `acquireBudgetMs` ({@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} when left out; a lock taken later runs nothing and is released at once); the operation as long as it needs; the release, from the operation's end, at most {@link DEVIN_SETUP_LOCK_RELEASE_MS} (it goes on afterwards, and this process's next hold of the lock waits for it in {@link withStorageLock}'s queue).
  * @param lockDirectory - The `devin-setup` folder of Codebook's global storage.
  * @param operation - The setup or removal steps.
  * @param wait - Attempts and pause; about ten seconds when left out.
- * @param reports - `onReleaseStalled`, told when the release outlasts its bound.
+ * @param options - `acquireBudgetMs`, the bound of the taking of the lock; `onReleaseStalled`, told when the release outlasts its bound.
  * @returns What the operation returns, once the lock is released or its release outlasted its bound.
  * @throws
- * - An error with {@link DEVIN_SETUP_LOCK_HELD_SENTENCE} when the lock stays held, or is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} while the retry pauses after another window's lock refused it
- * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_AFTER_HELD_SENTENCE} when the lock is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} and a taking after such a refusal has no answer yet
- * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE} when the lock is not taken within {@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS} and no held-lock refusal came: storage did not answer, or this process's own earlier taking or hold has not ended
+ * - An error with {@link DEVIN_SETUP_LOCK_HELD_SENTENCE} when the lock stays held, or is not taken within `acquireBudgetMs` while the retry pauses after another window's lock refused it
+ * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_AFTER_HELD_SENTENCE} when the lock is not taken within `acquireBudgetMs` and a taking after such a refusal has no answer yet
+ * - An error with {@link DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE} when the lock is not taken within `acquireBudgetMs` and no held-lock refusal came: storage did not answer, or this process's own earlier taking or hold has not ended
  * - What the operation throws, also when it throws before it returns a promise, and what the lock throws otherwise
  * @example
  * await withDevinSetupLock('/storage/devin-setup', () => removeDevinSetupLocked())
  * await withDevinSetupLock('/storage/devin-setup', () => setUpDevinChatLocked(), undefined, { onReleaseStalled: () => diagnostics.info('…') })
+ * await withDevinSetupLock('/storage/devin-setup', () => refreshEntry(), { attempts: 20, delayMs: 100 }, { acquireBudgetMs: 5_000 }) // refuses within 5 s
  */
 export async function withDevinSetupLock<Value>(
   lockDirectory: string,
   operation: () => Promise<Value>,
   wait: StorageLockWait = DEVIN_SETUP_LOCK_WAIT,
-  { onReleaseStalled }: DevinSetupLockReports = {},
+  {
+    acquireBudgetMs = DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS,
+    onReleaseStalled,
+  }: DevinSetupLockOptions = {},
 ): Promise<Value> {
   // The operation's own result, kept apart from the lock so that the retry reruns the taking of the lock only.
   let resolveOperation!: (value: Value) => void
@@ -160,7 +166,7 @@ export async function withDevinSetupLock<Value>(
   locking.catch(() => {})
   const isAcquiredInTime = await settledWithin(
     Promise.race([acquired, locking]),
-    DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS,
+    acquireBudgetMs,
   ).catch((error: unknown) => {
     // The lock was never taken: the wait for another window's lock ran out.
     if (!didRun && error instanceof StorageLockHeldError)

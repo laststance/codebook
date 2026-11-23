@@ -66,6 +66,9 @@ import {
   DEVIN_MARK_READ_RETRY_DELAY_MS,
   DEVIN_SETUP_FINAL_CHECK_MS,
   DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+  DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
+  DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS,
+  DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
   DEVIN_REMOVAL_ACTION,
   DEVIN_REMOVAL_QUESTION,
   DEVIN_SETUP_REMOVED_LINE,
@@ -252,7 +255,10 @@ import { requestCursorWikiText } from './utils/requestCursorWikiText'
 import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
-import { retryWhileStorageLockHeld } from './utils/retryWhileStorageLockHeld'
+import {
+  retryWhileStorageLockHeld,
+  type StorageLockWait,
+} from './utils/retryWhileStorageLockHeld'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import {
   runStepsWithinBudget,
@@ -300,6 +306,18 @@ import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
 import { withDevinSetupLock } from './utils/withDevinSetupLock'
 
 let stopExtension: (() => Promise<void>) | undefined
+
+/** How long one taking of the Devin Desktop setup lock may wait: the attempts and pause while another window holds it, and the bound of the whole taking ({@link withDevinSetupLock}). */
+type DevinSetupLockBound = { wait: StorageLockWait; acquireBudgetMs: number }
+
+/** How long a Devin Desktop window's activation refresh waits for the setup lock: about two to four seconds while another window holds it and at most {@link DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS} in all, not a setup's ten, because the window's server starts only after the refresh and the bridge Devin Local started at the window load waits 15 seconds for it; a lock still held then is a refusal like any other, and the server still starts. */
+const DEVIN_REFRESH_LOCK_BOUND: DevinSetupLockBound = {
+  wait: {
+    attempts: DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS,
+    delayMs: DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
+  },
+  acquireBudgetMs: DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
+}
 
 /** One change of this window's own Wiki update marker (its removal, or its turn into a stopped watch's reservation): the change, the timer of its next attempt while it waits, and the attempt while it runs. */
 /** The fields of a Devin Desktop window's connection descriptor that carry its AI chat mark; empty when the window is unmarked. */
@@ -1564,15 +1582,17 @@ export function activate(
       },
     )
   }
-  /** Runs one Devin Desktop setup, removal or activation refresh of the entry alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so neither a removal nor a refresh lands between another window's entry write and that setup's end or take-back. @example await underDevinLock(() => removeDevinSetupLocked()) */
+  /** Runs one Devin Desktop setup, removal or activation refresh of the entry alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so neither a removal nor a refresh lands between another window's entry write and that setup's end or take-back. @param bound - How long the taking of the lock may wait: a setup's or removal's ten seconds when left out; the activation refresh passes its shorter one ({@link DEVIN_REFRESH_LOCK_BOUND}). @example await underDevinLock(() => removeDevinSetupLocked()) */
   const underDevinLock = <Value>(
     operation: () => Promise<Value>,
+    bound?: DevinSetupLockBound,
   ): Promise<Value> =>
     withDevinSetupLock(
       join(context.globalStorageUri.fsPath, DEVIN_SETUP_STORAGE_DIRECTORY),
       operation,
-      undefined,
+      bound?.wait,
       {
+        acquireBudgetMs: bound?.acquireBudgetMs,
         onReleaseStalled: () =>
           diagnostics.info(DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE),
       },
@@ -2205,7 +2225,7 @@ export function activate(
       return { status: 'refused', disabled: false }
     }
     try {
-      // Under the setup lock, so the refresh never rewrites the entry between another window's entry write and that setup's take-back, which would then find a newer entry and leave the failed one installed; windows opened together may hold the entry's lock one after the other.
+      // Under the setup lock, so the refresh never rewrites the entry between another window's entry write and that setup's take-back, which would then find a newer entry and leave the failed one installed; windows opened together may hold the entry's lock one after the other. The lock is waited for only a few seconds: the window's server starts after the refresh, within the bridge's wait.
       const refresh = await underDevinLock(async () => {
         // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed; a record that cannot be read may name that entry, so the refresh changes nothing.
         const owedTakeBack = await finishOwedDevinTakeBack()
@@ -2218,7 +2238,7 @@ export function activate(
             devinMcpEntry(nodeExecutable),
           ),
         )
-      })
+      }, DEVIN_REFRESH_LOCK_BOUND)
       // The failed setup's entry still stands: the window reconnects nothing, so it never serves an entry that the next run takes out.
       if (refresh.status === 'owed') {
         diagnostics.info(DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE)
