@@ -3576,7 +3576,7 @@ test('a failed Devin setup whose take-back waits on storage answers within the b
   }
 })
 
-// Value: protects=while a failed setup's take-back still waits on storage after its command answered, a new Set Up AI Chat and a Remove Devin Desktop Setup of that window refuse at once with the sentence that names the take-back and says that a reload tries it again and that Codebook's Output says whether it finished, and the removal asks no question (Cycle 0146 task 1a; reload clause: Cycle 0146 /ship final-range pass, CodeRabbit CLI devinWindowSentences.ts:123); fails_when=the first command never answers, or a later command joins the pending take-back, waits for the lock, or asks its modal question first, or the refusal promises that a reload finishes the take-back, which another window's lock or a failed removal of the entry can still stop; no_claim=the lock seen from another window (the test above); the held stand-in entry removal stands for the stalled storage
+// Value: protects=while a failed setup's take-back still waits on storage after its command answered, a new Set Up AI Chat and a Remove Devin Desktop Setup of that window refuse at once with the sentence that names the take-back and says that a reload tries it again, and the removal asks no question (Cycle 0146 task 1a; reload clause: Cycle 0146 /ship final-range pass, CodeRabbit CLI devinWindowSentences.ts:123); fails_when=the first command never answers, or a later command joins the pending take-back, waits for the lock, or asks its modal question first, or the refusal promises that a reload finishes the take-back, which another window's lock or a failed removal of the entry can still stop; no_claim=the lock seen from another window (the test above); the held stand-in entry removal stands for the stalled storage
 test('a Devin setup and a removal refuse at once while an earlier take-back still waits on storage', async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -3612,11 +3612,11 @@ test('a Devin setup and a removal refuse at once while an earlier take-back stil
     assert.notEqual(firstOutcome, 'still waiting')
     assert.equal(
       setupRefusal,
-      "Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which tries that take-back again when it loads; Codebook's Output says whether it finished.",
+      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which tries that take-back again when it loads.',
     )
     assert.equal(
       removalRefusal,
-      "Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window, which tries that take-back again when it loads; Codebook's Output says whether it finished.",
+      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window, which tries that take-back again when it loads.',
     )
     assert.deepEqual(window.modalQuestions, [])
     assert.equal(
