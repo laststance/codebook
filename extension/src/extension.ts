@@ -1639,7 +1639,36 @@ export function activate(
       )
     return sentence === reason ? error : new Error(sentence)
   }
-  /** The steps of one Devin Desktop setup, run under {@link underDevinLock}: skill, server, entry, saved setup, a final skill check and the descriptor mark, with a take-back when a step after the entry write fails, awaited under the lock. @param onLapse - Hears a take-back step that outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, so the command answers while the take-back goes on. @returns The sentence of a kept copy of Devin's config that could not be deleted, when the entry write names one, and `disabled` when the entry stays turned off in Devin's Customize. @example const { cleanupFailure } = await setUpDevinChatLocked(onLapse) */
+  /**
+   * Runs one forward step of a Devin Desktop setup (the skill's deployment, the entry's write, the final skill check) under {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: a step that storage does not answer is never cut, but `onLapse` names it, so the command answers while the setup goes on under the setup lock; called by {@link setUpDevinChatLocked}.
+   * @param step - The step as the pending sentence names it.
+   * @param run - The step's work.
+   * @param onLapse - Hears the lapse as a `setup` lapse.
+   * @returns What the step answered.
+   * @throws What the step threw.
+   * @example const entryWrite = await runSetupStep('MCP entry', () => writeManagedDevinMcpEntry(root, entry), onLapse)
+   */
+  const runSetupStep = async <Value>(
+    step: DevinStorageStep,
+    run: () => Promise<Value>,
+    onLapse: (lapse: DevinLapse) => void,
+  ): Promise<Value> => {
+    let answer!: Value
+    await runStepsWithinBudget(
+      [
+        {
+          name: step,
+          run: async (): Promise<void> => {
+            answer = await run()
+          },
+        },
+      ],
+      DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+      (name) => onLapse({ kind: 'setup', step: name }),
+    )
+    return answer
+  }
+  /** The steps of one Devin Desktop setup, run under {@link underDevinLock}: skill, server, entry, saved setup, a final skill check and the descriptor mark, with a take-back when a step after the entry write fails, awaited under the lock. @param onLapse - Hears a forward or take-back step that outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, so the command answers while the setup or its take-back goes on. @returns The sentence of a kept copy of Devin's config that could not be deleted, when the entry write names one, and `disabled` when the entry stays turned off in Devin's Customize. @example const { cleanupFailure } = await setUpDevinChatLocked(onLapse) */
   const setUpDevinChatLocked = async (
     onLapse: (lapse: DevinLapse) => void,
   ): Promise<{
@@ -1657,9 +1686,14 @@ export function activate(
       throw new Error(DEVIN_SETUP_NODE_FAILURE_SENTENCE)
     })
     assertDevinSetupAvailable()
-    await deployDevinSkill(
-      context.extensionPath,
-      context.globalStorageUri.fsPath,
+    await runSetupStep(
+      'skill',
+      () =>
+        deployDevinSkill(
+          context.extensionPath,
+          context.globalStorageUri.fsPath,
+        ),
+      onLapse,
     )
     assertDevinSetupAvailable()
     await start()
@@ -1670,9 +1704,14 @@ export function activate(
       )
     const checkedServer = running
     const { workspace: setupWorkspace } = checkedServer.endpoint.descriptor
-    const entryWrite: DevinEntryWrite = await writeManagedDevinMcpEntry(
-      context.globalStorageUri.fsPath,
-      devinMcpEntry(nodeExecutable),
+    const entryWrite: DevinEntryWrite = await runSetupStep(
+      'MCP entry',
+      () =>
+        writeManagedDevinMcpEntry(
+          context.globalStorageUri.fsPath,
+          devinMcpEntry(nodeExecutable),
+        ),
+      onLapse,
     )
     // A re-run that fails puts this value back instead of clearing it.
     // Only the committed setup is carried: a provisional value left by a failed run reads as the one before it.
@@ -1688,9 +1727,14 @@ export function activate(
         previous: previousSetup,
       }))
       assertDevinSetupAvailable()
-      await verifyManagedDevinSkill(
-        context.extensionPath,
-        context.globalStorageUri.fsPath,
+      await runSetupStep(
+        'skill',
+        () =>
+          verifyManagedDevinSkill(
+            context.extensionPath,
+            context.globalStorageUri.fsPath,
+          ),
+        onLapse,
       )
       // A window marked without a readable installation id would be refused by the bridge, and the offered reload could not connect.
       const mcpReceiptPath = join(
@@ -1808,7 +1852,18 @@ export function activate(
         .join(' '),
     )
   }
-  /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. A take-back that outlasts its budget answers the command with the failure and the step that waits, and the take-back's end goes to the Output. @example await performDevinSetup() */
+  /** Tells how a Devin Desktop setup that answered its command early ended in failure: always in the Output, and as a warning when the command answered before the failure (its step waited on storage), because the learner has not read that failure yet; a take-back's command already named it. @param firstLapse - The lapse the command answered with. @param error - What the setup ended with. @example reportLateDevinSetupFailure({ kind: 'setup', step: 'skill' }, error) */
+  const reportLateDevinSetupFailure = (
+    firstLapse: DevinLapse,
+    error: unknown,
+  ): void => {
+    diagnostics.info(
+      devinLateFailureLine(firstLapse.kind, thrownMessage(error)),
+    )
+    if (firstLapse.kind === 'setup')
+      void showNotice('warning', thrownMessage(error))
+  }
+  /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. A step that outlasts its budget answers the command with the step that waits (after the failure, for a take-back), and the setup's end follows once storage answers. @example await performDevinSetup() */
   const performDevinSetup = async (): Promise<void> => {
     const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
     if (refusal) throw new Error(refusal)
@@ -1823,11 +1878,9 @@ export function activate(
       offerDevinSetupReady(answer.value)
       return
     }
-    // The learner has the failure and the waiting step; how the take-back ends goes to the Output.
+    // The setup's own end comes once storage answers: its ready notice, or its failure.
     void answer.run.then(offerDevinSetupReady, (error: unknown) =>
-      diagnostics.info(
-        devinLateFailureLine(answer.lapse.kind, thrownMessage(error)),
-      ),
+      reportLateDevinSetupFailure(answer.lapse, error),
     )
     throw new Error(
       [

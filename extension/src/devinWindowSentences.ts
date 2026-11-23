@@ -86,18 +86,23 @@ export const DEVIN_SETUP_RECORDS_UNREADABLE_SENTENCE =
 /** The title of the command that removes Codebook's Devin Desktop setup, as the sentences that ask to run it again name it. */
 export const REMOVE_DEVIN_SETUP_COMMAND = 'Codebook: Remove Devin Desktop Setup'
 
-/** A step of a Devin Desktop take-back or removal that waits on storage, as the sentences of a command that answered while the step still waited name it. */
+/** A step of a Devin Desktop setup, take-back or removal that waits on storage, as the sentences of a command that answered while the step still waited name it. */
 export type DevinStorageStep =
   'skill' | 'MCP entry' | 'saved setup' | 'descriptor'
 
-/** What a Devin Desktop window still runs after its command answered because storage did not: the take-back of a failed setup, or a removal; the window refuses a new setup and removal meanwhile. */
-export type DevinBackgroundWorkKind = 'take-back' | 'removal'
+/** What a Devin Desktop window still runs after its command answered because storage did not: a setup, the take-back of a failed setup, or a removal; the window refuses a new setup and removal meanwhile. */
+export type DevinBackgroundWorkKind = 'setup' | 'take-back' | 'removal'
 
 /** How the sentences below name each kind of work: as a subject, as the work going on, and what it does once storage answers. */
 const BACKGROUND_WORK: Record<
   DevinBackgroundWorkKind,
   { subject: string; doing: string; ending: string }
 > = {
+  setup: {
+    subject: "Codebook's Devin Desktop setup",
+    doing: 'setting up Devin Desktop',
+    ending: 'it finishes when storage answers and then shows its result',
+  },
   'take-back': {
     subject: "Codebook's take-back of this Devin Desktop setup",
     doing: 'taking back an earlier Devin Desktop setup',
@@ -111,7 +116,7 @@ const BACKGROUND_WORK: Record<
 }
 
 /**
- * What a Devin Desktop command answers, and the Output line it writes, once a step of its take-back or removal has waited 10 seconds on storage ({@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}): the step goes on under the setup lock, and the window refuses setup and removal until it ends.
+ * What a Devin Desktop command answers, and the Output line it writes, once a step of its setup, take-back or removal has waited 10 seconds on storage ({@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}): the step goes on under the setup lock, and the window refuses setup and removal until it ends.
  * @param kind - The work still going on.
  * @param step - The step that waits on storage.
  * @returns One sentence that names the step, then one that names the refusal.
@@ -124,7 +129,7 @@ export const devinStorageWaitSentence = (
   `${BACKGROUND_WORK[kind].subject} is still waiting on storage (${step}) after 10 seconds; ${BACKGROUND_WORK[kind].ending}. Until then Codebook: Set Up AI Chat and ${REMOVE_DEVIN_SETUP_COMMAND} refuse in this window.`
 
 /**
- * What a Devin Desktop setup or removal answers at once while this window still runs a take-back or removal whose command answered because storage did not.
+ * What a Devin Desktop setup or removal answers at once while this window still runs a setup, take-back or removal whose command answered because storage did not.
  * @param kind - The work still going on.
  * @param command - The title of the command that refused, which the learner runs again.
  * @returns One sentence that says what still runs, then how to go on.
@@ -137,7 +142,7 @@ export const devinBackgroundWorkSentence = (
   `Codebook is still ${BACKGROUND_WORK[kind].doing} because storage does not answer. Run ${command} again once it finishes, or reload the window.`
 
 /**
- * The Output line once a take-back or removal that answered its command early has ended, so the window takes setup and removal again.
+ * The Output line once a setup, take-back or removal that answered its command early has ended, so the window takes setup and removal again.
  * @param kind - The work that ended.
  * @returns One line.
  * @example devinBackgroundWorkEndedLine('removal') // => 'Codebook is done removing the Devin Desktop setup now that storage answered.'
@@ -148,7 +153,7 @@ export const devinBackgroundWorkEndedLine = (
   `Codebook is done ${BACKGROUND_WORK[kind].doing} now that storage answered.`
 
 /**
- * The Output line of a take-back or removal that answered its command early and then failed, since the command can no longer show the failure.
+ * The Output line of a setup, take-back or removal that answered its command early and then failed, since the command can no longer show the failure.
  * @param kind - The work that failed.
  * @param reason - The failure's sentence.
  * @returns One line.

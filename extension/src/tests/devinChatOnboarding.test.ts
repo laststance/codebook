@@ -3837,3 +3837,58 @@ test('a failed Devin setup re-run without a folder change puts back the setup sa
     await window.loaded.deactivate()
   }
 })
+
+// protects=a Devin setup whose skill deployment never returns answers within the setup budget with the step that waits, a Remove Devin Desktop Setup issued meanwhile refuses at once without its question, and the setup's own notice with Reload Window follows once storage answers (Cycle 0146 task 13) / fails_when=the command waits for the deployment for ever, the removal waits for the setup or asks its question, or the setup's end is never shown / no_claim=a forward step that fails after it answered (its warning); the held stand-in deployment stands for the stalled storage
+test('a Devin setup whose skill deployment never returns answers within the budget, a removal meanwhile refuses, and its own notice follows once storage answers', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    holdDeploy: true,
+    confirmRemoval: true,
+  })
+  try {
+    // Act
+    const setupEnd = window.commands.get('codebook.setupAiChat')!().then(
+      () => ({ atMs: performance.now(), message: 'resolved' }),
+      (error: Error) => ({ atMs: performance.now(), message: error.message }),
+    )
+    const deployReachedAtMs = await window.deployReached.then(() =>
+      performance.now(),
+    )
+    const setupOutcome = await within(setupEnd, 16_000)
+    const removalRefusal = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      2_000,
+    )
+    window.releaseDeploy()
+    await waitUntil(() => window.notices.length > 0, "the setup's own notice")
+    // Assert
+    assert.ok(setupOutcome !== 'still waiting', 'the setup command answered')
+    const answeredAfterMs = setupOutcome.atMs - deployReachedAtMs
+    assert.ok(
+      answeredAfterMs >= 9_000 && answeredAfterMs <= 15_000,
+      `the setup command answered ${answeredAfterMs} ms after the deployment was reached`,
+    )
+    assert.equal(
+      setupOutcome.message,
+      "Codebook's Devin Desktop setup is still waiting on storage (skill) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+    )
+    assert.equal(
+      removalRefusal,
+      'Codebook is still setting up Devin Desktop because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window.',
+    )
+    assert.deepEqual(window.modalQuestions, [])
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          "Codebook skill and MCP server saved for Devin Local. Reload this window so Devin Local loads Codebook's MCP server, then type /devin:codebook in a Local session.",
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
