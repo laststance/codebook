@@ -1352,8 +1352,9 @@ async function linkRetiringStaleReceipt(
   if (retiredPath) await unlink(retiredPath).catch(() => undefined)
 }
 
-/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; or `moved-unread` when the moved record itself could not be read. */
-type UnrestoredStanding = 'other' | 'foreign' | 'unread' | 'moved-unread'
+/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read. */
+type UnrestoredStanding =
+  'other' | 'foreign' | 'unread' | 'moved-unread' | 'moved-changed'
 
 /**
  * Thrown by {@link putBackRetiredReceipt} when a receipt a first setup moved aside could not go back to `receipt.json`, and by {@link retiredReceiptFateOf} when that receipt could not be read: its text names the private file and the way out, and it carries what made the put-back necessary (`failure`: the link's failure or a {@link changedRecordRefusal}), which the caller words as before and puts in front ({@link withUnrestoredNote}). The callers keep the publish record that names the private file ({@link Pending.retiresReceipt}), so the next run puts the receipt back ({@link settleRetiredReceipt}), or decides again when the record could not be marked {@link Pending.notLinked} ({@link UnrestoredReceiptError.withoutMark}).
@@ -1403,6 +1404,7 @@ class UnrestoredReceiptError extends Error {
  * - `foreign`: the sentence that asks the learner to move the moved file, which is no record of this config, to another folder, and never what stands at `receipt.json`
  * - `unread`: the sentence that Codebook kept both files and looks again, which advises no removal
  * - `moved-unread`: the sentence that names the private file Codebook could not read and asks to delete neither record
+ * - `moved-changed`: the sentence that the file at the private name changed while Codebook read it, so it kept both and looks again, which advises no removal
  * @example
  * unrestoredSentence(context, retiredPath, 'other', true) // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
  */
@@ -1420,6 +1422,9 @@ function unrestoredSentence(
     return `Codebook could not read its own old record of a setup whose entry is gone, which it had moved from ${receiptPath} to ${retiredPath}, so it kept that file and the publish record at ${pendingPath} and the next run reads it again; delete neither, make that file readable by you if it is not, ${retry}.`
   const lead = `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back`
   const unmarked = `it could not note in its publish record at ${pendingPath} that nothing of this setup was linked`
+  // Another file stood at the private name by the end of the read: nothing the read compared may be deleted, so both stay.
+  if (standing === 'moved-changed')
+    return `${lead}, because the file at ${retiredPath} changed while Codebook read it. Codebook kept both files, so the next run looks again; ${retry}.`
   // A folder, another file or a record of another entry: moving it away frees the name without deleting anything.
   if (standing === 'other')
     return isMarked
@@ -3612,7 +3617,7 @@ async function holdsReceipt(
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
  * @param attempt - Which link this is, from 1; only the put-back itself passes more.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, without any of them for any other link failure; that file stays, and so does the publish record that names it.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; that file stays, and so does the publish record that names it.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
  */
@@ -3648,15 +3653,14 @@ async function putBackRetiredReceipt(
   await unlink(retiredPath).catch(() => undefined)
 }
 
-/** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken. */
-type StandingReceipt =
-  'covers' | 'absent' | 'other' | 'foreign' | 'unread' | 'moved-unread'
+/** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken: `covers` and `absent` decide the put-back, every other answer keeps the moved record ({@link UnrestoredStanding}). */
+type StandingReceipt = 'covers' | 'absent' | UnrestoredStanding
 
 /**
  * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link putBackRetiredReceipt}.
  * @param standing - What the look found; undefined when the link failed with another error than EEXIST.
  * @returns
- * - `other`, `foreign` and `moved-unread` as they are
+ * - `other`, `foreign`, `moved-unread` and `moved-changed` as they are
  * - `unread` for `unread` and for `absent` past the last attempt (the name kept changing)
  * - undefined without a look, so the error keeps its first sentence
  * @example
@@ -3680,6 +3684,7 @@ function unrestoredStandingOf(
  * - `other` for a folder, a link or another kind of file, bytes that are no record, or a record of another config or entry
  * - `unread` when a look at `receipt.json` or the read of what stands there failed
  * - `moved-unread` when the moved record under its private name could not be read as a receipt
+ * - `moved-changed` when the private name no longer shows the file that was read there: what the read compared is not what an unlink would delete
  * @example
  * await standingReceiptOf(context, retiredPath) // => 'other' while a folder stands at receipt.json
  */
@@ -3697,7 +3702,7 @@ async function standingReceiptOf(
 }
 
 /**
- * Reads the record that stands at `receipt.json` and the moved one, and checks the name still shows what was read; called only by {@link standingReceiptOf}, which compares the two.
+ * Reads the record that stands at `receipt.json` and the moved one, and checks that both names still show the files that were read; called only by {@link standingReceiptOf}, which compares the two.
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns Both records once every look passed; otherwise the answer the looks already give ({@link StandingReceipt}).
@@ -3708,33 +3713,93 @@ async function readStandingReceipt(
   context: Context,
   retiredPath: string,
 ): Promise<StandingReceipt | { standing: Receipt; moved: Receipt }> {
-  const { receiptPath } = context
-  let before: BigIntStats | undefined
-  try {
-    before = await lstatOrAbsent(receiptPath)
-  } catch {
-    return 'unread'
-  }
-  if (!before) return 'absent'
-  if (!before.isFile()) return 'other'
-  const standing = await readRecordKind(context, receiptPath)
-  // A name that is empty again by the read counts as empty.
+  const standing = await readLookedRecord(context, context.receiptPath)
+  // A name that is empty, or empty again by the read, counts as empty.
   if (standing === undefined) return 'absent'
-  if (typeof standing === 'string') return standing
-  const moved = await readRecordKind(context, retiredPath)
+  if (standing === 'unread') return 'unread'
+  if (standing.read === 'other') return 'other'
+  const moved = await readLookedRecord(context, retiredPath)
   // Nothing is left under the private name to keep.
   if (moved === undefined) return 'covers'
   // The private file failed, not receipt.json: its own sentence names that file.
-  if (typeof moved === 'string') return 'moved-unread'
+  if (moved === 'unread' || moved.read === 'other') return 'moved-unread'
+  const stillness = await stillnessOf(
+    context,
+    retiredPath,
+    standing.look,
+    moved.look,
+  )
+  return stillness === 'still'
+    ? { standing: standing.read, moved: moved.read }
+    : stillness
+}
+
+/** A record file as {@link readLookedRecord} read it: the receipt, or `other` for a file that holds none, and its name's inode, size and times at the look right before the read. */
+type LookedRecord = { read: Receipt | 'other'; look: LeftoverLookback }
+
+/**
+ * Looks at a record's name, then reads the file, so a later look ({@link stillnessOf}) tells whether the name still shows the file that was read; called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name.
+ * @param context - The run.
+ * @param path - The record file.
+ * @returns
+ * - The receipt, or `other` for no regular file, too many bytes or bytes that are no receipt, each with the look ({@link LookedRecord})
+ * - undefined when the name is empty, or empty again by the read
+ * - `unread` when the look or the read failed ({@link readRecordKind})
+ * @example
+ * await readLookedRecord(context, retiredPath) // => { read: oldReceipt, look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } }
+ */
+async function readLookedRecord(
+  context: Context,
+  path: string,
+): Promise<LookedRecord | undefined | 'unread'> {
+  let before: BigIntStats | undefined
+  try {
+    before = await lstatOrAbsent(path)
+  } catch {
+    return 'unread'
+  }
+  if (!before) return undefined
   const { ino, size, mtimeNs, ctimeNs } = before
-  const isStill = await isNameStill(context, receiptPath, {
-    ino,
-    size,
-    mtimeNs,
-    ctimeNs,
-  }).catch(() => undefined)
-  if (isStill === undefined) return 'unread'
-  return isStill ? { standing, moved } : 'absent'
+  const look = { ino, size, mtimeNs, ctimeNs }
+  // A folder, a link or another kind of file holds no record and is not read.
+  if (!before.isFile()) return { read: 'other', look }
+  const read = await readRecordKind(context, path)
+  if (read === undefined || read === 'unread') return read
+  return { read, look }
+}
+
+/**
+ * Tells whether `receipt.json` and the moved record's private name still show the files that were read, right before the put-back decides on them; called only by {@link readStandingReceipt}.
+ * @param context - The run; its seam is called around each look ({@link isNameStill}).
+ * @param retiredPath - The private name that holds the moved record.
+ * @param standingLook - `receipt.json`'s look before its read.
+ * @param movedLook - The private name's look before its read.
+ * @returns
+ * - `still` when both names show the files that were read
+ * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
+ * - `moved-changed` when the private name shows another file or none; `moved-unread` when that look failed
+ * @example
+ * await stillnessOf(context, retiredPath, standingLook, movedLook) // => 'moved-changed' after a sync tool put another file at the private name during the read
+ */
+async function stillnessOf(
+  context: Context,
+  retiredPath: string,
+  standingLook: LeftoverLookback,
+  movedLook: LeftoverLookback,
+): Promise<'still' | 'absent' | 'unread' | 'moved-changed' | 'moved-unread'> {
+  const isStandingStill = await isNameStill(
+    context,
+    context.receiptPath,
+    standingLook,
+  ).catch(() => undefined)
+  if (isStandingStill === undefined) return 'unread'
+  if (!isStandingStill) return 'absent'
+  const isMovedStill = await isNameStill(context, retiredPath, movedLook).catch(
+    () => undefined,
+  )
+  if (isMovedStill === undefined) return 'moved-unread'
+  // Another file at the private name since the look: what the read compared is not what an unlink would delete.
+  return isMovedStill ? 'still' : 'moved-changed'
 }
 
 /**
