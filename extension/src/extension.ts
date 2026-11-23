@@ -1642,7 +1642,7 @@ export function activate(
   }
   /**
    * Takes back a failed Devin Desktop setup and words what the command answers; called by the catch of {@link setUpDevinChatLocked}, which awaits it, so the setup lock stays held until the take-back settled.
-   * When the take-back outlasts its budget, `onLapse` hears the step that waits and the failure's sentence, so the command answers then; the look at the receipt below is then skipped, because the command has already answered.
+   * When the take-back outlasts its budget, `onLapse` hears the step that waits and the failure's sentence (none when it names the receipt), so the command answers then; the bounded look at the receipt below still runs, because the setup's late warning ({@link reportLateDevinFailure}) shows the sentence it picks.
    * @param error - What the failed step threw.
    * @param takeBack - What the run's entry write answered, the saved setup from before the run, and the folder generation when the run began.
    * @param onLapse - Hears the take-back's lapse.
@@ -1661,9 +1661,7 @@ export function activate(
       'devin-mcp',
       'receipt.json',
     )
-    let hasLapsed = false
     const isRolledBack = await rollBackDevinSetup(takeBack, (step) => {
-      hasLapsed = true
       // A sentence that names the receipt may ask to repair a file the take-back deletes, so the command then names the pending step alone.
       onLapse({
         kind: 'take-back',
@@ -1671,12 +1669,7 @@ export function activate(
         reason: reason.includes(receiptPath) ? undefined : reason,
       })
     })
-    // The command already answered: its end goes to the Output, without a look at the receipt.
-    if (hasLapsed)
-      return isRolledBack
-        ? error
-        : new Error(`${reason} ${DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE}`)
-    // A repair instruction for a receipt the rollback deleted would ask for a file that is gone.
+    // A repair instruction for a receipt the rollback deleted would ask for a file that is gone; the look is bounded, and it runs also after a lapse, whose late warning shows this sentence.
     const sentence = await devinRefusalAfterRollback(reason, receiptPath)
     // A rollback that failed in part says where its reasons are.
     if (!isRolledBack)
@@ -1917,7 +1910,7 @@ export function activate(
         .join(' '),
     )
   }
-  /** Tells how a Devin Desktop setup or removal that answered its command early ended in failure: always in the Output, and as a warning when the command answered before the failure (a setup's or removal's step waited on storage), because the learner has not read that failure yet, while the pending sentence promised the result; a take-back's command already named it. Called by {@link performDevinSetup} and {@link removeDevinSetup} once the run that answered early rejected. @param firstLapse - The lapse the command answered with. @param error - What the run ended with. @example reportLateDevinFailure({ kind: 'removal', step: 'skill' }, error) */
+  /** Tells how a Devin Desktop setup or removal that answered its command early ended in failure: always in the Output, and as a warning when the command answered before the failure (a setup's or removal's step waited on storage), because the learner has not read that failure yet, while the pending sentence promised the result; a take-back's command already named it, unless it left out a failure that named the receipt. Called by {@link performDevinSetup} and {@link removeDevinSetup} once the run that answered early rejected. @param firstLapse - The lapse the command answered with. @param error - What the run ended with. @example reportLateDevinFailure({ kind: 'removal', step: 'skill' }, error) */
   const reportLateDevinFailure = (
     firstLapse: DevinLapse,
     error: unknown,
@@ -1925,8 +1918,8 @@ export function activate(
     diagnostics.info(
       devinLateFailureLine(firstLapse.kind, thrownMessage(error)),
     )
-    // A take-back's answer named the failure already.
-    if (firstLapse.kind !== 'take-back')
+    // A take-back's answer named the failure already, unless it left out one that named the receipt.
+    if (firstLapse.kind !== 'take-back' || firstLapse.reason === undefined)
       void showNotice('warning', thrownMessage(error))
   }
   /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. A step that outlasts its budget answers the command with the step that waits (after the failure, for a take-back), and the setup's end follows once storage answers. @example await performDevinSetup() */
