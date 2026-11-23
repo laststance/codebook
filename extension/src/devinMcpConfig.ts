@@ -1025,13 +1025,42 @@ type Published = {
   isRecorded: boolean
 }
 
-/** Everything a replacement of an existing config works with: the staged file, the probe name, the displaced copy, the identity of the config that was read, and the record that names them. */
+/** Everything a replacement of an existing config works with: the staged file, the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
 type Replacement = {
   temporary: string
   probePath: string
   displaced: KeptCopy
   identity: FileIdentity
   journal: Pending
+  staleReceipt: Receipt | undefined
+}
+
+/**
+ * Links the staged file in at the config name, the step that exposes a publish; called by {@link createConfig} and {@link linkInStaged}.
+ * A first setup's stale receipt ({@link isFirstSetup}) is deleted right before the link ({@link retireStaleReceipt}), so it goes only once this setup's own publish record is written and no reader takes the new entry for that receipt's. When the link fails nothing of this setup stands, so that receipt is written back, best effort: a config that came back meanwhile is still owned by it, and an unrecorded removal's retry still answers `removed`. The storage lock keeps every other Codebook run from writing a receipt in between, so no newer receipt is overwritten.
+ * @param context - The run.
+ * @param temporary - The staged file.
+ * @param staleReceipt - The receipt of an entry that is gone, which a first setup retires; undefined for an update, a removal, a rollback and a first setup without a receipt.
+ * @throws A {@link staleReceiptRefusal} when that receipt cannot be deleted (nothing was linked); what the link throws, once the receipt was written back.
+ * @example
+ * await linkWithoutStaleReceipt(context, temporary, staleReceipt) // the config stands and receipt.json is gone
+ */
+async function linkWithoutStaleReceipt(
+  context: Context,
+  temporary: string,
+  staleReceipt: Receipt | undefined,
+): Promise<void> {
+  if (staleReceipt) await retireStaleReceipt(context)
+  try {
+    await link(temporary, context.path)
+  } catch (error) {
+    // Nothing of this setup stands at the config name: the old receipt stands again; a failed write leaves it deleted, which the next first setup does anyway.
+    if (staleReceipt)
+      await writeRecord(context, context.receiptPath, staleReceipt).catch(
+        () => undefined,
+      )
+    throw error
+  }
 }
 
 /**
@@ -1040,18 +1069,20 @@ type Replacement = {
  * @param temporary - The staged file.
  * @param config - The inode the config will have.
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands.
+ * @param staleReceipt - The receipt a first setup deletes right before the link and writes back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
  * @returns The inode, and the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config).
- * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); nothing was published.
+ * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} when the stale receipt cannot be deleted; nothing was published then.
  */
 async function createConfig(
   context: Context,
   temporary: string,
   config: ConfigNumbers,
   journal: Pending,
+  staleReceipt: Receipt | undefined,
 ): Promise<Published> {
   try {
     context.seam?.afterCheck?.()
-    await link(temporary, context.path)
+    await linkWithoutStaleReceipt(context, temporary, staleReceipt)
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
     await dropPending(context)
@@ -1123,19 +1154,19 @@ function mismatchRefusal(
 }
 
 /**
- * Links the staged file in as the config after a successful comparison; called by {@link replaceConfig}. A link never replaces: a file that a save created after the move-aside stays.
+ * Links the staged file in as the config after a successful comparison; called by {@link replaceConfig}. A link never replaces: a file that a save created after the move-aside stays. A first setup's stale receipt is deleted right before the link and written back when it fails ({@link linkWithoutStaleReceipt}).
  * @param context - The run.
- * @param replacement - The staged file, the displaced file (whose bytes equal what was read) and the record.
+ * @param replacement - The staged file, the displaced file (whose bytes equal what was read), the record and the stale receipt.
  * @param opened - The displaced copy's handle and own mode.
- * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy. Any other link failure puts the displaced file back with its own permissions and rethrows it, or throws a {@link leftCopyRefusal} naming the displaced file when it cannot go back.
+ * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy. Any other link failure, and a {@link staleReceiptRefusal}, puts the displaced file back with its own permissions and rethrows it, or throws a {@link leftCopyRefusal} naming the displaced file when it cannot go back.
  */
 async function linkInStaged(
   context: Context,
-  { temporary, displaced, journal }: Replacement,
+  { temporary, displaced, journal, staleReceipt }: Replacement,
   opened: DisplacedHandle | undefined,
 ): Promise<void> {
   try {
-    await link(temporary, context.path)
+    await linkWithoutStaleReceipt(context, temporary, staleReceipt)
     return
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
@@ -1273,8 +1304,9 @@ function journalOf(
  * @param root - The complete new top-level object.
  * @param look - What was read; its owner bits are kept, its hash and inode are what the displaced file is compared with.
  * @param head - What the pending record says about this write; a removal has no generation, so one is made.
+ * @param staleReceipt - The receipt of an entry that is gone, which a first setup deletes only once this record is written, right before the link that exposes the publish, and which stands again when that link fails ({@link linkWithoutStaleReceipt}); undefined for every other publish. A refusal before that link leaves it as it was.
  * @returns The inode of the config that now stands, and the files that stay, if any (the pending record stays then).
- * @throws A {@link refusal} when the result is larger than {@link DEVIN_MCP_CONFIG_LIMIT_BYTES}, the file changed since the read or a save landed meanwhile (the newer file is left in place), or a leftover copy cannot be settled.
+ * @throws A {@link refusal} when the result is larger than {@link DEVIN_MCP_CONFIG_LIMIT_BYTES}, the file changed since the read or a save landed meanwhile (the newer file is left in place), or a leftover copy cannot be settled; a {@link staleReceiptRefusal} when the stale receipt cannot be deleted (nothing is published then).
  * @example
  * await publishRoot(context, { mcpServers: {} }, { kind: 'absent' }, { createdFile: true })
  */
@@ -1283,6 +1315,7 @@ async function publishRoot(
   root: JsonObject,
   look: ConfigLook,
   head: PendingHead,
+  staleReceipt?: Receipt,
 ): Promise<Published> {
   const serialized = `${JSON.stringify(root, null, 2)}\n`
   assertWithinSizeLimit(context, serialized)
@@ -1321,10 +1354,11 @@ async function publishRoot(
           displaced,
           identity: look.identity,
           journal,
+          staleReceipt,
         },
         config,
       )
-    : createConfig(context, staged.temporary, config, journal)
+    : createConfig(context, staged.temporary, config, journal, staleReceipt)
 }
 
 /**
@@ -2572,7 +2606,7 @@ async function adoptPending(
 
 /**
  * Tells whether a publish is a first setup: no receipt stands, or the receipt's entry no longer stands in the config (only `mcp_config.json` was deleted, or a removal took the entry out and left its receipt behind); called once by {@link publishEntry}.
- * A first setup deletes that stale receipt before it publishes ({@link retireStaleReceipt}), starts a new installation id (so descriptors marked before a removal stay refused) and marks its publish record, so a run that stops before its receipt is taken back ({@link isTakeBackOwed}). Every other publish that a receipt stands for is an update of the entry it owns: a changed or foreign entry is refused before any publish.
+ * A first setup deletes that stale receipt once its own publish record is written, right before the link that exposes its entry, and writes it back when that link fails ({@link linkWithoutStaleReceipt}); it starts a new installation id (so descriptors marked before a removal stay refused) and marks its publish record, so a run that stops before its receipt is taken back ({@link isTakeBackOwed}). Every other publish that a receipt stands for is an update of the entry it owns: a changed or foreign entry is refused before any publish.
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any.
  * @returns
@@ -2588,7 +2622,7 @@ function isFirstSetup(look: ConfigLook, receipt: Receipt | undefined): boolean {
 }
 
 /**
- * Builds the refusal for a stale receipt that could not be deleted before a first setup publishes; called by {@link retireStaleReceipt}.
+ * Builds the refusal for a stale receipt that could not be deleted before a first setup links its config in; called by {@link retireStaleReceipt}.
  * @param context - The run; gives the receipt's path and the command to run again.
  * @param cause - The failure of the deletion, kept for diagnosis and never put into the sentence.
  * @returns The error, not thrown yet.
@@ -2606,10 +2640,10 @@ function staleReceiptRefusal(
 }
 
 /**
- * Deletes the receipt of an entry that is gone before a first setup publishes, so no reader takes the new entry for that receipt's, and a run that stops before the new receipt leaves an entry that is taken back; called by {@link publishEntry} when {@link isFirstSetup} holds and a receipt stands.
- * Safe because the entry that receipt owned no longer stands, so it covers nothing.
+ * Deletes the receipt of an entry that is gone right before a first setup links its config in, so no reader takes the new entry for that receipt's, and a run that stops before the new receipt leaves an entry that is taken back; called by {@link linkWithoutStaleReceipt} when {@link isFirstSetup} held and a receipt stood, once the setup's own publish record is written.
+ * Safe because the entry that receipt owned no longer stands, so it covers nothing; a link that fails writes it back.
  * @param context - The run.
- * @throws A {@link staleReceiptRefusal} when the receipt cannot be deleted; nothing is published then.
+ * @throws A {@link staleReceiptRefusal} when the receipt cannot be deleted; nothing is linked then.
  * @example
  * await retireStaleReceipt(context) // receipt.json is gone
  */
@@ -2841,7 +2875,7 @@ async function takeOutUnrecordedEntry(
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
  * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted; an empty generation when the run has no entry.
- * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} when a first setup cannot delete the receipt of an entry that is gone; nothing is published then. When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects.
+ * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} when a first setup cannot delete the receipt of an entry that is gone right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails writes it back. When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -2860,18 +2894,25 @@ async function publishEntry(
   // A first setup starts a new installation, an update carries the receipt's over.
   const installationId = installationIdOf(isFirst ? undefined : receipt)
   const root = rootWithEntry(look, entry)
-  // The receipt of an entry that is gone goes first, so no reader can take this publish for that receipt's.
-  if (isFirst && receipt !== undefined) await retireStaleReceipt(context)
   await context.seam?.afterRead?.()
-  const { config, keptLeft } = await publishRoot(context, root, look, {
-    // A first setup's record carries the prefix so no older build adopts its entry; its receipt below keeps the plain hash.
-    entrySha256: isFirst ? `${FIRST_SETUP_HASH_PREFIX}${entryHash}` : entryHash,
-    createdFile,
-    generation,
-    installationId,
-    // A first setup is adoptable only once its receipt is written ({@link isTakeBackOwed}).
-    ...(isFirst && { firstSetup: true }),
-  })
+  const { config, keptLeft } = await publishRoot(
+    context,
+    root,
+    look,
+    {
+      // A first setup's record carries the prefix so no older build adopts its entry; its receipt below keeps the plain hash.
+      entrySha256: isFirst
+        ? `${FIRST_SETUP_HASH_PREFIX}${entryHash}`
+        : entryHash,
+      createdFile,
+      generation,
+      installationId,
+      // A first setup is adoptable only once its receipt is written ({@link isTakeBackOwed}).
+      ...(isFirst && { firstSetup: true }),
+    },
+    // The receipt of an entry that is gone goes right before the link, so no reader can take this publish for that receipt's, and it stays when the publish refuses before then.
+    isFirst ? receipt : undefined,
+  )
   const written: Receipt = {
     schemaVersion: 1,
     targetPath: context.path,

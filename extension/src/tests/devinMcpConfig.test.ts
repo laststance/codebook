@@ -4982,30 +4982,133 @@ test('Setup run again after only mcp_config.json was deleted is taken back when 
   assert.equal(existsSync(receiptPath), false)
 })
 
-test('A setup that stops right after it deleted the old record of a deleted mcp_config.json leaves nothing behind', async (context) => {
-  // Value: protects=the old receipt goes before anything is published, so a stop in between leaves neither record nor config for any Codebook version to read; fails_when=the old receipt still stands after the stop, a pending record or a config is left, or the refresh answers anything but not-managed; no_claim=a real process end (seam.afterRead throws in its place), and the next setup's own success
+test('A setup that stops before it publishes after only mcp_config.json was deleted keeps the old record and leaves nothing else behind', async (context) => {
+  // Value: protects=the old receipt goes only right before the new config is linked in, so a stop before the publish leaves that receipt as it was and neither a pending record nor a config for any Codebook version to read; fails_when=the old receipt is gone or changed after the stop, a pending record or a config is left, or the refresh answers anything but not-managed; no_claim=a real process end (seam.afterRead throws in its place), a stop between the receipt's deletion and the link (no seam stands there), and the next setup's own success
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptBefore = await readRecordFile(storage, 'receipt.json')
   rmSync(configPath)
 
   // Act
-  await assert.rejects(
-    writeManagedDevinMcpEntry(storage, ENTRY, home, {
-      afterRead: () => {
-        throw new Error('process ended')
-      },
-    }),
-    /process ended/,
+  const stopError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterRead: () => {
+      throw new Error('process ended')
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
   )
+  // What the stop left, read before the refresh's recovery can change it.
+  const receiptAfterStop = existsSync(receiptPath)
+    ? await readRecordFile(storage, 'receipt.json')
+    : 'absent'
+  const isPendingLeft = existsSync(join(storage, 'devin-mcp', 'pending.json'))
+  const isConfigLeft = existsSync(configPath)
   const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
+  assert.equal(
+    stopError instanceof Error ? stopError.message : stopError,
+    'process ended',
+  )
+  assert.deepEqual(receiptAfterStop, receiptBefore)
+  assert.equal(isPendingLeft, false)
+  assert.equal(isConfigLeft, false)
   assert.equal(result.status, 'not-managed')
-  assert.equal(existsSync(receiptPath), false)
-  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
-  assert.equal(existsSync(configPath), false)
+})
+
+test('A setup after mcp_config.json was moved away keeps the old record when the old config comes back before the new one is linked in, so the next setup finds that entry current', async (context) => {
+  // Value: protects=the record of an entry that is gone is deleted only right before a first setup links its own config in, and stands again when that link finds the old config back at its name, so that config's codebook entry stays Codebook's own; fails_when=the old record is gone or changed after the refused setup, the setup answers anything but the changed-file refusal, the old config changes, a pending record or a private name stays, or the next setup refuses the entry instead of answering current; no_claim=a real sync tool or editor (seam.afterCheck moves the config back right before the link in its place)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptBefore = await readRecordFile(storage, 'receipt.json')
+  const oldConfigText = readFileSync(configPath, 'utf8')
+  const movedAwayPath = join(home, 'mcp_config.moved-away.json')
+  renameSync(configPath, movedAwayPath)
+  let hasMovedBack = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => {
+      if (hasMovedBack) return
+      hasMovedBack = true
+      renameSync(movedAwayPath, configPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const receiptAfterRefusal = existsSync(receiptPath)
+    ? await readRecordFile(storage, 'receipt.json')
+    : 'absent'
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  const leftovers = await leftoversBeside(configPath)
+  const isPendingLeft = existsSync(join(storage, 'devin-mcp', 'pending.json'))
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMovedBack, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(receiptAfterRefusal, receiptBefore)
+  assert.equal(configAfterRefusal, oldConfigText)
+  assert.deepEqual(leftovers, [])
+  assert.equal(isPendingLeft, false)
+  assert.equal(next.status, 'current')
+})
+
+test('A removal retry after a first setup that could not write its own record still answers removed', async (context) => {
+  // Value: protects=a first setup that refuses before its own publish record is written leaves the receipt of the entry an unrecorded removal took out, so that removal's retry still answers removed and the window is offered its reload; fails_when=the refused setup deletes that receipt, or the retry answers anything but removed; no_claim=a real full disk (seam.afterPublish puts a folder where pending.json was during the removal, and seam.beforeRecordWrite fails the setup's record write), and a setup that refuses after its own record replaced the removal's
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let pendingBytes = ''
+  await assert.rejects(
+    removeManagedDevinMcpEntry(storage, home, {
+      afterPublish: () => {
+        pendingBytes = readFileSync(pendingPath, 'utf8')
+        rmSync(pendingPath, { force: true })
+        mkdirSync(pendingPath)
+      },
+    }),
+    /could not write its own record/,
+  )
+  // The record's room is back, as the refusal asked.
+  rmSync(pendingPath, { recursive: true })
+  writeFileSync(pendingPath, pendingBytes)
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path === pendingPath) throw noSpaceLeft()
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const isReceiptLeftAfterSetup = existsSync(receiptPath)
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    'no space left on device',
+  )
+  assert.equal(isReceiptLeftAfterSetup, true)
+  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
 })
 
 test('A setup that cannot delete the old record of an entry that is gone refuses and changes nothing', async (context) => {
