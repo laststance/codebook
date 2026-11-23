@@ -2934,6 +2934,51 @@ test('A first setup record whose flags an older Codebook version dropped is stil
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A first setup record that an older Codebook version handed over, dropping its flags, is still taken back and its copy is kept and named once', async (context) => {
+  // Value: protects=a first setup record that 0.2.140.0's hand-over rewrote (phase handed, firstSetup and takeBack dropped, the prefixed entry hash kept) is still taken back through its prefix, while the handed copy of the learner's previous config is never deleted and is named once; fails_when=the refresh adopts the entry (a receipt), keeps the entry in the config, deletes or changes the handed copy or does not name it, or the next refresh still refuses; no_claim=0.2.140.0's hand-over itself (the record is rewritten by hand as it writes it) and the wording of the copy's sentence; seam=seam.afterPublish ends the first setup after its link, in place of a real process end
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  const keptPath = join(dirname(configPath), String(publishRecord.keptName))
+  delete publishRecord.firstSetup
+  delete publishRecord.takeBack
+  publishRecord.phase = 'handed'
+  writeFileSync(pendingPath, JSON.stringify(publishRecord))
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.ok(firstError instanceof Error)
+  assert.ok(firstError.message.includes(keptPath), firstError.message)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalText)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(next.status, 'not-managed')
+})
+
 test('A 0.2.141.0 first setup record with a plain hash and the firstSetup flag is still taken back', async (context) => {
   // Value: protects=a record that 0.2.141.0 wrote before it stopped (plain entry hash plus firstSetup) is taken back by this version as it was by that one; fails_when=the refresh adopts the entry (current) or keeps it in the config; no_claim=0.2.141.0's writer itself (the prefix is removed from this version's record in its place); a real process end (seam.afterPublish throws in its place)
   // Arrange
@@ -3062,10 +3107,11 @@ test('A first setup whose receipt cannot be written removes only its own entry f
 })
 
 test('A first setup whose receipt cannot be written keeps the setup record and names the copy a save changed', async (context) => {
-  // protects: the proof that the published entry is Codebook's and a handed copy's location survive a failed first setup / fails_when: the setup record is overwritten by the rollback, or the refusal omits the copy's path / no_claim: a crash in the middle of the rollback
+  // Value: protects=the proof that the published entry is Codebook's and a handed copy's location survive a failed first setup, while the rollback still takes the entry out of the live config and the changed copy keeps the save; fails_when=the setup record is overwritten by the rollback, the refusal omits the copy's path, the live config keeps the codebook entry or loses alpha, or the copy no longer holds the original bytes with the appended space; no_claim=a crash in the middle of the rollback; seam=seam.afterPublish, at the setup's own publish only, appends a space to the displaced copy (an editor holding it open) and puts a folder where receipt.json goes
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
   let copyPath = ''
@@ -3073,6 +3119,8 @@ test('A first setup whose receipt cannot be written keeps the setup record and n
   // Act
   const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
     afterPublish: (displacedPath) => {
+      // Only the setup's own publish: the rollback's publish, which moves the published config aside, calls this seam too.
+      if (copyPath !== '') return
       copyPath = displacedPath ?? ''
       // An editor that still holds the old file open saves into it.
       appendFileSync(copyPath, ' ')
@@ -3087,7 +3135,10 @@ test('A first setup whose receipt cannot be written keeps the setup record and n
     assert.match(error.message, /took that entry out again/)
     return true
   })
-  assert.equal(existsSync(copyPath), true)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(readFileSync(copyPath, 'utf8'), `${originalText} `)
   const pending = JSON.parse(readFileSync(pendingPath, 'utf8'))
   assert.equal(typeof pending.entrySha256, 'string')
   assert.equal(pending.phase, 'handed')
@@ -4759,7 +4810,8 @@ async function arrangePublishedWithOriginal(
 }> {
   const keptPath = privateNameOf(configPath, 'codebook-displaced')
   const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
-  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
+  // A publish keeps the learner's other servers, so the original's alpha is in the published config too.
+  const publishedBytes = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`
   await writeConfig(configPath, publishedBytes)
   // An old modification time keeps an in-place rewrite visible on a file system with coarse timestamps.
   utimesSync(configPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
