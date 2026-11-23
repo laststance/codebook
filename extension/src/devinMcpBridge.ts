@@ -1011,7 +1011,7 @@ function setupCheckBeforeReconnect(
  * @param onClosed - Called once the bridge's cleanup has completed after its stdio closed.
  * @param cwd - The bridge's working folder, named by the refusal a later reconnection ends with.
  * Before any request it requires the setup receipts of the descriptor's installation ({@link checkDevinBridgeReceipts}), a check bounded by the remaining startup time (at least {@link WORKSPACE_RESOLVE_FLOOR_MS}).
- * @returns `connected` once the transport is up; `not-set-up` after a pause when the descriptor names no installation or the receipts check observed the setup removed; `unverified` after a pause when the receipts check did not answer in time or answered `no-answer`; `replaced` after a pause when the receipts check answered `replaced`; otherwise {@link outcomeOfConnectFailure}'s outcome for a connection that failed, after a pause unless it is `dropped`.
+ * @returns `connected` once the transport is up; `stopped` when Devin ended the bridge during the first handshake (cut, its session released, `onClosed` called); `not-set-up` after a pause when the descriptor names no installation or the receipts check observed the setup removed; `unverified` after a pause when the receipts check did not answer in time or answered `no-answer`; `replaced` after a pause when the receipts check answered `replaced`; otherwise {@link outcomeOfConnectFailure}'s outcome for a connection that failed, after a pause unless it is `dropped`.
  * @example
  * await connectOnce(selection, Date.now() + 15_000, expected) // => 'connected'
  */
@@ -1046,7 +1046,7 @@ async function connectOnce(
     cwd,
   )
   try {
-    await runCursorMcpBridge(
+    const served = await runCursorMcpBridge(
       selection.descriptorPath,
       Math.max(DEVIN_CONNECT_FLOOR_MS, deadline - Date.now()),
       // The connection's own read compares with the id the check confirmed.
@@ -1056,6 +1056,8 @@ async function connectOnce(
       setupCheck,
       setupCheck,
     )
+    // Devin ended the bridge during the first handshake, which was cut and its session released; `onClosed` already ran, so nothing more starts.
+    if (served === 'stopped') return 'stopped'
     process.stderr.write(
       `Codebook bridge: instance ${selection.instanceId}, workspace ${selection.workspace}\n`,
     )
@@ -1092,6 +1094,7 @@ function outcomeOfConnectFailure(
 /** What one {@link connectOnce} attempt came to; see its `@returns`. */
 type ConnectOutcome =
   | 'connected'
+  | 'stopped'
   | 'busy'
   | 'dropped'
   | 'not-set-up'
@@ -1181,7 +1184,7 @@ function mayStartAttempt(
  * @param env - Environment; `WINDSURF_EXT_HOST_PID` names the extension host.
  * @param options - Polling limits of {@link selectDevinDescriptor}; tests shorten them.
  * @returns
- * - `undefined` once the transport is connected
+ * - `undefined` once the transport is connected, or once Devin ended the bridge during its first handshake (its `onClosed` has run then)
  * - the one refusal line (no line break, no descriptor contents) when the bridge refuses; the caller writes it and exits 1
  */
 export async function runDevinMcpBridge(
@@ -1234,7 +1237,8 @@ export async function runDevinMcpBridge(
       options.onClosed,
       cwd,
     )
-    if (outcome === 'connected') return undefined
+    // Connected, or ended by Devin during the first handshake: nothing is left to try.
+    if (outcome === 'connected' || outcome === 'stopped') return undefined
     noteConnectOutcome(outcome, selection, excludedPaths, wait, pinned)
   }
 }
@@ -1316,7 +1320,7 @@ const PINNING_OUTCOMES: ReadonlySet<ConnectOutcome> = new Set([
  * @example noteConnectOutcome('unread', selection, excludedPaths, wait, pinned) // pinned now holds that path's instance id and url
  */
 function noteConnectOutcome(
-  outcome: Exclude<ConnectOutcome, 'connected'>,
+  outcome: Exclude<ConnectOutcome, 'connected' | 'stopped'>,
   selection: DevinDescriptorSelection,
   excludedPaths: Set<string>,
   wait: BridgeWait,

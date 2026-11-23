@@ -5,6 +5,8 @@
  * - `UNKNOWN_SESSION_REJECTED <n>` one macrotask after the SDK's n-th request failed with HTTP 404: every microtask of that rejection has run by then, so the bridge's forwarding has reached the wait for its reconnect.
  * - `SESSION_ASSIGNED <id>` when the headers of an answer named a session (the SDK has stored that id).
  * - `REFUSAL_HEADERS_SEEN` when the headers of an HTTP 401 or 403 answer arrived, before its body was read.
+ * - `STDIN_DATA_READ <n>` when stdin emits its n-th chunk to whoever reads it. Made by wrapping `process.stdin.emit`, so it adds no listener: the stdio transport's close still finds itself the only reader and pauses stdin.
+ * - `STDIN_PAUSED` each time `process.stdin.pause()` is called.
  * @returns The preload's source; the SDK's transport is required by the absolute path this process resolves, the module the bridge loads.
  * @example
  * await writeFile(preloadPath, bridgeStopMarksPreload())
@@ -15,6 +17,20 @@ export function bridgeStopMarksPreload(): string {
   return `const { writeSync } = require('node:fs')
 const http = require(${JSON.stringify(transportPath)})
 process.stdin.once('end', () => writeSync(2, 'STDIN_END_SEEN\\n'))
+let stdinDataReads = 0
+const originalStdinEmit = process.stdin.emit
+process.stdin.emit = function (event, ...rest) {
+  if (event === 'data') {
+    stdinDataReads += 1
+    writeSync(2, 'STDIN_DATA_READ ' + stdinDataReads + '\\n')
+  }
+  return originalStdinEmit.call(this, event, ...rest)
+}
+const originalStdinPause = process.stdin.pause
+process.stdin.pause = function (...rest) {
+  writeSync(2, 'STDIN_PAUSED\\n')
+  return originalStdinPause.apply(this, rest)
+}
 const originalSend = http.StreamableHTTPClientTransport.prototype.send
 let unknownSessionRejections = 0
 http.StreamableHTTPClientTransport.prototype.send = function (...rest) {

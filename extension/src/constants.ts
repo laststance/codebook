@@ -516,6 +516,8 @@ export const DEVIN_BRIDGE_HEADER_NAME = 'x-codebook-bridge'
 export const DEVIN_BRIDGE_HEADER_VALUE = 'devin'
 /** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
 export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
+/** The most input Codebook's Cursor and Devin Desktop bridges keep from their client while their first connection to Codebook's server is not up yet (they read it only to see the client end them): at this size they stop reading, keep the chunk that reached it whole, and read on once they serve. An MCP client sends only `initialize`, a few hundred bytes, and pings before it is answered. */
+export const BRIDGE_STARTUP_INPUT_LIMIT_BYTES = 1_048_576
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
 export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
 /** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */

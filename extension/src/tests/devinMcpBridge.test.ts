@@ -173,7 +173,10 @@ async function runCapturingStderr(
   agentDir: string,
   workspace: string,
   env: NodeJS.ProcessEnv,
-  options: { timeoutMs?: number; intervalMs?: number },
+  options: Pick<
+    DevinMcpBridgeModule.DevinSelectOptions,
+    'timeoutMs' | 'intervalMs' | 'onClosed'
+  >,
 ) {
   const lines: string[] = [],
     originalWrite = process.stderr.write.bind(process.stderr)
@@ -3547,14 +3550,26 @@ test(
   },
 )
 
-/** A connected Devin bridge process behind a proxy the test controls, as {@link startConnectedBridge} starts it. */
+/** Devin's request 0 of a handshake, as the Devin bridge tests send it. */
+const DEVIN_INITIALIZE_REQUEST = {
+  jsonrpc: '2.0',
+  id: 0,
+  method: 'initialize',
+  params: {
+    protocolVersion: '2025-03-26',
+    capabilities: {},
+    clientInfo: { name: 'devin-bridge-test', version: '1.0' },
+  },
+}
+
+/** A Devin bridge process behind a proxy the test controls, as {@link startConnectedBridge} (connected) or {@link launchDevinBridge} (still starting) starts it. */
 interface ConnectedBridge {
   /** The global storage folder, the parent of the agent folder. */
   root: string
   agentDir: string
   /** The folder of the window's workspace, the bridge's working folder. */
   directory: string
-  /** The initialize requests and the other requests that reached the proxy since the bridge connected, and the `tools/list` requests per session id. */
+  /** The initialize requests and the other requests that reached the proxy since the bridge connected ({@link startConnectedBridge}) or since its spawn ({@link launchDevinBridge}), and the `tools/list` requests per session id. */
   counts: {
     initializes: number
     others: number
@@ -3563,7 +3578,7 @@ interface ConnectedBridge {
   /** The status the proxy answers to every request instead of forwarding it; `undefined` forwards. */
   proxy: {
     refuseWith: number | undefined
-    /** Called with the JSON-RPC method of every request (empty for a request without one), the count of initializes seen since the bridge connected, the HTTP method (`DELETE` for the session release), the request's `mcp-session-id`, whether the bridge already closed the request's connection, and the response; resolves the status to answer instead of forwarding it, `undefined` forwards, `answered` when it wrote (or holds) the response itself. It may change the disk first. */
+    /** Called with the JSON-RPC method of every request (empty for a request without one), the count of initializes seen since the bridge connected (since its spawn, the one being decided included, for {@link launchDevinBridge}), the HTTP method (`DELETE` for the session release), the request's `mcp-session-id`, whether the bridge already closed the request's connection, and the response; resolves the status to answer instead of forwarding it, `undefined` forwards, `answered` when it wrote (or holds) the response itself. It may change the disk first. */
     decide?: (
       method: string,
       initializesSoFar: number,
@@ -3576,12 +3591,14 @@ interface ConnectedBridge {
   readStderr: () => string
   /** Resolves with the exit code once the process ended. */
   exited: Promise<number | null>
-  /** The JSON-RPC messages the bridge wrote to stdout so far. */
-  readMessages: () => Array<{ id?: number }>
+  /** The JSON-RPC messages the bridge wrote to stdout so far; an answer carries `result` or `error`. */
+  readMessages: () => Array<{ id?: number; result?: unknown; error?: unknown }>
   /** Makes the server forget the bridge's session, so that its next request answers 404 `Unknown MCP session`. */
   expireSession: () => Promise<void>
   /** Does the MCP handshake a client makes (request 0 `initialize`, then `initialized`). */
   handshake: () => void
+  /** Writes `text` to the bridge's stdin as it is, so a test can split a message across writes. */
+  write: (text: string) => void
   /** Asks `tools/list` as request `id`. */
   askToolsList: (id: number) => void
   /** Signals the bridge process (SIGUSR2) so a preload given to {@link startConnectedBridge} starts its work. */
@@ -3596,12 +3613,40 @@ interface ConnectedBridge {
  * Starts the Devin bridge entry against a real Codebook server behind a counting proxy and waits for its connected line; the arrange step of the reconnect tests.
  * @param context - The test context; its cleanup removes the folders and the servers.
  * @param preloadSource - Source of a preload script run in the bridge process; none when left out.
- * @returns The running bridge with the controls of {@link ConnectedBridge}.
+ * @returns The running bridge with the controls of {@link ConnectedBridge}; its counts start after the connection's own handshake.
  */
 async function startConnectedBridge(
   context: { after: (callback: () => Promise<void>) => void },
   preloadSource?: string,
 ): Promise<ConnectedBridge> {
+  const { bridge, child } = await launchDevinBridge(context, { preloadSource })
+  await watchConnectedLine(child).connected
+  // The connection's own handshake is not counted.
+  bridge.counts.initializes = 0
+  bridge.counts.others = 0
+  bridge.counts.toolsListBySession = {}
+  return bridge
+}
+
+/** What {@link launchDevinBridge} starts the bridge with. */
+interface DevinBridgeLaunch {
+  /** Source of a preload script run in the bridge process; none when left out. */
+  preloadSource?: string
+  /** The proxy's `decide` from the bridge's first request on, its startup included (see {@link ConnectedBridge}'s `proxy`). */
+  decide?: ConnectedBridge['proxy']['decide']
+}
+
+/**
+ * Starts the Devin bridge entry against a real Codebook server behind a counting proxy, without waiting for anything: the arrange step of the startup tests, and the first step of {@link startConnectedBridge}.
+ * It returns right after the spawn, so a caller that watches stderr for the connected line sees all of it. Its counts start at the spawn.
+ * @param context - The test context; its cleanup ends a bridge that is still running first, then removes the folders and the servers.
+ * @param launch - The preload and the proxy's `decide` from the start ({@link DevinBridgeLaunch}).
+ * @returns The bridge's controls ({@link ConnectedBridge}) and its process.
+ */
+async function launchDevinBridge(
+  context: { after: (callback: () => Promise<void>) => void },
+  launch: DevinBridgeLaunch,
+): Promise<{ bridge: ConnectedBridge; child: ChildProcess }> {
   let now = 0
   // After-hooks run in the order they were registered: the bridge ends first, so it sends nothing to a server that is already closed.
   const running: { child?: ChildProcess } = {}
@@ -3626,7 +3671,10 @@ async function startConnectedBridge(
       others: 0,
       toolsListBySession: {},
     },
-    proxy: ConnectedBridge['proxy'] = { refuseWith: undefined }
+    proxy: ConnectedBridge['proxy'] = {
+      refuseWith: undefined,
+      decide: launch.decide,
+    }
   const upstreamPort = Number(new URL(endpoint.descriptor.url).port)
   const { port } = await listen(context, (incoming, outgoing) => {
     const sessionHeader = incoming.headers['mcp-session-id'],
@@ -3686,9 +3734,9 @@ async function startConnectedBridge(
     instanceId: IDS[0],
   })
   const preloadArguments: string[] = []
-  if (preloadSource !== undefined) {
+  if (launch.preloadSource !== undefined) {
     const preloadPath = join(root, 'preload.js')
-    await writeFile(preloadPath, preloadSource)
+    await writeFile(preloadPath, launch.preloadSource)
     preloadArguments.push('--require', preloadPath)
   }
   const child = spawn(
@@ -3707,30 +3755,28 @@ async function startConnectedBridge(
     },
   )
   running.child = child
-  const watcher = watchConnectedLine(child)
+  let stderr = '',
+    stdout = ''
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8')
+  })
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8')
+  })
   const exited = new Promise<number | null>((done) => {
     // Waits for close, not exit: stderr's last chunk can arrive after exit.
     child.on('close', (code) => done(code))
   })
-  let stdout = ''
-  child.stdout?.on('data', (chunk: Buffer) => {
-    stdout += chunk.toString('utf8')
-  })
-  await watcher.connected
-  // The connection's own handshake is not counted.
-  counts.initializes = 0
-  counts.others = 0
-  counts.toolsListBySession = {}
   const send = (message: object): void => {
     child.stdin?.write(`${JSON.stringify(message)}\n`)
   }
-  return {
+  const bridge: ConnectedBridge = {
     root,
     agentDir,
     directory: harness.directory,
     counts,
     proxy,
-    readStderr: watcher.readStderr,
+    readStderr: () => stderr,
     exited,
     readMessages: () =>
       stdout
@@ -3739,24 +3785,24 @@ async function startConnectedBridge(
         .slice(0, -1)
         .filter((line) => line.startsWith('{'))
         .map((line) =>
-          z.looseObject({ id: z.number().optional() }).parse(JSON.parse(line)),
+          z
+            .looseObject({
+              id: z.number().optional(),
+              result: z.unknown().optional(),
+              error: z.unknown().optional(),
+            })
+            .parse(JSON.parse(line)),
         ),
     expireSession: async (): Promise<void> => {
       now = SESSION_IDLE_TIMEOUT_MS + 1
       await endpoint.expire()
     },
     handshake: (): void => {
-      send({
-        jsonrpc: '2.0',
-        id: 0,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-03-26',
-          capabilities: {},
-          clientInfo: { name: 'devin-bridge-test', version: '1.0' },
-        },
-      })
+      send(DEVIN_INITIALIZE_REQUEST)
       send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    },
+    write: (text): void => {
+      child.stdin?.write(text)
     },
     askToolsList: (id): void => {
       send({ jsonrpc: '2.0', id, method: 'tools/list', params: {} })
@@ -3771,6 +3817,7 @@ async function startConnectedBridge(
       child.kill(name)
     },
   }
+  return { bridge, child }
 }
 
 /**
@@ -5017,5 +5064,272 @@ fsPromises.open = (path, ...rest) => {
     const bridge = await startConnectedBridge(context, preload)
     // Assert
     assert.equal(bridge.readStderr().includes('SHORTAGE_INJECTED'), true)
+  },
+)
+
+/** Requests 0 to 3 as one text, Devin's initialize first and three pings after it, cut inside the second ping, so a test can send them in two writes with one message split across both. */
+function initializeAndPingsInTwoParts(): [string, string] {
+  const input = [
+    DEVIN_INITIALIZE_REQUEST,
+    { jsonrpc: '2.0', id: 1, method: 'ping' },
+    { jsonrpc: '2.0', id: 2, method: 'ping' },
+    { jsonrpc: '2.0', id: 3, method: 'ping' },
+  ]
+    .map((message) => `${JSON.stringify(message)}\n`)
+    .join('')
+  const splitAt = input.indexOf('"id":2') + 3
+  return [input.slice(0, splitAt), input.slice(splitAt)]
+}
+
+// Value: protects=every message Devin sent while the bridge's first attempt waited reaching the bridge's MCP server from its next attempt, once each and in order, after a busy (429) answer, a message split across two reads included (Cycle 0146 /ship pass 1, Codex review of the FB design); fails_when=the input the first attempt read to see its end is not given back whole and in order for the next attempt, so Devin's initialize or a ping is lost, sent twice or reordered; no_claim=the hand-over without a retry (cursorMcpBridge tests), the order of the initialize answer among the pings (each handler answers when it finishes)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a Devin bridge answers once each, in order, the messages Devin sent while its first attempt waited, after that attempt was answered 429',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    let heldFirstInitialize: ServerResponse | undefined
+    const { bridge } = await launchDevinBridge(context, {
+      preloadSource: bridgeStopMarksPreload(),
+      decide: async (method, initializesSoFar, _http, _session, _gone, out) => {
+        // The first attempt's initialize waits until the test answers it 429.
+        if (method !== 'initialize' || initializesSoFar !== 1) return undefined
+        heldFirstInitialize = out
+        return 'answered'
+      },
+    })
+    const firstInitialize = await waitUntil(
+      () => heldFirstInitialize,
+      "the first attempt's initialize held",
+      15_000,
+      undefined,
+      5,
+    )
+    const [firstPart, secondPart] = initializeAndPingsInTwoParts()
+    bridge.write(firstPart)
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_DATA_READ 1\n'),
+      'the bridge reading the first part of the input',
+      10_000,
+      undefined,
+      5,
+    )
+    bridge.write(secondPart)
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_DATA_READ 2\n'),
+      'the bridge reading the second part of the input',
+      10_000,
+      undefined,
+      5,
+    )
+    // Act
+    firstInitialize.writeHead(429)
+    firstInitialize.end()
+    await waitUntil(
+      () => bridge.readMessages().length >= 4,
+      'the answers to the four requests',
+      15_000,
+      undefined,
+      5,
+    )
+    bridge.closeStdin()
+    const exitCode = await within(bridge.exited, 10_000)
+    // Assert
+    const answers = bridge.readMessages()
+    assert.equal(exitCode, 0)
+    assert.deepEqual(answers.map((answer) => answer.id).sort(), [0, 1, 2, 3])
+    assert.deepEqual(
+      answers.filter((answer) => answer.id !== 0).map((answer) => answer.id),
+      [1, 2, 3],
+    )
+    assert.deepEqual(
+      answers.filter((answer) => answer.error !== undefined),
+      [],
+    )
+    assert.equal(
+      answers.every((answer) => answer.result !== undefined),
+      true,
+    )
+    assert.equal(bridge.counts.initializes, 2)
+  },
+)
+
+// Value: protects=a prompt end of the Devin bridge, with exit code 0, a DELETE for the session its first initialize opened and no further attempt, when Devin closes it during its first handshake (Cycle 0146 /ship pass 1, outside-voice 9); fails_when=the bridge sees the end of its input only once it serves, so it waits for that handshake to the end of its startup window, tries again and ends with a refusal line and exit code 1 after Devin already ended it; no_claim=that the server reclaims the session (the release is a best-effort DELETE for the id the bridge knows), a stop while the bridge serves (the tests above)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a Devin bridge that Devin closes during its first handshake releases that session and ends with exit code 0, without a refusal line or a second attempt',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    let isHeldNotificationGone: (() => boolean) | undefined,
+      releases = 0
+    const { bridge } = await launchDevinBridge(context, {
+      preloadSource: bridgeStopMarksPreload(),
+      decide: async (method, _initializes, httpMethod, _session, isGone) => {
+        if (httpMethod === 'DELETE') releases += 1
+        if (method !== 'notifications/initialized') return undefined
+        // Held through the bridge's exit: never answered.
+        isHeldNotificationGone = isGone
+        return 'answered'
+      },
+    })
+    bridge.write(`${JSON.stringify(DEVIN_INITIALIZE_REQUEST)}\n`)
+    const isNotificationGone = await waitUntil(
+      () => isHeldNotificationGone,
+      'the first initialized notification held',
+      15_000,
+      undefined,
+      5,
+    )
+    // Act
+    bridge.closeStdin()
+    const exitCode = await within(bridge.exited, 5_000)
+    // The child's exit does not wait for the proxy to see that connection close, so that is observed on its own, within a bound.
+    const wasNotificationClosed = await waitUntil(
+      () => isNotificationGone(),
+      'the proxy seeing the held notification closed',
+      5_000,
+      undefined,
+      5,
+    ).catch(() => false)
+    // Assert
+    const stderr = bridge.readStderr()
+    assert.equal(exitCode, 0)
+    assert.equal(wasNotificationClosed, true)
+    assert.equal(releases, 1)
+    assert.equal(bridge.counts.initializes, 1)
+    assert.equal(stderr.includes('Codebook bridge: instance'), false)
+    assert.equal(stderr.includes('Codebook is not running'), false)
+    assert.equal(stderr.includes('not set up'), false)
+    assert.equal(stderr.includes('could not connect'), false)
+  },
+)
+
+// Value: protects=a prompt end of the Devin bridge with exit code 0 and no refusal line when Devin closes its stdin while the bridge pauses between two attempts after a busy answer, with nothing read from stdin yet (Cycle 0146 /ship pass 1, Codex review of the FB design); fails_when=the end of input that comes between two attempts is lost, so the next attempt's first handshake runs to the end of the startup window and the bridge ends with a refusal line and exit code 1; no_claim=input read before the pause (the 429 order test above)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a Devin bridge whose stdin closes while it pauses after a busy answer ends with exit code 0 at its next attempt, without a refusal line',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const { bridge } = await launchDevinBridge(context, {
+      preloadSource: bridgeStopMarksPreload(),
+      decide: async (method, initializesSoFar) => {
+        // The first attempt is answered 429 at once; the next one's initialized notification is held through the bridge's exit.
+        if (method === 'initialize' && initializesSoFar === 1) return 429
+        return method === 'notifications/initialized' ? 'answered' : undefined
+      },
+    })
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge pausing its input after the busy answer',
+      15_000,
+      undefined,
+      5,
+    )
+    // Act
+    bridge.closeStdin()
+    const exitCode = await within(bridge.exited, 5_000)
+    // Assert
+    const stderr = bridge.readStderr()
+    assert.equal(exitCode, 0)
+    assert.equal(stderr.includes('Codebook bridge: instance'), false)
+    assert.equal(stderr.includes('Codebook is not running'), false)
+    assert.equal(stderr.includes('not set up'), false)
+    assert.equal(stderr.includes('could not connect'), false)
+  },
+)
+
+// Value: protects=runDevinMcpBridge ending with no refusal, no connected line and no second attempt, after calling its onClosed once, when a signal stops the first handshake, also for a caller whose onClosed returns instead of ending the process (Cycle 0146 /ship pass 1, Codex review of the FB design); fails_when=connectOnce treats the stopped connection as connected (writes the connected line) or as a failed one (tries again, then returns a refusal line), or onClosed runs twice or never; no_claim=the bridge entry's process exit (the child-process tests above)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'runDevinMcpBridge returns no refusal and calls onClosed once without a second attempt when a signal stops its first handshake',
+  { skip: process.platform === 'win32', timeout: 20_000 },
+  async (context) => {
+    // Arrange
+    const { agentDir, workspace } = await createFolders(context)
+    let initializes = 0,
+      releases = 0,
+      closings = 0,
+      isNotificationHeld = false
+    const { port } = await listen(context, (incoming, outgoing) => {
+      const chunks: Buffer[] = []
+      incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
+      incoming.on('end', () => {
+        if (incoming.method === 'DELETE') {
+          releases += 1
+          outgoing.writeHead(200)
+          outgoing.end()
+          return
+        }
+        const message = z
+          .looseObject({
+            id: z.number().optional(),
+            method: z.string(),
+            params: z
+              .looseObject({ protocolVersion: z.string().optional() })
+              .optional(),
+          })
+          .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        // The initialized notification is held: never answered.
+        if (message.method !== 'initialize') {
+          isNotificationHeld = true
+          return
+        }
+        initializes += 1
+        outgoing.writeHead(200, {
+          'content-type': 'application/json',
+          'mcp-session-id': 'session-1',
+        })
+        outgoing.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              protocolVersion: message.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: 'held', version: '1' },
+            },
+          }),
+        )
+      })
+    })
+    await writeDescriptor(agentDir, 0, workspace, process.pid, {
+      url: `http://127.0.0.1:${port}/mcp`,
+    })
+    const run = runCapturingStderr(
+      agentDir,
+      workspace,
+      { WINDSURF_EXT_HOST_PID: String(process.pid) },
+      {
+        timeoutMs: 1_500,
+        intervalMs: 20,
+        onClosed: () => {
+          closings += 1
+        },
+      },
+    )
+    await waitUntil(
+      () => isNotificationHeld,
+      'the first initialized notification held',
+      5_000,
+      undefined,
+      5,
+    )
+    // Act
+    // Reaches only the bridge's own listeners: the test runner's process has none, and an emitted signal has no default action.
+    process.emit('SIGINT')
+    const finished = await within(run, 5_000)
+    // Assert
+    if (finished === 'still waiting')
+      assert.fail('the bridge was still running 5 seconds after the signal')
+    assert.equal(finished.exitCode, undefined)
+    assert.equal(
+      finished.lines.some((line) => line.includes('Codebook bridge: instance')),
+      false,
+    )
+    assert.equal(closings, 1)
+    assert.equal(initializes, 1)
+    assert.equal(releases, 1)
   },
 )

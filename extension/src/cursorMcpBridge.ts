@@ -20,6 +20,7 @@ import {
   CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS,
   EXTENSION_VERSION,
 } from './constants'
+import { holdBridgeInput } from './utils/holdBridgeInput'
 import {
   readBridgeDescriptor,
   type DescriptorExpectation,
@@ -127,16 +128,87 @@ function isRefusal(error: unknown): boolean {
 }
 
 /**
+ * Runs a bridge's first handshake while it watches for the client ending the bridge: the end of stdin, a read error on it, SIGTERM or SIGINT; called by {@link runCursorMcpBridge} once, after its descriptor read.
+ * Before this the first handshake could not be stopped: nothing read stdin before the stdio transport started, and the signal handlers came after the handshake, so a client that closed the bridge meanwhile kept it waiting (Cursor's bridge has no deadline for the handshake) and a signal ended it before it released its session (Cycle 0146 /ship pass 1).
+ * A stop marks the bridge closed, which cuts the handshake short; its client is closed and the session the server named is released by `connect` itself (a best-effort DELETE for the id the bridge knows). The signal handlers stay until that release settled, so a second signal meets them instead of the default action.
+ * Not watched during the descriptor read before it: no session can exist yet, so a signal's default action loses nothing, and an end of input that came then is seen as soon as this starts.
+ * @param connect - Makes the handshake under the bridge's stop signal; it closes the client and releases any session itself when it fails or is cut.
+ * @param markClosed - Begins the bridge's stop; idempotent.
+ * @param stop - The bridge's stop signal, aborted by `markClosed`.
+ * @returns `'stopped'` when the stop began during the handshake, whatever the cut handshake threw: stdin is left paused and nothing is kept, so the process can end. Otherwise the connection and `handOver`, which the caller runs once its serving stop listens: it puts what was read from stdin back for the stdio transport (paused, each chunk whole and in order) and removes the signal handlers.
+ * @throws What the handshake threw when it failed without a stop; stdin then holds what was read, paused, for the next reader, and no handler is left.
+ * @example
+ * const first = await connectFirstUpstream(() => connectUpstream(budget), markClosed, shutdownStarted.signal)
+ */
+async function connectFirstUpstream<Connection>(
+  connect: () => Promise<Connection>,
+  markClosed: () => void,
+  stop: AbortSignal,
+): Promise<{ connection: Connection; handOver: () => void } | 'stopped'> {
+  const input = holdBridgeInput(process.stdin, markClosed)
+  process.on('SIGTERM', markClosed)
+  process.on('SIGINT', markClosed)
+  const stopWatching = (): void => {
+    process.off('SIGTERM', markClosed)
+    process.off('SIGINT', markClosed)
+  }
+  try {
+    const connection = await connect()
+    return {
+      connection,
+      handOver: (): void => {
+        input.putBack()
+        stopWatching()
+      },
+    }
+  } catch (error) {
+    stopWatching()
+    // A stop that began during the handshake ends the bridge as a stop, whatever the cut handshake threw.
+    if (stop.aborted) {
+      input.release()
+      return 'stopped'
+    }
+    input.putBack()
+    throw error
+  }
+}
+
+/**
+ * Registers a serving bridge's stop listeners, each once, as the bridge has always had them: the end of stdin, SIGTERM and SIGINT; called by {@link runCursorMcpBridge} before the first handshake's watch lets go of the signals, so a signal never meets the default action between the two.
+ * @param onInputEnd - The bridge's stop for the end of its input.
+ * @param onSignal - The bridge's stop for a signal.
+ * @returns Removes the three listeners again, for a stdio attachment that failed, so the Devin bridge's next attempt finds none of this one's.
+ * @example
+ * const stopListening = listenForServingStop(() => shutdownThenNotify(), stopForSignal)
+ */
+function listenForServingStop(
+  onInputEnd: () => void,
+  onSignal: () => void,
+): () => void {
+  process.stdin.once('end', onInputEnd)
+  process.once('SIGTERM', onSignal)
+  process.once('SIGINT', onSignal)
+  return (): void => {
+    process.stdin.off('end', onInputEnd)
+    process.off('SIGTERM', onSignal)
+    process.off('SIGINT', onSignal)
+  }
+}
+
+/**
  * Bridges Cursor's stdio MCP transport to the authenticated instance selected by its extension window.
  * @param descriptorPath - The private connection descriptor of the instance.
  * @param connectTimeoutMs - Longest wait for reading the descriptor and the whole connection handshake together (initialize and the initialized notification); the Devin Desktop bridge passes its remaining startup budget. The SDK's own request timeout applies when left out.
  * @param expected - What the Devin Desktop bridge's selection validated; the descriptor read for the connection must still say the same, else nothing is sent. Cursor's bridge passes none.
  * @param extraHeader - A request header sent on every request to the server, beside the bearer token; the Devin Desktop bridge marks its requests with it ({@link DEVIN_BRIDGE_HEADER_NAME}). Cursor's bridge passes none.
- * @param onClosed - Called once the bridge's cleanup has completed after stdin closed or the stdio transport closed, also after a signal, which closes the stdio transport; the Devin Desktop bridge entry ends its process there, so a lookup that never settles cannot keep it alive. Cursor's bridge passes none and ends with its event loop.
+ * @param onClosed - Called once the bridge's cleanup has completed after stdin closed or the stdio transport closed, also after a signal, which closes the stdio transport, and after a stop during the first handshake (see the return value); the Devin Desktop bridge entry ends its process there, so a lookup that never settles cannot keep it alive. Cursor's bridge passes none and ends with its event loop.
  * @param beforeUpstream - Check run before every upstream reinitialization after the first connection (an expired session); when it resolves `false` the bridge ends (cleanup, then `onClosed`) instead of reconnecting, and when it rejects only that request fails. A stop (end of input or a signal) cuts a replacement handshake short; after it no session opens and no request is sent, neither a new one nor a replay. The Devin Desktop bridge passes its receipts check; Cursor's bridge passes none.
  * @param onRefused - Check run when the server refuses a request with HTTP 401 or 403 (a removed setup unmarks the window, a take-back rotates the token). When it resolves `false` the bridge ends as for `beforeUpstream`; when it resolves `true` or rejects, only that request fails; the request is never sent again, because only the exact 404 `Unknown MCP session` is safe to retry. Also run when a stop cut a replacement handshake short, suppressed a request or interrupted one still in flight (the ones that come while such a check runs share it), so a setup removed or replaced meanwhile still ends the bridge with its line. The Devin Desktop bridge passes the same check as `beforeUpstream`; Cursor's bridge passes none and a refusal fails the request as before.
+ * @returns
+ * - `'serving'` once the first connection is up and the bridge serves its client (its later stop calls `onClosed`)
+ * - `'stopped'` when the client ended the bridge during its first handshake (the end of stdin, a read error on it, SIGTERM or SIGINT): the handshake was cut, a best-effort DELETE went out for the session the server had named (none when no answer named one), and `onClosed` was called once; nothing is written and the exit code is left as it was
  * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
- * @example await runCursorMcpBridge('/private/current.connection.json')
+ * @example await runCursorMcpBridge('/private/current.connection.json') // => 'serving'
  */
 export async function runCursorMcpBridge(
   descriptorPath: string,
@@ -146,7 +218,7 @@ export async function runCursorMcpBridge(
   onClosed?: () => void,
   beforeUpstream?: () => Promise<boolean>,
   onRefused?: () => Promise<boolean>,
-): Promise<void> {
+): Promise<'serving' | 'stopped'> {
   const startedAt = Date.now()
   // The read of the descriptor spends the same startup budget as the handshake.
   const descriptor = await readBridgeDescriptor(
@@ -158,8 +230,14 @@ export async function runCursorMcpBridge(
     connectTimeoutMs === undefined
       ? undefined
       : Math.max(1, connectTimeoutMs - (Date.now() - startedAt))
-  // Fires once the bridge's stop began (end of input, a closed stdio transport, a signal, or a refusal that ended the bridge); every upstream handshake runs under it, the first one included, which nothing can stop yet.
+  // Fires once the bridge's stop began (end of input or a read error on it, a closed stdio transport, a signal, or a refusal that ended the bridge); every upstream handshake runs under it, the first one included.
   const shutdownStarted = new AbortController()
+  let closed = false
+  // Marks the stop as begun, synchronously: no session opens and no request is sent from here on, and a handshake in flight stops being waited for. Idempotent, so a repeated signal or end changes nothing.
+  const markClosed = (): void => {
+    closed = true
+    shutdownStarted.abort(new Error(BRIDGE_CLOSED_SENTENCE))
+  }
   // Every transport to the instance carries the bearer token and the caller's header; a release names the session it ends.
   const openTransport = (sessionId?: string): StreamableHTTPClientTransport =>
     new StreamableHTTPClientTransport(new URL(descriptor.url), {
@@ -197,16 +275,20 @@ export async function runCursorMcpBridge(
     beforeClose?.()
     await connection.client.close()
   }
-  let active = await connectUpstream(firstHandshakeMs)
+  const first = await connectFirstUpstream(
+    () => connectUpstream(firstHandshakeMs),
+    markClosed,
+    shutdownStarted.signal,
+  )
+  // The client ended the bridge during its first handshake: that handshake was cut and the session it named released.
+  if (first === 'stopped') {
+    onClosed?.()
+    return 'stopped'
+  }
+  let active = first.connection
   let reconnecting: Promise<void> | undefined,
-    closed = false,
     // Forwarded requests sent upstream and not settled yet; the stop's final close interrupts every one of them.
     requestsInFlight = 0
-  // Marks the stop as begun, synchronously: no session opens and no request is sent from here on, and a handshake in flight stops being waited for.
-  const markClosed = (): void => {
-    closed = true
-    shutdownStarted.abort(new Error(BRIDGE_CLOSED_SENTENCE))
-  }
   // Every refusal check that is still running (each bounded by its caller's own deadline); a stdin close drains them before `onClosed`, so the refusal line and its exit code are out first.
   const refusals = new Set<Promise<void>>()
   // Runs the refusal check of the Devin Desktop bridge: a setup that is gone ends the bridge; a standing setup, or a check that cannot answer, leaves it running.
@@ -411,14 +493,6 @@ export async function runCursorMcpBridge(
       .then(() => onClosed?.())
   }
   stdio.onclose = (): void => shutdownThenNotify()
-  try {
-    await server.connect(stdio)
-  } catch (error) {
-    await closeUpstream(active)
-    throw error
-  }
-  // The SDK stdio transport does not close itself on stdin EOF, so release the HTTP session explicitly.
-  process.stdin.once('end', (): void => shutdownThenNotify())
   const stopForSignal = (): void => {
     void shutdown().then(
       () => {
@@ -430,6 +504,22 @@ export async function runCursorMcpBridge(
       },
     )
   }
-  process.once('SIGTERM', stopForSignal)
-  process.once('SIGINT', stopForSignal)
+  // The SDK stdio transport does not close itself on stdin EOF, so release the HTTP session explicitly. Registered before the first handshake's watch lets go, so a signal never meets the default action in between.
+  const stopListening = listenForServingStop(
+    () => shutdownThenNotify(),
+    stopForSignal,
+  )
+  // stdin goes to the stdio transport: what was read during the first handshake is put back first, each chunk whole and in order, and stdin stays paused until the transport listens.
+  first.handOver()
+  try {
+    await server.connect(stdio)
+  } catch (error) {
+    // A failed attachment leaves none of this bridge's listeners behind for the Devin bridge's next attempt.
+    stopListening()
+    await closeUpstream(active)
+    throw error
+  }
+  // Read only now: the transport's listeners are attached, so it gets the kept chunks first.
+  process.stdin.resume()
+  return 'serving'
 }
