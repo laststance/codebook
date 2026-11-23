@@ -763,7 +763,7 @@ async function handOver(context: Context, journal: Pending): Promise<boolean> {
 }
 
 /**
- * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says or which way a step goes ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}), never right before a link or unlink it guards.
+ * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards.
  * @param path - The name to look at.
  * @returns Its status with bigint numbers; undefined when nothing stands there.
  * @throws Any other failure of the look.
@@ -944,7 +944,7 @@ export async function didCopyChange(held: HeldCopy): Promise<boolean> {
   }
 }
 
-/** What {@link discardDisplaced} did with the displaced copy: `deleted`; `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
+/** What {@link discardDisplaced} did with the displaced copy: `deleted` (also when a copy that changed is gone from its private name by the time it would be kept, so nothing stays to name); `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
 type DiscardOutcome = 'deleted' | 'kept' | 'unrecorded'
 
 /** The outcome of {@link discardDisplaced} and the displaced copy as it stays: its path (another one when it was moved out of recovery's reach, {@link keepFromRecovery}) and what it holds; the copy is ignored for `deleted`. */
@@ -975,11 +975,11 @@ async function discardDisplaced(
   const look = (await didCopyChange(held))
     ? 'changed'
     : lookAtComparedName(context, displacedPath, held)
-  if (look === 'changed')
-    return {
-      outcome: 'kept',
-      copy: await handOverCopy(context, journal, displacedPath, held),
-    }
+  if (look === 'changed') {
+    const kept = await handOverCopy(context, journal, displacedPath, held)
+    // A copy gone from its name is not named: nothing stays, as after a delete.
+    return kept ? { outcome: 'kept', copy: kept } : { outcome: 'deleted', copy }
+  }
   // The completed record still names this unchanged copy, so the next run deletes it while it holds the recorded bytes: its sentence says so.
   if (look === 'unknown' || !(await didUnlink(displacedPath)))
     return { outcome: 'kept', copy: { ...copy, isLeftover: true } }
@@ -992,7 +992,7 @@ async function discardDisplaced(
  * @param journal - The record as it was written before the first move.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
- * @returns The copy as it stays: at its private name once the handed record is written or the record was dropped, else as {@link keepFromRecovery} leaves it.
+ * @returns The copy as it stays: at its private name once the handed record is written or the record was dropped, else as {@link keepFromRecovery} leaves it; undefined when nothing stands at its private name any more, so no notice names a path where nothing stands.
  * @example
  * await handOverCopy(context, journal, displacedPath, held) // => { path: displacedPath, holds: 'previous' } once the handed record is written
  */
@@ -1001,15 +1001,20 @@ async function handOverCopy(
   journal: Pending,
   displacedPath: string,
   held: HeldCopy,
-): Promise<KeptFile> {
-  return (await handOver(context, journal))
-    ? { path: displacedPath, holds: 'previous' }
-    : keepFromRecovery(context, journal, displacedPath, held)
+): Promise<KeptFile | undefined> {
+  if (!(await handOver(context, journal)))
+    return keepFromRecovery(context, journal, displacedPath, held)
+  const isGone = await lstatOrAbsent(displacedPath).then(
+    (status) => status === undefined,
+    // A look that fails proves nothing: the copy is named.
+    () => false,
+  )
+  return isGone ? undefined : { path: displacedPath, holds: 'previous' }
 }
 
 /**
  * Keeps a changed displaced copy out of a later run's reach when its handed record could not be written and the completed record stays on disk; called by {@link handOverCopy}.
- * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds. The rename moves whatever stands at the name, not the file the read saw through its handle, so it runs only while a last look still shows that file with the size and times of the read ({@link lookBeforeMove}). Any other copy stays where it is and is worded by what its name shows ({@link copyAsItStands}): one that cannot be read or looked at, holds other bytes, changed after the read or cannot move stays tracked ({@link KeptFile.isLeftover}), and its sentence says that a later run deletes it while it still holds the recorded bytes; a name that shows another file is said to be no longer that copy ({@link KeptFile.isReplaced}).
+ * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds. The rename moves whatever stands at the name, not the file the read saw through its handle, so it runs only while a last look still shows that file with the size and times of the read ({@link lookBeforeMove}). Any other copy stays where it is and is worded by what its name shows ({@link copyAsItStands}): one that cannot be read or looked at, holds other bytes, changed after the read or cannot move stays tracked ({@link KeptFile.isLeftover}), and its sentence says that a later run deletes it while it still holds the recorded bytes; a name that shows another file is said to be no longer that copy ({@link KeptFile.isReplaced}), and a name that shows nothing names no copy.
  * Limit: a swap between the last look and the rename is not seen; no Node primitive renames by inode.
  * @param context - The run; its seam is called when the copy is read and around the last look.
  * @param journal - The record as it was written before the first move; its kept hash is the bytes recovery deletes.
@@ -1019,7 +1024,7 @@ async function handOverCopy(
  * - at its new name once it moved;
  * - at its private name marked {@link KeptFile.isLeftover} when it could not be read or looked at, the name shows the recorded file with other bytes, size or times, or the move failed;
  * - at its private name marked {@link KeptFile.isReplaced} when the name shows another file;
- * - at its private name when nothing stands there.
+ * - undefined when nothing stands there: no copy stays to name.
  * @example
  * await keepFromRecovery(context, journal, displacedPath, held) // => { path: '…/mcp_config.json.<generation>.codebook-kept', holds: 'previous' }
  */
@@ -1028,7 +1033,7 @@ async function keepFromRecovery(
   journal: Pending,
   displacedPath: string,
   held: HeldCopy,
-): Promise<KeptFile> {
+): Promise<KeptFile | undefined> {
   const copy: KeptFile = { path: displacedPath, holds: 'previous' }
   let now: InspectedCopy | undefined
   try {
@@ -1086,19 +1091,20 @@ function lookBeforeMove(
  * @returns
  * - the copy marked {@link KeptFile.isLeftover} for the recorded inode or an unknown one: the completed record still lets a later run delete it while it holds the recorded bytes
  * - the copy marked {@link KeptFile.isReplaced} for another inode: another program's file, which no later run deletes ({@link otherInodeRefusal})
- * - the copy as given when nothing stands there
+ * - undefined when nothing stands there, so no notice names a path where nothing stands
  * @example
- * copyAsItStands(copy, 42n, 42n) // => { ...copy, isLeftover: true }
- * copyAsItStands(copy, 43n, 42n) // => { ...copy, isReplaced: true }
+ * copyAsItStands(copy, 42n, 42n)       // => { ...copy, isLeftover: true }
+ * copyAsItStands(copy, 43n, 42n)       // => { ...copy, isReplaced: true }
+ * copyAsItStands(copy, undefined, 42n) // => undefined
  */
 function copyAsItStands(
   copy: KeptFile,
   shown: bigint | 'unknown' | undefined,
   recordedIno: bigint,
-): KeptFile {
+): KeptFile | undefined {
   if (shown === 'unknown' || shown === recordedIno)
     return { ...copy, isLeftover: true }
-  return shown === undefined ? copy : { ...copy, isReplaced: true }
+  return shown === undefined ? undefined : { ...copy, isReplaced: true }
 }
 
 /**
