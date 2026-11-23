@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { createPathReadGate } from '../utils/shareReceiptRead'
 
 import { defer } from './utils/defer'
@@ -34,6 +35,44 @@ test('a caller that asks while a read is in flight gets the answer of a fresh re
   // Assert
   assert.deepEqual(answers, ['installed', 'removed'])
   assert.equal(starts, 2)
+  assert.equal(mostInFlight, 1)
+})
+
+// Value: protects=a caller that asks while the fresh read behind an earlier one runs gets a third read that began after its call, and the three reads never overlap (Cycle 0146 review round, OCR lens 3 shareReceiptRead.test.ts:13); fails_when=the gate hands that caller the second read, which began before its call, or starts the third read while the second still runs; no_claim=real file reads (the reads are deferred stand-ins)
+test('a caller that asks while the fresh read runs gets a third read started after that one', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const firstRead = defer<string>(),
+    secondRead = defer<string>()
+  // The first two reads answer when the test says; the third at once.
+  const heldReads = [firstRead.promise, secondRead.promise]
+  let starts = 0,
+    inFlight = 0,
+    mostInFlight = 0
+  const start = (): Promise<string> => {
+    starts += 1
+    inFlight += 1
+    mostInFlight = Math.max(mostInFlight, inFlight)
+    const answer = heldReads[starts - 1] ?? Promise.resolve('third')
+    return answer.finally(() => {
+      inFlight -= 1
+    })
+  }
+  const first = reads.read(RECEIPT_KEY, start)
+  const second = reads.read(RECEIPT_KEY, start)
+  firstRead.resolve('first')
+  await waitUntil(() => starts === 2, 'the second read starting', 2_000)
+  // Act
+  const third = reads.read(RECEIPT_KEY, start)
+  const thirdWhileSecondRuns = await within(third, 100)
+  const startsWhileSecondRuns = starts
+  secondRead.resolve('second')
+  const answers = await within(Promise.all([first, second, third]), 2_000)
+  // Assert
+  assert.equal(thirdWhileSecondRuns, 'still waiting')
+  assert.equal(startsWhileSecondRuns, 2)
+  assert.deepEqual(answers, ['first', 'second', 'third'])
+  assert.equal(starts, 3)
   assert.equal(mostInFlight, 1)
 })
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import type { DevinInstallationRead } from '../utils/readDevinInstallationId'
@@ -21,7 +22,8 @@ test('a first installation-id read that never returns answers no answer for the 
     installationId: undefined,
     state: {
       state: 'no-answer',
-      receiptPath: '/storage/devin-mcp/receipt.json',
+      // Built as the helper builds it, so the path reads the same on Windows.
+      receiptPath: join('/storage', 'devin-mcp', 'receipt.json'),
     },
   })
 })
