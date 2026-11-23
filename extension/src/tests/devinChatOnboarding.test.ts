@@ -4382,6 +4382,8 @@ test("a late receipts read of a replaced Devin Desktop server leaves the new ser
       "the reconnect's connection descriptor",
       15_000,
     )
+    // The first Stop waits for the reconnect's start to end: a Stop while it still starts makes the reconnect answer "did not reconnect", a notice this test does not exercise.
+    await window.whenReconnected()
     await window.commands.get('codebook.stopAgentServer')!()
     await window.commands.get('codebook.startAgentServer')!()
     const newDescriptorFile = await window.descriptorPath()
