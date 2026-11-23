@@ -4990,6 +4990,37 @@ test('a folder change whose saved-setup clear fails at once tells it first in th
   }
 })
 
+// Value: protects=a folder removed and added again at the same path, while the folder change's clear of the saved Devin setup still waits on storage, starts its next server unmarked and offers no Reload Window, because the setup that clear takes away no longer counts for the folder now open; fails_when=the window reads the old folder's saved setup, which the editor still holds until the queued clear's turn, as the setup of the folder now open, so the new server is marked for Devin Local and offers a reload for a setup that is being cleared (Cycle 0146 /ship pass 1, adversarial-native P3 3); why_new=only a folder change to another path was held, where the saved workspace differs anyway; seam=none; no_claim=a clear that failed (the setup it could not clear then counts again, as the cleanup notice says); the held stand-in write stands for the stalled storage
+test('a folder added again at the same path while its saved Devin setup is still being cleared starts its server unmarked and offers no reload', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    holdSavedSetupWrite: true,
+  })
+  try {
+    await window.whenReconnected()
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+    )
+    // The reconnect offered no notice; the window's notices start empty here.
+    const noticesBefore = structuredClone(window.notices)
+    window.changeFolder(window.directory)
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the folder change's clear of the saved setup",
+    )
+    // Act
+    await window.commands.get('codebook.startAgentServer')!()
+    // Assert
+    assert.deepEqual(noticesBefore, [])
+    assert.equal(await window.readDescriptorField(), undefined)
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a Remove Devin Desktop Setup whose skill step waits on storage and then fails shows that failure as a warning once storage answers, as its pending warning promised that it shows its result, and the Output keeps its line (Cycle 0146 task 26); fails_when=the late failure only reaches the Output, so the learner never learns that the removal ended without removing anything; no_claim=a late success (the hold cases above) and a setup's late failure (its own warning); the held stand-in skill removal stands for the stalled storage, then throws
 test('a Devin removal whose skill step waits on storage and then fails shows that failure as a warning once storage answers', async (context) => {
   // Arrange

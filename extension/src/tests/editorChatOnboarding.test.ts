@@ -5,12 +5,14 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type * as ExtensionModule from '../extension'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import * as storageOwner from '../utils/currentStorageOwner'
 import { readProcessStart } from '../utils/readProcessStart'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
+import { within } from './utils/within'
 
 type Command = () => Promise<unknown>
 type Definition = {
@@ -54,6 +56,12 @@ async function boundary(
   let deferredNode: { entered(): void; wait: Promise<void> } | undefined
   let deferredServer: { entered(): void; wait: Promise<void> } | undefined
   let deferredSetupSave: { entered(): void; wait: Promise<void> } | undefined
+  // The next clear of the saved setup waits here when a test holds it, as a storage that stops answering.
+  let deferredSetupClear: { entered(): void; wait: Promise<void> } | undefined
+  // How many clears of the saved setup have landed, so a test waits for a held clear and the ones queued behind it.
+  let setupClearsLanded = 0
+  // The listeners the window registered for a change of the workspace's folders; `changeFolders` fires them as the editor does.
+  const folderListeners: Array<() => void> = []
   let deferredCatalog: { entered(): void; wait: Promise<void> } | undefined
   let deferredCatalogRemoval:
     { entered(): void; wait: Promise<void> } | undefined
@@ -92,7 +100,10 @@ async function boundary(
       },
     },
     workspace: {
-      onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+      onDidChangeWorkspaceFolders: (listener: () => void) => {
+        folderListeners.push(listener)
+        return { dispose(): void {} }
+      },
       getConfiguration: () => ({
         get: (_name: string, fallback: string) => fallback,
       }),
@@ -277,7 +288,16 @@ async function boundary(
           deferred.entered()
           await deferred.wait
         }
+        const isSetupClear =
+          key === 'codebook.aiChatSetup' && value === undefined
+        const deferredClear = isSetupClear ? deferredSetupClear : undefined
+        if (deferredClear) {
+          deferredSetupClear = undefined
+          deferredClear.entered()
+          await deferredClear.wait
+        }
         state.set(key, value)
+        if (isSetupClear) setupClearsLanded += 1
       },
     },
   })
@@ -326,6 +346,24 @@ async function boundary(
       })
       deferredSetupSave = { entered, wait }
       return { started, release }
+    },
+    /** Holds the next clear of the saved setup (a folder change's, a removal's) until `release`, as a storage that stops answering. */
+    holdNextSetupClear() {
+      let entered!: () => void, release!: () => void
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const wait = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      deferredSetupClear = { entered, wait }
+      return { started, release }
+    },
+    /** How many clears of the saved setup have landed. */
+    setupClearsLanded: () => setupClearsLanded,
+    /** Fires the window's registered listeners for a change of the workspace's folders, as the editor does when a folder is added or removed. */
+    changeFolders(): void {
+      for (const listener of folderListeners) listener()
     },
     holdNextCatalogRefresh() {
       let entered!: () => void, release!: () => void
@@ -850,3 +888,42 @@ test('explicit Cursor removal preserves a catalog restored by another window aft
     await editor.loaded.deactivate()
   }
 })
+
+for (const appName of ['Visual Studio Code', 'Cursor'] as const) {
+  // Value: protects=a Set Up AI Chat run in VS Code or Cursor while two changes of the workspace's folders still clear the saved setup (the first clear waits on storage, the second is queued behind it) stays saved once those clears land, so the next window load reconnects it; fails_when=the setup saves its value outside the queue of the saved setup's writes, so the queued folder-change clears land after it and erase the setup it reported ready (Cycle 0146 /ship pass 1, outside-voice 7 and codex-structured extension.ts:1070); why_new=only Devin Desktop's writes of the saved setup were queued and tested; seam=a held clear of the saved setup; no_claim=Devin Desktop (its own folder tests) and the real editor storage, which keeps its value in memory at once (the stand-in sets it when the write lands)
+  test(`a ${appName} setup run while folder changes still clear the saved setup stays saved once those clears land`, async (context) => {
+    // Arrange
+    const editor = await boundary(context, appName)
+    const heldClear = editor.holdNextSetupClear()
+    try {
+      editor.changeFolders()
+      await heldClear.started
+      // A second change queues its own clear behind the held one, as folders added and removed in a row do.
+      editor.changeFolders()
+      // Act
+      const setup = editor.commands.get('codebook.setupAiChat')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      )
+      // Saved outside the queue, the setup saves and resolves within milliseconds while the clears still wait; a second without that shows its save waits behind them.
+      const outcomeWhileClearHeld = await within(setup, 1_000)
+      heldClear.release()
+      const outcome = await setup
+      await waitUntil(
+        () => editor.setupClearsLanded() === 2,
+        "both folder changes' clears of the saved setup to land",
+      )
+      // Assert
+      // A copy of this realm, so the saved setup compares by value.
+      assert.deepEqual(
+        structuredClone(editor.state.get('codebook.aiChatSetup')),
+        { workspace: editor.directory },
+      )
+      assert.equal(outcome, 'resolved')
+      assert.equal(outcomeWhileClearHeld, 'still waiting')
+    } finally {
+      heldClear.release()
+      await editor.loaded.deactivate()
+    }
+  })
+}

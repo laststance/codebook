@@ -361,8 +361,10 @@ export function activate(
     devinRemoving = false
   /** What this window still runs after its Devin Desktop command answered because a step waited {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS} on storage, with the step it waits on now; while it is set, setup and removal refuse at once ({@link assertNoDevinBackgroundWork}). */
   let devinBackgroundWork: DevinLapse | undefined
-  /** The last write of this window's saved Devin Desktop setup queued by {@link inSavedSetupQueue}; it never rejects. */
+  /** The last write of this window's saved AI chat setup queued by {@link inSavedSetupQueue}; it never rejects. */
   let savedSetupQueue: Promise<unknown> = Promise.resolve()
+  /** How many clears of the saved setup for a change of the workspace's folders ({@link clearSavedSetupForFolderChange}) wait for their turn or their write: while one does, the saved setup reads as cleared ({@link savedSetupNow}), because the editor still holds the old folder's value until that clear lands. */
+  let pendingFolderClears = 0
   /** How many changes of the workspace's folders this window has seen; a Devin setup reads it when it begins, so its take-back never puts back a saved setup of a folder that closed meanwhile ({@link restoreSavedDevinSetup}). */
   let devinFolderGeneration = 0
   let hasStoppedServer = false
@@ -458,13 +460,20 @@ export function activate(
   const wikiHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
   /** Whether a Devin setup run of this window is between its provisional save and its commit or rollback: only then does the provisional workspace count as the setup ({@link effectiveDevinSetupOf}), so a sync during the run does not unmark the run's own mark. */
   let isDevinRunProvisional = false
+  /**
+   * Reads this window's saved AI chat setup as the writes queued so far leave it: cleared while a folder change's clear still waits ({@link pendingFolderClears}), so a folder added again at the same path never counts the old folder's setup as its own; read by {@link setupMatchesCurrentWorkspace} and by a Devin setup for the setup it puts back.
+   * @returns The saved value, or `undefined` while a folder change's clear is pending.
+   * @example savedSetupNow() // => { workspace: '/repo' }
+   */
+  const savedSetupNow = (): unknown =>
+    pendingFolderClears > 0
+      ? undefined
+      : context.workspaceState.get('codebook.aiChatSetup')
   const setupMatchesCurrentWorkspace = () => {
     try {
       return (
-        effectiveDevinSetupOf(
-          context.workspaceState.get('codebook.aiChatSetup'),
-          isDevinRunProvisional,
-        )?.workspace === requireWorkspace()
+        effectiveDevinSetupOf(savedSetupNow(), isDevinRunProvisional)
+          ?.workspace === requireWorkspace()
       )
     } catch {
       return false
@@ -1031,7 +1040,7 @@ export function activate(
     }
   }
   /**
-   * Clears this window's saved AI chat setup for a change of the workspace's folders, in its turn of {@link inSavedSetupQueue}, so a Devin take-back's restore that started before it never lands after it; called first by {@link replaceReadersAfterFolderChange}, which does not wait for it, so a write that storage does not answer never holds the stop of the old folder's server, the new readers or the next start.
+   * Clears this window's saved AI chat setup for a change of the workspace's folders, in its turn of {@link inSavedSetupQueue}, so a Devin take-back's restore that started before it never lands after it, and a setup asked for after it lands after it; called first by {@link replaceReadersAfterFolderChange}, which does not wait for it, so a write that storage does not answer never holds the stop of the old folder's server, the new readers or the next start. Until the clear settled, the saved setup reads as cleared ({@link savedSetupNow}).
    * @returns Reads the clear's failure for the handling's notice once the handling's other steps ran: the failure when the clear failed by then, none when it ended or still waits; a clear that fails after that read is told in a notice of its own.
    * @example const clearFailures = clearSavedSetupForFolderChange(); await stop(); const failures = [...clearFailures()]
    */
@@ -1039,7 +1048,15 @@ export function activate(
     (): (() => FolderChangeCleanupFailure[]) => {
       let failure: FolderChangeCleanupFailure | undefined
       let isRead = false
-      void writeSavedSetup(() => undefined).catch((thrown: unknown) => {
+      // Counted at once and until its write settled, inside its turn: the writes queued after it start only then.
+      pendingFolderClears += 1
+      void inSavedSetupQueue(async () => {
+        try {
+          await context.workspaceState.update('codebook.aiChatSetup', undefined)
+        } finally {
+          pendingFolderClears -= 1
+        }
+      }).catch((thrown: unknown) => {
         failure = { step: 'chat-setup', thrown }
         // The handling's notice was shown without it: this failure gets its own.
         if (isRead)
@@ -1287,9 +1304,9 @@ export function activate(
         `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const setupCursorServer = isCursorHost ? registeredCursorServer : undefined
-    await context.workspaceState.update('codebook.aiChatSetup', {
-      workspace: running.endpoint.descriptor.workspace,
-    })
+    const setupWorkspace = running.endpoint.descriptor.workspace
+    // In the queue of the saved setup's writes, so a folder change's clear asked for before it never lands after it.
+    await writeSavedSetup(() => ({ workspace: setupWorkspace }))
     if (isCursorHost) {
       try {
         assertCursorSetupAvailable()
@@ -1300,7 +1317,7 @@ export function activate(
         assertCursorSetupAvailable()
       } catch (error) {
         // A different Cursor window may have removed the shared skill during the persisted setup write.
-        await context.workspaceState.update('codebook.aiChatSetup', undefined)
+        await writeSavedSetup(() => undefined)
         if (setupCursorServer && registeredCursorServer === setupCursorServer) {
           vscode.cursor?.mcp?.unregisterServer(setupCursorServer)
           registeredCursorServer = undefined
@@ -1520,7 +1537,7 @@ export function activate(
           diagnostics.info(DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE),
       },
     )
-  /** Runs one write of this window's saved Devin Desktop setup after every one queued before it, as {@link inDescriptorQueue} does for the descriptor. @example await inSavedSetupQueue(async () => {}) */
+  /** Runs one write of this window's saved AI chat setup after every one queued before it, as {@link inDescriptorQueue} does for the descriptor. @example await inSavedSetupQueue(async () => {}) */
   const inSavedSetupQueue = <Value>(
     task: () => Promise<Value>,
   ): Promise<Value> => {
@@ -1529,7 +1546,7 @@ export function activate(
     return result
   }
   /**
-   * Writes this window's saved Devin Desktop setup in its turn of {@link inSavedSetupQueue}, with the value `compute` gives when that turn comes, so the writes of a setup, its take-back and a removal land in the order they were asked for, whatever the editor's storage does; called by every Devin setup and removal write of the saved setup.
+   * Writes this window's saved AI chat setup in its turn of {@link inSavedSetupQueue}, with the value `compute` gives when that turn comes, so the writes of a setup, its take-back, a removal and a folder change's clear land in the order they were asked for, whatever the editor's storage does; called by every setup and removal write of the saved setup, in Devin Desktop, VS Code and Cursor.
    * @param compute - Gives the value to save (`undefined` clears it), read when the write starts.
    * @returns Resolves once the editor saved the value.
    * @throws The editor's write failure, for this write only: the writes queued after it still run.
@@ -1836,10 +1853,8 @@ export function activate(
       onLapse,
     )
     // A re-run that fails puts this value back instead of clearing it.
-    // Only the committed setup is carried: a provisional value left by a failed run reads as the one before it.
-    const previousSetup = effectiveDevinSetupOf(
-      context.workspaceState.get('codebook.aiChatSetup'),
-    )
+    // Only the committed setup is carried: a provisional value left by a failed run reads as the one before it, and a value a folder change's pending clear takes away reads as none.
+    const previousSetup = effectiveDevinSetupOf(savedSetupNow())
     try {
       // Provisional until the last step: a failed restore then still reads as `previousSetup`.
       isDevinRunProvisional = true
@@ -4185,7 +4200,7 @@ export function activate(
           const skillRemoval = (
             await removeManagedCursorSkill(context.globalStorageUri.fsPath)
           ).status
-          await context.workspaceState.update('codebook.aiChatSetup', undefined)
+          await writeSavedSetup(() => undefined)
           if (registeredCursorServer) {
             vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
             registeredCursorServer = undefined
