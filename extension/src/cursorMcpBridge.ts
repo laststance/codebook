@@ -134,7 +134,7 @@ function isRefusal(error: unknown): boolean {
  * @param extraHeader - A request header sent on every request to the server, beside the bearer token; the Devin Desktop bridge marks its requests with it ({@link DEVIN_BRIDGE_HEADER_NAME}). Cursor's bridge passes none.
  * @param onClosed - Called once the bridge's cleanup has completed after stdin closed or the stdio transport closed, also after a signal, which closes the stdio transport; the Devin Desktop bridge entry ends its process there, so a lookup that never settles cannot keep it alive. Cursor's bridge passes none and ends with its event loop.
  * @param beforeUpstream - Check run before every upstream reinitialization after the first connection (an expired session); when it resolves `false` the bridge ends (cleanup, then `onClosed`) instead of reconnecting, and when it rejects only that request fails. A stop (end of input or a signal) cuts a replacement handshake short; after it no session opens and no request is sent, neither a new one nor a replay. The Devin Desktop bridge passes its receipts check; Cursor's bridge passes none.
- * @param onRefused - Check run when the server refuses a request with HTTP 401 or 403 (a removed setup unmarks the window, a take-back rotates the token). When it resolves `false` the bridge ends as for `beforeUpstream`; when it resolves `true` or rejects, only that request fails; the request is never sent again, because only the exact 404 `Unknown MCP session` is safe to retry. Also run, once per stop, when a stop cut a replacement handshake short, suppressed a request or interrupted one still in flight, so a setup removed or replaced meanwhile still ends the bridge with its line. The Devin Desktop bridge passes the same check as `beforeUpstream`; Cursor's bridge passes none and a refusal fails the request as before.
+ * @param onRefused - Check run when the server refuses a request with HTTP 401 or 403 (a removed setup unmarks the window, a take-back rotates the token). When it resolves `false` the bridge ends as for `beforeUpstream`; when it resolves `true` or rejects, only that request fails; the request is never sent again, because only the exact 404 `Unknown MCP session` is safe to retry. Also run when a stop cut a replacement handshake short, suppressed a request or interrupted one still in flight (the ones that come while such a check runs share it), so a setup removed or replaced meanwhile still ends the bridge with its line. The Devin Desktop bridge passes the same check as `beforeUpstream`; Cursor's bridge passes none and a refusal fails the request as before.
  * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
  * @example await runCursorMcpBridge('/private/current.connection.json')
  */
@@ -226,9 +226,12 @@ export async function runCursorMcpBridge(
     if (isRefusal(error)) await endIfSetupGone()
     throw error
   }
-  // The one setup check of the stop, run once for every request the stop suppresses or interrupts (a replay, a request still in flight, a cut handshake): such a request may have been a refusal, so a setup removed or replaced meanwhile still ends the bridge with its line.
+  // The stop's setup check for the requests it suppresses or interrupts (a replay, a request still in flight, a cut handshake): such a request may have been a refusal, so a setup removed or replaced meanwhile still ends the bridge with its line. The requests that come while one runs share it; one that comes after it settled starts a fresh one, so a removal after an earlier check stood is still seen.
   let stopCheck: Promise<void> | undefined
-  const checkSetupOnStop = (): Promise<void> => (stopCheck ??= endIfSetupGone())
+  const checkSetupOnStop = (): Promise<void> =>
+    (stopCheck ??= endIfSetupGone().finally(() => {
+      stopCheck = undefined
+    }))
   // Fails a request that the stop suppressed, after the stop's setup check.
   const failAfterStop = async (): Promise<never> => {
     await checkSetupOnStop()

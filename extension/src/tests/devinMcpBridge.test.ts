@@ -57,6 +57,7 @@ import { defer } from './utils/defer'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
+import { within } from './utils/within'
 
 const FAST = { timeoutMs: 300, intervalMs: 20 }
 /** The installation id of the receipts {@link writeSetupReceipts} writes and of the default descriptor. */
@@ -4840,6 +4841,73 @@ test(
       ),
       1,
     )
+  },
+)
+
+/** Source of a preload that marks on stderr each answer of the bridge's refusal hook (`REFUSAL_CHECK_ANSWERED <true|false>`): the check a stop runs for a handshake it cut short, a request it suppressed or one its final close interrupts. The reconnect's own check (`beforeUpstream`) is not marked. */
+const MARK_REFUSAL_CHECKS_PRELOAD = `const { writeSync } = require('node:fs')
+const cursorBridge = require(${CURSOR_BRIDGE_MODULE_PATH})
+const original = cursorBridge.runCursorMcpBridge
+cursorBridge.runCursorMcpBridge = (descriptorPath, timeoutMs, expected, header, onClosed, beforeUpstream, onRefused) =>
+  original(descriptorPath, timeoutMs, expected, header, onClosed, beforeUpstream,
+    () => onRefused().then((stands) => { writeSync(2, 'REFUSAL_CHECK_ANSWERED ' + stands + '\\n'); return stands }))
+`
+
+// Value: protects=the not-set-up line and exit code 1 of a Devin bridge whose setup was removed after its stop's first setup check stood, when the stop's final close interrupts a request still in flight (Cycle 0146 review round, OCR lens 3 cursorMcpBridge.ts:231); fails_when=the stop keeps the settled answer of its first check, so the interrupted request reuses `stands` and the bridge exits 0 with no line; no_claim=a removal after the final close (nothing checks then), a check that hangs (the stalled-disk tests)
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a connected bridge whose setup was removed after its stop check stood still ends with the not-set-up line once and exit code 1 when the final close interrupts a request',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    const bridge = await startConnectedBridge(
+      context,
+      MARK_REFUSAL_CHECKS_PRELOAD,
+    )
+    const initializeHeld = defer<void>(),
+      requestHeld = defer<void>()
+    let toolsLists = 0
+    bridge.proxy.decide = async (method, initializesSoFar, httpMethod) => {
+      if (method === 'tools/list') toolsLists += 1
+      // The second request stays in flight on the old session until the final close interrupts it.
+      if (method === 'tools/list' && toolsLists === 2) {
+        requestHeld.resolve()
+        return new Promise<undefined>(() => undefined)
+      }
+      // The replacement's initialize is never answered, so the stop cuts it short and runs its first setup check then.
+      if (method === 'initialize' && initializesSoFar === 1) {
+        initializeHeld.resolve()
+        return new Promise<undefined>(() => undefined)
+      }
+      // The old session's release comes after that check settled: the setup is removed before the release is forwarded.
+      if (httpMethod === 'DELETE')
+        await writeSetupReceipts(bridge.root, { installed: false }, false)
+      return undefined
+    }
+    bridge.handshake()
+    await bridge.expireSession()
+    bridge.askToolsList(1)
+    await initializeHeld.promise
+    bridge.askToolsList(2)
+    await requestHeld.promise
+    // Act
+    bridge.signal('SIGTERM')
+    const exitCode = await within(bridge.exited, 15_000)
+    // Assert
+    // The stop's first check stood before the removal, and a later one saw the removal.
+    assert.match(
+      bridge.readStderr(),
+      /REFUSAL_CHECK_ANSWERED true\n[\s\S]*REFUSAL_CHECK_ANSWERED false\n/,
+    )
+    assert.equal(exitCode, 1)
+    assert.equal(
+      occurrencesOf(
+        bridge.readStderr(),
+        `Codebook is running in this Devin Desktop window, but AI chat is not set up for ${await realpath(bridge.directory)}. Run Codebook: Set Up AI Chat here, then reload the window.\n`,
+      ),
+      1,
+    )
+    assert.equal(bridge.counts.initializes, 1)
   },
 )
 
