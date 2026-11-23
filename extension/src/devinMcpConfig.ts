@@ -779,11 +779,11 @@ async function lstatOrAbsent(path: string): Promise<BigIntStats | undefined> {
   }
 }
 
-/** Whether a file was deleted; a failure is an answer here, because the caller names the file that stays. */
+/** Whether a name is gone: deleted now, or already gone (ENOENT) because another program removed it first, so no notice names a path where nothing stands; any other failure is an answer here, because the caller names the file that stays. */
 function didUnlink(path: string): Promise<boolean> {
   return unlink(path).then(
     () => true,
-    () => false,
+    (error: unknown) => codeOf(error) === 'ENOENT',
   )
 }
 
@@ -992,7 +992,11 @@ async function discardDisplaced(
  * @param journal - The record as it was written before the first move.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
- * @returns The copy as it stays: at its private name once the handed record is written or the record was dropped, else as {@link keepFromRecovery} leaves it; undefined when nothing stands at its private name any more, so no notice names a path where nothing stands.
+ * @returns The copy as it stays:
+ * - at its private name once the handed record is written or the record was dropped, also when that name cannot be looked at;
+ * - at its private name marked {@link KeptFile.isReplaced} when that name shows another inode than the one moved aside: another program's file, never called the previous config;
+ * - undefined when nothing stands at its private name any more, so no notice names a path where nothing stands;
+ * - as {@link keepFromRecovery} leaves it when the handover could not be recorded.
  * @example
  * await handOverCopy(context, journal, displacedPath, held) // => { path: displacedPath, holds: 'previous' } once the handed record is written
  */
@@ -1004,12 +1008,15 @@ async function handOverCopy(
 ): Promise<KeptFile | undefined> {
   if (!(await handOver(context, journal)))
     return keepFromRecovery(context, journal, displacedPath, held)
-  const isGone = await lstatOrAbsent(displacedPath).then(
-    (status) => status === undefined,
-    // A look that fails proves nothing: the copy is named.
-    () => false,
+  const shownIno = await lstatOrAbsent(displacedPath).then(
+    (status) => status?.ino,
+    // A look that fails proves nothing: the copy is named as handed.
+    () => held.ino,
   )
-  return isGone ? undefined : { path: displacedPath, holds: 'previous' }
+  // Nothing at the name: no copy stays to name.
+  if (shownIno === undefined) return undefined
+  const copy: KeptFile = { path: displacedPath, holds: 'previous' }
+  return shownIno === held.ino ? copy : { ...copy, isReplaced: true }
 }
 
 /**

@@ -4605,6 +4605,66 @@ test('A setup names no copy of the previous config when another program removed 
   assert.equal(nextRun.status, 'current')
 })
 
+test('A setup that hands over the moved-aside copy after a sync tool put another file at its private name says that the file there is no longer that copy', async (context) => {
+  // Value: protects=a copy whose handover was recorded is named the previous config only while its private name still shows the inode Codebook moved aside, so a file another program put there is never called the previous config or advised for deletion; fails_when=the notice calls the file at that name a copy of the previous config, omits its path, or the file there changes; no_claim=a real sync tool (seam.beforeLeftoverCheck renames another file over the private name once, right before the last look) and what the next run does with that file (it refuses naming it, covered elsewhere)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const swappedText = '{"swapped in by a sync tool":true}\n'
+  let copyPath = ''
+  let isSwapped = false
+
+  // Act
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== copyPath || isSwapped) return
+      isSwapped = true
+      swapFile(copyPath, swappedText)
+    },
+  })
+
+  // Assert
+  assert.equal(isSwapped, true)
+  assert.equal(setup.status, 'installed')
+  assert.equal(
+    setup.cleanupFailure,
+    `Another program replaced the private copy of your previous Devin MCP config that Codebook kept at ${copyPath}, so the file at that path is no longer that copy; Codebook left that file untouched, so look at it before you use or delete it.`,
+  )
+  assert.equal(readFileSync(copyPath, 'utf8'), swappedText)
+})
+
+test('A setup names no copy of the previous config when another program removed the moved-aside copy right before Codebook deleted it', async (context) => {
+  // Value: protects=a notice never says that Codebook kept a private copy at a path where nothing stands: an unlink that finds the copy already gone counts as done; fails_when=the notice names the empty private name, the setup is not installed, or the next run does not answer current; no_claim=a real program that removes the copy (seam.afterLeftoverCheck unlinks the private name once, right after the last look and before Codebook's own unlink)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  let copyPath = ''
+  let isRemoved = false
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+    afterLeftoverCheck: (path) => {
+      if (path !== copyPath || isRemoved) return
+      isRemoved = true
+      rmSync(copyPath)
+    },
+  })
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(isRemoved, true)
+  assert.equal(setup.status, 'installed')
+  assert.equal(setup.cleanupFailure, undefined)
+  assert.equal(existsSync(copyPath), false)
+  assert.equal(nextRun.status, 'current')
+})
+
 test('A first setup whose handed record hit a full disk and whose copy a writer changed warns that Codebook still tracks that copy, which the next run deletes once the writer put the previous bytes back', async (context) => {
   // Value: protects=a changed copy that stays under the name the completed record holds is named with the warning, because a writer that still holds that file can put the recorded bytes back and the next run then deletes it; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy once its bytes are back; no_claim=a real writer (writeFileSync into the same inode stands for an editor that kept the old file open), a real ENOSPC (seam.beforeRecordWrite fails only the handed record), and a copy whose bytes stay changed (named once and kept, covered above)
   // Arrange
