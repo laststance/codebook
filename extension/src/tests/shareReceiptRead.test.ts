@@ -1,0 +1,215 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { createPathReadGate } from '../utils/shareReceiptRead'
+
+import { defer } from './utils/defer'
+import { within } from './utils/within'
+
+const RECEIPT_KEY = 'receipt:/storage/devin-mcp/receipt.json'
+const OTHER_RECEIPT_KEY = 'receipt:/storage/devin-skill/receipt.json'
+
+// Value: protects=a caller that asks while a read is in flight gets a read that began after its call, so a decision taken after a removal never accepts the older read's `installed` (Cycle 0146 task 1d, Codex finding 7); fails_when=the caller joins the read already in flight and answers with its older result, or two reads of the file run at once; no_claim=real file reads (the reads are deferred stand-ins)
+test('a caller that asks while a read is in flight gets the answer of a fresh read started after it', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const firstRead = defer<string>()
+  let starts = 0,
+    inFlight = 0,
+    mostInFlight = 0
+  const start = (): Promise<string> => {
+    starts += 1
+    inFlight += 1
+    mostInFlight = Math.max(mostInFlight, inFlight)
+    const answer = starts === 1 ? firstRead.promise : Promise.resolve('removed')
+    return answer.finally(() => {
+      inFlight -= 1
+    })
+  }
+  const earlier = reads.read(RECEIPT_KEY, start)
+  const later = reads.read(RECEIPT_KEY, start)
+  // Act
+  firstRead.resolve('installed')
+  const answers = await within(Promise.all([earlier, later]), 2_000)
+  // Assert
+  assert.deepEqual(answers, ['installed', 'removed'])
+  assert.equal(starts, 2)
+  assert.equal(mostInFlight, 1)
+})
+
+// Value: protects=a caller that asks while the fresh read behind an earlier one runs gets a third read that began after its call, and the three reads never overlap (Cycle 0146 review round, OCR lens 3 shareReceiptRead.test.ts:13); fails_when=the gate hands that caller the second read, which began before its call, or starts the third read while the second still runs; no_claim=real file reads (the reads are deferred stand-ins)
+test('a caller that asks while the fresh read runs gets a third read started after that one', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const firstRead = defer<string>(),
+    secondRead = defer<string>()
+  // The first two reads answer when the test says; the third at once.
+  const heldReads = [firstRead.promise, secondRead.promise]
+  let starts = 0,
+    inFlight = 0,
+    mostInFlight = 0
+  const start = (): Promise<string> => {
+    starts += 1
+    inFlight += 1
+    mostInFlight = Math.max(mostInFlight, inFlight)
+    const answer = heldReads[starts - 1] ?? Promise.resolve('third')
+    return answer.finally(() => {
+      inFlight -= 1
+    })
+  }
+  const first = reads.read(RECEIPT_KEY, start)
+  const second = reads.read(RECEIPT_KEY, start)
+  firstRead.resolve('first')
+  await waitUntil(() => starts === 2, 'the second read starting', 2_000)
+  // Act
+  const third = reads.read(RECEIPT_KEY, start)
+  const thirdWhileSecondRuns = await within(third, 100)
+  const startsWhileSecondRuns = starts
+  secondRead.resolve('second')
+  const answers = await within(Promise.all([first, second, third]), 2_000)
+  // Assert
+  assert.equal(thirdWhileSecondRuns, 'still waiting')
+  assert.equal(startsWhileSecondRuns, 2)
+  assert.deepEqual(answers, ['first', 'second', 'third'])
+  assert.equal(starts, 3)
+  assert.equal(mostInFlight, 1)
+})
+
+// Value: protects=the fresh read queued behind a settled read takes the file over in the step that ends the settled one, so a caller that asks in between never starts a second read of the file beside it (Cycle 0146 /ship pass 1, outside voice finding 8 shareReceiptRead.ts:44); fails_when=the settled read frees the file in one callback and the queued read starts in a later one, so a caller in between starts a read of its own and two reads of one file run at once; no_claim=real file reads (the reads are deferred stand-ins), or which order a real caller's awaits produce
+test('a caller that asks while a settled read hands the file to the read queued behind it waits for that read instead of reading beside it', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const firstRead = defer<string>(),
+    queuedRead = defer<string>(),
+    betweenRead = defer<string>()
+  let starts = 0,
+    inFlight = 0,
+    mostInFlight = 0
+  const startHeld = (held: Promise<string>) => (): Promise<string> => {
+    starts += 1
+    inFlight += 1
+    mostInFlight = Math.max(mostInFlight, inFlight)
+    return held.finally(() => {
+      inFlight -= 1
+    })
+  }
+  const first = reads.read(RECEIPT_KEY, startHeld(firstRead.promise))
+  let queued: Promise<string> | undefined
+  let between: Promise<string> | undefined
+  // The first read's caller, answered right after the gate saw that read settle, queues a job and then asks again; the job asks between the gate's steps.
+  const askedAgain = first.then(() => {
+    queueMicrotask(() => {
+      between = reads.read(RECEIPT_KEY, startHeld(betweenRead.promise))
+    })
+    queued = reads.read(RECEIPT_KEY, startHeld(queuedRead.promise))
+  })
+  // Act
+  firstRead.resolve('first')
+  await askedAgain
+  await waitUntil(
+    () => between !== undefined,
+    'the caller in between asking',
+    2_000,
+  )
+  const startsWhileQueuedRuns = starts
+  const mostInFlightWhileQueuedRuns = mostInFlight
+  queuedRead.resolve('queued')
+  betweenRead.resolve('between')
+  const answers = await within(Promise.all([first, queued, between]), 2_000)
+  // Assert
+  assert.equal(mostInFlightWhileQueuedRuns, 1)
+  assert.equal(startsWhileQueuedRuns, 2)
+  assert.deepEqual(answers, ['first', 'queued', 'between'])
+  assert.equal(starts, 3)
+  assert.equal(mostInFlight, 1)
+})
+
+// Value: protects=a read of a stalled storage that never returns holds one thread of the file pool however many callers ask (Cycle 0146 task 1d); fails_when=each caller starts a read of its own, so four callers fill libuv's four pool threads; no_claim=what the callers answer meanwhile (each bounds its own wait)
+test('a read that never returns starts once however many callers ask for it', async (context) => {
+  // Arrange
+  const reads = createPathReadGate()
+  const held = defer<string>()
+  context.after(() => held.resolve('released'))
+  let starts = 0
+  const start = (): Promise<string> => {
+    starts += 1
+    return held.promise
+  }
+  // Act
+  const answers = [1, 2, 3, 4].map(() => reads.read(RECEIPT_KEY, start))
+  const firstAnswer = await within(answers[0]!, 100)
+  // Assert
+  assert.equal(firstAnswer, 'still waiting')
+  assert.equal(starts, 1)
+})
+
+// Value: protects=callers behind a hung read end in their own deadlines and a read of another file is not held by it (Cycle 0146 task 1d); fails_when=a hung read under one key blocks reads under other keys, or the joined callers never get a fresh read once the hung one settles; no_claim=the length of any caller's deadline
+test('a hung read holds only the callers of its own file, and they read afresh once it ends', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const held = defer<string>()
+  let starts = 0
+  const start = (): Promise<string> => {
+    starts += 1
+    return starts === 1 ? held.promise : Promise.resolve('fresh')
+  }
+  void reads.read(RECEIPT_KEY, start)
+  const joined = reads.read(RECEIPT_KEY, start)
+  // Act
+  const joinedWhileHung = await within(joined, 100)
+  const otherFile = await within(
+    reads.read(OTHER_RECEIPT_KEY, async () => 'other file'),
+    2_000,
+  )
+  held.resolve('late')
+  const joinedAfterRelease = await within(joined, 2_000)
+  // Assert
+  assert.equal(joinedWhileHung, 'still waiting')
+  assert.equal(otherFile, 'other file')
+  assert.equal(joinedAfterRelease, 'fresh')
+  assert.equal(starts, 2)
+})
+
+// Value: protects=a read that fails gives its callers its own error and the callers behind it still read afresh; fails_when=a failed read poisons the key, so every later caller gets the old error; no_claim=which errors a real read gives
+test('a read that fails answers its caller with the error and lets the callers behind it read afresh', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const failing = defer<string>()
+  let starts = 0
+  const start = (): Promise<string> => {
+    starts += 1
+    return starts === 1 ? failing.promise : Promise.resolve('fresh')
+  }
+  const failed = reads.read(RECEIPT_KEY, start)
+  const behind = reads.read(RECEIPT_KEY, start)
+  // Act
+  failing.reject(new Error('EIO'))
+  const failure = await failed.then(
+    () => 'answered',
+    (error: unknown) => (error instanceof Error ? error.message : 'other'),
+  )
+  const behindAnswer = await within(behind, 2_000)
+  // Assert
+  assert.equal(failure, 'EIO')
+  assert.equal(behindAnswer, 'fresh')
+  assert.equal(starts, 2)
+})
+
+// Value: protects=a read asked after the last one settled starts afresh, so a changed receipt is seen at the next refresh; fails_when=the gate keeps a settled answer and hands it to a later caller; no_claim=reads that overlap
+test('a read asked after the previous one settled starts afresh instead of reusing its answer', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  let starts = 0
+  const start = async (): Promise<string> => {
+    starts += 1
+    return starts === 1 ? 'installed' : 'removed'
+  }
+  const first = await reads.read(RECEIPT_KEY, start)
+  // Act
+  const second = await reads.read(RECEIPT_KEY, start)
+  // Assert
+  assert.equal(first, 'installed')
+  assert.equal(second, 'removed')
+  assert.equal(starts, 2)
+})

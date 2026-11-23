@@ -21,6 +21,7 @@ import { before, test, type TestContext } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 
 import { WIKI_METADATA_FILE_LIMIT_BYTES } from '../constants'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import type * as placementModule from '../utils/placeStorageLock'
 import {
@@ -32,6 +33,7 @@ import type * as lockModule from '../utils/withStorageLock'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
+import { defer } from './utils/defer'
 import { idleChild } from './utils/idleChild'
 import {
   ANOTHER_ID_OF_NO_PROCESS,
@@ -41,6 +43,7 @@ import { loadModule } from './utils/loadModule'
 import { realProcessStart } from './utils/realProcessStart'
 import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
+import { within } from './utils/within'
 
 // Every write of these tests names this process's own start, which the product reads once, keeps, and keeps as failed for a minute; on Windows that read is a PowerShell that starts cold. It is made here first, with the tests' own bound, and names its query when it fails.
 before(async () => {
@@ -1186,7 +1189,7 @@ test('a link that leads nowhere where a private storage folder should be is refu
  * Loads {@link withStorageLock} as one window that has its own queue, whose read of its lock's owner and whose removal of its lock fail while a test says so, as on Windows while a scanner or an indexer holds the file (`EBUSY`) or the system refuses the removal (`EPERM`).
  * @param lockPath - The `writer.lock` file whose read and removal may be refused.
  * @param isRetryWaitSkipped - Whether the pauses between the release's attempts end at once, for a test that fakes the timers; the default keeps the real pauses.
- * @returns The loaded write and the switches: `readsToRefuse` counts the reads of the lock's owner that answer nothing, `isRemovalRefused` refuses every removal of the lock while it is set; `refusedRemovals` counts the removals of the lock that were refused, `ownerReads` the reads of the lock's owner that began and `ownerReadsEnded` those that ended, so that a test can see whether a take-back ran and when its read is over. `timersPending` counts the timers the module armed that have not fired, and `timersFired` those that fired: the take-back timer is the module's only one, so these say whether a take-back is planned, and how many ran at a tick (Cycle 0048 task 58).
+ * @returns The loaded write and the switches: `readsToRefuse` counts the reads of the lock's owner that answer nothing, `isRemovalRefused` refuses every removal of the lock while it is set, and `removalHeldUntil`, while it is set, holds every removal of the lock until that promise settles, as storage that stops answering does; `heldRemovals` counts the removals that waited so, `refusedRemovals` counts the removals of the lock that were refused, `ownerReads` the reads of the lock's owner that began and `ownerReadsEnded` those that ended, so that a test can see whether a take-back ran and when its read is over. `timersPending` counts the timers the module armed that have not fired, and `timersFired` those that fired: the take-back timer is the module's only one, so these say whether a take-back is planned, and how many ran at a tick (Cycle 0048 task 58).
  * @example const window = await windowWithRefusedRelease(lockPath); window.readsToRefuse = 1
  */
 async function windowWithRefusedRelease(
@@ -1196,15 +1199,22 @@ async function windowWithRefusedRelease(
   withStorageLock: typeof withStorageLock
   readsToRefuse: number
   isRemovalRefused: boolean
+  removalHeldUntil: Promise<void> | undefined
+  heldRemovals: number
   refusedRemovals: number
   ownerReads: number
   ownerReadsEnded: number
   timersPending: number
   timersFired: number
 }> {
-  const switches = {
+  const switches: Omit<
+    Awaited<ReturnType<typeof windowWithRefusedRelease>>,
+    'withStorageLock'
+  > = {
     readsToRefuse: 0,
     isRemovalRefused: false,
+    removalHeldUntil: undefined,
+    heldRemovals: 0,
     refusedRemovals: 0,
     ownerReads: 0,
     ownerReadsEnded: 0,
@@ -1235,6 +1245,11 @@ async function windowWithRefusedRelease(
       'node:fs/promises': {
         ...fsPromises,
         unlink: async (path: string) => {
+          // A held removal waits before it removes the lock, as on storage that stops answering.
+          if (path === lockPath && switches.removalHeldUntil) {
+            switches.heldRemovals += 1
+            await switches.removalHeldUntil
+          }
           if (path === lockPath && switches.isRemovalRefused) {
             switches.refusedRemovals += 1
             throw Object.assign(
@@ -1422,6 +1437,63 @@ test('a write that throws keeps its own error when the system also refuses to re
   assert.equal(
     outcome,
     'Error: Another editor window has not finished recording.',
+  )
+})
+
+// Value: protects=two holds of one storage folder in one window never overlap while the first hold's release stalls, so the Devin Desktop setup lock, which answers 3 s into a stalled release and lets the release go on (Cycle 0146 task 1a), never lets this window's next setup start before that release ended; fails_when=the folder's queue lets the next hold start once the first hold's write ended and before its release removed the lock, so the next hold meets this window's own lock and is refused with "Learning storage is locked …", or both hold it; why_new=Cycle 0146 v2 design, Codex finding 3 (the setup lock carries no per-acquisition token: this queue keeps the next hold behind a pending release); seam=the removal of the lock in a loaded withStorageLock, held until the test lets it go; no_claim=a hold of another window, which the lock file itself excludes, and the setup lock's own answer, which withDevinSetupLock.test.ts covers
+test('a second hold of one folder starts only after the first hold’s stalled release ended', async (context) => {
+  // Arrange: a window whose first hold's removal of its lock waits until the test lets it go.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+  const removal = defer<void>()
+  context.after(() => removal.resolve())
+  const events: string[] = []
+  const firstHold = window
+    .withStorageLock(directory, async () => {
+      events.push('first write')
+      window.removalHeldUntil = removal.promise
+    })
+    .then(() => {
+      events.push('first hold ended')
+    })
+  await waitUntil(
+    () => window.heldRemovals === 1,
+    "the first hold's release reaching the removal of its lock",
+    5_000,
+  )
+
+  // Act
+  const secondHold = window
+    .withStorageLock(directory, async () => {
+      events.push('second write')
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+  // gstack-timing-ok: the second hold must show it does not start while the first release stalls, which only elapsed time can show; a hold that skipped the queue is refused within milliseconds
+  const secondHoldWhileReleaseStalls = await within(secondHold, 1_000)
+  const eventsWhileReleaseStalls = [...events]
+  window.removalHeldUntil = undefined
+  removal.resolve()
+  await firstHold
+  const secondOutcome = await secondHold
+
+  // Assert
+  assert.deepEqual(
+    {
+      secondHoldWhileReleaseStalls,
+      eventsWhileReleaseStalls,
+      secondOutcome,
+      events,
+      entriesAfterBothHolds: await readdir(directory),
+    },
+    {
+      secondHoldWhileReleaseStalls: 'still waiting',
+      eventsWhileReleaseStalls: ['first write'],
+      secondOutcome: 'written',
+      events: ['first write', 'first hold ended', 'second write'],
+      entriesAfterBothHolds: [],
+    },
   )
 })
 

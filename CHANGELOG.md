@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.142.0] - 2026-11-23 (development candidate)
+
+Cycle 0146 ([Issue #365](https://github.com/laststance/codebook/issues/365)), a bug-fix cycle. **Codebook's Devin Desktop setup now answers on a stalled disk, survives an interrupted setup, and keeps your MCP config and its private copies safe.** It fixes the twelve defects that Cycle 0145's review limit carried and the defects that this cycle's reviews found in the same code.
+
+### Fixed
+- **Set Up AI Chat, a failed setup's take-back and Remove Devin Desktop Setup answer within about 10 seconds when storage does not answer** (for example a stalled disk). The work goes on under the setup lock, and the Output names the step that still waits. Until it ends, this window refuses another setup or removal with a sentence that says so.
+- **A failed setup that a reload, a crash or a closed window cut short is taken back by the next Devin Desktop window, setup, removal or refresh**, and only that failed setup's entry, never a newer one. While that take-back takes the entry out, the window stops serving Devin Local, and while Codebook cannot confirm that it finished, setup sets up nothing and says so.
+- **Devin Local stops being served as soon as you confirm a removal**, also from a server started meanwhile, and is served again when the removal ends without changing the setup.
+- **A window whose records answer only after 5 seconds is still marked once they answer**, and offers Reload Window once.
+- **An older Codebook version in another window never installs an entry that this version's first setup left behind.**
+- **Your MCP config and its private copies stay safe:**
+  - a copy of your previous config that Codebook said it keeps is never deleted by a later run (it may move to a name ending in `.codebook-kept`);
+  - a half-saved config never turns a failed setup into an installed one;
+  - no refusal asks you to copy a private file over the config.
+  - Setup moves the old setup record aside instead of deleting it, and puts it back when it refuses, also on a full disk.
+- **A setup reads the window's folder when you run it**: when the workspace folders change meanwhile, it sets up nothing for the folder now open. A setup saved after a folder change stays saved, in VS Code, Cursor and Devin Desktop alike.
+- **A Devin Desktop window that opens while another window changes the setup waits only about two to four seconds for that window**, and gives its own look at an unfinished take-back and its rewrite of the entry 3 seconds in all, so Devin Local keeps its connection.
+- **Closing Cursor or Devin Desktop while a bridge is still making its first connection ends that bridge at once** and asks Codebook's server to end its session. A bridge that is closed while it checks the setup opens no new session.
+
 ## [0.2.141.0] - 2026-11-23 (development candidate)
 
 Cycle 0145 ([Issue #362](https://github.com/laststance/codebook/issues/362)), a bug-fix cycle. **The Devin Desktop setup and its bridge now hold under reconnects, passing read failures, a stalled disk and failed take-backs.** It fixes the nine defects that Cycle 0144's review limit carried and the defects this cycle's reviews found in the same code, so that none of these cases deletes a copy of your config, turns a failed setup into an installed one, ends a working Devin Local connection, or reports a success that Devin Local then refuses.

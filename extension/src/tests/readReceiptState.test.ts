@@ -8,6 +8,7 @@ import { DEVIN_DESCRIPTOR_LIMIT_BYTES } from '../constants'
 import { checkDevinBridgeReceipts as realCheckDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import * as realReadDescriptorText from '../utils/readDescriptorText'
 import { readReceiptState } from '../utils/readReceiptState'
+import { createPathReadGate } from '../utils/shareReceiptRead'
 
 import {
   createLinkIfAllowed,
@@ -425,7 +426,7 @@ test('the bridge check answers removed when the descriptor read fails with EIO b
   })
 })
 
-// protects=a removal seen in one receipt ending the bridge although the other receipt read never settles; fails_when=the check waits for every read, so every refusal times out and the bridge stays up for a removed setup; no_claim=a stalled read when nothing was observed (it stays pending)
+// Value: protects=a removal seen in one receipt ending the bridge although the other receipt read never settles; fails_when=the check waits for every read, so every refusal times out and the bridge stays up for a removed setup; no_claim=a stalled read when nothing was observed (it stays pending)
 test('the bridge check answers removed at once when the skill receipt read never settles and the MCP receipt was read as missing', async () => {
   // Arrange
   const mcpPath = join('/storage', 'devin-mcp', 'receipt.json')
@@ -451,8 +452,13 @@ test('the bridge check answers removed at once when the skill receipt read never
     },
   })
   // Act
+  // A gate of its own: the read that never settles would otherwise hold its key in the gate every test of this file shares, and a later read of that path would hang.
   const answer = await within(
-    stalledModule.checkDevinBridgeReceipts('/storage/agent/x.connection.json'),
+    stalledModule.checkDevinBridgeReceipts(
+      '/storage/agent/x.connection.json',
+      {},
+      createPathReadGate(),
+    ),
     5_000,
   )
   // Assert

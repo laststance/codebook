@@ -65,6 +65,11 @@ import {
   DEVIN_MARK_READ_RETRY_BUDGET_MS,
   DEVIN_MARK_READ_RETRY_DELAY_MS,
   DEVIN_SETUP_FINAL_CHECK_MS,
+  DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+  DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
+  DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS,
+  DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS,
+  DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
   DEVIN_REMOVAL_ACTION,
   DEVIN_REMOVAL_QUESTION,
   DEVIN_SETUP_REMOVED_LINE,
@@ -93,13 +98,30 @@ import {
 } from './devinMcpConfig'
 import {
   DEVIN_ENTRY_MISSING_LINE,
+  DEVIN_LATE_MARK_SENTENCE,
   DEVIN_REFRESH_NODE_FAILURE_LINE,
   DEVIN_SERVER_RESTARTED_SENTENCE,
+  DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE,
   DEVIN_SETUP_NODE_FAILURE_SENTENCE,
+  DEVIN_SETUP_NOT_RESTORED_LINE,
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
   DEVIN_SETUP_FOLDER_CHANGED_SENTENCE,
+  DEVIN_OWED_TAKE_BACK_LINE,
+  DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE,
+  DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
+  DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE,
+  DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE,
+  DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE,
+  REMOVE_DEVIN_SETUP_COMMAND,
+  devinBackgroundWorkEndedLine,
+  devinBackgroundWorkSentence,
+  devinLateFailureLine,
+  devinOwedTakeBackUnreadLine,
+  devinStorageWaitSentence,
+  type DevinBackgroundWorkKind,
+  type DevinStorageStep,
 } from './devinWindowSentences'
 import { createEnvironment, requireWorkspace } from './environment'
 import { learningItemSchema } from './identitySchemas'
@@ -143,6 +165,7 @@ import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
 } from './utils/classifyWikiUpdateEnd'
+import { continueAfterLateRead } from './utils/continueAfterLateRead'
 import { createSavedSessionStore } from './utils/createSavedSessionStore'
 import {
   currentStorageOwner,
@@ -173,6 +196,8 @@ import { devinRefusalAfterRollback } from './utils/devinRefusalAfterRollback'
 import {
   devinEntryRemovalOf,
   devinRemovalNotice,
+  devinRemovalPendingNotice,
+  type DevinRemovalProgress,
 } from './utils/devinRemovalNotice'
 import { devinRollbackLeftoverLine } from './utils/devinRollbackLeftoverLine'
 import { devinSetupRefusalSentence } from './utils/devinSetupRefusalSentence'
@@ -206,7 +231,14 @@ import { listWikiCandidates } from './utils/listWikiCandidates'
 import { createLlmWikiView } from './utils/llmWikiView'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
+import {
+  clearOwedDevinTakeBack,
+  readOwedDevinTakeBack,
+  recordOwedDevinTakeBack,
+  type OwedDevinTakeBack,
+} from './utils/owedDevinTakeBack'
 import { readDevinInstallationId } from './utils/readDevinInstallationId'
+import { readDevinInstallationIdWithin } from './utils/readDevinInstallationIdWithin'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readLlmWikiViewFacts } from './utils/readLlmWikiViewFacts'
 import { readStandingDevinInstallationId } from './utils/readStandingDevinInstallationId'
@@ -226,8 +258,15 @@ import { requestCursorWikiText } from './utils/requestCursorWikiText'
 import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
-import { retryWhileStorageLockHeld } from './utils/retryWhileStorageLockHeld'
+import {
+  retryWhileStorageLockHeld,
+  type StorageLockWait,
+} from './utils/retryWhileStorageLockHeld'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
+import {
+  runStepsWithinBudget,
+  type BudgetedStep,
+} from './utils/runStepsWithinBudget'
 import { runUnderAbortSignal } from './utils/runUnderAbortSignal'
 import { sanitizeCause } from './utils/sanitizeCause'
 import {
@@ -270,6 +309,18 @@ import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
 import { withDevinSetupLock } from './utils/withDevinSetupLock'
 
 let stopExtension: (() => Promise<void>) | undefined
+
+/** How long one taking of the Devin Desktop setup lock may wait: the attempts and pause while another window holds it, and the bound of the whole taking ({@link withDevinSetupLock}). */
+type DevinSetupLockBound = { wait: StorageLockWait; acquireBudgetMs: number }
+
+/** How long a Devin Desktop window's activation refresh waits for the setup lock: about two to four seconds while another window holds it and at most {@link DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS} in all, not a setup's ten, because the window's server starts only after the refresh and the bridge Devin Local started at the window load waits 15 seconds for it; a lock still held then is a refusal like any other, and the server still starts. */
+const DEVIN_REFRESH_LOCK_BOUND: DevinSetupLockBound = {
+  wait: {
+    attempts: DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS,
+    delayMs: DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
+  },
+  acquireBudgetMs: DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
+}
 
 /** One change of this window's own Wiki update marker (its removal, or its turn into a stopped watch's reservation): the change, the timer of its next attempt while it waits, and the attempt while it runs. */
 /** The fields of a Devin Desktop window's connection descriptor that carry its AI chat mark; empty when the window is unmarked. */
@@ -314,6 +365,28 @@ export function activate(
     /** Whether the descriptor was written with the `devinChat` mark ({@link devinChatField}); a later unmark by a removal does not change it. */
     devinChat: boolean
   }
+  /** A step of a Devin Desktop take-back or removal that outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: the work it belongs to, the step that waits on storage, and the failure's sentence a take-back's command still gives (none when it names a file the take-back may delete). */
+  type DevinLapse = {
+    kind: DevinBackgroundWorkKind
+    step: DevinStorageStep
+    reason?: string
+  }
+  /** A step of the activation refresh's work under the setup lock ({@link refreshUnderDevinLock}): the look for an owed take-back, then the rewrite of the entry; a lapse of its budget names the one pending. */
+  type DevinRefreshStep = 'owed take-back' | 'MCP entry'
+  /** A run of a Devin Desktop window that takes the window's mark off: its removal, the take-back of its failed setup, or the take-back of a failed setup's entry that a reload left owed ({@link devinMarkTakeOffs}). */
+  type DevinMarkTakeOffRun =
+    Exclude<DevinBackgroundWorkKind, 'setup'> | 'owed take-back'
+  /** What a Devin Desktop setup was run for: the workspace folder the command ran in and the count of folder changes ({@link devinFolderGeneration}) at that moment, so every later step can tell that the window changed its folders since ({@link assertDevinSetupFolderUnchanged}). */
+  type DevinSetupInvocation = {
+    workspace: string
+    folderGeneration: number
+  }
+  /** What a Devin Desktop setup's take-back puts back: what its entry write answered, the saved setup from before the run, and the folder generation ({@link devinFolderGeneration}) when the command ran. */
+  type DevinTakeBack = {
+    entryWrite: DevinEntryWrite
+    previousSetup: unknown
+    folderGeneration: number
+  }
   let starting: Promise<Running> | undefined,
     running: Running | undefined,
     stopping: Promise<void> | undefined
@@ -326,6 +399,16 @@ export function activate(
   let devinSetup: Promise<void> | undefined,
     devinRemoval: Promise<void> | undefined,
     devinRemoving = false
+  /** What this window still runs after its Devin Desktop command answered because a step waited {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS} on storage, with the step it waits on now; while it is set, setup and removal refuse at once ({@link assertNoDevinBackgroundWork}). */
+  let devinBackgroundWork: DevinLapse | undefined
+  /** Whether the take-back of a failed Devin Desktop setup that runs in this window now owes nothing a reload of the window would lose: `true` when its setup installed no entry, or once its record of that entry was written ({@link recordTakeBackOwed}); `false` while that write waits on storage or after it failed. Set by {@link rollBackDevinSetup}; read by {@link assertNoDevinBackgroundWork} for the reload its refusal offers. */
+  let isOwedTakeBackRecorded = true
+  /** The last write of this window's saved AI chat setup queued by {@link inSavedSetupQueue}; it never rejects. */
+  let savedSetupQueue: Promise<unknown> = Promise.resolve()
+  /** How many clears of the saved setup for a change of the workspace's folders ({@link clearSavedSetupForFolderChange}) wait for their turn or their write: while one does, the saved setup reads as cleared ({@link savedSetupNow}), because the editor still holds the old folder's value until that clear lands. */
+  let pendingFolderClears = 0
+  /** How many changes of the workspace's folders this window has seen; a Devin setup reads it when it begins, so its take-back never puts back a saved setup of a folder that closed meanwhile ({@link restoreSavedDevinSetup}). */
+  let devinFolderGeneration = 0
   let hasStoppedServer = false
   /** The last descriptor change or removal queued by {@link inDescriptorQueue}; it never rejects. */
   let descriptorQueue: Promise<unknown> = Promise.resolve()
@@ -419,13 +502,28 @@ export function activate(
   const wikiHost: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
   /** Whether a Devin setup run of this window is between its provisional save and its commit or rollback: only then does the provisional workspace count as the setup ({@link effectiveDevinSetupOf}), so a sync during the run does not unmark the run's own mark. */
   let isDevinRunProvisional = false
+  /**
+   * Reads this window's saved AI chat setup as the writes queued so far leave it: cleared while a folder change's clear still waits ({@link pendingFolderClears}), so a folder added again at the same path never counts the old folder's setup as its own; read by {@link setupMatchesCurrentWorkspace} and by a Devin setup for the setup it puts back.
+   * @returns The saved value, or `undefined` while a folder change's clear is pending.
+   * @example savedSetupNow() // => { workspace: '/repo' }
+   */
+  const savedSetupNow = (): unknown =>
+    pendingFolderClears > 0
+      ? undefined
+      : context.workspaceState.get('codebook.aiChatSetup')
+  /** The workspace folder this window serves now, or `undefined` when it has none; read by {@link assertDevinSetupFolderUnchanged}. @example currentWorkspaceOrNone() // => '/repo' */
+  const currentWorkspaceOrNone = (): string | undefined => {
+    try {
+      return requireWorkspace()
+    } catch {
+      return undefined
+    }
+  }
   const setupMatchesCurrentWorkspace = () => {
     try {
       return (
-        effectiveDevinSetupOf(
-          context.workspaceState.get('codebook.aiChatSetup'),
-          isDevinRunProvisional,
-        )?.workspace === requireWorkspace()
+        effectiveDevinSetupOf(savedSetupNow(), isDevinRunProvisional)
+          ?.workspace === requireWorkspace()
       )
     } catch {
       return false
@@ -433,6 +531,8 @@ export function activate(
   }
   /** Whether this window's connection descriptor carries the Devin AI chat mark right now: set once the mark is written, cleared before an unmark rewrites the descriptor. The server refuses a request of the Devin bridge while it is `false` ({@link startServer}), so a bridge that connected before a failed setup's rollback stops being served. */
   let isDevinChatMarked = false
+  /** The runs of this window that take its Devin mark off now: a removal from the moment the learner confirmed it, the take-back of a failed setup whose entry it installed (or whose earlier setup does not stand) from its start, and the take-back of an owed entry from the moment its record was found ({@link finishOwedDevinTakeBack}); each counts until the turn right before its own descriptor step in {@link inDescriptorQueue}, or until it ended without reaching that step ({@link endDevinMarkTakeOff}). While one counts, nothing turns the in-memory mark on ({@link isDevinMarkBeingTakenOff}). */
+  const devinMarkTakeOffs = new Set<DevinMarkTakeOffRun>()
   /** The fields a Devin Desktop window's connection descriptor carries when this window's AI chat setup stands: `devinChat`, so the Devin bridge connects only in windows where Set Up AI Chat ran, and `devinSetupInstallation`, the installation id of the MCP receipt, so a bridge refuses a descriptor whose setup another window removed meanwhile (no id until an older receipt is refreshed); empty everywhere else. @example { ...(await devinChatField()) } // => { devinChat: true, devinSetupInstallation: '…' } in a set-up Devin Desktop window */
   const devinChatField = async (): Promise<DevinChatFields> => {
     let field: DevinChatFields | undefined
@@ -476,8 +576,12 @@ export function activate(
       ? { devinChat: true, devinSetupInstallation: installationId }
       : {}
   }
-  /** The mark fields for a server that starts now, and for the sync of a rollback: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, and a read that settles later changes nothing. An observed removal answers at once. Called by {@link startServer}'s start and by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
-  const devinChatFieldAtStart = async (): Promise<DevinChatFields> => {
+  /** The mark fields for a server that starts now, with the read still in flight when the deadline passed: a read that gets no answer (descriptor exhaustion, `EIO`) is asked again every {@link DEVIN_MARK_READ_RETRY_DELAY_MS}, and the whole wait, a read that never returns included, ends after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS}, so the descriptor ends marked as soon as a read stands; at the deadline it is published unmarked without waiting for a read in flight, which the start's late mark waits for instead ({@link markDevinChatLate}). An observed removal answers at once. Called by {@link startServer}'s start and by {@link devinChatFieldAtStart}. @returns `fields`, and `lateRead` when a read was in flight at the deadline (none when the retry was between two reads). @example const { fields, lateRead } = await readFieldsAtStart() */
+  const readFieldsAtStart = async (): Promise<{
+    fields: DevinChatFields
+    lateRead?: Promise<unknown>
+  }> => {
+    let lateRead: Promise<unknown> | undefined
     const deadline = Date.now() + DEVIN_MARK_READ_RETRY_BUDGET_MS
     const stopWaiting = new AbortController()
     /** Whether the deadline passed or the answer came: no read starts after it. */
@@ -502,20 +606,25 @@ export function activate(
       signal: stopWaiting.signal,
     }).then(
       () => {
-        // Ends the retry wait and marks a read still in flight as outlived.
+        // Ends the retry wait and marks a read still in flight as outlived; that read is kept for the late mark.
         stopWaiting.abort()
         abandonStandingRead()
+        lateRead = standingRead
         return undefined
       },
       () => undefined,
     )
     try {
-      return (await Promise.race([readUntilAnswered(), expiry])) ?? {}
+      const fields = (await Promise.race([readUntilAnswered(), expiry])) ?? {}
+      return { fields, lateRead }
     } finally {
       // The answer came first: the timer must not keep the process alive.
       stopWaiting.abort()
     }
   }
+  /** The mark fields for the sync of a rollback, as {@link readFieldsAtStart} reads them; a read that settles after the deadline changes nothing here. Called by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
+  const devinChatFieldAtStart = async (): Promise<DevinChatFields> =>
+    (await readFieldsAtStart()).fields
   let reader: StudyWorkspace | undefined
   /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
   const unsavedStudies: UnsavedStudyArchive[] = []
@@ -856,7 +965,7 @@ export function activate(
         const startedService = service
         // The mark decision, the write and the publication of the running target share the queue of the removal's unmark: a removal that comes first leaves the decision unmarked, and one that comes later finds the target and unmarks it.
         return await inDescriptorQueue(async (): Promise<Running> => {
-          const devinFields = await devinChatFieldAtStart()
+          const { fields: devinFields, lateRead } = await readFieldsAtStart()
           // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
           await writeFile(
             descriptorPath,
@@ -871,7 +980,9 @@ export function activate(
               flag: 'wx',
             },
           )
-          isDevinChatMarked = devinFields.devinChat === true
+          // A removal or take-back that takes the mark off now keeps it off; that run's own descriptor step rewrites the file, or the window syncs the mark again when the run ends before that step.
+          isDevinChatMarked =
+            devinFields.devinChat === true && !isDevinMarkBeingTakenOff()
           const server: Running = {
             endpoint: startedEndpoint,
             environment,
@@ -881,6 +992,8 @@ export function activate(
           }
           // A stop that is under way owns the instance through `starting`; the checks after the wait refuse it.
           if (!stopping && startedEndpoint.listening) running = server
+          // A read that answers after the deadline can still mark this server once it settled.
+          markDevinChatLate(server, lateRead)
           return server
         })
       } catch (error) {
@@ -977,8 +1090,36 @@ export function activate(
     }
   }
   /**
+   * Clears this window's saved AI chat setup for a change of the workspace's folders, in its turn of {@link inSavedSetupQueue}, so a Devin take-back's restore that started before it never lands after it, and a setup asked for after it lands after it; called first by {@link replaceReadersAfterFolderChange}, which does not wait for it, so a write that storage does not answer never holds the stop of the old folder's server, the new readers or the next start. Until the clear settled, the saved setup reads as cleared ({@link savedSetupNow}).
+   * @returns Reads the clear's failure for the handling's notice once the handling's other steps ran: the failure when the clear failed by then, none when it ended or still waits; a clear that fails after that read is told in a notice of its own.
+   * @example const clearFailures = clearSavedSetupForFolderChange(); await stop(); const failures = [...clearFailures()]
+   */
+  const clearSavedSetupForFolderChange =
+    (): (() => FolderChangeCleanupFailure[]) => {
+      let failure: FolderChangeCleanupFailure | undefined
+      let isRead = false
+      // Counted at once and until its write settled, inside its turn: the writes queued after it start only then.
+      pendingFolderClears += 1
+      void inSavedSetupQueue(async () => {
+        try {
+          await context.workspaceState.update('codebook.aiChatSetup', undefined)
+        } finally {
+          pendingFolderClears -= 1
+        }
+      }).catch((thrown: unknown) => {
+        failure = { step: 'chat-setup', thrown }
+        // The handling's notice was shown without it: this failure gets its own.
+        if (isRead)
+          void showNotice('error', folderChangeCleanupNotice([failure]))
+      })
+      return (): FolderChangeCleanupFailure[] => {
+        isRead = true
+        return failure ? [failure] : []
+      }
+    }
+  /**
    * Handles one change of the workspace's folders: clears the saved AI chat setup, stops the agent server, closes both readers and the DeepWiki reader, and makes both readers anew; called by the folders' listener, one change after the one before it.
-   * Every step runs whatever the step before it did. A step that threw used to end the handling: after a stop or a Repository Wiki reader that failed, that reader stayed in its variable, disposed, so every later start failed with "Repository reader is disposed.", and the Study reader of the folders that were left stayed in use. The failures are told together in one notice ({@link folderChangeCleanupNotice}).
+   * The clear of the saved setup is queued first and not waited for ({@link clearSavedSetupForFolderChange}). Every step runs whatever the step before it did. A step that threw used to end the handling: after a stop or a Repository Wiki reader that failed, that reader stayed in its variable, disposed, so every later start failed with "Repository reader is disposed.", and the Study reader of the folders that were left stayed in use. The failures are told together in one notice ({@link folderChangeCleanupNotice}).
    * A server whose resources could not be released is still owned afterwards and keeps waiting for Stop Agent Server, which retires it on the Study reader made here.
    * @returns Nothing, and it does not reject: a failed step is in the notice.
    * @example replacingReaders = (replacingReaders ?? Promise.resolve()).then(replaceReadersAfterFolderChange)
@@ -996,9 +1137,8 @@ export function activate(
         failures.push({ step, thrown })
       }
     }
-    await attempt('chat-setup', () =>
-      context.workspaceState.update('codebook.aiChatSetup', undefined),
-    )
+    // In the queue of the Devin setup's writes, so a take-back's restore that started before it never lands after it; not waited for, so a write that storage does not answer never holds the stop and the new readers.
+    const clearFailures = clearSavedSetupForFolderChange()
     const closingWikiReader = deepWikiReader
     deepWikiReader = undefined
     try {
@@ -1029,9 +1169,11 @@ export function activate(
       repository()
     })
     await attempt('wiki-reader', () => closingWikiReader?.close())
+    // The clear of the saved setup comes first, as it was asked for first.
+    const settledFailures = [...clearFailures(), ...failures]
     // The notice stays until the learner closes it, so it is not waited for.
-    if (failures.length)
-      void showNotice('error', folderChangeCleanupNotice(failures))
+    if (settledFailures.length)
+      void showNotice('error', folderChangeCleanupNotice(settledFailures))
   }
   /** Stops the server because the learner or the closing window asked for it, and counts that for a start that waits ({@link awaitReplacedReaders}); the stop a change of the workspace's folders makes on its own way is not counted. Called by Stop Agent Server and by the extension's shutdown. @example registerCommand('codebook.stopAgentServer', stopOnRequest) */
   const stopOnRequest = (): Promise<void> => {
@@ -1212,9 +1354,9 @@ export function activate(
         `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const setupCursorServer = isCursorHost ? registeredCursorServer : undefined
-    await context.workspaceState.update('codebook.aiChatSetup', {
-      workspace: running.endpoint.descriptor.workspace,
-    })
+    const setupWorkspace = running.endpoint.descriptor.workspace
+    // In the queue of the saved setup's writes, so a folder change's clear asked for before it never lands after it.
+    await writeSavedSetup(() => ({ workspace: setupWorkspace }))
     if (isCursorHost) {
       try {
         assertCursorSetupAvailable()
@@ -1225,7 +1367,7 @@ export function activate(
         assertCursorSetupAvailable()
       } catch (error) {
         // A different Cursor window may have removed the shared skill during the persisted setup write.
-        await context.workspaceState.update('codebook.aiChatSetup', undefined)
+        await writeSavedSetup(() => undefined)
         if (setupCursorServer && registeredCursorServer === setupCursorServer) {
           vscode.cursor?.mcp?.unregisterServer(setupCursorServer)
           registeredCursorServer = undefined
@@ -1256,11 +1398,29 @@ export function activate(
     )
       throw new Error(DEVIN_SETUP_SERVER_CHANGED_SENTENCE)
   }
-  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved or the setup lock was released: the folder-change handling stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). The saved value is cleared here too, because a commit that landed after the folder-change handling cleared it would leave the old folder's setup saved. @throws With a retry sentence. @example await assertDevinSetupWorkspaceStands() */
-  const assertDevinSetupWorkspaceStands = async (): Promise<void> => {
+  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved or the setup lock was released: the folder-change handling stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). The saved value is cleared here too, because a commit that landed after the folder-change handling cleared it would leave the old folder's setup saved; that clear is a forward setup step under {@link runSetupStep}'s budget, so a storage that does not answer never holds the command: the clear goes on in the background (under the setup lock after the commit). Called by {@link setUpDevinChatLocked} after the commit and by {@link performDevinSetup} after the lock's release. @param onLapse - Hears the clear's lapse as a `setup` lapse naming `saved setup`. @throws With a retry sentence. @example await assertDevinSetupWorkspaceStands(onLapse) */
+  const assertDevinSetupWorkspaceStands = async (
+    onLapse: (lapse: DevinLapse) => void,
+  ): Promise<void> => {
     if (setupMatchesCurrentWorkspace()) return
-    await clearSavedDevinSetup()
+    await runSetupStep('saved setup', clearSavedDevinSetup, onLapse)
     throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
+  }
+  /**
+   * Refuses a Devin Desktop setup whose window changed its workspace folders since the command ran: a setup that went on would start, mark and save a setup for the folder now open, which the learner did not ask for; called by {@link setUpDevinChatLocked} before the server start, before the entry write, before the descriptor's mark and before the commit.
+   * @param invocation - The folder and the count of folder changes when the command ran.
+   * @throws With {@link DEVIN_SETUP_FOLDER_CHANGED_SENTENCE}; after the entry write the setup then takes back what it saved.
+   * @example assertDevinSetupFolderUnchanged({ workspace: '/repo', folderGeneration: 0 })
+   */
+  const assertDevinSetupFolderUnchanged = ({
+    workspace,
+    folderGeneration,
+  }: DevinSetupInvocation): void => {
+    if (
+      devinFolderGeneration !== folderGeneration ||
+      currentWorkspaceOrNone() !== workspace
+    )
+      throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
   }
   /** Re-checks, after an awaited step of a Devin Desktop setup, that its removal has not begun and its checked server still stands; called by {@link setUpDevinChatLocked} after the receipts check and after the commit write. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupStillStands(checkedServer) */
   const assertDevinSetupStillStands = (server: Running): void => {
@@ -1286,27 +1446,191 @@ export function activate(
         void vscode.commands.executeCommand(RELOAD_WINDOW_COMMAND)
     })
   }
-  /** Offers the Reload Window button when this Devin Desktop window's agent server started again after a Stop Agent Server: the bridge Devin Local started at the window load kept the stopped server's endpoint; not offered at the first start of the window, or when the new instance's descriptor carries no `devinChat` mark (a window without chat setup, or a setup whose records are gone). @param server - The instance that just started. @example offerReloadAfterServerRestart(server) */
+  /** Offers the Reload Window button when this Devin Desktop window's agent server started again after a Stop Agent Server: the bridge Devin Local started at the window load kept the stopped server's endpoint; not offered at the first start of the window, when the new instance's descriptor carries no `devinChat` mark (a window without chat setup, or a setup whose records are gone), or when the window's mark is off now (a removal or take-back takes it off, {@link isDevinMarkBeingTakenOff}, or took it off since the start). @param server - The instance that just started. @example offerReloadAfterServerRestart(server) */
   const offerReloadAfterServerRestart = (server: Running): void => {
-    if (!hasStoppedServer || !isDevinHost || devinRemoving || !server.devinChat)
+    if (
+      !hasStoppedServer ||
+      !isDevinHost ||
+      !server.devinChat ||
+      !isDevinChatMarked
+    )
       return
     hasStoppedServer = false
     offerDevinReload('information', DEVIN_SERVER_RESTARTED_SENTENCE)
   }
-  /** Runs one Devin Desktop setup or removal alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so a removal never lands between another window's skill deployment and entry write. @example await underDevinLock(() => removeDevinSetupLocked()) */
+  /** Offers the Reload Window button once a late mark marked this Devin Desktop window: the bridge Devin Local started at the window load found the unmarked descriptor; also at the window's first start, unlike {@link offerReloadAfterServerRestart}, and not while a removal runs. @example offerDevinReloadAfterLateMark() */
+  const offerDevinReloadAfterLateMark = (): void => {
+    if (!isDevinHost || devinRemoving) return
+    offerDevinReload('information', DEVIN_LATE_MARK_SENTENCE)
+  }
+  /**
+   * Whether a removal of this window, or the take-back of a failed setup or of an owed entry that takes the mark off, counts as taking the window's Devin mark off now ({@link devinMarkTakeOffs}): the server start's queue turn then leaves the in-memory mark off whatever it decided, and no mark, sync or late mark turns it on, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn, {@link markDevinChatDescriptor}, {@link syncDevinChatDescriptor} and {@link isDevinSetupChanging}. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
+   * @returns `true` from the moment the removal was confirmed, or the take-back began, until the turn right before that run's own descriptor step, or until the run ended without reaching it.
+   * @example isDevinMarkBeingTakenOff() // => true while Remove Devin Desktop Setup waits for the setup lock
+   */
+  const isDevinMarkBeingTakenOff = (): boolean => devinMarkTakeOffs.size > 0
+  /**
+   * Counts `run` as taking this window's Devin mark off from now on, and turns the in-memory mark off at once, before the run waits on any storage or lock, so the server refuses the Devin bridge meanwhile (it reads the mark per request); called by {@link removeDevinSetup} once the learner confirmed, by {@link revokeFailedSetupMark} and by {@link finishOwedDevinTakeBack} once it found an owed take-back.
+   * @param run - The run that begins.
+   * @example beginDevinMarkTakeOff('removal')
+   */
+  const beginDevinMarkTakeOff = (run: DevinMarkTakeOffRun): void => {
+    devinMarkTakeOffs.add(run)
+    isDevinChatMarked = false
+  }
+  /**
+   * Stops counting `run` as taking the mark off, in a turn of {@link inDescriptorQueue} of its own queued right before the run's own descriptor step (nothing can be queued between the two), so that step decides the mark and a server start queued after it reads the setup as the run left it; called by the removal's descriptor step and by {@link syncRolledBackDescriptor}.
+   * @param run - The run whose descriptor step is queued next.
+   * @example handDevinMarkToDescriptorStep('removal'); await markDevinChatDescriptor(false)
+   */
+  const handDevinMarkToDescriptorStep = (run: DevinMarkTakeOffRun): void => {
+    void inDescriptorQueue(async () => {
+      devinMarkTakeOffs.delete(run)
+    })
+  }
+  /**
+   * Ends `run`'s take-off of the mark once the run settled: a run that ended before its own descriptor step (a removal refused by another window's lock, by an edited skill or by a setup's background work) took the mark off without rewriting the descriptor, so the window syncs its mark again from the receipts ({@link syncDevinChatDescriptor}); a run whose descriptor step came changes nothing here. Called by {@link removeDevinSetup} once its run settled.
+   * @param run - The run that settled.
+   * @example endDevinMarkTakeOff('removal')
+   */
+  const endDevinMarkTakeOff = (run: DevinMarkTakeOffRun): void => {
+    // Its own descriptor step already decided the mark.
+    if (!devinMarkTakeOffs.delete(run)) return
+    void syncDevinChatDescriptor().catch(reportDescriptorUpdateFailure)
+  }
+  /**
+   * Whether a Devin Desktop setup, its take-back, a removal of this window or the take-back of an owed entry that takes the mark off runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-backs and the removal rewrite the descriptor), so a late mark gives way to it; read by {@link isLateMarkTarget}.
+   * @returns `true` while such a run goes on.
+   * @example isDevinSetupChanging() // => true while Set Up AI Chat runs
+   */
+  const isDevinSetupChanging = (): boolean =>
+    devinRemoving ||
+    devinSetup !== undefined ||
+    devinBackgroundWork !== undefined ||
+    isDevinMarkBeingTakenOff()
+  /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
+  const isLateMarkTarget = (server: Running): boolean =>
+    running === server &&
+    !stopping &&
+    !isDevinSetupChanging() &&
+    setupMatchesCurrentWorkspace()
+  /**
+   * Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read ({@link readFieldsAtStart}, bounded by its own deadline) finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. Called by {@link markLateUntilAnswered}.
+   * @param server - The server whose start read answered late.
+   * @returns
+   * - `{ isMarked: true }` when it marked the window;
+   * - `{ isMarked: false, lateRead }` when the fresh read was still in flight at its own deadline, so nothing was decided yet;
+   * - `{ isMarked: false }` otherwise.
+   * @example await markLateInQueue(server) // => { isMarked: true }
+   */
+  const markLateInQueue = (
+    server: Running,
+  ): Promise<{ isMarked: boolean; lateRead?: Promise<unknown> }> =>
+    inDescriptorQueue(async () => {
+      // A window marked since its start (by its setup) already carries the mark and offered its reload.
+      if (isDevinChatMarked || !isLateMarkTarget(server))
+        return { isMarked: false }
+      // A fresh read decides, never the late read's own answer; one still in flight at its own deadline decides nothing yet.
+      const { fields, lateRead } = await readFieldsAtStart()
+      if (lateRead) return { isMarked: false, lateRead }
+      if (fields.devinChat !== true || !isLateMarkTarget(server))
+        return { isMarked: false }
+      await writeSyncedDescriptor(
+        server,
+        true,
+        fields.devinSetupInstallation,
+        false,
+      )
+      // The write waited on storage: a removal, take-back, stop or folder change meanwhile keeps the in-memory mark off, and its own step rewrites the file.
+      if (!isLateMarkTarget(server)) return { isMarked: false }
+      isDevinChatMarked = true
+      return { isMarked: true }
+    })
+  /**
+   * Gives `server` its late mark in turns of {@link markLateInQueue} until a fresh read answers in time: a fresh read still in flight at its own deadline is waited for outside the descriptor queue, then read afresh, so a storage that answers only after two deadlines still marks the window while each read stays bounded inside the queue; called by {@link markDevinChatLate} once the start's late read settled.
+   * @param server - The server whose start read answered late.
+   * @returns Whether it marked the window.
+   * @example await markLateUntilAnswered(server) // => true once a fresh read found the setup standing
+   */
+  const markLateUntilAnswered = async (server: Running): Promise<boolean> => {
+    let answer = await markLateInQueue(server)
+    // Only the settling of the read in flight counts; it holds no turn of the queue while it is waited for.
+    while (answer.lateRead) {
+      await answer.lateRead.then(
+        () => undefined,
+        () => undefined,
+      )
+      answer = await markLateInQueue(server)
+    }
+    return answer.isMarked
+  }
+  /**
+   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline), and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start.
+   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a setup, take-back or removal of this window that runs ({@link isLateMarkTarget}) is left as it is and shows nothing.
+   * @param server - The server that just started.
+   * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
+   * @example markDevinChatLate(server, lateRead)
+   */
+  const markDevinChatLate = (
+    server: Running,
+    lateRead: Promise<unknown> | undefined,
+  ): void => {
+    if (!lateRead) return
+    void continueAfterLateRead(lateRead, () =>
+      markLateUntilAnswered(server),
+    ).then(
+      (isMarked) => {
+        if (!isMarked) return
+        server.devinChat = true
+        offerDevinReloadAfterLateMark()
+      },
+      (error: unknown) => {
+        diagnostics.info(
+          `Codebook could not mark this window for Devin Desktop after storage answered late: ${thrownMessage(error)}`,
+        )
+      },
+    )
+  }
+  /** Runs one Devin Desktop setup, removal or activation refresh of the entry alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so neither a removal nor a refresh lands between another window's entry write and that setup's end or take-back. @param bound - How long the taking of the lock may wait: a setup's or removal's ten seconds when left out; the activation refresh passes its shorter one ({@link DEVIN_REFRESH_LOCK_BOUND}). @example await underDevinLock(() => removeDevinSetupLocked()) */
   const underDevinLock = <Value>(
     operation: () => Promise<Value>,
+    bound?: DevinSetupLockBound,
   ): Promise<Value> =>
     withDevinSetupLock(
       join(context.globalStorageUri.fsPath, DEVIN_SETUP_STORAGE_DIRECTORY),
       operation,
+      bound?.wait,
+      {
+        acquireBudgetMs: bound?.acquireBudgetMs,
+        onReleaseStalled: () =>
+          diagnostics.info(DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE),
+      },
     )
-  /** Puts this window's saved Devin Desktop setup back to `value` (cleared when it is undefined); a failed write only goes to the Output, so the rollback or removal that called it goes on. @returns Whether the write succeeded. @example await saveDevinSetupAs(undefined, 'clear') */
+  /** Runs one write of this window's saved AI chat setup after every one queued before it, as {@link inDescriptorQueue} does for the descriptor. @example await inSavedSetupQueue(async () => {}) */
+  const inSavedSetupQueue = <Value>(
+    task: () => Promise<Value>,
+  ): Promise<Value> => {
+    const result = savedSetupQueue.then(task)
+    savedSetupQueue = result.catch(() => {})
+    return result
+  }
+  /**
+   * Writes this window's saved AI chat setup in its turn of {@link inSavedSetupQueue}, with the value `compute` gives when that turn comes, so the writes of a setup, its take-back, a removal and a folder change's clear land in the order they were asked for, whatever the editor's storage does; called by every setup and removal write of the saved setup, in Devin Desktop, VS Code and Cursor.
+   * @param compute - Gives the value to save (`undefined` clears it), read when the write starts.
+   * @returns Resolves once the editor saved the value.
+   * @throws The editor's write failure, for this write only: the writes queued after it still run.
+   * @example await writeSavedSetup(() => ({ workspace: '/repo' }))
+   */
+  const writeSavedSetup = (compute: () => unknown): Promise<void> =>
+    inSavedSetupQueue(async () => {
+      await context.workspaceState.update('codebook.aiChatSetup', compute())
+    })
+  /** Puts this window's saved Devin Desktop setup back to what `compute` gives in the write's turn (cleared when it gives undefined); a failed write only goes to the Output, so the rollback or removal that called it goes on. @returns Whether the write succeeded. @example await saveDevinSetupAs(() => undefined, 'clear') */
   const saveDevinSetupAs = async (
-    value: unknown,
+    compute: () => unknown,
     action: 'clear' | 'restore',
   ): Promise<boolean> =>
-    await context.workspaceState.update('codebook.aiChatSetup', value).then(
+    await writeSavedSetup(compute).then(
       () => true,
       (error: unknown) => {
         diagnostics.info(
@@ -1317,8 +1641,8 @@ export function activate(
     )
   /** Clears this window's saved Devin Desktop setup. @example await clearSavedDevinSetup() */
   const clearSavedDevinSetup = (): Promise<boolean> =>
-    saveDevinSetupAs(undefined, 'clear')
-  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), and marks only while the setup stands ({@link devinChatField}). @param checkedInstallationId - The installation id an explicit setup read just before queueing this mark; the mark carries it without reading the receipt again, so a receipt that became unreadable meanwhile cannot leave a mark without its id. Other callers leave it out. @example await markDevinChatDescriptor(true) */
+    saveDevinSetupAs(() => undefined, 'clear')
+  /** Marks (or unmarks) this window's connection descriptor for the Devin bridge, once the setup is saved or removed; it touches only the descriptor of the instance running when its turn in {@link inDescriptorQueue} comes (none after a stop), marks only while the setup stands ({@link devinChatField}), and turns the in-memory mark on only while no removal or take-back takes it off ({@link isDevinMarkBeingTakenOff}). @param checkedInstallationId - The installation id an explicit setup read just before queueing this mark; the mark carries it without reading the receipt again, so a receipt that became unreadable meanwhile cannot leave a mark without its id. Other callers leave it out. @example await markDevinChatDescriptor(true) */
   const markDevinChatDescriptor = (
     enabled: boolean,
     checkedInstallationId?: string,
@@ -1339,7 +1663,8 @@ export function activate(
         enabled,
         field.devinSetupInstallation,
       )
-      isDevinChatMarked ||= enabled
+      // A removal confirmed meanwhile keeps the in-memory mark off; its own descriptor step rewrites the file.
+      isDevinChatMarked ||= enabled && !isDevinMarkBeingTakenOff()
     })
   /** Rewrites the descriptor of `target` for the mark it earns; when `rotates`, the next token is only prepared, written with a removed mark, and the server switches to it (and the VS Code MCP client is told) once the file carries it, so a failed write leaves the server and the file on the old token. @example await writeSyncedDescriptor(running, false, undefined, true) */
   const writeSyncedDescriptor = async (
@@ -1361,7 +1686,7 @@ export function activate(
     rotation?.commit()
     notifyMcpDefinitions()
   }
-  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, in the turn of {@link inDescriptorQueue}. @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
+  /** Sets the mark of the descriptor of the server running now to whether this window's setup stands at this moment, so a server that started during a failed setup (it read the half-saved setup) loses the mark, and one whose earlier setup still stands keeps it; it runs after the records are put back, or once a removal ended before its own descriptor step ({@link endDevinMarkTakeOff}), in the turn of {@link inDescriptorQueue}, and turns the in-memory mark on only while no other removal or take-back takes it off ({@link isDevinMarkBeingTakenOff}). @param rotateWhenUnmarked - Rotates the server's bearer token when this rewrite removes a mark (the descriptor carried one and the window ends up unmarked), after the descriptor carries the new one, so every bridge that holds the old token (the one of an earlier build sends no Devin header) is refused; a normal removal leaves it out. @example await syncDevinChatDescriptor(true) */
   const syncDevinChatDescriptor = (rotateWhenUnmarked = false): Promise<void> =>
     inDescriptorQueue(async () => {
       const target = running
@@ -1377,63 +1702,284 @@ export function activate(
         field.devinSetupInstallation,
         rotateWhenUnmarked && !isMarked,
       )
-      isDevinChatMarked ||= isMarked
+      // Another run that takes the mark off keeps it off; that run's own descriptor step decides.
+      isDevinChatMarked ||= isMarked && !isDevinMarkBeingTakenOff()
     })
+  /** The take-back's first step: puts this window's saved setup back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load), decided when the write's turn in {@link inSavedSetupQueue} comes: after a change of the workspace's folders since the run began it clears the value instead, because that setup belongs to a folder that closed, and says so in the Output; with the folder change's own clear in the same queue, either order ends with no saved setup. @param previousSetup - The saved setup from before the run. @param folderGeneration - {@link devinFolderGeneration} when the run began. @returns Whether the write succeeded; a failure went to the Output. @example await restoreSavedDevinSetup(undefined, 0) */
+  const restoreSavedDevinSetup = (
+    previousSetup: unknown,
+    folderGeneration: number,
+  ): Promise<boolean> =>
+    saveDevinSetupAs(() => {
+      if (devinFolderGeneration === folderGeneration) return previousSetup
+      diagnostics.info(DEVIN_SETUP_NOT_RESTORED_LINE)
+      return undefined
+    }, 'restore')
+  /** The take-back's entry step, only for an entry this setup installed (an updated or current entry is used by other windows): removes it while its receipt still names this setup's generation, so a newer setup's entry stays; once the removal answered, the record of the owed take-back goes ({@link recordTakeBackOwed}). Also run by {@link finishOwedDevinTakeBack}. @param generation - The generation the setup's entry write answered. @returns Whether the entry and its records are gone; a leftover or a failure went to the Output. @example await takeBackDevinEntry('g1') */
+  const takeBackDevinEntry = (generation: string): Promise<boolean> =>
+    removeManagedDevinMcpEntry(
+      context.globalStorageUri.fsPath,
+      undefined,
+      undefined,
+      { expectedGeneration: generation },
+    ).then(
+      async (removal) => {
+        // The removal answered: nothing of this entry is owed any more, whatever it left; a removal that failed keeps the record for the next run.
+        await clearOwedDevinTakeBack(context.globalStorageUri.fsPath).catch(
+          (error: unknown) => {
+            diagnostics.info(
+              `Codebook could not delete its record of the Devin Desktop take-back it finished: ${thrownMessage(error)}`,
+            )
+          },
+        )
+        // A removal that resolved may still have left a receipt, a copy or an edited entry.
+        const leftover = devinRollbackLeftoverLine(removal)
+        if (leftover === undefined) return true
+        diagnostics.info(leftover)
+        return false
+      },
+      (cleanupError: unknown) => {
+        diagnostics.info(
+          `Codebook could not take back the Devin Desktop MCP entry this setup wrote: ${thrownMessage(cleanupError)}`,
+        )
+        return false
+      },
+    )
+  /** Writes the Output line of a connection descriptor that a Devin removal, take-back or sync could not rewrite, so the step that called it goes on. @param error - What the rewrite threw. @example await syncDevinChatDescriptor().catch(reportDescriptorUpdateFailure) */
+  const reportDescriptorUpdateFailure = (error: unknown): void => {
+    diagnostics.info(
+      `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
+    )
+  }
+  /** The take-back's first step, only for an entry this setup installed: records that this entry is still to be taken back, before any other step waits on storage, so a reload, a crash or a closed window before the entry step ended leaves it to the next run ({@link finishOwedDevinTakeBack}). A failed write only goes to the Output and leaves the take-back complete, because the entry step still takes the entry back in this run; only a written record turns {@link isOwedTakeBackRecorded} on, so a refusal while the take-back waits never promises a reload that finishes it. @param generation - The generation the setup's entry write answered. @returns `true`, also after a failed write. @example await recordTakeBackOwed('g1') */
+  const recordTakeBackOwed = (generation: string): Promise<boolean> =>
+    recordOwedDevinTakeBack(context.globalStorageUri.fsPath, generation).then(
+      () => {
+        // The record is on disk: a reload from now on leaves this take-back to the next window load.
+        isOwedTakeBackRecorded = true
+        return true
+      },
+      (error: unknown) => {
+        diagnostics.info(
+          `Codebook could not record that the Devin Desktop MCP entry of this setup is still to be taken back, so a reload before the take-back ends leaves that entry: ${thrownMessage(error)}`,
+        )
+        return true
+      },
+    )
   /**
-   * Takes back what a failed Devin Desktop setup saved: this window's setup goes back to what it was before the run (a shared entry that stays `current` then still reconnects at the next window load), the entry is removed only when this setup installed it (an updated or current entry is used by other windows, and a newer setup's generation stays), and the server running now, which may be one started during the setup, gets the mark its restored setup earns.
-   * Called by {@link setUpDevinChatLocked} when a step after the entry write fails.
-   * @param entryWrite - What the setup's entry write answered.
-   * @param previousSetup - The saved setup from before the run.
-   * @returns Whether the saved setup and the entry were taken back; each failure went to the Output.
+   * Finishes the take-back of a failed Devin Desktop setup that a reload, a crash or a closed window stopped before its entry step ended ({@link recordTakeBackOwed}): takes that entry back by the generation its record names, so a newer setup's entry stays, and writes one line to the Output. From the moment it finds the record until that take-back's descriptor step, the window's mark is off ({@link beginDevinMarkTakeOff}), so a server running or started meanwhile refuses the Devin bridge; that step then gives the window the mark its setup records still earn once the removal answered ({@link syncRolledBackDescriptor}): none when that entry's receipt went with it.
+   * Run under the setup lock, first, by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads ({@link finishOwedDevinTakeBackAtLoad}), so no later run adopts or refreshes the failed setup's entry; a setup and a refresh go on only when it answers `none`.
+   * @param onOwedFound - Hears that the first look found the record, before the take-back waits on storage; the activation refresh passes it ({@link refreshUnderDevinLock}), so a refresh that answers before that take-back ended reconnects nothing.
+   * @returns What the last look found ({@link readOwedDevinTakeBack}), looked at again after a take-back it ran:
+   * - `none` when no record stood, or the one that stood is gone after its entry's take-back
+   * - `owed` when the record still stands (a failed removal keeps it)
+   * - `unknown` when the record could not be read, which the Output names
+   * @example await finishOwedDevinTakeBack() // => 'none'
+   */
+  const finishOwedDevinTakeBack = async (
+    onOwedFound?: () => void,
+  ): Promise<OwedDevinTakeBack['state']> => {
+    const storageRoot = context.globalStorageUri.fsPath
+    const firstLook = await readOwedDevinTakeBack(storageRoot)
+    if (firstLook.state === 'owed') {
+      onOwedFound?.()
+      diagnostics.info(DEVIN_OWED_TAKE_BACK_LINE)
+      // The failed setup's entry is served no more from now on, also by a server started while its removal waits on storage.
+      beginDevinMarkTakeOff('owed take-back')
+      await takeBackDevinEntry(firstLook.generation)
+      await syncRolledBackDescriptor('owed take-back')
+    }
+    // Only a record that is gone now leaves no later run that takes out the entry this run keeps: a removal that failed keeps it, and so may a failed delete of the record.
+    const lastLook =
+      firstLook.state === 'owed'
+        ? await readOwedDevinTakeBack(storageRoot)
+        : firstLook
+    if (lastLook.state === 'unknown')
+      diagnostics.info(devinOwedTakeBackUnreadLine(lastLook.recordPath))
+    return lastLook.state
+  }
+  /**
+   * Finishes, once when a Devin Desktop window loads, a take-back that a reload, a crash or a closed window stopped ({@link finishOwedDevinTakeBack}), under the setup lock, so the window a reload opened takes that entry back even when it has no setup to reconnect; called by {@link activate}, which does not wait for it.
+   * Another editor, a refused window (Windows, a remote) and a window without such a record take no lock.
+   * @returns Nothing; a lock that stays held or a failure goes to the Output, and the record then stays for the next run.
+   * @example void finishOwedDevinTakeBackAtLoad()
+   */
+  const finishOwedDevinTakeBackAtLoad = async (): Promise<void> => {
+    if (
+      !isDevinHost ||
+      devinWindowRefusal(process.platform, vscode.env.remoteName)
+    )
+      return
+    const owed = await readOwedDevinTakeBack(context.globalStorageUri.fsPath)
+    if (owed.state !== 'owed') return
+    await underDevinLock(finishOwedDevinTakeBack).catch((error: unknown) => {
+      diagnostics.info(
+        `Codebook could not finish the take-back of a failed Devin Desktop setup: ${thrownMessage(error)}`,
+      )
+    })
+  }
+  /** The last step of a take-back, of a failed setup or of an owed entry ({@link finishOwedDevinTakeBack}): gives the server running now, which may be one started during the setup or the take-back, the mark its restored setup earns; the take-back stops taking the mark off in the turn right before it ({@link handDevinMarkToDescriptorStep}). A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the take-back is incomplete; the window's in-memory mark is already off ({@link revokeFailedSetupMark}), so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too. @param run - The take-back whose descriptor step this is. @returns Whether the descriptor was rewritten; a failure went to the Output. @example await syncRolledBackDescriptor('take-back') */
+  const syncRolledBackDescriptor = (
+    run: DevinMarkTakeOffRun,
+  ): Promise<boolean> => {
+    handDevinMarkToDescriptorStep(run)
+    return syncDevinChatDescriptor(true).then(
+      () => true,
+      (error: unknown) => {
+        reportDescriptorUpdateFailure(error)
+        return false
+      },
+    )
+  }
+  /**
+   * Takes back what a failed Devin Desktop setup saved, in three steps under one budget: the saved setup, the entry when this setup installed it, and the descriptor of the server running now; an entry this setup installed is first recorded as owed ({@link recordTakeBackOwed}), so the next run finishes a take-back that a reload stopped. The steps are never cut: once they outlast {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, `onLapse` names the one that waits, so the command can answer while the take-back goes on under the setup lock.
+   * Called by {@link takeBackFailedDevinSetup} when a step after the entry write fails.
+   * @param takeBack - What the run's entry write answered, the saved setup from before the run, and the folder generation when the run began.
+   * @param onLapse - Hears the step that waits on storage when the budget passed.
+   * @returns Whether every step took back what it should; each failure went to the Output.
    * @example
-   * const isComplete = await rollBackDevinSetup({ status: 'installed', generation: 'g1' }, undefined)
+   * const isComplete = await rollBackDevinSetup({ entryWrite: { status: 'installed', path, generation: 'g1' }, previousSetup: undefined, folderGeneration: 0 }, () => {})
    */
   const rollBackDevinSetup = async (
-    entryWrite: {
-      status: 'installed' | 'updated' | 'current'
-      generation: string
-    },
-    previousSetup: unknown,
+    { entryWrite, previousSetup, folderGeneration }: DevinTakeBack,
+    onLapse: (step: DevinStorageStep) => void,
   ): Promise<boolean> => {
-    // The run is over: the provisional value now reads as the setup before it, even when the restore write fails.
-    isDevinRunProvisional = false
-    let isComplete = await saveDevinSetupAs(previousSetup, 'restore')
-    if (entryWrite.status === 'installed')
-      await removeManagedDevinMcpEntry(
-        context.globalStorageUri.fsPath,
-        undefined,
-        undefined,
-        { expectedGeneration: entryWrite.generation },
-      ).then(
-        (removal) => {
-          // A removal that resolved may still have left a receipt, a copy or an edited entry.
-          const leftover = devinRollbackLeftoverLine(removal)
-          if (leftover === undefined) return
-          isComplete = false
-          diagnostics.info(leftover)
-        },
-        (cleanupError: unknown) => {
-          isComplete = false
-          diagnostics.info(
-            `Codebook could not take back the Devin Desktop MCP entry this setup wrote: ${thrownMessage(cleanupError)}`,
-          )
-        },
-      )
-    // Any server running now may have read the half-saved setup, not only the one the setup checked.
-    // A descriptor that cannot be rewritten (for example an unreadable one) may still carry the mark the setup wrote, so the rollback is incomplete; the window's in-memory mark is already off, so the server refuses the Devin bridge meanwhile. A window left unmarked also gets a new token, so a bridge of an earlier build (no Devin header) is refused too.
-    await syncDevinChatDescriptor(true).catch((error: unknown) => {
-      isComplete = false
-      diagnostics.info(
-        `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
-      )
+    let isComplete = true
+    // An entry this setup installed owes a record before a reload can leave the take-back to the next window load.
+    isOwedTakeBackRecorded = entryWrite.status !== 'installed'
+    /** One take-back step that keeps whether it took back everything; it never rejects, so the steps after it run. */
+    const takeBackStep = (
+      name: DevinStorageStep,
+      run: () => Promise<boolean>,
+    ): BudgetedStep<DevinStorageStep> => ({
+      name,
+      run: async (): Promise<void> => {
+        isComplete = (await run()) && isComplete
+      },
     })
+    await runStepsWithinBudget(
+      [
+        // Recorded before any step waits: a reload or a closed window during the take-back leaves the entry to the next run.
+        ...(entryWrite.status === 'installed'
+          ? [
+              takeBackStep('MCP entry', () =>
+                recordTakeBackOwed(entryWrite.generation),
+              ),
+            ]
+          : []),
+        takeBackStep('saved setup', () =>
+          restoreSavedDevinSetup(previousSetup, folderGeneration),
+        ),
+        // Only an entry this setup installed is taken back.
+        ...(entryWrite.status === 'installed'
+          ? [
+              takeBackStep('MCP entry', () =>
+                takeBackDevinEntry(entryWrite.generation),
+              ),
+            ]
+          : []),
+        // Any server running now may have read the half-saved setup, not only the one the setup checked.
+        takeBackStep('descriptor', () => syncRolledBackDescriptor('take-back')),
+      ],
+      DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+      onLapse,
+    )
     return isComplete
   }
-  /** The steps of one Devin Desktop setup, run under {@link underDevinLock}: skill, server, entry, saved setup, a final skill check and the descriptor mark, with a rollback when a step after the entry write fails. @returns The sentence of a kept copy of Devin's config that could not be deleted, when the entry write names one, and `disabled` when the entry stays turned off in Devin's Customize. @example const { cleanupFailure } = await setUpDevinChatLocked() */
-  const setUpDevinChatLocked = async (): Promise<{
+  /** Takes the Devin mark of a failed setup off this window at once, before any take-back step waits on storage, so its server refuses the Devin bridge meanwhile (the server reads the mark per request), also a server that starts before the take-back's descriptor step ({@link beginDevinMarkTakeOff}, ended by {@link syncRolledBackDescriptor}, which the take-back always runs); a mark of a previous setup that still stands for this workspace stays, unless the failed run installed the entry, which the take-back removes. Called first by {@link takeBackFailedDevinSetup}. @param entryWrite - What the setup's entry write answered. @example revokeFailedSetupMark(entryWrite) */
+  const revokeFailedSetupMark = (entryWrite: DevinEntryWrite): void => {
+    // The run is over: the provisional value now reads as the setup before it, even while the restore write waits or after it failed.
+    isDevinRunProvisional = false
+    // An earlier setup that stands, whose entry this run did not install, keeps its mark.
+    if (setupMatchesCurrentWorkspace() && entryWrite.status !== 'installed')
+      return
+    beginDevinMarkTakeOff('take-back')
+  }
+  /**
+   * Takes back a failed Devin Desktop setup and words what the command answers; called by the catch of {@link setUpDevinChatLocked}, which awaits it, so the setup lock stays held until the take-back settled.
+   * When the take-back outlasts its budget, `onLapse` hears the step that waits and the failure's sentence (none when it names the receipt), so the command answers then; the bounded look at the receipt below still runs, because the setup's late warning ({@link reportLateDevinFailure}) shows the sentence it picks.
+   * @param error - What the failed step threw.
+   * @param takeBack - What the run's entry write answered, the saved setup from before the run, and the folder generation when the run began.
+   * @param onLapse - Hears the take-back's lapse.
+   * @returns The error the setup ends with: the original one, or one that names an incomplete take-back or a retry instead of a repair of a deleted receipt.
+   * @example throw await takeBackFailedDevinSetup(error, { entryWrite, previousSetup: undefined, folderGeneration: 0 }, onLapse)
+   */
+  const takeBackFailedDevinSetup = async (
+    error: unknown,
+    takeBack: DevinTakeBack,
+    onLapse: (lapse: DevinLapse) => void,
+  ): Promise<unknown> => {
+    revokeFailedSetupMark(takeBack.entryWrite)
+    const reason = thrownMessage(error)
+    const receiptPath = join(
+      context.globalStorageUri.fsPath,
+      'devin-mcp',
+      'receipt.json',
+    )
+    const isRolledBack = await rollBackDevinSetup(takeBack, (step) => {
+      // A sentence that names the receipt may ask to repair a file the take-back deletes, so the command then names the pending step alone.
+      onLapse({
+        kind: 'take-back',
+        step,
+        reason: reason.includes(receiptPath) ? undefined : reason,
+      })
+    })
+    // A repair instruction for a receipt the rollback deleted would ask for a file that is gone; the look is bounded, and it runs also after a lapse, whose late warning shows this sentence.
+    const sentence = await devinRefusalAfterRollback(reason, receiptPath)
+    // A rollback that failed in part says where its reasons are.
+    if (!isRolledBack)
+      return new Error(
+        `${sentence} ${DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE}`,
+      )
+    return sentence === reason ? error : new Error(sentence)
+  }
+  /**
+   * Runs one forward step of a Devin Desktop setup (the skill's deployment, the server start's descriptor, the entry's write, both writes of the saved setup, the final skill check, the descriptor's mark, the saved setup's clear after a folder change) under {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: a step that storage does not answer is never cut, but `onLapse` names it, so the command answers while the setup goes on under the setup lock; called by {@link setUpDevinChatLocked} and {@link assertDevinSetupWorkspaceStands}.
+   * @param step - The step as the pending sentence names it.
+   * @param run - The step's work.
+   * @param onLapse - Hears the lapse as a `setup` lapse.
+   * @returns What the step answered.
+   * @throws What the step threw.
+   * @example const entryWrite = await runSetupStep('MCP entry', () => writeManagedDevinMcpEntry(root, entry), onLapse)
+   */
+  const runSetupStep = async <Value>(
+    step: DevinStorageStep,
+    run: () => Promise<Value>,
+    onLapse: (lapse: DevinLapse) => void,
+  ): Promise<Value> => {
+    let answer!: Value
+    await runStepsWithinBudget(
+      [
+        {
+          name: step,
+          run: async (): Promise<void> => {
+            answer = await run()
+          },
+        },
+      ],
+      DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+      (name) => onLapse({ kind: 'setup', step: name }),
+    )
+    return answer
+  }
+  /** The steps of one Devin Desktop setup, run under {@link underDevinLock}: skill, server, entry, saved setup, a final skill check and the descriptor mark, with a take-back when a step after the entry write fails, awaited under the lock. @param onLapse - Hears a forward or take-back step that outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, so the command answers while the setup or its take-back goes on. @returns The sentence of a kept copy of Devin's config that could not be deleted, when the entry write names one, and `disabled` when the entry stays turned off in Devin's Customize. @example const { cleanupFailure } = await setUpDevinChatLocked(onLapse) */
+  const setUpDevinChatLocked = async (
+    invocation: DevinSetupInvocation,
+    onLapse: (lapse: DevinLapse) => void,
+  ): Promise<{
     cleanupFailure?: string
     disabled?: true
   }> => {
+    // Read when the command ran: a folder change since then means the earlier saved setup is not put back.
+    const { folderGeneration } = invocation
+    // A failed setup's entry that a reload left is taken back first, so this setup never adopts it as its own; a record that still stands, or cannot be read, may name the entry this setup would keep and report ready, so it writes nothing.
+    const owedTakeBack = await runSetupStep(
+      'MCP entry',
+      finishOwedDevinTakeBack,
+      onLapse,
+    )
+    if (owedTakeBack !== 'none')
+      throw new Error(DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE)
     // The failure's own text can carry the executable's stderr; the learner gets a fixed sentence.
     const nodeExecutable = await resolveExternalNodeExecutable(
       vscode.workspace
@@ -1443,40 +1989,62 @@ export function activate(
       throw new Error(DEVIN_SETUP_NODE_FAILURE_SENTENCE)
     })
     assertDevinSetupAvailable()
-    await deployDevinSkill(
-      context.extensionPath,
-      context.globalStorageUri.fsPath,
+    await runSetupStep(
+      'skill',
+      () =>
+        deployDevinSkill(
+          context.extensionPath,
+          context.globalStorageUri.fsPath,
+        ),
+      onLapse,
     )
     assertDevinSetupAvailable()
-    await start()
+    // The deployment and the lock's wait may have outlasted a folder change: the server start would serve the folder now open.
+    assertDevinSetupFolderUnchanged(invocation)
+    // The server start publishes the descriptor, a write that storage may not answer.
+    await runSetupStep('descriptor', start, onLapse)
     assertDevinSetupAvailable()
+    assertDevinSetupFolderUnchanged(invocation)
     if (!running)
       throw new Error(
         `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const checkedServer = running
     const { workspace: setupWorkspace } = checkedServer.endpoint.descriptor
-    const entryWrite: DevinEntryWrite = await writeManagedDevinMcpEntry(
-      context.globalStorageUri.fsPath,
-      devinMcpEntry(nodeExecutable),
+    const entryWrite: DevinEntryWrite = await runSetupStep(
+      'MCP entry',
+      () =>
+        writeManagedDevinMcpEntry(
+          context.globalStorageUri.fsPath,
+          devinMcpEntry(nodeExecutable),
+        ),
+      onLapse,
     )
     // A re-run that fails puts this value back instead of clearing it.
-    // Only the committed setup is carried: a provisional value left by a failed run reads as the one before it.
-    const previousSetup = effectiveDevinSetupOf(
-      context.workspaceState.get('codebook.aiChatSetup'),
-    )
+    // Only the committed setup is carried: a provisional value left by a failed run reads as the one before it, and a value a folder change's pending clear takes away reads as none.
+    const previousSetup = effectiveDevinSetupOf(savedSetupNow())
     try {
       // Provisional until the last step: a failed restore then still reads as `previousSetup`.
       isDevinRunProvisional = true
-      await context.workspaceState.update('codebook.aiChatSetup', {
-        workspace: setupWorkspace,
-        provisional: true,
-        previous: previousSetup,
-      })
+      await runSetupStep(
+        'saved setup',
+        () =>
+          writeSavedSetup(() => ({
+            workspace: setupWorkspace,
+            provisional: true,
+            previous: previousSetup,
+          })),
+        onLapse,
+      )
       assertDevinSetupAvailable()
-      await verifyManagedDevinSkill(
-        context.extensionPath,
-        context.globalStorageUri.fsPath,
+      await runSetupStep(
+        'skill',
+        () =>
+          verifyManagedDevinSkill(
+            context.extensionPath,
+            context.globalStorageUri.fsPath,
+          ),
+        onLapse,
       )
       // A window marked without a readable installation id would be refused by the bridge, and the offered reload could not connect.
       const mcpReceiptPath = join(
@@ -1484,7 +2052,9 @@ export function activate(
         'devin-mcp',
         'receipt.json',
       )
-      const installationRead = await readDevinInstallationId(
+      // A read that has not answered within its bound is no answer: the setup asks for a retry and takes itself back instead of holding the lock.
+      const installationRead = await readDevinInstallationIdWithin(
+        readDevinInstallationId,
         context.globalStorageUri.fsPath,
       )
       const checkedInstallationId = installationRead.installationId
@@ -1493,8 +2063,14 @@ export function activate(
         throw new Error(
           devinInstallationReadRefusal(installationRead.state, mcpReceiptPath),
         )
+      // A folder change since the command ran leaves the mark to no folder the learner asked for.
+      assertDevinSetupFolderUnchanged(invocation)
       // The descriptor of a server started before this setup carries no mark yet.
-      await markDevinChatDescriptor(true, checkedInstallationId)
+      await runSetupStep(
+        'descriptor',
+        () => markDevinChatDescriptor(true, checkedInstallationId),
+        onLapse,
+      )
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
       // Success only when the bridge's own check stands for the descriptor just marked, and that descriptor names the checked server, its workspace and host, carries the mark and this setup's installation.
@@ -1517,44 +2093,90 @@ export function activate(
       if (refusal) throw new Error(refusal)
       // The receipts read awaited: a removal, a Stop or a folder change in that gap ends the setup.
       assertDevinSetupStillStands(checkedServer)
+      assertDevinSetupFolderUnchanged(invocation)
       // The commit write is the last step that can fail the setup and nothing is checked after it: a change after it is a later event (a stopped server starts again when the window loads, another window's removal unmarks this one at its next sync), so there is no rollback after the commit and no half-committed value; only a changed workspace folder, which clears the saved value, is reported once the commit is saved.
-      await context.workspaceState.update('codebook.aiChatSetup', {
-        workspace: setupWorkspace,
-      })
+      await runSetupStep(
+        'saved setup',
+        () => writeSavedSetup(() => ({ workspace: setupWorkspace })),
+        onLapse,
+      )
       isDevinRunProvisional = false
     } catch (error) {
       // A different Devin Desktop window may have removed the shared skill during the saved setup.
-      const isRolledBack = await rollBackDevinSetup(entryWrite, previousSetup)
-      // A repair instruction for a receipt the rollback deleted would ask for a file that is gone.
-      const sentence = await devinRefusalAfterRollback(
-        thrownMessage(error),
-        join(context.globalStorageUri.fsPath, 'devin-mcp', 'receipt.json'),
+      throw await takeBackFailedDevinSetup(
+        error,
+        { entryWrite, previousSetup, folderGeneration },
+        onLapse,
       )
-      // A rollback that failed in part says where its reasons are.
-      if (!isRolledBack)
-        throw new Error(
-          `${sentence} ${DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE}`,
-        )
-      if (sentence !== thrownMessage(error)) throw new Error(sentence)
-      throw error
     }
     // The commit write awaited: a folder change in that gap is no success, and nothing is rolled back for it.
-    await assertDevinSetupWorkspaceStands()
+    await assertDevinSetupWorkspaceStands(onLapse)
     return {
       cleanupFailure: entryWrite.cleanupFailure,
       disabled: entryWrite.disabled,
     }
   }
-  /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. @example await performDevinSetup() */
-  const performDevinSetup = async (): Promise<void> => {
-    const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
-    if (refusal) throw new Error(refusal)
-    requireWorkspace()
-    const { cleanupFailure, disabled } =
-      await underDevinLock(setUpDevinChatLocked)
-    // The lock's release was awaited: a folder change in that gap is no success, and no reload is offered for a folder that closed (Cycle 0145 last-round O11).
-    await assertDevinSetupWorkspaceStands()
-    // A kept copy of the previous config holds other servers' settings, so the notice names it.
+  /** Ends this window's background Devin Desktop work once the run that answered its command early settled, so setup and removal are taken again, and says so in the Output; called by {@link runUntilDevinLapse} for each run that settled, with the lapse that run set last. A run that answered in time ran nothing in the background, and a run never ends the background work of another run (a removal that refused while a setup still goes on under the lock). @param ownLapse - The lapse the settled run set last, or `undefined` when it set none. @example endDevinBackgroundWork(ownLapse) */
+  const endDevinBackgroundWork = (ownLapse: DevinLapse | undefined): void => {
+    // Only the run whose lapse is the current one ends it.
+    if (ownLapse === undefined || devinBackgroundWork !== ownLapse) return
+    diagnostics.info(devinBackgroundWorkEndedLine(ownLapse.kind))
+    devinBackgroundWork = undefined
+  }
+  /**
+   * Starts one Devin Desktop setup or removal run and waits for it only until it settles or one of its budgeted steps lapses ({@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}), whichever comes first, so a storage that stops answering never holds the command; called by {@link performDevinSetup} and {@link removeDevinSetup}.
+   * Each lapse names the step the window waits on now in {@link devinBackgroundWork} and in the Output, and only the first ends the command's wait; the run goes on under the setup lock, and once it settled the window takes setup and removal again, unless another run's lapse is the current one by then.
+   * @param start - Starts the run with the callback its budgeted steps call on a lapse.
+   * @returns `{ value }` when the run ended first; `{ lapse, run }` when a step lapsed first, with the run still going on.
+   * @throws What the run threw when it ended first.
+   * @example const answer = await runUntilDevinLapse((onLapse) => underDevinLock(() => setUpDevinChatLocked(onLapse)))
+   */
+  const runUntilDevinLapse = async <Value>(
+    start: (onLapse: (lapse: DevinLapse) => void) => Promise<Value>,
+  ): Promise<{ value: Value } | { lapse: DevinLapse; run: Promise<Value> }> => {
+    let announceLapse!: (lapse: DevinLapse) => void
+    const lapsed = new Promise<DevinLapse>((resolve) => {
+      announceLapse = resolve
+    })
+    // The lapse this run set last, a copy of its own, so the run's end clears that one and never one another run set.
+    let ownLapse: DevinLapse | undefined
+    const run = start((lapse) => {
+      ownLapse = { ...lapse }
+      devinBackgroundWork = ownLapse
+      diagnostics.info(devinStorageWaitSentence(lapse.kind, lapse.step))
+      announceLapse(lapse)
+    })
+    const endOwnBackgroundWork = (): void => endDevinBackgroundWork(ownLapse)
+    void run.then(endOwnBackgroundWork, endOwnBackgroundWork)
+    return await Promise.race([
+      run.then((value) => ({ value })),
+      lapsed.then((lapse) => ({ lapse, run })),
+    ])
+  }
+  /** Refuses a Devin Desktop setup or removal at once while this window still runs one whose command answered because storage did not; called first by {@link setupDevinChat}, and by {@link removeDevinSetup} before its question, after it, and once a setup it waited for answered. A take-back whose record of the owed entry is not written ({@link isOwedTakeBackRecorded}) gets the plain reload clause and the Output line of what a reload leaves. @param command - The title of the command that refuses, which the sentence asks to run again. @throws With {@link devinBackgroundWorkSentence}. @example assertNoDevinBackgroundWork(SET_UP_AI_CHAT_COMMAND) */
+  const assertNoDevinBackgroundWork = (command: string): void => {
+    if (!devinBackgroundWork) return
+    // A take-back whose record of the owed entry is not on disk is not finished by a reload: the refusal promises no such reload, and the Output says what a reload leaves.
+    const isTakeBackRecorded =
+      devinBackgroundWork.kind !== 'take-back' || isOwedTakeBackRecorded
+    if (!isTakeBackRecorded)
+      diagnostics.info(DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE)
+    throw new Error(
+      devinBackgroundWorkSentence(
+        devinBackgroundWork.kind,
+        command,
+        isTakeBackRecorded,
+      ),
+    )
+  }
+  /** Offers the reload that ends a Devin Desktop setup; a kept copy of the previous config holds other servers' settings, so the notice names it. @param outcome - What the setup's steps answered. @example offerDevinSetupReady({ disabled: undefined }) */
+  const offerDevinSetupReady = ({
+    cleanupFailure,
+    disabled,
+  }: {
+    cleanupFailure?: string
+    disabled?: true
+  }): void => {
     offerDevinReload(
       'information',
       [
@@ -1565,13 +2187,128 @@ export function activate(
         .join(' '),
     )
   }
-  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
+  /** Tells how a Devin Desktop setup or removal that answered its command early ended in failure: always in the Output, and as a warning when the command answered before the failure (a setup's or removal's step waited on storage), because the learner has not read that failure yet, while the pending sentence promised the result; a take-back's command already named it, unless it left out a failure that named the receipt. Called by {@link performDevinSetup} and {@link removeDevinSetup} once the run that answered early rejected. @param firstLapse - The lapse the command answered with. @param error - What the run ended with. @example reportLateDevinFailure({ kind: 'removal', step: 'skill' }, error) */
+  const reportLateDevinFailure = (
+    firstLapse: DevinLapse,
+    error: unknown,
+  ): void => {
+    diagnostics.info(
+      devinLateFailureLine(firstLapse.kind, thrownMessage(error)),
+    )
+    // A take-back's answer named the failure already, unless it left out one that named the receipt.
+    if (firstLapse.kind !== 'take-back' || firstLapse.reason === undefined)
+      void showNotice('warning', thrownMessage(error))
+  }
+  /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. A step that outlasts its budget answers the command with the step that waits (after the failure, for a take-back), and the setup's end follows once storage answers. @example await performDevinSetup() */
+  const performDevinSetup = async (): Promise<void> => {
+    const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
+    if (refusal) throw new Error(refusal)
+    // Read when the command runs, before the lock's wait: a folder change from here on sets up nothing for the folder now open.
+    const invocation: DevinSetupInvocation = {
+      workspace: requireWorkspace(),
+      folderGeneration: devinFolderGeneration,
+    }
+    const answer = await runUntilDevinLapse(async (onLapse) => {
+      const outcome = await underDevinLock(() =>
+        setUpDevinChatLocked(invocation, onLapse),
+      )
+      // The lock's release was awaited: a folder change in that gap is no success, and no reload is offered for a folder that closed (Cycle 0145 last-round O11).
+      await assertDevinSetupWorkspaceStands(onLapse)
+      return outcome
+    })
+    if ('value' in answer) {
+      offerDevinSetupReady(answer.value)
+      return
+    }
+    // The setup's own end comes once storage answers: its ready notice, or its failure.
+    void answer.run.then(offerDevinSetupReady, (error: unknown) =>
+      reportLateDevinFailure(answer.lapse, error),
+    )
+    throw new Error(
+      [
+        answer.lapse.reason,
+        devinStorageWaitSentence(answer.lapse.kind, answer.lapse.step),
+      ]
+        .filter((sentence) => sentence !== undefined)
+        .join(' '),
+    )
+  }
+  /**
+   * Runs the activation refresh's rewrite of the entry under the setup lock ({@link DEVIN_REFRESH_LOCK_BOUND}), after the look for an owed take-back ({@link finishOwedDevinTakeBack}), so the refresh never rewrites the entry between another window's entry write and that setup's take-back, and never keeps a failed setup's entry that a reload left as installed; called by {@link refreshDevinEntry}.
+   * Why: the window's server starts after the refresh, and the bridge Devin Local started at the window load waits 15 seconds for it, so the lock is waited for only a few seconds, and the look and the rewrite together only {@link DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS} ({@link runStepsWithinBudget}). Neither is cut: the run keeps the lock until it ends, nothing is rewritten after a look that outlasted the budget, and a rewrite that outlasted it may still change the entry later. A look that found the record when the budget passed answers `owed`, because the entry it is still taking back is the failed setup's.
+   * @param rewrite - The entry's rewrite, run only when no take-back is owed.
+   * @returns What the rewrite answered, or `{ status: 'owed' }` when an owed take-back's record still stands after its removal was tried, or the look found that record and had not ended when the budget passed.
+   * @throws
+   * - An error with {@link DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE} when the look could not read the record, or its read outlasted the budget
+   * - An error with {@link DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE} when the rewrite outlasted the budget
+   * - The lock's refusal, and what the rewrite threw
+   * @example
+   * await refreshUnderDevinLock(() => refreshManagedDevinMcpEntry(storageRoot, entry)) // => { status: 'current', path: '/home/user/.config/devin/mcp_config.json' }
+   */
+  const refreshUnderDevinLock = <Refresh>(
+    rewrite: () => Promise<Refresh>,
+  ): Promise<Refresh | { status: 'owed' }> => {
+    let hasLapsed = false
+    // Set once the look found the record of an owed take-back, before that take-back waits on storage.
+    let isTakeBackOwed = false
+    let answerAtLapse!: (pendingStep: DevinRefreshStep) => void
+    const lapsed = new Promise<{ status: 'owed' }>((resolve, reject) => {
+      answerAtLapse = (pendingStep): void => {
+        // The rewrite has changed nothing yet: the window does not wait for it.
+        if (pendingStep === 'MCP entry')
+          reject(new Error(DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE))
+        // The look is still taking the failed setup's entry back: the window reconnects nothing.
+        else if (isTakeBackOwed) resolve({ status: 'owed' })
+        else reject(new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE))
+      }
+    })
+    const run = underDevinLock(async () => {
+      let owedTakeBack!: OwedDevinTakeBack['state']
+      let refresh!: Refresh
+      await runStepsWithinBudget<DevinRefreshStep>(
+        [
+          {
+            name: 'owed take-back',
+            // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed; a record that cannot be read may name that entry, so the refresh changes nothing.
+            run: async (): Promise<void> => {
+              owedTakeBack = await finishOwedDevinTakeBack(() => {
+                isTakeBackOwed = true
+              })
+            },
+          },
+          {
+            name: 'MCP entry',
+            // Only an entry no take-back is owed for is rewritten, and nothing once the refresh answered at a lapse of its look.
+            run: async (): Promise<void> => {
+              if (owedTakeBack !== 'none' || hasLapsed) return
+              refresh = await rewrite()
+            },
+          },
+        ],
+        DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS,
+        (pendingStep) => {
+          hasLapsed = true
+          answerAtLapse(pendingStep)
+        },
+      )
+      // A refresh that outlasted its budget was answered at its lapse (nobody waits for this end), and a record that cannot be read may name the failed setup's entry.
+      if (hasLapsed || owedTakeBack === 'unknown')
+        throw new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE)
+      if (owedTakeBack === 'owed') return { status: 'owed' as const }
+      return refresh
+    }, DEVIN_REFRESH_LOCK_BOUND)
+    // After a lapse nobody waits for the run: the look writes its own lines to the Output, and a late answer of the rewrite goes nowhere.
+    run.catch(() => {})
+    return Promise.race([run, lapsed])
+  }
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link refreshUnderDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other, as is a record of an owed take-back that cannot be read, or whose read outlasts the refresh's budget ({@link finishOwedDevinTakeBack}), and a rewrite that outlasts that budget; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, `refused` when nothing was refreshed, or `owed` when an owed take-back's record still stands after its removal was tried, or that take-back had not ended within the budget, so the entry is the failed setup's and the window reconnects nothing; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
   const refreshDevinEntry = async (
     storageRoot: string,
   ): Promise<{
     status:
       | Awaited<ReturnType<typeof refreshManagedDevinMcpEntry>>['status']
       | 'refused'
+      | 'owed'
     disabled: boolean
   }> => {
     let nodeExecutable: string
@@ -1588,9 +2325,19 @@ export function activate(
     }
     try {
       // Windows opened together may hold the entry's lock one after the other.
-      const refresh = await retryWhileStorageLockHeld(() =>
-        refreshManagedDevinMcpEntry(storageRoot, devinMcpEntry(nodeExecutable)),
+      const refresh = await refreshUnderDevinLock(() =>
+        retryWhileStorageLockHeld(() =>
+          refreshManagedDevinMcpEntry(
+            storageRoot,
+            devinMcpEntry(nodeExecutable),
+          ),
+        ),
       )
+      // The failed setup's entry still stands: the window reconnects nothing, so it never serves an entry that the next run takes out.
+      if (refresh.status === 'owed') {
+        diagnostics.info(DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE)
+        return { status: 'owed', disabled: false }
+      }
       // An entry edited after setup stays as the learner left it; the bridge it names may still connect.
       if (refresh.status === 'changed')
         diagnostics.info(
@@ -1606,7 +2353,7 @@ export function activate(
       return { status: 'refused', disabled: false }
     }
   }
-  /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. The setup counts as removed when the skill check fails and the entry's receipt is gone, decided before Node or the config is read. @returns `false` when the window is refused or the setup was removed, so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
+  /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. The setup counts as removed when the skill check fails and the entry's receipt is gone, decided before Node or the config is read. @returns `false` when the window is refused, the setup was removed or the entry is a failed setup's whose take-back has not finished, so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
   const refreshDevinSetup = async (): Promise<boolean> => {
     // Windows and remote windows have no Devin Desktop setup yet, so a saved setup there reconnects nothing.
     const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
@@ -1636,6 +2383,8 @@ export function activate(
       )
     const { status: entryStatus, disabled: entryDisabled } =
       await refreshDevinEntry(storageRoot)
+    // The entry is a failed setup's that the next run takes out: nothing reconnects onto it (the Output said so).
+    if (entryStatus === 'owed') return false
     // A removal finished in another window meanwhile took a receipt: the setup is not Codebook's any more, and nothing reconnects (both receipts are read right before the server starts).
     if (!(await hasDevinSetupReceipts(storageRoot))) {
       diagnostics.info(DEVIN_SETUP_REMOVED_LINE)
@@ -1651,33 +2400,75 @@ export function activate(
       offerDevinReload('information', devinEntryRefreshedMessage(entryDisabled))
     return true
   }
-  /** The steps of one Devin Desktop removal, run under {@link underDevinLock}: the skill, then the entry, then this window's saved setup and descriptor mark. @returns The notice the removal ends with. @example const notice = await removeDevinSetupLocked() */
-  const removeDevinSetupLocked = async (): Promise<
-    ReturnType<typeof devinRemovalNotice>
-  > => {
+  /**
+   * The steps of one Devin Desktop removal, run under {@link underDevinLock} and one budget: the skill, then the entry, then this window's saved setup and descriptor mark. The steps are never cut: once they outlast {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, `onLapse` names the one that waits, so the command can answer while the removal goes on under the lock.
+   * @param progress - Gets what the skill and entry steps answered, each once it ended, for a notice shown while a later step waits.
+   * @param onLapse - Hears the step that waits on storage when the budget passed.
+   * @returns The notice the removal ends with.
+   * @throws The skill's refusal (edited or replaced after setup), which ends the removal before the entry, as Cursor's removal does.
+   * @example const notice = await removeDevinSetupLocked({}, () => {})
+   */
+  const removeDevinSetupLocked = async (
+    progress: DevinRemovalProgress,
+    onLapse: (step: DevinStorageStep) => void,
+  ): Promise<ReturnType<typeof devinRemovalNotice>> => {
     const storageRoot = context.globalStorageUri.fsPath
-    // A skill refusal (edited or replaced after setup) ends the removal before the entry, as Cursor's removal does.
-    const skillRemoval = (await removeManagedDevinSkill(storageRoot)).status
-    // A refused entry (an unreadable config, a removal journal of another file) keeps the config as it is, and the warning says so.
-    const entryRemoval = await removeManagedDevinMcpEntry(storageRoot).catch(
-      (error: unknown) => devinEntryRemovalOf(error, thrownMessage),
+    let skillRemoval!: NonNullable<DevinRemovalProgress['skill']>
+    let entryRemoval!: NonNullable<DevinRemovalProgress['entry']>
+    await runStepsWithinBudget<DevinStorageStep>(
+      [
+        // A failed setup's entry that a reload left is taken back by its own generation first.
+        { name: 'MCP entry', run: finishOwedDevinTakeBack },
+        {
+          name: 'skill',
+          run: async (): Promise<void> => {
+            skillRemoval = (await removeManagedDevinSkill(storageRoot)).status
+            progress.skill = skillRemoval
+          },
+        },
+        {
+          name: 'MCP entry',
+          run: async (): Promise<void> => {
+            // A refused entry (an unreadable config, a removal journal of another file) keeps the config as it is, and the warning says so.
+            entryRemoval = await removeManagedDevinMcpEntry(storageRoot).catch(
+              (error: unknown) => devinEntryRemovalOf(error, thrownMessage),
+            )
+            progress.entry = entryRemoval
+          },
+        },
+        // The saved setup is cleared after the entry, and a failed write of it only goes to the Output: the next window then reconnects nothing (its refresh finds no receipt).
+        { name: 'saved setup', run: clearSavedDevinSetup },
+        {
+          name: 'descriptor',
+          run: (): Promise<void> => {
+            // The in-memory mark is off since the removal began; this step decides it from here on.
+            handDevinMarkToDescriptorStep('removal')
+            return markDevinChatDescriptor(false).catch(
+              reportDescriptorUpdateFailure,
+            )
+          },
+        },
+      ],
+      DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+      onLapse,
     )
-    // The saved setup is cleared after the entry, and a failed write of it only goes to the Output: the next window then reconnects nothing (its refresh finds no receipt).
-    await clearSavedDevinSetup()
-    await markDevinChatDescriptor(false).catch((error: unknown) => {
-      diagnostics.info(
-        `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
-      )
-    })
     return devinRemovalNotice(skillRemoval, entryRemoval)
   }
-  /** Removes Codebook's Devin Desktop skill and entry after the learner confirms; called by Codebook: Remove Devin Desktop Setup. @example await removeDevinSetup() */
+  /** Shows the notice a Devin Desktop removal ends with, with Reload Window when Devin Local still runs the removed entry. @param notice - The removal's notice. @example showDevinRemovalNotice(await removeDevinSetupLocked({}, () => {})) */
+  const showDevinRemovalNotice = (
+    notice: ReturnType<typeof devinRemovalNotice>,
+  ): void => {
+    if (notice.reload) offerDevinReload(notice.severity, notice.text)
+    else void showNotice(notice.severity, notice.text)
+  }
+  /** Removes Codebook's Devin Desktop skill and entry after the learner confirms; called by Codebook: Remove Devin Desktop Setup. A removal whose step outlasts its budget shows what it did so far and the step that waits, then its own notice once storage answers. @example await removeDevinSetup() */
   const removeDevinSetup = async (): Promise<void> => {
     if (!isDevinHost)
       throw new Error('This command is available in Devin Desktop only.')
     // Windows and remote windows have no Devin Desktop setup yet, so there is nothing of Codebook's to remove.
     const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
     if (refusal) throw new Error(refusal)
+    assertNoDevinBackgroundWork(REMOVE_DEVIN_SETUP_COMMAND)
     if (devinRemoval) return devinRemoval
     const choice = await vscode.window.showWarningMessage(
       DEVIN_REMOVAL_QUESTION,
@@ -1686,17 +2477,41 @@ export function activate(
     )
     if (choice !== DEVIN_REMOVAL_ACTION) return
     if (devinRemoval) return devinRemoval
+    // A step of this window's setup or take-back may have waited its budget on storage while the question was open: that work goes on under the lock.
+    assertNoDevinBackgroundWork(REMOVE_DEVIN_SETUP_COMMAND)
     const attempt = (async () => {
       devinRemoving = true
-      try {
-        // A setup still running would write the skill and the entry again after they are removed.
-        await devinSetup?.catch(() => {})
-        const notice = await underDevinLock(removeDevinSetupLocked)
-        if (notice.reload) offerDevinReload(notice.severity, notice.text)
-        else void showNotice(notice.severity, notice.text)
-      } finally {
-        devinRemoving = false
+      // The server stops serving the setup being removed now, before the removal waits for a setup, the lock or storage.
+      beginDevinMarkTakeOff('removal')
+      const progress: DevinRemovalProgress = {}
+      const answer = await runUntilDevinLapse(async (onLapse) => {
+        try {
+          // A setup still running would write the skill and the entry again after they are removed. Its command answers once its run settled or one of its steps waited its budget on storage, whichever came first.
+          await devinSetup?.catch(() => {})
+          // A setup that answered because its step waits on storage still holds the lock: the removal refuses as at its start, and that setup's background state stays ({@link endDevinBackgroundWork}).
+          assertNoDevinBackgroundWork(REMOVE_DEVIN_SETUP_COMMAND)
+          return await underDevinLock(() =>
+            removeDevinSetupLocked(progress, (step) =>
+              onLapse({ kind: 'removal', step }),
+            ),
+          )
+        } finally {
+          // The removal counts as under way until its last step settled, also after its command answered.
+          devinRemoving = false
+          // A removal that ended before its descriptor step gives the window the mark its setup still earns.
+          endDevinMarkTakeOff('removal')
+        }
+      })
+      if ('value' in answer) {
+        showDevinRemovalNotice(answer.value)
+        return
       }
+      const pending = devinRemovalPendingNotice(progress, answer.lapse.step)
+      void showNotice(pending.severity, pending.text)
+      // The removal's own notice follows once storage answers, or its failure as a warning: the pending warning promised its result.
+      void answer.run.then(showDevinRemovalNotice, (error: unknown) =>
+        reportLateDevinFailure(answer.lapse, error),
+      )
     })()
     devinRemoval = attempt
     try {
@@ -1705,8 +2520,9 @@ export function activate(
       if (devinRemoval === attempt) devinRemoval = undefined
     }
   }
-  /** Coalesces overlapping Devin Desktop setup commands so its removal can await the whole deployment and saved state. @example await setupDevinChat() */
+  /** Coalesces overlapping Devin Desktop setup commands so its removal can await the whole deployment and saved state; refuses at once while a take-back or removal of this window still waits on storage. @example await setupDevinChat() */
   const setupDevinChat = (): Promise<void> => {
+    assertNoDevinBackgroundWork(SET_UP_AI_CHAT_COMMAND)
     assertDevinSetupAvailable()
     if (devinSetup) return devinSetup
     const tracked = performDevinSetup().finally(() => {
@@ -3653,7 +4469,7 @@ export function activate(
           const skillRemoval = (
             await removeManagedCursorSkill(context.globalStorageUri.fsPath)
           ).status
-          await context.workspaceState.update('codebook.aiChatSetup', undefined)
+          await writeSavedSetup(() => undefined)
           if (registeredCursorServer) {
             vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
             registeredCursorServer = undefined
@@ -3965,6 +4781,8 @@ export function activate(
       ),
     ),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      // Counted at once, before any handling: a Devin take-back that decides its restore after this sees the change.
+      devinFolderGeneration += 1
       // One change is handled after the one before it: handled at once, the second would clear the readers the first had just made, without disposing them.
       const replacement = (replacingReaders ?? Promise.resolve()).then(
         replaceReadersAfterFolderChange,
@@ -4095,6 +4913,8 @@ export function activate(
   // Register lazy readers before restored captured documents or contributed views request their providers.
   workspace()
   repository()
+  // A take-back that a reload or a closed window stopped is finished by the next Devin Desktop window that loads, with or without a setup to reconnect.
+  void finishOwedDevinTakeBackAtLoad()
   // Settles when the reconnect at activation ended (started the server or decided not to); tests wait on it.
   let reconnectSettled: Promise<void> = Promise.resolve()
   if (

@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.141'
+export const EXTENSION_VERSION = '0.2.142'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -482,6 +482,8 @@ export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
 export const DEVIN_MCP_RECORD_LIMIT_BYTES = 16_384
 /** The largest Devin Desktop MCP config (`~/.config/devin/mcp_config.json`) that Codebook reads; a larger file is refused before it is read, because a real config of a few servers is a few kilobytes. */
 export const DEVIN_MCP_CONFIG_LIMIT_BYTES = 1_048_576
+/** What a first setup's pending record puts before its entry hash (`entrySha256`), so an older build, which adopts an entry whose hash equals the record's, never adopts a first setup's entry before its receipt exists; the receipt keeps the plain hash ({@link plainEntryHashOf} strips this). */
+export const FIRST_SETUP_HASH_PREFIX = 'first-setup:'
 /** The largest connection descriptor (`<instanceId>.connection.json`) the Devin Desktop bridge reads; a real one is a few hundred bytes, so a larger file is skipped before it is parsed. */
 export const DEVIN_DESCRIPTOR_LIMIT_BYTES = 65_536
 /** The least time the Devin Desktop bridge gives one connection attempt, also when the 15 s selection window has nearly passed: a server that needs a moment to answer still connects, so the bridge's total time can exceed that window by this floor. */
@@ -514,6 +516,8 @@ export const DEVIN_BRIDGE_HEADER_NAME = 'x-codebook-bridge'
 export const DEVIN_BRIDGE_HEADER_VALUE = 'devin'
 /** The longest the bridge waits for a half-open session to be released (a DELETE) after a failed or timed-out connection, before it closes the transport anyway. */
 export const CURSOR_MCP_BRIDGE_CLEANUP_TIMEOUT_MS = 1_000
+/** The most input Codebook's Cursor and Devin Desktop bridges keep from their client while their first connection to Codebook's server is not up yet (they read it only to see the client end them): at this size they stop reading, keep the chunk that reached it whole, and read on once they serve. An MCP client sends only `initialize`, a few hundred bytes, and pings before it is answered. */
+export const BRIDGE_STARTUP_INPUT_LIMIT_BYTES = 1_048_576
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
 export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
 /** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */
@@ -522,6 +526,18 @@ export const CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS = 100
 export const DEVIN_SETUP_LOCK_WAIT_ATTEMPTS = 70
 /** How long a Devin Desktop setup or removal waits before it checks the setup lock again, before the random share that keeps windows opened together out of step. */
 export const DEVIN_SETUP_LOCK_RETRY_DELAY_MS = 100
+/** The longest a Devin Desktop setup or removal waits, from its call, until it holds the setup lock, before it refuses with the try-again sentence: above the wait for another window's lock ({@link DEVIN_SETUP_LOCK_WAIT_ATTEMPTS} attempts, at most about 13.8 s), so only an attempt that storage never answers is cut. A lock taken after that runs nothing and is released at once; the setup or removal itself is never cut. */
+export const DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS = 15_000
+/** The longest a Devin Desktop setup or removal waits for its setup lock's release once its steps ended, before it answers with their result and lets the release go on; this window's next hold of the lock still waits for that release. */
+export const DEVIN_SETUP_LOCK_RELEASE_MS = 3_000
+/** How often the activation refresh of a Devin Desktop window checks the setup lock while another window holds it: with {@link DEVIN_SETUP_LOCK_RETRY_DELAY_MS} and its random share, a wait of about two to four seconds (1.9 to 3.8 s), not the ten of a setup, so the window's server still starts well inside the 15 seconds the Devin bridge waits for its descriptor. */
+export const DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS = 20
+/** The longest the activation refresh of a Devin Desktop window waits, from its call, until it holds the setup lock: above its wait for another window's lock ({@link DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS}), so a held lock is refused with the held sentence, and, with the server start's receipts read ({@link DEVIN_MARK_READ_RETRY_BUDGET_MS}), well inside the 15 seconds the Devin bridge waits for the window's descriptor. */
+export const DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS = 5_000
+/** The longest the activation refresh of a Devin Desktop window waits, once it holds the setup lock, for the whole of its work under that lock: its look for an owed take-back (the record's read, and the take-back of the entry it names) and then its rewrite of the entry. This wait, the lock's ({@link DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS}) and the server start's receipts read ({@link DEVIN_MARK_READ_RETRY_BUDGET_MS}) add up to 13 seconds, inside the 15 seconds the Devin bridge waits for the window's descriptor; the refresh's reads outside the lock (the skill check, the Node lookup and the check of the setup records before the server starts) are not bounded by them. Work that outlasts it is never cut and keeps the lock until it ends: a look that has not answered counts as unconfirmed, so nothing is rewritten after it, and a rewrite that has not answered as a refusal, which may still change the entry later; either way the window still reconnects, except that a look that had found the record by then reconnects nothing, because the entry it still takes back is the failed setup's. */
+export const DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS = 3_000
+/** How long a forward step of a Devin Desktop setup (the skill's deployment, the entry's write, the final skill check), the take-back of a failed setup, or the steps of a removal may wait on storage before the command answers with the step still waiting: the work goes on under the setup lock until storage answers, and the window refuses setup and removal meanwhile. Above a healthy take-back's worst case, the descriptor sync's mark read ({@link DEVIN_MARK_READ_RETRY_BUDGET_MS}) plus milliseconds of writes, so it is an answer deadline, never a cut. */
+export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 /** How long a Devin Desktop window's server start waits before it reads the setup receipts again after a read that could not look (descriptor exhaustion, `EIO`), so a moment of exhaustion does not leave the descriptor unmarked for the whole run. */
 export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
 /** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */

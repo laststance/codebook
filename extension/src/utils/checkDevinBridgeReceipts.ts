@@ -10,6 +10,7 @@ import {
   type ReceiptRemovedReason,
   type ReceiptState,
 } from './readReceiptState'
+import { defaultPathReadGate, type PathReadGate } from './shareReceiptRead'
 
 /** What the Devin bridge's selection validated, so the check can tell a setup that was removed from one that was replaced by another installation: the instance id and the endpoint url the bridge connected for and the installation id the descriptor's mark named. A field left out is not compared. */
 export interface DevinBridgeBinding {
@@ -199,8 +200,10 @@ function decideFromSettledReads(
  * Says whether the setup a descriptor was marked for still stands, as the Devin bridge's check before it opens an MCP session (the first connection, a reconnect after an expired session, and a refusal with 401 or 403); called by the Devin bridge, and by setup for the bridge's own rules.
  * The descriptor must name an installation (its mark), the skill receipt must say `installed: true` and the MCP receipt must be installed with the descriptor's installation id. All three are read together with the bounded read ({@link readPrivateJsonState}) from the parent of the agent folder, the folder the descriptor stands in. A read that only failed to look (descriptor exhaustion, `EIO`) is never read as a removal: it answers `no-answer`, and only when no read observed a removal.
  * Order: the check answers as soon as the reads that settled give a definite answer, without waiting for a read still pending: a removed descriptor, a descriptor without a mark, a descriptor that differs from the binding (`replaced`), then a removed receipt. Once every read settled, a failed read answers `no-answer` and a receipt of another installation answers `removed` with `another-installation`.
+ * The three reads go through the read gate: a read of the same file still in flight from an earlier check (one an early answer left behind) is never started again, and this check gets a read that began after it.
  * @param descriptorPath - The selected descriptor, in the agent folder.
  * @param binding - What the bridge connected for; without it only the descriptor's mark is compared with the receipts.
+ * @param readGate - The read gate; {@link defaultPathReadGate} when left out (a test passes its own).
  * @returns A {@link DevinBridgeReceiptsAnswer}; never rejects, and stays pending only while no settled read gives a definite answer.
  * @example
  * await checkDevinBridgeReceipts('/storage/agent/x.connection.json') // => { answer: 'removed', reason: 'missing', path: '/storage/devin-skill/receipt.json' } after a removal
@@ -209,6 +212,7 @@ function decideFromSettledReads(
 export function checkDevinBridgeReceipts(
   descriptorPath: string,
   binding: DevinBridgeBinding = {},
+  readGate: PathReadGate = defaultPathReadGate,
 ): Promise<DevinBridgeReceiptsAnswer> {
   const storageRoot = dirname(dirname(descriptorPath))
   const skillPath = join(storageRoot, 'devin-skill', 'receipt.json'),
@@ -237,14 +241,20 @@ export function checkDevinBridgeReceipts(
       weigh()
     }
     // The reads never throw; a rejection still counts as a read that gave no answer.
-    void readPrivateJsonState(descriptorPath).then(settleDescriptor, () =>
-      settleDescriptor({ state: 'no-answer' }),
-    )
-    void readReceiptState(skillPath).then(settleSkill, () =>
-      settleSkill({ state: 'no-answer', receiptPath: skillPath }),
-    )
-    void readReceiptState(mcpPath).then(settleMcp, () =>
-      settleMcp({ state: 'no-answer', receiptPath: mcpPath }),
-    )
+    void readGate
+      .read(`descriptor:${descriptorPath}`, () =>
+        readPrivateJsonState(descriptorPath),
+      )
+      .then(settleDescriptor, () => settleDescriptor({ state: 'no-answer' }))
+    void readGate
+      .read(`receipt:${skillPath}`, () => readReceiptState(skillPath))
+      .then(settleSkill, () =>
+        settleSkill({ state: 'no-answer', receiptPath: skillPath }),
+      )
+    void readGate
+      .read(`receipt:${mcpPath}`, () => readReceiptState(mcpPath))
+      .then(settleMcp, () =>
+        settleMcp({ state: 'no-answer', receiptPath: mcpPath }),
+      )
   })
 }

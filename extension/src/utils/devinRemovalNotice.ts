@@ -3,10 +3,20 @@ import {
   DevinMcpUnrecordedRemovalError,
   type DevinMcpRemovalResult,
 } from '../devinMcpConfig'
+import {
+  devinStorageWaitSentence,
+  type DevinStorageStep,
+} from '../devinWindowSentences'
 
 /** How the removal of Codebook's entry in Devin Desktop's MCP config ended ({@link removeManagedDevinMcpEntry}), or the refusal it threw; `isEntryRemoved` marks a refusal after the config already lost the entry. */
 type DevinEntryRemoval =
   DevinMcpRemovalResult | { refusal: string; isEntryRemoved?: boolean }
+
+/** What the steps of one Devin Desktop removal have ended with so far; only a step that ended is in it, so a notice shown while a later step waits never names a change that has not happened. */
+export type DevinRemovalProgress = {
+  skill?: CursorSkillRemovalStatus
+  entry?: DevinEntryRemoval
+}
 
 /**
  * Turns what {@link removeManagedDevinMcpEntry} threw into the refusal {@link devinRemovalNotice} words, keeping the fact that the entry was already out of the config; called by the removal command of {@link activate}.
@@ -48,6 +58,26 @@ const ENTRY_SENTENCES: Record<
     `The codebook entry in ${path} was edited after setup, so Codebook left it in place; remove it by hand if you no longer want it.`,
   superseded: (path) =>
     `The codebook entry in ${path} belongs to a newer setup, so Codebook left it in place.`,
+}
+
+/**
+ * Words what became of the MCP entry: its sentence, then the sentence of a record or kept copy Codebook could not delete after the entry went; called by {@link devinRemovalNotice} and {@link devinRemovalPendingNotice}, so the warning a removal shows while a later step waits names that leftover too.
+ * @param entryRemoval - How the entry's removal ended.
+ * @returns The entry's sentence, and the cleanup sentence when there is one.
+ * @example
+ * entrySentences({ status: 'not-managed', path: '/home/user/.config/devin/mcp_config.json' })
+ * // => ["/home/user/.config/devin/mcp_config.json holds no codebook entry of Codebook's, so it is unchanged."]
+ */
+function entrySentences(entryRemoval: DevinMcpRemovalResult): string[] {
+  // A record Codebook could not delete after the entry went is named after the entry.
+  const cleanupFailure =
+    'cleanupFailure' in entryRemoval && entryRemoval.cleanupFailure
+      ? [entryRemoval.cleanupFailure]
+      : []
+  return [
+    ENTRY_SENTENCES[entryRemoval.status](entryRemoval.path),
+    ...cleanupFailure,
+  ]
 }
 
 /** Why a reload follows a removed entry: Devin Local keeps the MCP servers it started when the window loaded. */
@@ -100,17 +130,12 @@ export function devinRemovalNotice(
       text: `Nothing to remove: no Codebook-owned Devin Desktop skill was found and ${entryRemoval.path} holds no codebook entry of Codebook's. No file was changed.`,
       reload: false,
     }
+  // A record Codebook could not delete after the entry went does not change that the reload is needed.
   const reload =
     entryRemoval.status === 'removed' || entryRemoval.status === 'file-removed'
-  // A record Codebook could not delete after the entry went is named after the entry; the reload is still needed.
-  const cleanupFailure =
-    'cleanupFailure' in entryRemoval && entryRemoval.cleanupFailure
-      ? [entryRemoval.cleanupFailure]
-      : []
   const sentences = [
     SKILL_SENTENCES[skillRemoval],
-    ENTRY_SENTENCES[entryRemoval.status](entryRemoval.path),
-    ...cleanupFailure,
+    ...entrySentences(entryRemoval),
     ...(reload ? [RELOAD_SENTENCE] : []),
     // An edited entry stays, and setup would refuse it, so the way back starts with that entry.
     entryRemoval.status === 'changed'
@@ -118,4 +143,32 @@ export function devinRemovalNotice(
       : RESTORE_SENTENCE,
   ]
   return { severity: 'information', text: sentences.join(' '), reload }
+}
+
+/**
+ * Words the warning a learner reads when **Codebook: Remove Devin Desktop Setup** answers while one of its steps still waits on storage: what the steps that ended did (with a record or kept copy the entry step could not delete), then the step that waits; called by the removal command of {@link activate} once that step outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, before {@link devinRemovalNotice} words the removal's end.
+ * @param progress - What the steps that ended answered.
+ * @param step - The step that waits on storage.
+ * @returns A warning without a reload: the removal's own notice offers one once its steps ended.
+ * @example
+ * devinRemovalPendingNotice({ skill: 'removed' }, 'MCP entry')
+ * // => { severity: 'warning', reload: false, text: "Codebook removed its Devin Desktop skill. Codebook's removal of the Devin Desktop setup is still waiting on storage (MCP entry) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window." }
+ */
+export function devinRemovalPendingNotice(
+  progress: DevinRemovalProgress,
+  step: DevinStorageStep,
+): { severity: 'warning'; text: string; reload: false } {
+  const { skill, entry } = progress
+  const sentences = [
+    // Only a step that ended is named; the skill step comes first.
+    ...(skill === undefined ? [] : [SKILL_SENTENCES[skill]]),
+    // An entry that was refused stays as it is, and the refusal says why; a removed entry's leftover record or copy is named after it.
+    ...(entry === undefined
+      ? []
+      : 'refusal' in entry
+        ? [entry.refusal]
+        : entrySentences(entry)),
+    devinStorageWaitSentence('removal', step),
+  ]
+  return { severity: 'warning', text: sentences.join(' '), reload: false }
 }

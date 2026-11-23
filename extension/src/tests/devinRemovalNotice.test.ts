@@ -5,7 +5,64 @@ import { DevinMcpUnrecordedRemovalError } from '../devinMcpConfig'
 import {
   devinEntryRemovalOf,
   devinRemovalNotice,
+  devinRemovalPendingNotice,
 } from '../utils/devinRemovalNotice'
+
+// Value: protects=a removal whose entry step waits on storage tells the learner only that the skill is gone and which step waits, without a reload; fails_when=the warning claims the entry was removed before it was, or offers a reload while Devin Local still runs the entry; no_claim=the removal command's timing (the onboarding tests); seam=none
+test('a removal whose entry step still waits names the removed skill and the waiting step and asks for no reload', () => {
+  // Arrange / Act
+  const notice = devinRemovalPendingNotice({ skill: 'removed' }, 'MCP entry')
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'warning',
+    text: "Codebook removed its Devin Desktop skill. Codebook's removal of the Devin Desktop setup is still waiting on storage (MCP entry) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+    reload: false,
+  })
+})
+
+// Value: protects=a removal whose entry was refused and whose saved-setup step then waits names the refusal, so the learner knows the entry stayed, before the waiting step; fails_when=the warning drops the refusal or words the entry as removed; no_claim=the final notice after the refusal (the devinRemovalNotice tests); seam=none
+test('a removal whose entry was refused and whose saved setup still waits names the refusal and the waiting step', () => {
+  // Arrange / Act
+  const notice = devinRemovalPendingNotice(
+    {
+      skill: 'removed',
+      entry: {
+        refusal:
+          'Codebook could not read /home/user/.config/devin/mcp_config.json.',
+      },
+    },
+    'saved setup',
+  )
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'warning',
+    text: "Codebook removed its Devin Desktop skill. Codebook could not read /home/user/.config/devin/mcp_config.json. Codebook's removal of the Devin Desktop setup is still waiting on storage (saved setup) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+    reload: false,
+  })
+})
+
+// Value: protects=a removal whose entry went but whose kept private copy of the config (it holds other servers' settings) could not be deleted names that copy in its warning while a later step waits on storage, so the learner learns of it also when storage never answers (Cycle 0146 review round, CodeRabbit devinRemovalNotice.ts:154-156); fails_when=the warning names the removed entry but drops the copy that stays on disk; no_claim=the final notice (the record test below names it there); seam=none
+test('a removal whose entry went but whose kept copy stayed names that copy while its saved setup still waits', () => {
+  // Arrange / Act
+  const notice = devinRemovalPendingNotice(
+    {
+      skill: 'removed',
+      entry: {
+        status: 'removed',
+        path: '/home/user/.config/devin/mcp_config.json',
+        cleanupFailure:
+          'Codebook could not delete its private copy of the previous config at /private/devin-mcp/previous.json; delete it when you no longer need it.',
+      },
+    },
+    'saved setup',
+  )
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'warning',
+    text: "Codebook removed its Devin Desktop skill. Codebook removed its codebook entry from /home/user/.config/devin/mcp_config.json and kept the file's other entries. Codebook could not delete its private copy of the previous config at /private/devin-mcp/previous.json; delete it when you no longer need it. Codebook's removal of the Devin Desktop setup is still waiting on storage (saved setup) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+    reload: false,
+  })
+})
 
 // Value: protects=after a full removal the learner reads what went, that the config's other servers stayed, and that a reload stops the bridge Devin Local already runs; fails_when=the notice hides the kept entries or drops the reload, so Devin Local keeps calling a removed setup until some later reload; why_new=Devin Desktop removal command (Cycle 0143); seam=none
 test('a removal of the skill and the entry asks for a reload and says the other MCP entries were kept', () => {
