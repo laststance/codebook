@@ -765,7 +765,7 @@ function didUnlink(path: string): Promise<boolean> {
   )
 }
 
-/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode, and the size and times (nanoseconds) a later look must still see; an in-place write that keeps inode and size changes the times. `nlink` is how many names the inode had at that read ({@link dropCheckedName} deletes a name only while another one still reaches the file). */
+/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode, and the size and times (nanoseconds) a later look must still see; an in-place write that keeps inode and size changes the times. `nlink` is how many names the inode had at that read, an early filter of {@link dropCheckedName}; the drop decides on the last look ({@link isStillSecondName}). */
 type InspectedCopy = {
   sha256: string
   ino: bigint
@@ -1904,6 +1904,8 @@ type LeftoverLookback = {
   size?: bigint
   mtimeNs?: bigint
   ctimeNs?: bigint
+  /** Set when the name must not be the file's only name at the look: the last look before a second name of a shared file is unlinked ({@link isStillSecondName}). */
+  isShared?: true
 }
 
 /**
@@ -1929,7 +1931,7 @@ function isLeftoverStill(
 }
 
 /**
- * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed, and by {@link settleDroppingName}, whose dropping name holds only a file the private name also reaches once its looks passed.
+ * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed, by {@link settleDroppingName}, whose dropping name holds only a file the private name also reaches once its looks passed, and by {@link isStillSecondName}.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -1956,13 +1958,15 @@ async function isNameStill(
 /**
  * Compares what a look at a name found with what was checked; used by {@link isLeftoverStill} and {@link isNameStill}.
  * @param now - The name's status, undefined when nothing stands there.
- * @param checked - The inode that was checked and, when given, the size and times of the last read.
- * @returns `true` when the name shows that inode with those size and times.
+ * @param checked - The inode that was checked and, when given, the size and times of the last read, and whether another name must still reach the file.
+ * @returns `true` when the name shows that inode with those size and times, with more than one name when `checked.isShared` is set.
  * @example
  * showsChecked(undefined, { ino: 42n }) // => false
  */
 function showsChecked(
-  now: Pick<BigIntStats, 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'> | undefined,
+  now:
+    | Pick<BigIntStats, 'ino' | 'size' | 'mtimeNs' | 'ctimeNs' | 'nlink'>
+    | undefined,
   checked: LeftoverLookback,
 ): boolean {
   return (
@@ -1970,7 +1974,8 @@ function showsChecked(
     checked.ino === now.ino &&
     (checked.size === undefined || checked.size === now.size) &&
     (checked.mtimeNs === undefined || checked.mtimeNs === now.mtimeNs) &&
-    (checked.ctimeNs === undefined || checked.ctimeNs === now.ctimeNs)
+    (checked.ctimeNs === undefined || checked.ctimeNs === now.ctimeNs) &&
+    (checked.isShared !== true || now.nlink > 1n)
   )
 }
 
@@ -2511,13 +2516,13 @@ const DROPPING_SUFFIX = 'codebook-dropping'
 
 /**
  * Deletes a private name that is a second name of the config only while it still names the file Codebook checked; called by {@link assertSharedPutBackBytes} and {@link putBackDisplaced} right after their last looks.
- * The name is renamed first to `<private name>.codebook-dropping` ({@link DROPPING_SUFFIX}), so a file another program swaps in at the private name after the last look moves with the rename instead of being deleted. The rename runs only while nothing stands at the dropping name: a rename would replace a file there, or do nothing when that is another name of the same file and leave the private name standing. The moved file is read again and deleted only while it has the checked inode, the checked bytes when they are given, and another name (the config's) that still reaches it; anything else is linked back to the private name, which a link never replaces, and the run refuses.
- * Limits: a file that appears at the dropping name between its look and the rename is replaced (no Node primitive renames without replacing). A write into the shared file or a save at the config name after that read is not seen (no Node primitive unlinks by inode or content). A stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds; the record still holds the private name, so the next run puts the file back there and settles it again ({@link settleDroppingName}).
- * @param context - The run; its seam is called when the moved file is read.
+ * The name is renamed first to `<private name>.codebook-dropping` ({@link DROPPING_SUFFIX}), so a file another program swaps in at the private name after the last look moves with the rename instead of being deleted. The rename runs only while nothing stands at the dropping name: a rename would replace a file there, or do nothing when that is another name of the same file and leave the private name standing. The moved file is read again and deleted only while it has the checked inode, the checked bytes when they are given and another name; then the config name and, last, the dropping name are looked at again ({@link isStillSecondName}). Anything else is linked back to the private name, which a link never replaces, and the run refuses.
+ * Limits: a file that appears at the dropping name between its look and the rename is replaced (no Node primitive renames without replacing). A save at the config name or a write into the file after the dropping name's last look sampled it, and before the unlink takes effect, is not seen (no Node primitive unlinks by inode, link count or content). A stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds; the record still holds the private name, so the next run puts the file back there and settles it again ({@link settleDroppingName}).
+ * @param context - The run; its seam is called when the moved file is read and around the last looks.
  * @param path - The private name to drop.
  * @param checked - The inode the moved file must have, and the hash of the bytes it must hold when a check read them (a put-back by inode accepts any bytes).
  * @param refuse - Builds the error thrown once the moved file stands at the private name again.
- * @throws The {@link droppingNameTakenError} when a file already stands at the dropping name, and what that look throws; nothing moved then. `refuse()` when the moved file is not the checked one, holds other bytes, cannot be read or is the only name of its file; a {@link PutBackCheckError} naming the moved name when that file cannot go back; what the rename throws (nothing moved then) and what the unlink throws (the file went back first).
+ * @throws The {@link droppingNameTakenError} when a file already stands at the dropping name, and what that look throws; nothing moved then. `refuse()` when the moved file is not the checked one, holds other bytes, cannot be read or is the only name of its file, or when a last look finds a name changed or fails; a {@link PutBackCheckError} naming the moved name when that file cannot go back; what the rename throws (nothing moved then) and what the unlink throws (the file went back first).
  * @example
  * await dropCheckedName(context, keptPath, { ino: copy.ino, sha256: pending.keptSha256 }, () => sharedBytesError(context, keptPath))
  */
@@ -2535,11 +2540,17 @@ async function dropCheckedName(
   const moved = await inspectCopy(droppingPath, context.seam).catch(
     () => undefined,
   )
-  // The checked file with the checked bytes, which the config name also reaches: dropping this name loses nothing.
+  // The checked file with the checked bytes and another name at its read, which the config name and, last, the dropping name still show: dropping this name loses nothing. Nothing async runs between the last look and the unlink.
   const isChecked =
     moved?.ino === checked.ino &&
     (checked.sha256 === undefined || moved.sha256 === checked.sha256) &&
-    moved.nlink > 1n
+    moved.nlink > 1n &&
+    (await isStillSecondName(
+      context,
+      droppingPath,
+      moved,
+      checked.sha256 !== undefined,
+    ))
   if (!isChecked) {
     await moveBackFromDropping(context, path, droppingPath)
     throw refuse()
@@ -2549,6 +2560,39 @@ async function dropCheckedName(
   } catch (error) {
     await moveBackFromDropping(context, path, droppingPath)
     throw error
+  }
+}
+
+/**
+ * Looks at the config name and then, last, at the dropping name right before {@link dropCheckedName} unlinks the dropping name, without holding the extension host's thread ({@link isNameStill}): the config name must still show the moved file, and the dropping name must show it with another name still reaching it at that very look, so a save by rename at the config name while either look waited is seen; for a drop whose bytes were checked it must also show the size and times of the moved file's read, so an in-place write after that read is seen.
+ * Limit: a save at the config name, or a write into the file, after the dropping name's look sampled it and before the unlink takes effect is not seen, also while the unlink request waits for the file system; no Node primitive unlinks by inode, link count or content.
+ * @param context - The run; its seam is called around both looks.
+ * @param droppingPath - The dropping name about to be unlinked.
+ * @param moved - The moved file as {@link inspectCopy} read it after the rename.
+ * @param isByBytes - Whether the drop checked the moved file's bytes.
+ * @returns `true` only when both looks passed; `false` when a name changed or a look threw.
+ * @example
+ * await isStillSecondName(context, `${keptPath}.codebook-dropping`, moved, false) // => false once a save replaced the config
+ */
+async function isStillSecondName(
+  context: Context,
+  droppingPath: string,
+  moved: InspectedCopy,
+  isByBytes: boolean,
+): Promise<boolean> {
+  const { ino, size, mtimeNs, ctimeNs } = moved
+  try {
+    return (
+      (await isNameStill(context, context.path, { ino })) &&
+      (await isNameStill(context, droppingPath, {
+        ino,
+        isShared: true,
+        ...(isByBytes && { size, mtimeNs, ctimeNs }),
+      }))
+    )
+  } catch {
+    // A look that fails proves nothing: the file goes back to its private name and the run refuses.
+    return false
   }
 }
 

@@ -5759,6 +5759,136 @@ test('A put-back by bytes keeps the displaced name when the config is rewritten 
   assert.equal(retained.bytesUnverified, true)
 })
 
+test("A put-back keeps the learner's previous config at its private name when the config is saved again while the drop reads the moved name, and names both paths", async (context) => {
+  // Value: protects=the put-back's private name goes only while the config name still shows the put-back file at a look after the moved name's read, so a save by rename during that read keeps the learner's previous config and names both paths; fails_when=the private or dropping name is deleted, either file's bytes change, a dropping name stays, the run does not refuse naming both, or the record is not handed; no_claim=a real editor save (seam.afterStat renames another file over the config once, between the moved name's stat and its read), and a save after the last look
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  const droppingPath = `${keptPath}.codebook-dropping`
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== droppingPath || isSaved) return
+      isSaved = true
+      // A save by rename at the config name leaves the put-back file reachable only through the dropping name.
+      swapFile(configPath, '{"saved again":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"saved again":true}\n')
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
+test("A put-back keeps the learner's previous config at its private name when the config is saved again while the drop's last look at the moved name waits, and names both paths", async (context) => {
+  // Value: protects=the last look at the moved name also needs another name to reach the file at that very look, so a save by rename that lands after the config look and before that look keeps the learner's previous config and names both paths; fails_when=the private or dropping name is deleted, either file's bytes change, a dropping name stays, the run does not refuse naming both, or the record is not handed; no_claim=a real stalled lstat (seam.beforeLeftoverCheck renames another file over the config once, right before the moved name's look is issued, which is what a look that has not yet sampled the file sees; a look that sampled before the save is the documented gap), and a save between the last look and the unlink
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  const droppingPath = `${keptPath}.codebook-dropping`
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== droppingPath || isSaved) return
+      isSaved = true
+      // The config look already passed: the save lands while the moved name's look waits.
+      swapFile(configPath, '{"saved again":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"saved again":true}\n')
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
+test("A content-only put-back keeps both names when the config is rewritten in place while the drop's last look at the moved name waits, and names both paths", async (context) => {
+  // Value: protects=a content-only put-back drops the private name, the only sign that the config may hold bytes Codebook did not verify, only while the moved file still has the size and times of the drop's own read at the last look, so an in-place save after that read keeps both names and names both paths; fails_when=the private name is deleted, a dropping name stays, the refusal omits a path, or the record is not handed; no_claim=a real editor (seam.beforeLeftoverCheck writes the config in place once with other bytes of the same size, right before the moved name's look), and a write after the last look
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  // A put-back by bytes alone that stopped right after its link.
+  linkSync(keptPath, configPath)
+  const droppingPath = `${keptPath}.codebook-dropping`
+  const rewrittenBytes = '{"theme":"evil"}\n'
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== droppingPath || isRewritten) return
+      isRewritten = true
+      // The same file, written in place with the same size: the inode and both names stay.
+      writeFileSync(configPath, rewrittenBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(isRewritten, true)
+  assert.equal(readFileSync(configPath, 'utf8'), rewrittenBytes)
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
+test("A put-back keeps the learner's previous config at its private name when the drop's last look at the moved name fails, and names both paths", async (context) => {
+  // Value: protects=a last look that fails proves nothing, so the moved file goes back to its private name and the run refuses naming both paths; fails_when=the dropping name stays or is deleted, the private name is missing, or the refusal omits a path; no_claim=a real EIO (seam.beforeLeftoverCheck throws once at the moved name's look)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  const droppingPath = `${keptPath}.codebook-dropping`
+  let hasFailedLook = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== droppingPath || hasFailedLook) return
+      hasFailedLook = true
+      throw Object.assign(new Error('input/output error'), { code: 'EIO' })
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(hasFailedLook, true)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+  // The put-back's link stays: the config and the private name reach one file.
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
 test('A write that published the config still writes its receipt when the recheck of the displaced copy fails', async (context) => {
   // protects=a failing recheck after the publish keeps the displaced copy and reports it instead of failing before the receipt; fails_when=the write throws or the receipt is missing; no_claim=which errno the filesystem reports; seam=seam.beforeLeftoverCheck throws EIO
   // Arrange
