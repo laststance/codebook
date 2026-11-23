@@ -7822,6 +7822,95 @@ test("A setup whose old record's name changes right after Codebook read a matchi
   ])
 })
 
+test("A setup that moved aside a record of another config while a record of this config with the same entry appeared at the old record's name keeps both, and the next setup runs once the moved file is moved away", async (context) => {
+  // Value: protects=a record of another config that a first setup moved aside is never deleted because a record of this config that covers the same entry stands at receipt.json by the put-back, and the refusal asks to move only the moved file, never the record of this config; fails_when=the moved file is gone or changed, receipt.json no longer holds the record of this config, the publish record is gone, the refusal advises moving what stands at receipt.json, or the next setup after the moved file was moved away answers anything but installed; no_claim=a real sync or backup tool (seam.afterCheck saves the record of another config at receipt.json right before the move aside, and the config module is loaded with a link that saves the record of this config at receipt.json right before the put-back's link)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedAwayPath = join(home, 'moved-record.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptBefore = await readRecordFile(storage, 'receipt.json')
+  rmSync(configPath)
+  const otherConfigReceipt = {
+    ...receiptBefore,
+    targetPath: join(home, 'elsewhere', 'mcp_config.json'),
+    generation: 'c0ffee00-0000-4000-8000-000000000148',
+  }
+  const thisConfigReceipt = {
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000000149',
+  }
+  let hasSavedThisConfig = false
+  const savingThisConfig = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath && !hasSavedThisConfig) {
+            hasSavedThisConfig = true
+            writeFileSync(receiptPath, JSON.stringify(thisConfigReceipt))
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await savingThisConfig
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: () =>
+        writeFileSync(receiptPath, JSON.stringify(otherConfigReceipt)),
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const generation = existsSync(pendingPath)
+    ? String((await readRecordFile(storage, 'pending.json')).generation)
+    : 'absent'
+  const retiredName = `receipt.json.${generation}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  const recordsAfterRefusal = await recordsIn(storage)
+  const movedAfterRefusal = existsSync(retiredPath)
+    ? JSON.parse(readFileSync(retiredPath, 'utf8'))
+    : 'absent'
+  const standingAfterRefusal = await readRecordFile(storage, 'receipt.json')
+  // The way out the refusal names: the moved file goes to another folder.
+  if (existsSync(retiredPath)) renameSync(retiredPath, movedAwayPath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasSavedThisConfig, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it put that record back and changed nothing in Devin Desktop's MCP config at ${configPath}; then run Codebook: Set Up AI Chat again. Codebook moved a file that is no record of Devin Desktop's MCP config at ${configPath} from ${receiptPath} to ${retiredPath} and kept it there, because its record of that config stands at ${receiptPath} again; move that file to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.deepEqual(movedAfterRefusal, otherConfigReceipt)
+  assert.deepEqual(standingAfterRefusal, thisConfigReceipt)
+  assert.equal(next, 'installed')
+  assert.deepEqual(
+    JSON.parse(readFileSync(movedAwayPath, 'utf8')),
+    otherConfigReceipt,
+  )
+})
+
 test('A setup whose old record changed right before it moves that record aside puts the changed record back and changes nothing', async (context) => {
   // Value: protects=a first setup takes away only the record it read: a record saved at that name since its read (a sync or backup tool restoring one) goes back where it was, nothing is published, and the learner is told what happened and how to go on; fails_when=the setup publishes its entry, deletes or changes the changed record, leaves a config, a pending record or a private name, or rejects with another sentence; no_claim=a real sync or backup tool (seam.afterCheck saves the changed record right before the receipt is moved aside, in its place)
   // Arrange
@@ -8037,6 +8126,69 @@ test('A first setup with another bridge path that stopped after its link, whose 
   assert.equal(existsSync(receiptPath), false)
   assert.deepEqual(await recordsIn(storage), [])
   assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
+test("A first setup with another bridge path that wrote its own record but could not delete its publish record or the old record's private file leaves its record standing, and the old record never comes back", async (context) => {
+  // Value: protects=a first setup that wrote its own record finished, so the next run deletes the old record's private file whatever the config shows, never asks to move that setup's own record away and never puts the old record back; fails_when=the refresh rejects or answers anything but not-managed, receipt.json holds anything but that setup's record, or any other record stays; no_claim=why the unlinks fail (the config module is loaded with an unlink that fails with EBUSY for the old record's private name and an rm that fails with EBUSY for pending.json), a learner deleting mcp_config.json again (rmSync)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  rmSync(configPath)
+  const busyNames = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm: async (...args: Parameters<typeof rm>) => {
+          if (args[0] === pendingPath)
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return rm(...args)
+        },
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  const setup = await busyNames.writeManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  )
+  const setupReceipt = await readRecordFile(storage, 'receipt.json')
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const recordsAfterSetup = await recordsIn(storage)
+  // The learner deletes mcp_config.json again.
+  rmSync(configPath)
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.deepEqual(recordsAfterSetup, [
+    'pending.json',
+    'receipt.json',
+    `receipt.json.${String(generation)}.retired`,
+  ])
+  assert.equal(result, 'not-managed')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
 test("A refresh that cannot read the old record's private file once keeps both records, and the next refresh still refuses", async (context) => {
