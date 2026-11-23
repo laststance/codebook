@@ -1664,7 +1664,7 @@ export function activate(
     return sentence === reason ? error : new Error(sentence)
   }
   /**
-   * Runs one forward step of a Devin Desktop setup (the skill's deployment, the entry's write, the final skill check) under {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: a step that storage does not answer is never cut, but `onLapse` names it, so the command answers while the setup goes on under the setup lock; called by {@link setUpDevinChatLocked}.
+   * Runs one forward step of a Devin Desktop setup (the skill's deployment, the server start's descriptor, the entry's write, both writes of the saved setup, the final skill check, the descriptor's mark) under {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: a step that storage does not answer is never cut, but `onLapse` names it, so the command answers while the setup goes on under the setup lock; called by {@link setUpDevinChatLocked}.
    * @param step - The step as the pending sentence names it.
    * @param run - The step's work.
    * @param onLapse - Hears the lapse as a `setup` lapse.
@@ -1720,7 +1720,8 @@ export function activate(
       onLapse,
     )
     assertDevinSetupAvailable()
-    await start()
+    // The server start publishes the descriptor, a write that storage may not answer.
+    await runSetupStep('descriptor', start, onLapse)
     assertDevinSetupAvailable()
     if (!running)
       throw new Error(
@@ -1745,11 +1746,16 @@ export function activate(
     try {
       // Provisional until the last step: a failed restore then still reads as `previousSetup`.
       isDevinRunProvisional = true
-      await writeSavedSetup(() => ({
-        workspace: setupWorkspace,
-        provisional: true,
-        previous: previousSetup,
-      }))
+      await runSetupStep(
+        'saved setup',
+        () =>
+          writeSavedSetup(() => ({
+            workspace: setupWorkspace,
+            provisional: true,
+            previous: previousSetup,
+          })),
+        onLapse,
+      )
       assertDevinSetupAvailable()
       await runSetupStep(
         'skill',
@@ -1778,7 +1784,11 @@ export function activate(
           devinInstallationReadRefusal(installationRead.state, mcpReceiptPath),
         )
       // The descriptor of a server started before this setup carries no mark yet.
-      await markDevinChatDescriptor(true, checkedInstallationId)
+      await runSetupStep(
+        'descriptor',
+        () => markDevinChatDescriptor(true, checkedInstallationId),
+        onLapse,
+      )
       // A Stop or a folder change meanwhile left no server to reach: no success, no reload.
       assertDevinSetupServerStands(checkedServer)
       // Success only when the bridge's own check stands for the descriptor just marked, and that descriptor names the checked server, its workspace and host, carries the mark and this setup's installation.
@@ -1802,7 +1812,11 @@ export function activate(
       // The receipts read awaited: a removal, a Stop or a folder change in that gap ends the setup.
       assertDevinSetupStillStands(checkedServer)
       // The commit write is the last step that can fail the setup and nothing is checked after it: a change after it is a later event (a stopped server starts again when the window loads, another window's removal unmarks this one at its next sync), so there is no rollback after the commit and no half-committed value; only a changed workspace folder, which clears the saved value, is reported once the commit is saved.
-      await writeSavedSetup(() => ({ workspace: setupWorkspace }))
+      await runSetupStep(
+        'saved setup',
+        () => writeSavedSetup(() => ({ workspace: setupWorkspace })),
+        onLapse,
+      )
       isDevinRunProvisional = false
     } catch (error) {
       // A different Devin Desktop window may have removed the shared skill during the saved setup.

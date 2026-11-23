@@ -201,6 +201,8 @@ async function devinWindow(
     holdSavedSetupWrite?: boolean
     /** Holds every descriptor rewrite that removes the mark (a take-back's sync, a removal's unmark) until `holds.descriptorUnmark` is released, then runs the real rewrite. */
     holdDescriptorUnmark?: boolean
+    /** Holds every descriptor rewrite that sets the mark (a setup's mark, a sync that keeps a mark) until `holds.descriptorMark` is released, then runs the real rewrite. */
+    holdDescriptorMark?: boolean
     /** The prefix of the window's instance ids (`instance` when left out), so two windows that share one storage folder write descriptors of different names. */
     instanceLabel?: string
     /** Runs when the setup resolves Node, its first step under the setup lock. */
@@ -293,6 +295,7 @@ async function devinWindow(
     skillRemoval: createGate(),
     savedSetupWrite: createGate(),
     descriptorUnmark: createGate(),
+    descriptorMark: createGate(),
     firstInstallationRead: createGate(),
     receiptRead: createGate(),
   }
@@ -633,8 +636,10 @@ async function devinWindow(
           },
         },
       }),
-      // The rewrite that removes the mark fails, or waits until the test releases it and then runs the real one; every other rewrite is the real one.
-      ...((options.failDescriptorUnmark || options.holdDescriptorUnmark) && {
+      // The rewrite that removes the mark fails, or waits until the test releases it and then runs the real one; a rewrite that sets the mark waits likewise when a test holds it; every other rewrite is the real one.
+      ...((options.failDescriptorUnmark ||
+        options.holdDescriptorUnmark ||
+        options.holdDescriptorMark) && {
         './utils/setDescriptorDevinChat': {
           setDescriptorDevinChat: async (
             path: string,
@@ -644,7 +649,10 @@ async function devinWindow(
           ): Promise<boolean> => {
             if (!enabled && options.failDescriptorUnmark)
               throw new Error('Injected descriptor unmark failure')
-            if (!enabled) await holds.descriptorUnmark.wait()
+            if (!enabled && options.holdDescriptorUnmark)
+              await holds.descriptorUnmark.wait()
+            if (enabled && options.holdDescriptorMark)
+              await holds.descriptorMark.wait()
             return setDescriptorDevinChat(path, enabled, installationId, token)
           },
         },
@@ -868,7 +876,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `hangFirstInstallationRead`, `holdReceiptReadAt`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -4120,3 +4128,65 @@ test('a Devin setup whose skill deployment never returns answers within the budg
     await window.loaded.deactivate()
   }
 })
+
+/** The forward setup writes after the entry write that a test holds on storage, with the harness option and hold of each and the sentence the setup command answers while it waits. */
+const FORWARD_WRITE_HOLD_CASES = [
+  {
+    step: 'saved setup',
+    option: 'holdSavedSetupWrite',
+    hold: 'savedSetupWrite',
+    pendingSentence:
+      "Codebook's Devin Desktop setup is still waiting on storage (saved setup) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+  },
+  {
+    step: 'descriptor',
+    option: 'holdDescriptorMark',
+    hold: 'descriptorMark',
+    pendingSentence:
+      "Codebook's Devin Desktop setup is still waiting on storage (descriptor) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+  },
+] as const
+
+for (const holdCase of FORWARD_WRITE_HOLD_CASES) {
+  // Value: protects=a Devin setup whose write of the committed saved setup, or of the descriptor's mark, never returns answers within the setup budget naming that step, goes on under the setup lock, and shows its own notice with Reload Window once storage answers, with the setup saved and the descriptor marked (Cycle 0146 task 14); fails_when=the command waits for that write for ever, so the setup lock and a removal queued behind it wait with it; no_claim=the server start's publish and the provisional save (budgeted the same way, not held here); a stand-in write held at a gate stands for the stalled storage
+  test(`a Devin setup whose ${holdCase.step} write never returns answers within the budget and shows its own notice once storage answers`, async (context) => {
+    // Arrange
+    const window = await devinWindow(context, { [holdCase.option]: true })
+    try {
+      // Act
+      const setupEnd = window.commands.get('codebook.setupAiChat')!().then(
+        () => ({ atMs: performance.now(), message: 'resolved' }),
+        (error: Error) => ({ atMs: performance.now(), message: error.message }),
+      )
+      const writeReachedAtMs = await waitUntil(
+        () => window.holds[holdCase.hold].reachedAtMs(),
+        `the setup's held ${holdCase.step} write`,
+      )
+      const setupOutcome = await within(setupEnd, 16_000)
+      window.holds[holdCase.hold].release()
+      await waitUntil(() => window.notices.length > 0, "the setup's own notice")
+      // Assert
+      assert.ok(setupOutcome !== 'still waiting', 'the setup command answered')
+      const answeredAfterMs = setupOutcome.atMs - writeReachedAtMs
+      assert.ok(
+        answeredAfterMs >= 9_000 && answeredAfterMs <= 15_000,
+        `the setup command answered ${answeredAfterMs} ms after its ${holdCase.step} write was reached`,
+      )
+      assert.equal(setupOutcome.message, holdCase.pendingSentence)
+      assert.deepEqual(window.notices, [
+        {
+          severity: 'information',
+          message:
+            "Codebook skill and MCP server saved for Devin Local. Reload this window so Devin Local loads Codebook's MCP server, then type /devin:codebook in a Local session.",
+          actions: ['Reload Window'],
+        },
+      ])
+      assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
+        workspace: window.directory,
+      })
+      assert.equal(await window.readDescriptorField(), true)
+    } finally {
+      await window.loaded.deactivate()
+    }
+  })
+}
