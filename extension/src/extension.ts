@@ -68,7 +68,7 @@ import {
   DEVIN_SETUP_ROLLBACK_BUDGET_MS,
   DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
   DEVIN_REFRESH_LOCK_WAIT_ATTEMPTS,
-  DEVIN_REFRESH_TAKE_BACK_BUDGET_MS,
+  DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS,
   DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
   DEVIN_REMOVAL_ACTION,
   DEVIN_REMOVAL_QUESTION,
@@ -108,6 +108,7 @@ import {
   DEVIN_SETUP_FOLDER_CHANGED_SENTENCE,
   DEVIN_OWED_TAKE_BACK_LINE,
   DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE,
+  DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
   DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE,
@@ -370,6 +371,8 @@ export function activate(
     step: DevinStorageStep
     reason?: string
   }
+  /** A step of the activation refresh's work under the setup lock ({@link refreshUnderDevinLock}): the look for an owed take-back, then the rewrite of the entry; a lapse of its budget names the one pending. */
+  type DevinRefreshStep = 'owed take-back' | 'MCP entry'
   /** A run of a Devin Desktop window that takes the window's mark off: its removal, the take-back of its failed setup, or the take-back of a failed setup's entry that a reload left owed ({@link devinMarkTakeOffs}). */
   type DevinMarkTakeOffRun =
     Exclude<DevinBackgroundWorkKind, 'setup'> | 'owed take-back'
@@ -2232,11 +2235,12 @@ export function activate(
   }
   /**
    * Runs the activation refresh's rewrite of the entry under the setup lock ({@link DEVIN_REFRESH_LOCK_BOUND}), after the look for an owed take-back ({@link finishOwedDevinTakeBack}), so the refresh never rewrites the entry between another window's entry write and that setup's take-back, and never keeps a failed setup's entry that a reload left as installed; called by {@link refreshDevinEntry}.
-   * Why: the window's server starts after the refresh, and the bridge Devin Local started at the window load waits 15 seconds for it, so the lock is waited for only a few seconds and the look only {@link DEVIN_REFRESH_TAKE_BACK_BUDGET_MS} ({@link runStepsWithinBudget}); the look is never cut: it keeps the lock until it ends, and nothing is refreshed after it. A look that found the record when its budget passed answers `owed`, because the entry it is still taking back is the failed setup's.
+   * Why: the window's server starts after the refresh, and the bridge Devin Local started at the window load waits 15 seconds for it, so the lock is waited for only a few seconds, and the look and the rewrite together only {@link DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS} ({@link runStepsWithinBudget}). Neither is cut: the run keeps the lock until it ends, nothing is rewritten after a look that outlasted the budget, and a rewrite that outlasted it may still change the entry later. A look that found the record when the budget passed answers `owed`, because the entry it is still taking back is the failed setup's.
    * @param rewrite - The entry's rewrite, run only when no take-back is owed.
-   * @returns What the rewrite answered, or `{ status: 'owed' }` when an owed take-back's record still stands after its removal was tried, or the look found that record and had not ended when its budget passed.
+   * @returns What the rewrite answered, or `{ status: 'owed' }` when an owed take-back's record still stands after its removal was tried, or the look found that record and had not ended when the budget passed.
    * @throws
    * - An error with {@link DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE} when the look could not read the record, or its read outlasted the budget
+   * - An error with {@link DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE} when the rewrite outlasted the budget
    * - The lock's refusal, and what the rewrite threw
    * @example
    * await refreshUnderDevinLock(() => refreshManagedDevinMcpEntry(storageRoot, entry)) // => { status: 'current', path: '/home/user/.config/devin/mcp_config.json' }
@@ -2247,39 +2251,57 @@ export function activate(
     let hasLapsed = false
     // Set once the look found the record of an owed take-back, before that take-back waits on storage.
     let isTakeBackOwed = false
-    let answerAtLapse!: () => void
+    let answerAtLapse!: (pendingStep: DevinRefreshStep) => void
     const lapsed = new Promise<{ status: 'owed' }>((resolve, reject) => {
-      answerAtLapse = (): void => {
+      answerAtLapse = (pendingStep): void => {
+        // The rewrite has changed nothing yet: the window does not wait for it.
+        if (pendingStep === 'MCP entry')
+          reject(new Error(DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE))
         // The look is still taking the failed setup's entry back: the window reconnects nothing.
-        if (isTakeBackOwed) resolve({ status: 'owed' })
+        else if (isTakeBackOwed) resolve({ status: 'owed' })
         else reject(new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE))
       }
     })
     const run = underDevinLock(async () => {
-      // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed; a record that cannot be read may name that entry, so the refresh changes nothing.
-      const look = finishOwedDevinTakeBack(() => {
-        isTakeBackOwed = true
-      })
-      await runStepsWithinBudget(
-        [{ name: 'owed take-back', run: () => look }],
-        DEVIN_REFRESH_TAKE_BACK_BUDGET_MS,
-        () => {
+      let owedTakeBack!: OwedDevinTakeBack['state']
+      let refresh!: Refresh
+      await runStepsWithinBudget<DevinRefreshStep>(
+        [
+          {
+            name: 'owed take-back',
+            // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed; a record that cannot be read may name that entry, so the refresh changes nothing.
+            run: async (): Promise<void> => {
+              owedTakeBack = await finishOwedDevinTakeBack(() => {
+                isTakeBackOwed = true
+              })
+            },
+          },
+          {
+            name: 'MCP entry',
+            // Only an entry no take-back is owed for is rewritten, and nothing once the refresh answered at a lapse of its look.
+            run: async (): Promise<void> => {
+              if (owedTakeBack !== 'none' || hasLapsed) return
+              refresh = await rewrite()
+            },
+          },
+        ],
+        DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS,
+        (pendingStep) => {
           hasLapsed = true
-          answerAtLapse()
+          answerAtLapse(pendingStep)
         },
       )
-      const owedTakeBack = await look
-      // A look that outlasted its budget was answered as unconfirmed already: nothing is refreshed after it.
+      // A refresh that outlasted its budget was answered at its lapse (nobody waits for this end), and a record that cannot be read may name the failed setup's entry.
       if (hasLapsed || owedTakeBack === 'unknown')
         throw new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE)
       if (owedTakeBack === 'owed') return { status: 'owed' as const }
-      return rewrite()
+      return refresh
     }, DEVIN_REFRESH_LOCK_BOUND)
-    // After a lapse nobody waits for the run: the look writes its own lines to the Output.
+    // After a lapse nobody waits for the run: the look writes its own lines to the Output, and a late answer of the rewrite goes nowhere.
     run.catch(() => {})
     return Promise.race([run, lapsed])
   }
-  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link refreshUnderDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other, as is a record of an owed take-back that cannot be read, or whose read outlasts its budget ({@link finishOwedDevinTakeBack}); called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, `refused` when nothing was refreshed, or `owed` when an owed take-back's record still stands after its removal was tried, or that take-back had not ended within the budget, so the entry is the failed setup's and the window reconnects nothing; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link refreshUnderDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other, as is a record of an owed take-back that cannot be read, or whose read outlasts the refresh's budget ({@link finishOwedDevinTakeBack}), and a rewrite that outlasts that budget; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, `refused` when nothing was refreshed, or `owed` when an owed take-back's record still stands after its removal was tried, or that take-back had not ended within the budget, so the entry is the failed setup's and the window reconnects nothing; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
   const refreshDevinEntry = async (
     storageRoot: string,
   ): Promise<{

@@ -1,4 +1,7 @@
-import { DEVIN_SETUP_ROLLBACK_BUDGET_MS } from './constants'
+import {
+  DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS,
+  DEVIN_SETUP_ROLLBACK_BUDGET_MS,
+} from './constants'
 import { SET_UP_AI_CHAT_COMMAND } from './utils/startOverBy'
 
 /** What Set Up AI Chat, the activation refresh and the removal answer in a Devin Desktop window that runs in a remote (WSL, SSH, a container): Devin's skill and MCP config folders and the bridge Devin starts are those of the remote machine, which no check has covered (Cycle 0143). */
@@ -212,6 +215,9 @@ export const DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE = `Codebook could not co
 
 /** The Output line of the activation refresh when the record of an owed take-back still stands after its removal was tried: the entry is the failed setup's, so the window reconnects nothing instead of serving an entry that the next run takes out. */
 export const DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE = `Codebook did not refresh its Devin Desktop MCP entry or reconnect this window because the take-back of the failed Devin Desktop setup that wrote that entry has not finished; run ${SET_UP_AI_CHAT_COMMAND} again once storage answers.`
+
+/** Why the activation refresh of a Devin Desktop window refreshed nothing when its rewrite of the entry had not ended within the refresh's budget ({@link DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS}), so the window's server still starts while the bridge Devin Local started at the window load waits for it: the rewrite is never cut and goes on under the setup lock, and Devin Local starts an entry it moves only after a reload, because it runs the entry it read when the window loaded. */
+export const DEVIN_REFRESH_REWRITE_UNFINISHED_SENTENCE = `Codebook's rewrite of that entry had not ended after ${DEVIN_REFRESH_UNDER_LOCK_BUDGET_MS / 1_000} seconds, so this window goes on without waiting for it; the rewrite keeps the setup lock until storage answers, and when it moves the entry, Devin Local starts the moved entry only after you reload this window.`
 
 /** The Output line when a Devin Desktop setup or removal ended but its setup lock was not released within 3 seconds ({@link DEVIN_SETUP_LOCK_RELEASE_MS}): the command answers, and this window's next setup or removal waits for the release. */
 export const DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE =

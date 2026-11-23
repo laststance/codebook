@@ -3948,6 +3948,52 @@ test("a Devin Desktop window whose refresh's look for an owed take-back never an
   }
 })
 
+// Value: protects=a Devin Desktop window whose activation refresh found no owed take-back and whose rewrite of the entry then never answers (a stalled volume of Devin's MCP config) still publishes its server's descriptor within 6 seconds of its load, inside the 15 seconds the Devin bridge waits for it, says in the Output that the rewrite had not ended, and keeps the setup lock until that rewrite ends (Cycle 0146 /ship last round, outside-voice 5 and adversarial-native 4); fails_when=only the look for an owed take-back is bounded, so the refresh waits for the rewrite without a bound, the server never starts while it hangs and the bridge Devin Local started at the window load gives up, or the lock is released while the rewrite still runs; no_claim=a rewrite that ends within the bound (the refresh tests above), the reads before and after the lock (the skill check, the Node lookup and the setup records' check, which this bound does not cover) and the bridge's own wait (its tests); the held stand-in rewrite waits at its gate until the test releases it, and the lock is the real one
+test("a Devin Desktop window whose refresh's rewrite of the entry never answers still publishes its descriptor and keeps the setup lock until the rewrite ends", async (context) => {
+  // Arrange
+  const loadedAtMs = performance.now()
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    holdRefresh: true,
+  })
+  try {
+    // Act
+    const publishedAtMs = await waitUntil(
+      async () =>
+        (await window.descriptorReadable()) ? performance.now() : undefined,
+      "the reconnected server's descriptor while the refresh's rewrite hangs",
+      10_000,
+    )
+    await window.whenReconnected()
+    const isLockHeldWhileRewriteHangs = await isSetupLockHeld(window.directory)
+    window.releaseRefresh()
+    await waitUntil(
+      async () => !(await isSetupLockHeld(window.directory)),
+      "the setup lock's release once the held rewrite ended",
+      5_000,
+    )
+    // Assert
+    const publishedAfterMs = publishedAtMs - loadedAtMs
+    assert.ok(
+      publishedAfterMs < 6_000,
+      `the descriptor was published ${Math.round(publishedAfterMs)} ms after the window loaded`,
+    )
+    assert.equal(isLockHeldWhileRewriteHangs, true)
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'refresh MCP entry',
+      'start server',
+    ])
+    assert.deepEqual(window.outputLines, [
+      "Codebook did not refresh its Devin Desktop MCP entry: Codebook's rewrite of that entry had not ended after 3 seconds, so this window goes on without waiting for it; the rewrite keeps the setup lock until storage answers, and when it moves the entry, Devin Local starts the moved entry only after you reload this window.",
+    ])
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a Devin Desktop window whose activation refresh found an owed take-back, and whose removal of that failed setup's entry then outlasts the refresh's 3 seconds, reconnects nothing and says in the Output that the take-back has not finished, so it never serves the failed setup's entry that the take-back removes later (Cycle 0146 /ship last round, outside-voice 1 and adversarial-native 3); fails_when=the lapse reads as an ordinary refusal, so the window reconnects while both setup records still stand and starts its server marked for the failed setup; no_claim=a look whose read of the record never answers (the test above: the window still reconnects) and a server started meanwhile (the next tests); the window load's own look waits at its gate, so the refresh's look is the one that finds the real record, and the held stand-in entry removal deletes the receipt as the real one does once released
 test("a Devin Desktop window whose refresh's take-back of an owed entry outlasts the refresh's budget reconnects nothing", async (context) => {
   // Arrange
