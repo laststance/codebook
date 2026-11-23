@@ -170,7 +170,7 @@ type Context = {
   retry: string
   /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
   rollbackOf?: string
-  /** Set only on the context {@link settleRollbackJournal} settles a journal with, which makes its pending path a tracked journal: the version of the journal that run read, replaced by each version it writes at its pending path ({@link writeRecord}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}). */
+  /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal: the version of the journal that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}). */
   journalVersion?: { current: RecordVersion | undefined }
 }
 
@@ -5065,10 +5065,15 @@ function disabledFlagOf(entry: unknown): { disabled?: true } {
 /** What a write reports about the entry it published. */
 type PublishedEntry = { generation: string; cleanupFailure?: string }
 
-/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing) or `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out); `keptLeft` holds the copies the rollback itself left. */
+/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing), `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out) or `journal-taken` (something already stood at the name of the rollback's own journal, which its first write never replaces, so nothing moved and the config was left unchanged); `keptLeft` holds the copies the rollback itself left. */
 type RollbackResult = {
   outcome:
-    'took-out' | 'replaced-config' | 'not-ours' | 'unreadable' | 'not-taken-out'
+    | 'took-out'
+    | 'replaced-config'
+    | 'not-ours'
+    | 'unreadable'
+    | 'not-taken-out'
+    | 'journal-taken'
   keptLeft: KeptFile[]
   /** Set with `took-out`: whether the whole file went or only the entry. */
   removal?: 'file-removed' | 'removed'
@@ -5079,7 +5084,7 @@ type RollbackResult = {
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
- * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`.
+ * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name is `journal-taken`, and nothing moved.
  * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`.
  */
 async function rollBackPublishedEntry(
@@ -5102,18 +5107,27 @@ async function rollBackPublishedEntry(
   // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
   if (!isSameFileId(written.config.ino, look.identity.ino))
     return { outcome: 'replaced-config', keptLeft: [] }
-  const { keptLeft, status } = await takeEntryOut(
-    rollbackContextOf(context, written.generation),
-    { look, receipt: written },
-  )
-  return { outcome: 'took-out', keptLeft, removal: status }
+  try {
+    const { keptLeft, status } = await takeEntryOut(
+      rollbackContextOf(context, written.generation),
+      { look, receipt: written },
+    )
+    return { outcome: 'took-out', keptLeft, removal: status }
+  } catch (error) {
+    // Only the journal's first write, a claim, lets this escape (every later journal write of the take-back swallows its failure), so nothing moved.
+    if (error instanceof JournalConflictError)
+      return { outcome: 'journal-taken', keptLeft: [] }
+    throw error
+  }
 }
 
 /**
  * The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads.
  * @param context - The run.
- * @param publishGeneration - The generation of the publish being rolled back; every journal of the rollback records it. Omit it to only read or settle a journal.
+ * @param publishGeneration - The generation of the publish being rolled back; every journal of the rollback records it. Omit it to only read or settle a journal. With it, the context tracks its journal from its first write ({@link Context.journalVersion}), which claims the name and never replaces what stands there ({@link claimJournal}).
  * @returns The rollback's context.
+ * @example
+ * rollbackContextOf(context, generation).pendingPath // => '…/devin-mcp/pending.json.rollback'
  */
 function rollbackContextOf(
   context: Context,
@@ -5122,7 +5136,10 @@ function rollbackContextOf(
   return {
     ...context,
     pendingPath: `${context.pendingPath}.rollback`,
-    ...(publishGeneration !== undefined && { rollbackOf: publishGeneration }),
+    ...(publishGeneration !== undefined && {
+      rollbackOf: publishGeneration,
+      journalVersion: { current: undefined },
+    }),
   }
 }
 
@@ -5162,17 +5179,24 @@ function alsoKeptSentence({ path, isLeftover, isReplaced }: KeptFile): string {
  * Words how a failed first setup's rollback ended as one clause; used by {@link takeOutUnrecordedEntry} and {@link finishCutShortSetup}.
  * A by-hand removal is asked for only when the entry was confirmed as Codebook's own and could not be taken out.
  * @param outcome - The {@link RollbackResult} outcome.
+ * @param context - The run; its config path and the rollback journal's path beside its record ({@link rollbackContextOf}) are named for `journal-taken`.
  * @returns A clause that follows a comma and states what Codebook did with the file and what the learner should check.
  * @example
- * rollbackOutcomeClause('took-out') // => 'so it took that entry out again and changed nothing else'
+ * rollbackOutcomeClause('took-out', context) // => 'so it took that entry out again and changed nothing else'
  */
-function rollbackOutcomeClause(outcome: RollbackResult['outcome']): string {
+function rollbackOutcomeClause(
+  outcome: RollbackResult['outcome'],
+  context: Context,
+): string {
+  const { path } = context
+  const journal = rollbackContextOf(context).pendingPath
   return {
     'took-out': 'so it took that entry out again and changed nothing else',
     'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
     'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
     unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
     'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
+    'journal-taken': `but something already stands at ${journal}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${path} unchanged; the next run reads ${journal} before it takes the entry out (if what stands there is not Codebook's for ${path}, move it to another folder first)`,
   }[outcome]
 }
 
@@ -5211,7 +5235,7 @@ async function takeOutUnrecordedEntry(
   // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left.
   if (outcome === 'took-out' && keptCopies.length === 0)
     await dropPending(context)
-  const sentence = rollbackOutcomeClause(outcome)
+  const sentence = rollbackOutcomeClause(outcome, context)
   return new Error(
     `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}; make room for that record, ${retry}.${keptCopiesSentence(keptCopies)}`,
     { cause },
@@ -5937,7 +5961,7 @@ async function finishCutShortSetup(
   if (outcome === 'replaced-config' || outcome === 'not-ours') return undefined
   if (outcome !== 'took-out' || keptLeft.length > 0)
     throw new Error(
-      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
+      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome, context)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
   await retirePending(context, retained, emptiedRetiredPath)
   return { look: await lookAtConfig(context), removal: result.removal }
