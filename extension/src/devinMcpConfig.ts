@@ -1693,6 +1693,8 @@ type Unsettled = {
   isHandedOver?: boolean
   /** The inode the handed copy's name showed when recovery looked at it; the handed record names it ({@link handedRecordOf}), because a copy that only its bytes proved has another inode than the recorded one. */
   handedIno?: bigint
+  /** Set by {@link inspect} when the handed record could not be written: the refusal then says that a later run may check the copy again ({@link bothFilesRefusal}) instead of promising that both paths stay. */
+  isHandoverUnrecorded?: boolean
 }
 
 /**
@@ -1977,21 +1979,48 @@ function unsettledOf(
 /**
  * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named.
  * @param context - The run.
- * @param phase - The phase of the pending record.
+ * @param phase - The phase recovery read the pending record in ({@link leftoverPhaseOf}).
  * @param reported - The unsettled leftover to name.
  * @returns The refusal, not thrown yet.
  */
 function unsettledRefusal(
   context: Context,
   phase: Pending['phase'],
-  { leftover, cause, isHandedOver }: Unsettled,
+  { leftover, cause, isHandedOver, isHandoverUnrecorded }: Unsettled,
 ): Error {
   // The put-back check's and the changed config's own texts name both paths and the state; the move-back advice would lose a new save.
-  if (namesBothFiles(cause)) return cause
+  if (namesBothFiles(cause))
+    return bothFilesRefusal(cause, leftover.path, isHandoverUnrecorded)
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
     : leftCopyRefusal(context, leftover.path, cause)
+}
+
+/**
+ * Words a leftover whose own failure text names both files and what stays ({@link namesBothFiles}); called by {@link unsettledRefusal}.
+ * That text says what this run did. One sentence follows when what happens to the copy next differs from what it implies: a handover whose record could not be written, so a later run may check the copy again.
+ * @param cause - The failure's own error ({@link PutBackCheckError} or {@link ConfigChangedError}).
+ * @param copyPath - The private copy it names.
+ * @param isHandoverUnrecorded - Whether the handed record of this copy could not be written ({@link Unsettled.isHandoverUnrecorded}).
+ * @returns
+ * - `cause` itself when its handover, if any, is recorded
+ * - A new error of `cause`'s text and the sentence otherwise
+ * @example
+ * bothFilesRefusal(sharedBytesError(context, keptPath), keptPath, true) // => '… never copy one over the other; … Codebook could not record that it leaves both paths to you, so a later run may check them again …'
+ */
+function bothFilesRefusal(
+  cause: PutBackCheckError | ConfigChangedError,
+  copyPath: string,
+  isHandoverUnrecorded: boolean | undefined,
+): Error {
+  // No record says the copy is left to the learner, so a later run may still check it and put it back or drop it.
+  if (isHandoverUnrecorded)
+    return new Error(
+      `${cause.message} Codebook could not record that it leaves both paths to you, so a later run may check them again and removes ${copyPath} only while the config holds the bytes Codebook kept.`,
+      { cause },
+    )
+  return cause
 }
 
 /**
@@ -3382,10 +3411,18 @@ async function inspect(context: Context): Promise<Inspection> {
   const phase = pending && leftoverPhaseOf(pending)
   // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
-  // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable.
-  if (pending && isHandedNow) await persistHandover(context, pending, unsettled)
+  // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable. A write that failed is said in the refusal, which then promises no handover.
+  const isHandoverUnrecorded = Boolean(
+    pending &&
+    isHandedNow &&
+    !(await persistHandover(context, pending, unsettled)),
+  )
   const tracked = phase ? unsettled.slice(1) : unsettled
-  const [reported] = unsettled
+  const [first] = unsettled
+  const reported = first && {
+    ...first,
+    ...(isHandoverUnrecorded && { isHandoverUnrecorded }),
+  }
   const retained =
     pending &&
     retainedRecord(
@@ -3461,20 +3498,23 @@ function handedRecordOf(pending: Pending, unsettled: Unsettled[]): Pending {
  * @param context - The run.
  * @param pending - The pending record as read; the whole record is kept, only its phase (and the kept inode of a copy that only its bytes proved) changes.
  * @param unsettled - The leftovers recovery could not settle; the handed one names its copy's inode.
- * @returns Nothing; best effort: a failed write leaves the record as it was, and {@link settlePending} writes the record that stays again.
+ * @returns `true` once the record is written; `false` when the write failed: the record then stays as it was, {@link settlePending} tries the record that stays again, and the refusal says that no record holds the handover ({@link Unsettled.isHandoverUnrecorded}).
  * @example
- * if (pending && isHandedNow) await persistHandover(context, pending, unsettled)
+ * const isRecorded = await persistHandover(context, pending, unsettled)
  */
-async function persistHandover(
+function persistHandover(
   context: Context,
   pending: Pending,
   unsettled: Unsettled[],
-): Promise<void> {
-  await writeRecord(
+): Promise<boolean> {
+  return writeRecord(
     context,
     context.pendingPath,
     handedRecordOf(pending, unsettled),
-  ).catch(() => undefined)
+  ).then(
+    () => true,
+    () => false,
+  )
 }
 
 /**

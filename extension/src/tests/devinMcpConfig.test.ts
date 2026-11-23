@@ -2888,6 +2888,54 @@ test('A put-back by bytes whose private name cannot be deleted after its link ke
   assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
 })
 
+test('A handover after a failed shared-bytes check whose record cannot be written is not reported as kept for good, and the next run finishes it once the bytes are back', async (context) => {
+  // Value: protects=a refusal says a copy is left to the learner for good only once a record holds that: when the handed record cannot be written and the config read then fails too, the refusal says a later run may check both paths again and removes the private name only while the config holds the bytes Codebook kept, which the next run then does; fails_when=the refusal lacks that sentence or a path, the record turns handed, or the next run with the bytes back keeps the private name or changes the config; no_claim=a real full disk (the seam cancels each handed write the way a full disk at the temporary file does); seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name and an in-place append of an opening brace (the shared bytes changed and the config is no valid JSON), seam.beforeRecordWrite fails every write of a handed pending record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  linkSync(keptPath, configPath)
+  appendFileSync(configPath, '{')
+  let refusedWriteCount = 0
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      if (path !== pendingPath || phaseOfRecord(record) !== 'handed') return
+      refusedWriteCount += 1
+      throw noSpaceLeft()
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(
+      error.message.includes('text that is not valid JSON'),
+      error.message,
+    )
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    assert.ok(
+      error.message.includes(
+        `Codebook could not record that it leaves both paths to you, so a later run may check them again and removes ${keptPath} only while the config holds the bytes Codebook kept.`,
+      ),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(refusedWriteCount, 1)
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, undefined)
+
+  // Act
+  writeFileSync(configPath, PUT_BACK_BYTES)
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(nextRun.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange
