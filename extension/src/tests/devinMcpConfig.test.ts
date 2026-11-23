@@ -5,6 +5,7 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -13,6 +14,7 @@ import {
   symlinkSync,
   utimesSync,
   writeFileSync,
+  type StatSyncOptions,
 } from 'node:fs'
 import {
   chmod,
@@ -4623,6 +4625,128 @@ test('A first setup whose handed record hit a full disk never moves the changed 
   assert.equal(nextRun.status, 'current')
   assert.equal(existsSync(copyPath), false)
   assert.equal(readFileSync(keptPath, 'utf8'), otherText)
+})
+
+test('A first setup whose handed record hit a full disk and that cannot look at the changed copy’s private name right after linking it to the .codebook-kept name keeps both names and warns that Codebook still tracks that copy instead of failing with a raw error', async (context) => {
+  // Value: protects=a look that fails right after the move out of recovery's reach linked the copy to the .codebook-kept name never turns a published setup into a raw error: both names stay, the notice names the private name with the warning that a later run deletes it while it holds exactly the previous config, and the next run does so while the .codebook-kept name keeps the previous config; fails_when=the setup rejects or is not installed, the notice names no copy or leaves it to the learner, the setup deletes or changes either name, or the next run deletes the .codebook-kept name; no_claim=a real I/O error (the module's lstatSync stand-in throws EIO once, at the first look at the private name after the link), a real ENOSPC (seam.beforeRecordWrite fails only the handed record), and which file a failed look would have shown
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  let copyPath = ''
+  let hasLinkedKeptName = false
+  let hasFailedLook = false
+  const failingLook = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          if (hasLinkedKeptName && !hasFailedLook && path === copyPath) {
+            hasFailedLook = true
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          }
+          return lstatSync(path, options)
+        },
+      },
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          if (to.endsWith('.codebook-kept')) hasLinkedKeptName = true
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setup = await failingLook.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      beforeRecordWrite: ({ record }) => {
+        if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+      },
+      afterPublish: (displacedPath) => {
+        copyPath = displacedPath ?? ''
+        utimesSync(copyPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+      },
+    },
+  )
+  const keptPath = copyPath.replace(/codebook-displaced$/, 'codebook-kept')
+
+  // Assert
+  assert.equal(hasFailedLook, true)
+  assert.equal(setup.status, 'installed')
+  assert.equal(
+    setup.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  )
+  assert.equal(readFileSync(copyPath, 'utf8'), originalText)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalText)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), originalText)
+})
+
+test('A first setup whose handed record hit a full disk never calls the file at the .codebook-kept name the previous config when a sync tool swapped its file in at the changed copy’s private name right before the move', async (context) => {
+  // Value: protects=a notice never names the .codebook-kept name as the previous config when the move out of recovery's reach linked another program's file there: a look at that name right after the link tells the moved copy from a file swapped in at the private name after the last look, and the notice then says that the file there is no longer that copy; fails_when=the notice calls the file at the .codebook-kept name the previous config or names no file, or the setup or the next run deletes or changes the swapped-in file at either name; no_claim=a real sync tool (seam.afterLeftoverCheck renames another file over the private name once, right after the last look and before the link), a real ENOSPC (seam.beforeRecordWrite fails only the handed record), and the words of the next run's refusal beyond the private name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const swappedText = '{"swapped in by a sync tool":true}\n'
+  let copyPath = ''
+  let isSwapped = false
+
+  // Act
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      utimesSync(copyPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+    },
+    afterLeftoverCheck: (path) => {
+      if (path !== copyPath || isSwapped) return
+      isSwapped = true
+      swapFile(copyPath, swappedText)
+    },
+  })
+  const keptPath = copyPath.replace(/codebook-displaced$/, 'codebook-kept')
+
+  // Assert
+  assert.equal(isSwapped, true)
+  assert.equal(setup.status, 'installed')
+  assert.equal(
+    setup.cleanupFailure,
+    `Another program replaced the private copy of your previous Devin MCP config that Codebook kept at ${keptPath}, so the file at that path is no longer that copy; Codebook left that file untouched, so look at it before you use or delete it.`,
+  )
+  assert.equal(readFileSync(keptPath, 'utf8'), swappedText)
+  assert.equal(readFileSync(copyPath, 'utf8'), swappedText)
+
+  // Act
+  const nextRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(nextRun, (error: Error) => {
+    assert.ok(error.message.includes(copyPath), error.message)
+    assert.doesNotMatch(error.message, /previous Devin MCP config at/)
+    return true
+  })
+  assert.equal(readFileSync(keptPath, 'utf8'), swappedText)
+  assert.equal(readFileSync(copyPath, 'utf8'), swappedText)
 })
 
 test('A first setup whose handed record hit a full disk names no copy of the previous config when another program removed the moved-aside copy', async (context) => {

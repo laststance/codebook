@@ -313,7 +313,7 @@ type KeptFile = {
   holds: 'previous' | 'new'
   /** Set for a copy of the previous config that stays under a name a record on disk still holds ({@link discardDisplaced}, {@link keepFromRecovery}, {@link publishEntry}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
   isLeftover?: true
-  /** Set for the private name of a copy of the previous config where another program put another file before Codebook could move the copy out of recovery's reach ({@link keepFromRecovery}): the sentence that names it says that the file there is no longer that copy ({@link replacedCopySentence}). */
+  /** Set for the private name of a copy of the previous config where another program put another file before Codebook could move the copy out of recovery's reach ({@link keepFromRecovery}), or for the name the move linked such a file to ({@link moveWithoutReplacing}): the sentence that names it says that the file there is no longer that copy ({@link replacedCopySentence}). */
   isReplaced?: true
 }
 
@@ -1041,7 +1041,7 @@ async function handOverCopy(
 /**
  * Keeps a changed displaced copy out of a later run's reach when its handed record could not be written and the completed record stays on disk; called by {@link handOverCopy}.
  * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds, without replacing a file another program put there ({@link moveWithoutReplacing}). That move reaches whatever stands at the private name, not the file the read saw through its handle, so it runs only while a last look still shows that file with the size and times of the read ({@link lookBeforeMove}). Any other copy stays where it is and is worded by what its name shows ({@link copyAsItStands}): one that cannot be read or looked at, holds other bytes, changed after the read or cannot move (also because a file stands at the new name) stays tracked ({@link KeptFile.isLeftover}), and its sentence says that a later run deletes it while it still holds the recorded bytes; a name that shows another file is said to be no longer that copy ({@link KeptFile.isReplaced}), and a name that shows nothing names no copy.
- * Limit: a swap between the last look and the move is not seen; no Node primitive links by inode.
+ * A swap between the last look and the move links another program's file to the new name; no Node primitive links by inode, so a look at the new name right after the link tells it from the copy ({@link moveWithoutReplacing}), and that name is then said to be no longer the copy.
  * @param context - The run; its seam is called when the copy is read and around the last look.
  * @param journal - The record as it was written before the first move; its kept hash is the bytes recovery deletes.
  * @param displacedPath - The private name of the displaced copy.
@@ -1050,6 +1050,7 @@ async function handOverCopy(
  * - at its new name once it moved;
  * - at its private name marked {@link KeptFile.isLeftover} when it could not be read or looked at, the name shows the recorded file with other bytes, size or times, or the move failed (a file at the new name stays as it is);
  * - at its private name marked {@link KeptFile.isReplaced} when the name shows another file;
+ * - at its new name marked {@link KeptFile.isReplaced} when the move linked a file another program put at the private name after the last look;
  * - undefined when nothing stands there: no copy stays to name.
  * @example
  * await keepFromRecovery(context, journal, displacedPath, held) // => { path: '…/mcp_config.json.<generation>.codebook-kept', holds: 'previous' }
@@ -1075,45 +1076,57 @@ async function keepFromRecovery(
   // The name changed since the read: whatever stands there now stays.
   if (shown !== 'held') return copyAsItStands(copy, shown, held.ino)
   const keptPath = `${displacedPath.slice(0, -JOURNAL_SUFFIX.kept.length)}${KEPT_COPY_SUFFIX}`
-  return (await moveWithoutReplacing(displacedPath, keptPath, now.ino))
-    ? { path: keptPath, holds: 'previous' }
-    : copyAsItStands(copy, 'unknown', held.ino)
+  const move = await moveWithoutReplacing(displacedPath, keptPath, now.ino)
+  if (move === 'stayed') return copyAsItStands(copy, 'unknown', held.ino)
+  const kept: KeptFile = { path: keptPath, holds: 'previous' }
+  return move === 'moved' ? kept : { ...kept, isReplaced: true }
 }
 
+/** What {@link moveWithoutReplacing} did: `moved` once the copy stands at the new name; `replaced` when the new name shows another file, which another program put at the private name after the last look (or at the new name after the link); `stayed` when the link or a look after it failed, so the copy is worded at its private name. */
+type KeptMove = 'moved' | 'replaced' | 'stayed'
+
 /**
- * Moves a displaced copy to the name no record holds without replacing anything there; called by {@link keepFromRecovery}, because a rename replaces whatever stands at its destination. A link claims the new name and fails when any file stands at it; only then is the private name unlinked, while it still shows the linked file.
+ * Moves a displaced copy to the name no record holds without replacing anything there; called by {@link keepFromRecovery}, because a rename replaces whatever stands at its destination. A link claims the new name and fails when any file stands at it; only then is the private name unlinked, while the new name shows the copy's inode and the private name still shows the linked file.
  * Limit: a swap at the private name between the look right before the unlink and the unlink is not seen; no Node primitive unlinks by inode.
  * @param displacedPath - The private name of the displaced copy.
  * @param keptPath - The name no record holds ({@link KEPT_COPY_SUFFIX}).
  * @param ino - The inode the last look showed at the private name.
  * @returns
- * - `true` once the copy stands at `keptPath`, also when its private name could not be unlinked: both names then reach it, and a later run that deletes the private name leaves `keptPath`;
- * - `false` when the link failed, for example because another file stands at `keptPath`, which stays as it is.
+ * - `moved` once the copy stands at `keptPath`, also when its private name could not be unlinked: both names then reach it, and a later run that deletes the private name leaves `keptPath`;
+ * - `replaced` when `keptPath` shows another inode: the link reached a file another program put at the private name after the last look (or another program replaced `keptPath` after the link), and both names stay;
+ * - `stayed` when the link failed, for example because another file stands at `keptPath`, which stays as it is, or when a look after the link failed, which proves nothing, so both names stay.
  * @example
- * await moveWithoutReplacing(displacedPath, keptPath, 42n) // => false when another program put a file at keptPath
+ * await moveWithoutReplacing(displacedPath, keptPath, 42n) // => 'stayed' when another program put a file at keptPath
  */
 async function moveWithoutReplacing(
   displacedPath: string,
   keptPath: string,
   ino: bigint,
-): Promise<boolean> {
+): Promise<KeptMove> {
   try {
     await link(displacedPath, keptPath)
   } catch {
-    return false
+    return 'stayed'
   }
-  const shown = lstatSync(displacedPath, {
-    bigint: true,
-    throwIfNoEntry: false,
-  })
-  // The private name goes only while it still shows the file the new name reaches: a file swapped in meanwhile stays.
-  if (shown?.ino === ino) await unlink(displacedPath).catch(() => undefined)
-  return true
+  try {
+    // The link reaches whatever stood at the private name, so another inode at the new name is a file swapped in after the last look, never the copy.
+    if (lstatSync(keptPath, { bigint: true }).ino !== ino) return 'replaced'
+    const shown = lstatSync(displacedPath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })
+    // The private name goes only while it still shows the file the new name reaches: a file swapped in meanwhile stays.
+    if (shown?.ino === ino) await unlink(displacedPath).catch(() => undefined)
+    return 'moved'
+  } catch {
+    // A failed look proves nothing: both names stay, and the copy is worded at its private name.
+    return 'stayed'
+  }
 }
 
 /**
  * Looks at a displaced name right before {@link keepFromRecovery} moves it ({@link moveWithoutReplacing}): the read's open handle proves the file it read, not what stands at the name, and the move reaches whatever stands there.
- * Limit: a swap between this look and the move is not seen; no Node primitive links by inode.
+ * Limit: a swap between this look and the move is not seen here; no Node primitive links by inode, so the move looks at the name it linked ({@link moveWithoutReplacing}).
  * @param context - The run; its seam is called around the look ({@link isLeftoverStill}).
  * @param displacedPath - The private name of the displaced copy.
  * @param read - The copy as {@link inspectCopy} read it: its inode, size and times.
