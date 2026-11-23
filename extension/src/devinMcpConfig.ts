@@ -5484,10 +5484,10 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read, only while its name still shows the version this run settled ({@link retirePending}).
- * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one; the journal then ends only while that record's name still shows the mark ({@link markLeftCheck}), so a setup record a backup puts back without it keeps the journal. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
  * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired, after the first leftover's refusal when one stays ({@link refusalWithConflict}): that name stays as it is and the run goes no further.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread` or `record-gone` sentence when the publish record's name no longer shows the take-back mark this run wrote ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired, after the first leftover's refusal when one stays ({@link refusalWithConflict}): that name stays as it is and the run goes no further.
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -5546,7 +5546,13 @@ async function settleRollbackJournal(
             decision.publishVersion,
           )
         : undefined
-    if (!held) await retirePending(rollbackContext, retained)
+    // A journal that proves a take-back this run marked ends only while the publish record's name still shows that mark, at a look right before the journal's rename or unlink.
+    if (!held)
+      await retirePending(
+        rollbackContext,
+        retained,
+        await markLeftCheck(context, decision?.markVersion, legacy),
+      )
   } catch (error) {
     // Another file at the journal's name ends the run here, named after the leftover this recovery could not settle.
     throw error instanceof JournalConflictError && reported
@@ -6120,11 +6126,11 @@ function unmatchedLeftoverSentence(
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
  * @returns
- * - The decision ({@link PublishDecision}): the belonging it decided ({@link JournalBelonging}), `belongs` once the mark is written, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`), with the version of the record it was decided on
+ * - The decision ({@link PublishDecision}): the belonging it decided ({@link JournalBelonging}), `belongs` once the mark is written, with the version of that mark, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`), with the version of the record it was decided on
  * - undefined when there is no publish record of this config, or it is marked already
  * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written, and its `record-gone` sentence when that name is found empty then ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
  * @example
- * await markTakeBackOwed(context, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' } }; pending.json now holds takeBack: true
+ * await markTakeBackOwed(context, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
@@ -6154,23 +6160,52 @@ async function markTakeBackOwed(
   if (belonging !== 'belongs')
     throw unmatchedJournalRefusal(context, belonging, legacy)
   // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, one it moved away is not written back, and the run stops.
-  await writeRecord(
-    {
-      ...context,
-      journalVersion: { current: version, refusesEmptyName: true },
-    },
-    context.pendingPath,
-    { ...publish, takeBack: true },
-  ).catch((error: unknown) => {
+  const marking: Context = {
+    ...context,
+    journalVersion: { current: version, refusesEmptyName: true },
+  }
+  await writeRecord(marking, context.pendingPath, {
+    ...publish,
+    takeBack: true,
+  }).catch((error: unknown) => {
     throw publishRecordConflict(context, legacy, error)
   })
-  return decision
+  return { ...decision, markVersion: marking.journalVersion?.current }
 }
 
 /** What {@link markTakeBackOwed} decided on one read of the publish record: how the rollback journal relates to it, and the version of the record it read ({@link RecordVersion}), which a held journal binds the rest of its run to ({@link heldPublishContext}). */
 type PublishDecision = {
   belonging: JournalBelonging
   publishVersion: RecordVersion
+  /** The version of the take-back mark this call wrote ({@link stageRecord}); undefined when nothing was marked. The journal that proves that take-back is ended only while the record's name still shows it ({@link markLeftCheck}). */
+  markVersion?: RecordVersion
+}
+
+/**
+ * Gives the synchronous look that must still find the take-back mark this run wrote at the publish record's name right before the rollback journal that proves that take-back is ended; called by {@link settleRollbackJournal}, so a setup record a backup puts back without that mark keeps the journal, and the next run marks it again instead of adopting it.
+ * @param context - The run; its pending path is the publish record.
+ * @param markVersion - The version of the mark ({@link PublishDecision.markVersion}); undefined when nothing was marked.
+ * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
+ * @returns
+ * - undefined when nothing was marked
+ * - otherwise the look {@link publishLeftCheck} gives once its own look found the mark
+ * @throws What {@link publishLeftCheck} throws: the `record-reread` or `record-gone` {@link unmatchedJournalRefusal} when the name no longer shows the mark; nothing is retired then.
+ * @example
+ * await retirePending(rollbackContext, retained, await markLeftCheck(context, decision?.markVersion, legacy)) // throws, keeping both records, once a backup put the unmarked record back
+ */
+async function markLeftCheck(
+  context: Context,
+  markVersion: RecordVersion | undefined,
+  legacy: LegacyJournalEvidence | undefined,
+): Promise<(() => void) | undefined> {
+  if (markVersion === undefined) return undefined
+  return publishLeftCheck(
+    {
+      ...context,
+      journalVersion: { current: markVersion, refusesEmptyName: true },
+    },
+    legacy,
+  )
 }
 
 /**
