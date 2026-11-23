@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import * as fsPromises from 'node:fs/promises'
 import {
   chmod,
   mkdir,
@@ -215,6 +216,18 @@ async function devinWindow(
     hangFirstInstallationRead?: boolean
     /** The position (1 for the first) of the one read of the setup receipts that reads the real records and then waits at `holds.receiptRead` until the test releases it, answering what it read before it waited, as a slow storage whose answer comes after the start budget. */
     holdReceiptReadAt?: number
+    /** Holds every write of the MCP entry until `holds.entryWrite` is released, then writes it as the stand-in does. */
+    holdEntryWrite?: boolean
+    /** Holds every provisional write of the saved setup until `holds.provisionalSave` is released, then saves it. */
+    holdProvisionalSave?: boolean
+    /** Holds every check of the managed Devin skill until `holds.skillCheck` is released, then answers as the stand-in does. */
+    holdSkillCheck?: boolean
+    /** Holds every publish of a connection descriptor (the server start's own write of the file) until `holds.descriptorPublish` is released, then runs the real write. */
+    holdDescriptorPublish?: boolean
+    /** Makes every descriptor rewrite that sets the mark fail (the other rewrites run the real one), as a descriptor that cannot be replaced. */
+    failDescriptorMark?: boolean
+    /** Makes the first dispose of the Study reader throw, as a reader whose panes could not be closed. */
+    failStudyReaderDispose?: boolean
   } = {},
 ) {
   const directory =
@@ -302,6 +315,10 @@ async function devinWindow(
     descriptorMark: createGate(),
     firstInstallationRead: createGate(),
     receiptRead: createGate(),
+    entryWrite: createGate(),
+    provisionalSave: createGate(),
+    skillCheck: createGate(),
+    descriptorPublish: createGate(),
   }
   // Whether the one held write of the saved setup was reached; the writes after it are not held.
   let isSavedSetupWriteHeld = false
@@ -432,6 +449,19 @@ async function devinWindow(
     {
       vscode,
       './service': { StudyService: Service },
+      // The server start's own write of the descriptor waits until the test releases it; every other file call is the real one.
+      ...(options.holdDescriptorPublish && {
+        'node:fs/promises': {
+          ...fsPromises,
+          writeFile: async (
+            ...parameters: Parameters<typeof writeFile>
+          ): Promise<void> => {
+            if (String(parameters[0]).endsWith(CONNECTION_DESCRIPTOR_SUFFIX))
+              await holds.descriptorPublish.wait()
+            return writeFile(...parameters)
+          },
+        },
+      }),
       './environment': {
         requireWorkspace: () => currentWorkspace,
         createEnvironment: async () => ({
@@ -486,7 +516,13 @@ async function devinWindow(
           releaseUnsavedStudies(): [] {
             return []
           }
-          async dispose(): Promise<void> {}
+          async dispose(): Promise<void> {
+            // Only the first dispose fails, so the window's own deactivate disposes the reader made afterwards.
+            if (options.failStudyReaderDispose) {
+              options.failStudyReaderDispose = false
+              throw new Error('Injected Study reader dispose failure')
+            }
+          }
         },
       },
       './repositoryReader': {
@@ -534,6 +570,7 @@ async function devinWindow(
         },
         verifyManagedDevinSkill: async () => {
           steps.push('verify Devin skill')
+          if (options.holdSkillCheck) await holds.skillCheck.wait()
           await options.onSkillCheck?.()
           // A skill whose receipt is gone was removed by another window.
           if (options.skillManaged === false)
@@ -556,6 +593,7 @@ async function devinWindow(
           entry: DevinEntry,
         ) => {
           steps.push('write MCP entry')
+          if (options.holdEntryWrite) await holds.entryWrite.wait()
           // The real write leaves its record in the storage.
           await mkdir(join(directory, 'devin-mcp'), { recursive: true })
           await writeFile(
@@ -642,10 +680,11 @@ async function devinWindow(
           },
         },
       }),
-      // The rewrite that removes the mark fails, or waits until the test releases it and then runs the real one; a rewrite that sets the mark waits likewise when a test holds it; every other rewrite is the real one.
+      // The rewrite that removes the mark fails, or waits until the test releases it and then runs the real one; a rewrite that sets the mark fails or waits likewise when a test asks for it; every other rewrite is the real one.
       ...((options.failDescriptorUnmark ||
         options.holdDescriptorUnmark ||
-        options.holdDescriptorMark) && {
+        options.holdDescriptorMark ||
+        options.failDescriptorMark) && {
         './utils/setDescriptorDevinChat': {
           setDescriptorDevinChat: async (
             path: string,
@@ -655,6 +694,8 @@ async function devinWindow(
           ): Promise<boolean> => {
             if (!enabled && options.failDescriptorUnmark)
               throw new Error('Injected descriptor unmark failure')
+            if (enabled && options.failDescriptorMark)
+              throw new Error('Injected descriptor mark failure')
             if (!enabled && options.holdDescriptorUnmark)
               await holds.descriptorUnmark.wait()
             if (enabled && options.holdDescriptorMark)
@@ -838,6 +879,8 @@ async function devinWindow(
           )
             throw new Error('Injected workspace state commit failure')
           hasWrittenProvisional ||= isProvisional
+          if (options.holdProvisionalSave && isProvisional)
+            await holds.provisionalSave.wait()
           // The first write that is not a provisional one waits, as a storage that stops answering; the writes after it go through.
           if (
             options.holdSavedSetupWrite &&
@@ -884,7 +927,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -3398,6 +3441,63 @@ test("a failed first Devin setup's bridge request is refused while its take-back
   }
 })
 
+// Value: protects=a server started by Start Agent Server while a failed Devin setup's take-back still waits on storage after its command answered is not marked from the receipts that held take-back has not removed yet, so it refuses the Devin bridge until the take-back's own descriptor step decides; fails_when=the start's queue turn sets the in-memory mark from its read of the receipts (the take-back is not counted as taking the mark off), so the Devin bridge is served for a setup that is being taken back; why_new=only a removal is covered as the run that takes the mark off at a server start; seam=none; no_claim=the descriptor file's content while the take-back is held (its descriptor step rewrites it later); the earlier setup is put back first, the held stand-in entry removal stands for the stalled storage and deletes the receipt as the real one does, the server is the real one
+test("Start Agent Server while a failed setup's take-back waits on storage starts a server that refuses the Devin bridge", async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    realServer: true,
+    holdEntryRemoval: true,
+    removalDeletesReceipt: true,
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await window.whenReconnected()
+    // Armed after the reconnect's own skill check, so the re-run fails after its entry write and takes itself back.
+    options.onSkillCheck = async (): Promise<void> => {
+      options.onSkillCheck = undefined
+      throw new Error('Injected skill check failure')
+    }
+    const setupOutcome = await within(
+      window.commands.get('codebook.setupAiChat')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      16_000,
+    )
+    await window.commands.get('codebook.stopAgentServer')!()
+    // Act
+    const startOutcome = await within(
+      window.commands.get('codebook.startAgentServer')!().then(
+        () => 'started',
+        (error: Error) => error.message,
+      ),
+      5_000,
+    )
+    const statusWhileHeld = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    window.holds.entryRemoval.release()
+    await waitUntil(
+      () =>
+        window.outputLines.includes(
+          "Codebook's take-back of this Devin Desktop setup ended now that storage answered, so Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup run again in this window.",
+        ),
+      "the take-back's end",
+    )
+    // Assert
+    assert.equal(
+      setupOutcome,
+      "Injected skill check failure Codebook's take-back of this Devin Desktop setup is still waiting on storage (MCP entry) after 10 seconds; it finishes when storage answers, and Codebook's Output says when. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+    )
+    assert.equal(startOutcome, 'started')
+    assert.equal(statusWhileHeld, 403)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a failed first Devin setup whose descriptor rewrite waits on storage answers within the budget, refuses the Devin bridge meanwhile and leaves the descriptor and the served token as they are until the write lands, then rotates the token, so a bridge with the old token is refused (Cycle 0146 task 1a, v2 finding 12); fails_when=the command waits for the write for ever, the server switches token before the descriptor carries the new one, or the old token is still served afterwards; no_claim=a removal's unmark (the removal tests); the held stand-in rewrite runs the real one once released, the server is the real one
 test('a failed first Devin setup whose descriptor unmark waits on storage keeps the old token until the write lands, then rotates it', async (context) => {
   // Arrange
@@ -3740,6 +3840,52 @@ test('a Devin Desktop window whose late receipts read finds the setup removed st
   }
 })
 
+// Value: protects=a late Devin mark whose descriptor rewrite fails is handled: one Output line says the window could not be marked, the window stays unmarked (its server refuses the Devin bridge, the descriptor carries no mark) and no Reload Window is offered; fails_when=the rejection escapes unhandled, or the window is marked in memory or offered a reload for a descriptor that was never marked; why_new=no test makes the late mark's write fail; seam=none; no_claim=the line's wording past its prefix; the first receipts read waits at its gate until the unmarked descriptor is published, the stand-in rewrite that sets the mark throws, the server is the real one
+test('a late Devin mark whose descriptor rewrite fails writes one Output line, stays unmarked and offers no reload', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    holdReceiptReadAt: 1,
+    failDescriptorMark: true,
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    // Act
+    window.holds.receiptRead.release()
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision",
+      15_000,
+    )
+    const statusAfterDecision = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    // Assert
+    assert.deepEqual(window.lateMarkDecisions, [
+      'Injected descriptor mark failure',
+    ])
+    assert.equal(
+      window.outputLines.filter((line) =>
+        line.startsWith(
+          'Codebook could not mark this window for Devin Desktop after storage answered late: ',
+        ),
+      ).length,
+      1,
+    )
+    assert.equal(await window.readDescriptorField(), undefined)
+    assert.equal(statusAfterDecision, 403)
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // protects=a late receipts read of a server that was stopped and replaced before the read settled leaves the new server's mark and notices as they are: only its own restart offer is shown (Cycle 0146 task 1c) / fails_when=the late continuation marks or rewrites the new server's descriptor, or offers a second reload / no_claim=the new server's own late read (none here); the stand-in read waits 5.5 s and then has no answer, the other reads are the real ones
 test("a late receipts read of a replaced Devin Desktop server leaves the new server's mark and notices as they are", async (context) => {
   // Arrange
@@ -3885,6 +4031,50 @@ test("a Devin server start whose mark was decided before this window's removal t
     // Assert
     assert.equal(restartOutcome, 'resolved')
     assert.equal(statusWhileRemoving, 403)
+    assert.equal(removalOutcome, 'resolved')
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=Devin Local is refused (403) while the removal's saved-setup or descriptor step waits: Remove Devin Desktop Setup takes the window's in-memory mark off right after its entry step, before the steps that wait on storage; fails_when=the in-memory mark stays on until the descriptor step, so a removed entry is still served (200); why_new=the removal hold cases use no real server, and the late-mark and server-start tests get their 403 from other checks; seam=none; no_claim=the descriptor file while the clear waits; the removal's saved-setup clear waits at its gate, the server is the real one
+test('a Devin removal whose saved-setup clear waits on storage refuses the Devin bridge once its entry step ended', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    holdSavedSetupWrite: true,
+  })
+  try {
+    await window.whenReconnected()
+    await waitUntil(
+      async () => (await window.readDescriptorField()) === true,
+      "the reconnect's marked descriptor",
+    )
+    const statusBeforeRemoval = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    // Act
+    const removal = window.commands.get(
+      'codebook.removeManagedDevinSetup',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the removal's saved-setup clear, after its entry step",
+    )
+    const statusWhileClearWaits = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    window.holds.savedSetupWrite.release()
+    const removalOutcome = await within(removal, 15_000)
+    // Assert
+    assert.deepEqual([statusBeforeRemoval, statusWhileClearWaits], [200, 403])
     assert.equal(removalOutcome, 'resolved')
   } finally {
     await window.loaded.deactivate()
@@ -4151,27 +4341,55 @@ test('a Devin setup whose skill deployment never returns answers within the budg
   }
 })
 
-/** The forward setup writes after the entry write that a test holds on storage, with the harness option and hold of each and the sentence the setup command answers while it waits. */
+/** The forward setup steps a test holds on storage, with the name the test's title gives the held step, the harness option and hold of each and the sentence the setup command answers while it waits. */
 const FORWARD_WRITE_HOLD_CASES = [
   {
-    step: 'saved setup',
+    name: 'saved setup write',
     option: 'holdSavedSetupWrite',
     hold: 'savedSetupWrite',
     pendingSentence:
       "Codebook's Devin Desktop setup is still waiting on storage (saved setup) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
   },
   {
-    step: 'descriptor',
+    name: 'descriptor write',
     option: 'holdDescriptorMark',
     hold: 'descriptorMark',
+    pendingSentence:
+      "Codebook's Devin Desktop setup is still waiting on storage (descriptor) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+  },
+  {
+    name: 'MCP entry write',
+    option: 'holdEntryWrite',
+    hold: 'entryWrite',
+    pendingSentence:
+      "Codebook's Devin Desktop setup is still waiting on storage (MCP entry) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+  },
+  {
+    name: 'provisional saved setup write',
+    option: 'holdProvisionalSave',
+    hold: 'provisionalSave',
+    pendingSentence:
+      "Codebook's Devin Desktop setup is still waiting on storage (saved setup) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+  },
+  {
+    name: 'final skill check',
+    option: 'holdSkillCheck',
+    hold: 'skillCheck',
+    pendingSentence:
+      "Codebook's Devin Desktop setup is still waiting on storage (skill) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+  },
+  {
+    name: "server start's descriptor publish",
+    option: 'holdDescriptorPublish',
+    hold: 'descriptorPublish',
     pendingSentence:
       "Codebook's Devin Desktop setup is still waiting on storage (descriptor) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
   },
 ] as const
 
 for (const holdCase of FORWARD_WRITE_HOLD_CASES) {
-  // Value: protects=a Devin setup whose write of the committed saved setup, or of the descriptor's mark, never returns answers within the setup budget naming that step, goes on under the setup lock, and shows its own notice with Reload Window once storage answers, with the setup saved and the descriptor marked (Cycle 0146 task 14); fails_when=the command waits for that write for ever, so the setup lock and a removal queued behind it wait with it; no_claim=the server start's publish and the provisional save (budgeted the same way, not held here); a stand-in write held at a gate stands for the stalled storage
-  test(`a Devin setup whose ${holdCase.step} write never returns answers within the budget and shows its own notice once storage answers`, async (context) => {
+  // Value: protects=a Devin setup whose forward step never returns (the server start's descriptor publish, the entry write, the provisional save, the final skill check, the descriptor's mark or the committed saved setup) answers within the setup budget naming that step, goes on under the setup lock, and shows its own notice with Reload Window once storage answers, with the setup saved and the descriptor marked (Cycle 0146 task 14; the publish, entry, provisional and skill check cases Cycle 0146 /ship Step 7); fails_when=a step runs outside its budget, so the command waits for that step for ever and the setup lock and a removal queued behind it wait with it; why_new=only the committed saved setup and the descriptor mark were held before; seam=none; no_claim=the skill deployment (its own test above) and the clear after a folder change (the folder tests below); a stand-in step held at a gate stands for the stalled storage, and the publish is the real write, held by a stand-in of the file module
+  test(`a Devin setup whose ${holdCase.name} never returns answers within the budget and shows its own notice once storage answers`, async (context) => {
     // Arrange
     const window = await devinWindow(context, { [holdCase.option]: true })
     try {
@@ -4182,7 +4400,7 @@ for (const holdCase of FORWARD_WRITE_HOLD_CASES) {
       )
       const writeReachedAtMs = await waitUntil(
         () => window.holds[holdCase.hold].reachedAtMs(),
-        `the setup's held ${holdCase.step} write`,
+        `the setup's held ${holdCase.name}`,
       )
       const setupOutcome = await within(setupEnd, 16_000)
       window.holds[holdCase.hold].release()
@@ -4192,7 +4410,7 @@ for (const holdCase of FORWARD_WRITE_HOLD_CASES) {
       const answeredAfterMs = setupOutcome.atMs - writeReachedAtMs
       assert.ok(
         answeredAfterMs >= 9_000 && answeredAfterMs <= 15_000,
-        `the setup command answered ${answeredAfterMs} ms after its ${holdCase.step} write was reached`,
+        `the setup command answered ${answeredAfterMs} ms after its ${holdCase.name} was reached`,
       )
       assert.equal(setupOutcome.message, holdCase.pendingSentence)
       assert.deepEqual(window.notices, [
@@ -4477,6 +4695,44 @@ test('a folder change whose clear of the saved Devin setup fails after storage a
         severity: 'error',
         message:
           "Codebook did not finish its cleanup after the workspace's folders changed. The saved AI chat setup could not be cleared: Injected late workspace state write failure. It is still in use; run Codebook: Set Up AI Chat to replace it. Codebook goes on with new readers.",
+        actions: [],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a folder change whose clear of the saved Devin setup fails at once tells that failure in the handling's one cleanup notice, first, before the failure of a step that ran after it; fails_when=the failure is dropped, it is told after the later step's failure, or it gets a notice of its own beside the handling's (two notices); why_new=only the late failure and the notice wording are tested; seam=none; no_claim=VS Code and Cursor windows, which share this path; the stand-in storage refuses the clear at once, and the stand-in Study reader's first dispose throws as the later failure
+test('a folder change whose saved-setup clear fails at once tells it first in the one cleanup notice', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    failSetupClear: true,
+    failStudyReaderDispose: true,
+  })
+  try {
+    await window.whenReconnected()
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+    )
+    // Act
+    window.changeFolder('/other/folder')
+    // Only the handling's own notice names the Study reader, and it is shown last: a notice of the clear alone would already be there.
+    await waitUntil(
+      () =>
+        window.notices.some(({ message }) =>
+          message.includes('The Study workspace could not be closed'),
+        ),
+      "the folder change's cleanup notice",
+    )
+    // Assert
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'error',
+        message:
+          "Codebook did not finish its cleanup after the workspace's folders changed. The saved AI chat setup could not be cleared: Injected workspace state write failure. It is still in use; run Codebook: Set Up AI Chat to replace it. The Study workspace could not be closed: Injected Study reader dispose failure. Codebook goes on with new readers. If a Codebook pane stayed open, close it by hand.",
         actions: [],
       },
     ])
