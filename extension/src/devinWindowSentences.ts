@@ -197,11 +197,11 @@ export const DEVIN_OWED_TAKE_BACK_LINE =
 /**
  * The Output line when a Devin Desktop setup, removal or activation refresh could not use Codebook's record of an owed take-back (a read that got no answer, or a record that is not private or not of its shape): that record may name the entry the setup or refresh would keep, so they change nothing.
  * @param recordPath - The `devin-setup/take-back.json` in Codebook's global storage.
- * @returns One line that names the file and what to do when it stays unreadable.
+ * @returns One line that names the file and what to do when it stays unreadable: make it readable again first, because the record may name the entry the failed setup left, and only when that cannot be done check that entry before the record is deleted.
  * @example devinOwedTakeBackUnreadLine('/storage/devin-setup/take-back.json') // => "Codebook could not read /storage/devin-setup/take-back.json, its record of a failed Devin Desktop setup's take-back, …"
  */
 export const devinOwedTakeBackUnreadLine = (recordPath: string): string =>
-  `Codebook could not read ${recordPath}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+  `Codebook could not read ${recordPath}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, make that file readable again, as a regular file readable only by you (mode 600); only when you cannot, check the \`codebook\` entry in Devin Desktop's MCP config, which that failed setup may have left, before you delete that file and run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /** Why a Devin Desktop setup or activation refresh changed nothing when the record of an owed take-back still stands after its removal was tried, or could not be read ({@link devinOwedTakeBackUnreadLine}): the entry it would keep may be the failed setup's, which the next run takes out. */
 export const DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE =

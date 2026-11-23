@@ -3802,7 +3802,7 @@ test('a Devin setup whose owed take-back fails writes no entry, reports no ready
   }
 })
 
-// Value: protects=a Set Up AI Chat whose look for an owed take-back gets no answer (descriptor exhaustion, EIO) writes no entry and reports no ready setup, and the Output names the record, because that record may name the entry the setup would adopt (Cycle 0146 /ship pass 2, red-team 1); fails_when=a look without answer reads as nothing owed, so the setup adopts the failed setup's entry as current and reports ready, and the next look that answers takes that entry out; no_claim=a record that cannot be used for good (the same refusal; the Output line asks to delete it when this repeats); the stand-in read of the record answers no-answer once, and the record is the real file
+// Value: protects=a Set Up AI Chat whose look for an owed take-back gets no answer (descriptor exhaustion, EIO) writes no entry and reports no ready setup, and the Output names the record, because that record may name the entry the setup would adopt (Cycle 0146 /ship pass 2, red-team 1); fails_when=a look without answer reads as nothing owed, so the setup adopts the failed setup's entry as current and reports ready, and the next look that answers takes that entry out, or the Output line advises deleting the record before making it readable again, so the next setup finds nothing owed and keeps the failed setup's entry; no_claim=a record that cannot be used for good (the same refusal; when this repeats, the Output line asks first to make that record readable again, and only when that cannot be done to check the failed setup's `codebook` entry in Devin Desktop's MCP config before deleting the record, Cycle 0146 /ship final-range pass, CodeRabbit CLI devinWindowSentences.ts:204); the stand-in read of the record answers no-answer once, and the record is the real file
 test('a Devin setup whose look for an owed take-back gets no answer writes no entry and reports no ready setup', async (context) => {
   // Arrange
   const window = await devinWindow(context, { entryWrite: 'current' })
@@ -3830,7 +3830,7 @@ test('a Devin setup whose look for an owed take-back gets no answer writes no en
       generation: 'generation-of-this-setup',
     })
     assert.deepEqual(window.outputLines, [
-      `Codebook could not read ${join(window.directory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run Codebook: Set Up AI Chat again.`,
+      `Codebook could not read ${join(window.directory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, make that file readable again, as a regular file readable only by you (mode 600); only when you cannot, check the \`codebook\` entry in Devin Desktop's MCP config, which that failed setup may have left, before you delete that file and run Codebook: Set Up AI Chat again.`,
     ])
   } finally {
     await window.loaded.deactivate()
@@ -3896,7 +3896,7 @@ test('a Devin Desktop window whose look for an owed take-back gets no answer lea
       'start server',
     ])
     assert.deepEqual(window.outputLines, [
-      `Codebook could not read ${join(storageDirectory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run Codebook: Set Up AI Chat again.`,
+      `Codebook could not read ${join(storageDirectory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, make that file readable again, as a regular file readable only by you (mode 600); only when you cannot, check the \`codebook\` entry in Devin Desktop's MCP config, which that failed setup may have left, before you delete that file and run Codebook: Set Up AI Chat again.`,
       'Codebook did not refresh its Devin Desktop MCP entry: Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished.',
     ])
   } finally {
