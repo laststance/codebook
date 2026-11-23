@@ -2097,7 +2097,7 @@ async function tidyLeftover(
 }
 
 /**
- * Gives the phase recovery reads a pending record in; called by {@link recoverLeftovers}, {@link tidyLeftover}, {@link putBackDisplaced} and {@link inspect}.
+ * Gives the phase recovery reads a pending record in; called by {@link recoverLeftovers}, {@link tidyLeftover}, {@link putBackDisplaced}, {@link settleRollbackJournal} and {@link inspect}.
  * A record that says {@link Pending.bytesUnverified} was written as handed only so that older builds never delete from it while a put-back by bytes is unchecked; this build reads it as the change in progress it is, so it checks the shared bytes and finishes the put-back.
  * @param pending - The pending record as read.
  * @returns `undefined` for an unverified put-back's record; the recorded phase otherwise.
@@ -2971,7 +2971,9 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   if (pending?.targetPath !== context.path) return
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
-  const tracked = pending.phase ? unsettled.slice(1) : unsettled
+  // An unverified put-back's handed journal is read as the change in progress it is, so its displaced file stays tracked.
+  const phase = leftoverPhaseOf(pending)
+  const tracked = phase ? unsettled.slice(1) : unsettled
   // A journal of an older build names no publish: the config its recovery just put back helps tell whether it is this publish's.
   const legacy =
     pending.publishGeneration === undefined
@@ -2985,12 +2987,12 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   await retirePending(
     rollbackContext,
     retainedRecord(
-      isHandedNow ? { ...pending, phase: 'handed' } : pending,
+      isHandedNow ? handedRecordOf(pending) : { ...pending, phase },
       tracked,
     ),
   )
   const [reported] = unsettled
-  if (reported) throw unsettledRefusal(rollbackContext, pending.phase, reported)
+  if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
 }
 
 /** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `unmatched` (the evidence contradicts itself) and `unread` (the config that decides could not be read) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
@@ -3320,7 +3322,7 @@ async function inspect(context: Context): Promise<Inspection> {
 }
 
 /**
- * Gives the record a copy handed to the learner in this run leaves: the whole record as read, now handed and no longer unverified ({@link Pending.bytesUnverified}), so no later run of any build deletes the copy; used by {@link inspect} for the record it writes at once ({@link persistHandover}) and for the record that stays.
+ * Gives the record a copy handed to the learner in this run leaves: the whole record as read, now handed and no longer unverified ({@link Pending.bytesUnverified}), so no later run of any build deletes the copy; used by {@link inspect} for the record it writes at once ({@link persistHandover}) and for the record that stays, and by {@link settleRollbackJournal} for a rollback's journal.
  * @param pending - The pending record as read.
  * @returns The same record with `phase: 'handed'` and without `bytesUnverified`.
  * @example

@@ -2682,6 +2682,54 @@ test('A content-only put-back that stopped after it recorded itself as unverifie
   assert.equal(existsSync(pendingPath), false)
 })
 
+test('A rollback journal left unverified by a put-back by bytes stays when its put-back fails, so the next run still names the only copy of the config', async (context) => {
+  // Value: protects=a rollback journal that a put-back by bytes left handed and unverified, while the config name is empty and the private file is the learner's only copy of the config, is read as the change in progress it is when that put-back fails, so it stays tracked and named and setup never installs over the empty config name; fails_when=the journal is gone after the first run, the refusal advises deleting the file when it is no longer needed, a later setup installs, or the private file changes; no_claim=what an older build does with the journal (read from its code), and a put-back that fails for another reason than changed bytes; seam=hand-written rollback journal of this build (publishGeneration set) with phase handed and bytesUnverified, whose displaced file has another inode and other bytes than the record, and an empty config name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const editedBytes = '{"mcpServers":{"alpha":{"command":"edited"}}}\n'
+  await writeFile(keptPath, editedBytes)
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  await writeRecordFile(storage, 'pending.json.rollback', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000146',
+    phase: 'handed',
+    bytesUnverified: true,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino + 1,
+    keptSha256: sha256('{"mcpServers":{"alpha":{"command":"a"}}}\n'),
+  })
+
+  // Act
+  const firstRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(firstRun, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(!error.message.includes('no longer need it'), error.message)
+    return true
+  })
+  assert.equal(existsSync(journalPath), true)
+  assert.equal(
+    (await readRecordFile(storage, 'pending.json.rollback')).keptName,
+    basename(keptPath),
+  )
+
+  // Act
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(setup, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), editedBytes)
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange
