@@ -2936,6 +2936,86 @@ test('A handover after a failed shared-bytes check whose record cannot be writte
   assert.equal(existsSync(pendingPath), false)
 })
 
+test('A failed shared-bytes check after another file was saved at the config name never claims the two paths are one file', async (context) => {
+  // Value: protects=the shared-bytes refusal claims nothing about the two paths that its looks did not show: a config name that another file replaced during the check is not called a second name of the private file; fails_when=the refusal says the paths are two names of one file, omits a path, or a name is deleted; no_claim=the rest of the wording; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, seam.beforeLeftoverCheck saves another file over the config name at the check's synchronous look
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== configPath || isSaved) return
+      isSaved = true
+      swapFile(configPath, '{"editor":"saved"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    assert.ok(
+      !error.message.includes('are two names of one file'),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(configPath, 'utf8'), '{"editor":"saved"}\n')
+  assert.equal(readFileSync(keptPath, 'utf8'), PUT_BACK_BYTES)
+})
+
+test('A private copy of a finished change that stays because the config changed during its cleanup is named with the advice to delete it when no longer needed', async (context) => {
+  // Value: protects=a leftover of a finished change that Codebook stops tracking after the config changed while it was about to delete it is named with the advice to delete it when no longer needed, besides the advice never to copy it over the config; fails_when=the refusal omits that advice, the never-copy advice or the private path, a file is deleted or changed, or the record keeps tracking the copy; no_claim=the order of the sentences; seam=hand-written completed pending record whose displaced name is a second name of the config, seam.beforeLeftoverCheck saves another file over the config name right before the private name would be deleted
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, PUT_BACK_BYTES)
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  linkSync(configPath, keptPath)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: statSync(keptPath).ino,
+    keptSha256: sha256(PUT_BACK_BYTES),
+  })
+  let isSaved = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== configPath || isSaved) return
+      isSaved = true
+      swapFile(configPath, '{"editor":"saved"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(
+      error.message.includes('never copy the private file over the config'),
+      error.message,
+    )
+    assert.ok(
+      error.message.includes(
+        `Codebook left ${keptPath} from a change that had already finished, so delete that file when you no longer need it.`,
+      ),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(isSaved, true)
+  assert.equal(readFileSync(configPath, 'utf8'), '{"editor":"saved"}\n')
+  assert.equal(readFileSync(keptPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange

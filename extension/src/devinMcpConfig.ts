@@ -1990,7 +1990,7 @@ function unsettledRefusal(
 ): Error {
   // The put-back check's and the changed config's own texts name both paths and the state; the move-back advice would lose a new save.
   if (namesBothFiles(cause))
-    return bothFilesRefusal(cause, leftover.path, isHandoverUnrecorded)
+    return bothFilesRefusal(cause, leftover.path, phase, isHandoverUnrecorded)
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
@@ -1999,25 +1999,33 @@ function unsettledRefusal(
 
 /**
  * Words a leftover whose own failure text names both files and what stays ({@link namesBothFiles}); called by {@link unsettledRefusal}.
- * That text says what this run did. One sentence follows when what happens to the copy next differs from what it implies: a handover whose record could not be written, so a later run may check the copy again.
+ * That text says what this run did. One sentence follows when what happens to the copy next differs from what it implies: a handover whose record could not be written (a later run may check the copy again), or a leftover of a finished or handed change, which recovery reports once and never puts back, so the learner may delete it.
  * @param cause - The failure's own error ({@link PutBackCheckError} or {@link ConfigChangedError}).
  * @param copyPath - The private copy it names.
+ * @param phase - The phase recovery read the record in ({@link leftoverPhaseOf}).
  * @param isHandoverUnrecorded - Whether the handed record of this copy could not be written ({@link Unsettled.isHandoverUnrecorded}).
  * @returns
- * - `cause` itself when its handover, if any, is recorded
+ * - `cause` itself for a change in progress whose handover, if any, is recorded
  * - A new error of `cause`'s text and the sentence otherwise
  * @example
- * bothFilesRefusal(sharedBytesError(context, keptPath), keptPath, true) // => '… never copy one over the other; … Codebook could not record that it leaves both paths to you, so a later run may check them again …'
+ * bothFilesRefusal(configChangedError(context, keptPath), keptPath, 'completed', undefined) // => '… never copy the private file over the config; … Codebook left … from a change that had already finished, so delete that file when you no longer need it.'
  */
 function bothFilesRefusal(
   cause: PutBackCheckError | ConfigChangedError,
   copyPath: string,
+  phase: Pending['phase'],
   isHandoverUnrecorded: boolean | undefined,
 ): Error {
   // No record says the copy is left to the learner, so a later run may still check it and put it back or drop it.
   if (isHandoverUnrecorded)
     return new Error(
       `${cause.message} Codebook could not record that it leaves both paths to you, so a later run may check them again and removes ${copyPath} only while the config holds the bytes Codebook kept.`,
+      { cause },
+    )
+  // A finished or handed change's leftover is reported once and never put back.
+  if (phase)
+    return new Error(
+      `${cause.message} Codebook left ${copyPath} from a change that had already finished, so delete that file when you no longer need it.`,
       { cause },
     )
   return cause
@@ -2254,13 +2262,13 @@ async function assertSharedPutBackBytes(
   await unlink(path)
 }
 
-/** The refusal of {@link assertSharedPutBackBytes}: both names of one file stay, and the learner is asked to look at both and never to copy one over the other; handed, so no later run deletes either name. */
+/** The refusal of {@link assertSharedPutBackBytes}: both paths stay, and the learner is asked to look at both and never to copy one over the other; handed, so no later run deletes either name. It claims no shared file, because it also fires when a name is gone or another file was saved at the config name. */
 function sharedBytesError(
   context: Context,
   copyPath: string,
 ): PutBackCheckError {
   return new PutBackCheckError(
-    `The config at ${context.path} and the private file at ${copyPath} are two names of one file, and Codebook could not verify that it still holds the bytes Codebook kept (it changed or could not be read); Codebook left both names as they are, so look at both before you use either, and never copy one over the other; ${context.retry}.`,
+    `Codebook could not verify that the config at ${context.path} and the private file at ${copyPath} are still two names of one file holding the bytes Codebook kept (one of them changed, is gone or could not be read); Codebook left both paths as they are, so look at both before you use either, and never copy one over the other; ${context.retry}.`,
     true,
   )
 }
