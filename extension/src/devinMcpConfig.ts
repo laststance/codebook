@@ -136,7 +136,9 @@ type JsonObject = Record<string, unknown>
 type FileIdentity = {
   ino: bigint
   size: bigint
-  mtimeMs: bigint
+  /** The modification and change times in nanoseconds, so a write within the same millisecond is seen as well ({@link assertConfigUnchanged}). */
+  mtimeNs: bigint
+  ctimeNs: bigint
   /** The permission bits (`mode & 0o777`) the file had when it was read; a replacement keeps only the owner's of them. */
   mode: number
   /** How many names the inode had when it was read; more than one means another path reaches the same file ({@link assertSingleLink}). */
@@ -440,12 +442,13 @@ function codeOf(error: unknown): unknown {
 function identityOf(status: {
   ino: bigint
   size: bigint
-  mtimeMs: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
   mode: bigint
   nlink: bigint
 }): FileIdentity {
-  const { ino, size, mtimeMs, mode, nlink } = status
-  return { ino, size, mtimeMs, mode: Number(mode) & 0o777, nlink }
+  const { ino, size, mtimeNs, ctimeNs, mode, nlink } = status
+  return { ino, size, mtimeNs, ctimeNs, mode: Number(mode) & 0o777, nlink }
 }
 
 /**
@@ -628,7 +631,7 @@ function parseConfig(
 }
 
 /**
- * Throws when the config is no longer the file that was read; runs just before the rename ({@link publishRoot}) and before a removal.
+ * Throws when the config is no longer the file that was read: another inode, size or modification or change time in nanoseconds, so a same-size write within the same millisecond is seen too; runs just before the rename ({@link publishRoot}), before a removal and right before a first setup's old record is deleted ({@link dropRetiredReceipt}).
  * @param context - The run.
  * @param expected - The identity read earlier; undefined when the file was absent.
  * @throws A {@link refusal} naming the change; nothing was written.
@@ -644,7 +647,8 @@ function assertConfigUnchanged(
     ? !now ||
       now.ino !== expected.ino ||
       now.size !== expected.size ||
-      now.mtimeMs !== expected.mtimeMs
+      now.mtimeNs !== expected.mtimeNs ||
+      now.ctimeNs !== expected.ctimeNs
     : Boolean(now)
   if (didChange) throw changedWhileWorking(context)
 }

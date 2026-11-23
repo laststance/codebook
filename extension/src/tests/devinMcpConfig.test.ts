@@ -9561,6 +9561,57 @@ test('A refresh that decided to delete the old record on the entry a stopped fir
   assert.equal(readFileSync(retiredPath, 'utf8'), ownerRecordText)
 })
 
+test('A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps that record when the config is written again in place at the same size within the same millisecond right before the delete', async (context) => {
+  // Value: protects=the last look at the config before the old record is deleted compares the nanosecond modification and change times too, so a write into the same file at the same size whose modification time stays within the millisecond the drop was decided on stops the delete and keeps both records; fails_when=the refresh deletes the old record or answers without the changed-config refusal, a record is gone after it, or the config holds anything but the text written again; no_claim=a real backup tool (seam.afterLeftoverCheck writes the config the old record covers into the same file once at the same size, then utimes sets its modification time back into the millisecond it had), a write after that last look (the syscall gap), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
+  // Arrange
+  const { home, storage, configPath, retiredName, retiredPath } =
+    await arrangeResavedAfterStoppedFirstSetup(context, OTHER_ENTRY)
+  // The config the old record covers (ENTRY), padded with spaces to the 187 bytes of the config that stands.
+  const restoredText = `${'{"mcpServers":{"codebook":{"command":"/usr/bin/node","args":["/ext/dist/devinMcpBridge.js","/storage/agent"],"env":{}}}}'.padEnd(186, ' ')}\n`
+  const looks: Array<{ ino: bigint; size: bigint; mtimeMs: bigint }> = []
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      afterLeftoverCheck: (path) => {
+        if (path !== retiredPath || looks.length > 0) return
+        // A backup tool writes the old config into the same file, and its modification time goes back into the millisecond it had.
+        const before = statSync(configPath, { bigint: true })
+        writeFileSync(configPath, restoredText)
+        utimesSync(
+          configPath,
+          Number(before.atimeMs) / 1000,
+          Number(before.mtimeMs) / 1000 + 0.0005,
+        )
+        const after = statSync(configPath, { bigint: true })
+        looks.push(before, after)
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  // The write kept the inode, the size and the millisecond of the modification time, which alone show no change.
+  const [before, after] = looks.map(({ ino, size, mtimeMs }) => [
+    ino,
+    size,
+    mtimeMs,
+  ])
+  assert.notEqual(before, undefined)
+  assert.deepEqual(after, before)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+})
+
 test("A first setup with another bridge path that wrote its own record but could not delete its publish record or the old record's private file leaves its record standing, and the old record never comes back", async (context) => {
   // Value: protects=a first setup that wrote its own record finished, so the next run deletes the old record's private file whatever the config shows, never asks to move that setup's own record away and never puts the old record back; fails_when=the refresh rejects or answers anything but not-managed, receipt.json holds anything but that setup's record, or any other record stays; no_claim=why the unlinks fail (the config module is loaded with an unlink that fails with EBUSY for the old record's private name and an rm that fails with EBUSY for pending.json), a learner deleting mcp_config.json again (rmSync)
   // Arrange
