@@ -25,6 +25,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer as startRealServer } from '../server'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
+import { continueAfterLateRead } from '../utils/continueAfterLateRead'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
 import { readDevinInstallationId } from '../utils/readDevinInstallationId'
 import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
@@ -206,6 +207,8 @@ async function devinWindow(
     onResolveNode?: () => void
     /** Holds the first read of the MCP receipt's installation id until `holds.firstInstallationRead` is released, then reads the real receipt. */
     hangFirstInstallationRead?: boolean
+    /** The position (1 for the first) of the one read of the setup receipts that reads the real records and then waits at `holds.receiptRead` until the test releases it, answering what it read before it waited, as a slow storage whose answer comes after the start budget. */
+    holdReceiptReadAt?: number
   } = {},
 ) {
   const directory =
@@ -291,6 +294,7 @@ async function devinWindow(
     savedSetupWrite: createGate(),
     descriptorUnmark: createGate(),
     firstInstallationRead: createGate(),
+    receiptRead: createGate(),
   }
   // Whether the one held write of the saved setup was reached; the writes after it are not held.
   let isSavedSetupWriteHeld = false
@@ -305,6 +309,8 @@ async function devinWindow(
   }
   // How many reads of the setup receipts the window started; a test reads it to see that a hung read is not asked again.
   let receiptReadCount = 0
+  // What each late mark's continuation answered once it settled (whether it marked, or its failure's message), in order; a test waits for it instead of for the start of the fresh read.
+  const lateMarkDecisions: unknown[] = []
   // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
   let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
@@ -647,6 +653,13 @@ async function devinWindow(
       './utils/readStandingDevinInstallationId': {
         readStandingDevinInstallationId: async (storageRoot: string) => {
           receiptReadCount += 1
+          // The held read answers what it read before it waited, so a continuation that trusted it would see the setup standing.
+          if (receiptReadCount === options.holdReceiptReadAt) {
+            const standsBeforeHold =
+              await readStandingDevinInstallationId(storageRoot)
+            await holds.receiptRead.wait()
+            return standsBeforeHold
+          }
           // A read that answers late with no answer, as a slow storage that then fails.
           const delayMs = options.receiptReadDelaysMs?.[receiptReadCount - 1]
           if (delayMs !== undefined) {
@@ -671,6 +684,19 @@ async function devinWindow(
             await receiptsHeld
           }
           return stands
+        },
+      },
+      // The real continuation of a late mark; each decision it settles with is recorded, before the window's own handler runs.
+      './utils/continueAfterLateRead': {
+        continueAfterLateRead: (
+          ...parameters: Parameters<typeof continueAfterLateRead>
+        ) => {
+          const decision = continueAfterLateRead(...parameters)
+          void decision.then(
+            (isMarked) => lateMarkDecisions.push(isMarked),
+            (error: Error) => lateMarkDecisions.push(error.message),
+          )
+          return decision
         },
       },
       // Reads the real receipt; `afterInstallationRead` runs once, right after the first read answered, as a receipt that becomes unreadable between the setup's check and its mark write.
@@ -842,7 +868,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `hangFirstInstallationRead`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `hangFirstInstallationRead`, `holdReceiptReadAt`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -869,6 +895,8 @@ async function devinWindow(
     changeFolder,
     /** How many reads of the setup receipts the window started. */
     receiptReadCount: (): number => receiptReadCount,
+    /** What each late mark's continuation settled with, in order: `true` when it marked the descriptor, `false` when it left it as it was, or its failure's message. */
+    lateMarkDecisions,
     /** Whether a read of the setup records is waiting for {@link releaseReceipts}; a test polls it with a time budget, so a hold that is never reached fails instead of hanging. */
     hasReceiptsReached: (): boolean => isReceiptsReached,
     releaseReceipts,
@@ -3725,6 +3753,113 @@ test("a late receipts read of a replaced Devin Desktop server leaves the new ser
         actions: ['Reload Window'],
       },
     ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a late mark whose descriptor write lands after this window's removal took the in-memory mark off leaves the mark off, so the server keeps refusing the Devin bridge while the removal still waits on storage, and the late mark offers no Reload Window (Cycle 0146 task 17); fails_when=the late mark turns the in-memory mark back on once its write lands, so the Devin bridge is served for a setup that is being removed; no_claim=the descriptor file while the removal waits (the removal's own unmark rewrites it later) and a take-back that takes the mark off; the late read, the late mark's rewrite and the removal's saved-setup clear wait at gates the test opens, the server is the real one
+test("a late Devin mark whose descriptor write lands after this window's removal began keeps refusing the Devin bridge and offers no reload", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    holdReceiptReadAt: 1,
+    holdDescriptorRewrite: true,
+    holdSavedSetupWrite: true,
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    window.holds.receiptRead.release()
+    const lateRewrite = await within(window.rewriteReached, 15_000)
+    // Act
+    const removal = window.commands.get(
+      'codebook.removeManagedDevinSetup',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the removal's saved-setup clear, after its entry step",
+    )
+    window.releaseRewrite()
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision",
+    )
+    const statusWhileRemoving = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    window.holds.savedSetupWrite.release()
+    const removalOutcome = await within(removal, 15_000)
+    // Assert
+    assert.notEqual(lateRewrite, 'still waiting')
+    assert.equal(statusWhileRemoving, 403)
+    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(removalOutcome, 'resolved')
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message: `Codebook removed its Devin Desktop skill. Codebook removed its codebook entry from ${window.configPath} and kept the file's other entries. Reload this window so Devin Local stops Codebook's MCP server. Codebook: Set Up AI Chat installs the skill and the entry again.`,
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin server start whose mark was decided before this window's removal took the in-memory mark off leaves the mark off once its descriptor is written, so the restarted server refuses the Devin bridge while the removal still waits on storage (Cycle 0146 task 17); fails_when=the start's queue turn sets the in-memory mark from its earlier decision, so the Devin bridge is served for a setup that is being removed; no_claim=the descriptor file while the removal waits (the removal's own unmark rewrites it later); the restart's receipts read reads the installed records and waits until the removal's entry step ran, the removal's saved-setup clear waits at its gate, the server is the real one
+test("a Devin server start whose mark was decided before this window's removal took it off keeps refusing the Devin bridge", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    holdSavedSetupWrite: true,
+  })
+  try {
+    await window.whenReconnected()
+    await window.commands.get('codebook.stopAgentServer')!()
+    window.armReceiptsHold()
+    const restart = window.commands.get('codebook.startAgentServer')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.hasReceiptsReached(),
+      "the restart's receipts read",
+    )
+    // Act
+    const removal = window.commands.get(
+      'codebook.removeManagedDevinSetup',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the removal's saved-setup clear, after its entry step",
+    )
+    window.releaseReceipts()
+    const restartOutcome = await within(restart, 15_000)
+    const statusWhileRemoving = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    window.holds.savedSetupWrite.release()
+    const removalOutcome = await within(removal, 15_000)
+    // Assert
+    assert.equal(restartOutcome, 'resolved')
+    assert.equal(statusWhileRemoving, 403)
+    assert.equal(removalOutcome, 'resolved')
   } finally {
     await window.loaded.deactivate()
   }
