@@ -8598,6 +8598,202 @@ test("A setup that moved aside a readable file of another shape while a record o
   assert.deepEqual(JSON.parse(readFileSync(movedAwayPath, 'utf8')), otherShape)
 })
 
+test("A setup whose link fails while the record of the entry the restored config holds appeared at the old record's name never asks to move that record, names the old record as the one to move, and the next setup finds that entry current", async (context) => {
+  // Value: protects=a record at receipt.json that owns the entry the config holds is never named as the one to move: the refusal names the old record, which owns nothing the config holds, and following it keeps the live entry Codebook's own; fails_when=the refusal asks to move what stands at receipt.json, a record or the publish record is gone after the refusal, or the next setup after the old record was moved away answers anything but current with the live record kept; no_claim=a real sync or backup tool (the config module is loaded with a link that, for the link that publishes the config, first saves the live record at receipt.json and a config holding its entry at the config name)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedAwayPath = join(home, 'moved-old-record.json')
+  const liveReceipt = {
+    ...receiptBefore,
+    entrySha256: sha256(OTHER_CANONICAL),
+    generation: 'c0ffee00-0000-4000-8000-000000000152',
+  }
+  const restoredConfigText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY } })}\n`
+  const restoringLive = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            writeFileSync(receiptPath, JSON.stringify(liveReceipt))
+            writeFileSync(configPath, restoredConfigText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await restoringLive
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const generation = existsSync(pendingPath)
+    ? String((await readRecordFile(storage, 'pending.json')).generation)
+    : 'absent'
+  const retiredName = `receipt.json.${generation}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  const recordsAfterRefusal = await recordsIn(storage)
+  // The way out the refusal names: the old record goes to another folder.
+  if (existsSync(retiredPath)) renameSync(retiredPath, movedAwayPath)
+  const next = await writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and kept it there, because its record of the "codebook" entry that Devin Desktop's MCP config at ${configPath} holds stands at ${receiptPath} again; move that old record to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(next, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), liveReceipt)
+  assert.deepEqual(
+    JSON.parse(readFileSync(movedAwayPath, 'utf8')),
+    receiptBefore,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), restoredConfigText)
+})
+
+test("A setup whose link fails while an older build's record of the same entry, turned off in Devin, appeared at the old record's name keeps that record and drops the old one", async (context) => {
+  // Value: protects=two records of this config that own the same entry the config holds, one hashing the whole entry (an older build, disabled included) and one its core, count as the same entry: the old one is a spare copy, and the record at receipt.json is never named as the one to move; fails_when=the refusal names a record to move, the older build's record is gone or changed, the old record or the publish record stays, or the next setup answers anything but updated (it owns that entry and rewrites the older build's record in the new form, as for any record of an older build); no_claim=a real sync or backup tool (the config module is loaded with a link that, for the link that publishes the config, first saves the older build's record at receipt.json and the config with that entry turned off at the config name)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore } =
+    await arrangeMovedAwayConfig(context)
+  const olderBuildReceipt = {
+    ...receiptBefore,
+    entrySha256: sha256(DISABLED_ENTRY_CANONICAL),
+    generation: 'c0ffee00-0000-4000-8000-000000000153',
+  }
+  const restoredConfigText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: { ...ENTRY, disabled: true } } })}\n`
+  const restoringOlder = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            writeFileSync(receiptPath, JSON.stringify(olderBuildReceipt))
+            writeFileSync(configPath, restoredConfigText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await restoringOlder
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const recordsAfterRefusal = await recordsIn(storage)
+  const receiptAfterRefusal = await readRecordFile(storage, 'receipt.json')
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, ['receipt.json'])
+  assert.deepEqual(receiptAfterRefusal, olderBuildReceipt)
+  assert.equal(next, 'updated')
+})
+
+test("A setup whose link fails while a record of another entry appeared at the old record's name and the config cannot be read keeps both records and names neither as the one to move", async (context) => {
+  // Value: protects=a record at receipt.json is named as the one to move only once the config was read and that record owns nothing it holds: when the config cannot be read, both records and the publish record stay and the refusal asks to move neither; fails_when=the refusal asks to move a record, or a record or the publish record is gone; no_claim=a real sync tool or a real unreadable config (the config module is loaded with a link that, for the link that publishes the config, first saves a record of another entry at receipt.json and makes a folder at the config name)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const otherEntryReceipt = {
+    ...receiptBefore,
+    entrySha256: sha256('another entry'),
+    generation: 'c0ffee00-0000-4000-8000-000000000154',
+  }
+  const makingFolder = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            writeFileSync(receiptPath, JSON.stringify(otherEntryReceipt))
+            mkdirSync(configPath)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await makingFolder
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const message = setupError instanceof Error ? setupError.message : ''
+  const generation = existsSync(pendingPath)
+    ? String((await readRecordFile(storage, 'pending.json')).generation)
+    : 'absent'
+  const retiredName = `receipt.json.${generation}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+
+  // Assert
+  assert.equal(
+    message,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because it could not read Devin Desktop's MCP config at ${configPath} to tell whether the record at ${receiptPath} belongs to its "codebook" entry. Codebook kept both files, so the next run looks again; look at that config, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.doesNotMatch(message, /to another folder/)
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.deepEqual(
+    await readRecordFile(storage, 'receipt.json'),
+    otherEntryReceipt,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(retiredPath, 'utf8')), receiptBefore)
+})
+
 test('A setup whose old record changed right before it moves that record aside puts the changed record back and changes nothing', async (context) => {
   // Value: protects=a first setup takes away only the record it read: a record saved at that name since its read (a sync or backup tool restoring one) goes back where it was, nothing is published, and the learner is told what happened and how to go on; fails_when=the setup publishes its entry, deletes or changes the changed record, leaves a config, a pending record or a private name, or rejects with another sentence; no_claim=a real sync or backup tool (seam.afterCheck saves the changed record right before the receipt is moved aside, in its place)
   // Arrange

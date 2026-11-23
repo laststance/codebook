@@ -1352,9 +1352,15 @@ async function linkRetiringStaleReceipt(
   if (retiredPath) await unlink(retiredPath).catch(() => undefined)
 }
 
-/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read. */
+/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it. */
 type UnrestoredStanding =
-  'other' | 'foreign' | 'unread' | 'moved-unread' | 'moved-changed'
+  | 'other'
+  | 'foreign'
+  | 'unread'
+  | 'moved-unread'
+  | 'moved-changed'
+  | 'superseded'
+  | 'config-unread'
 
 /**
  * Thrown by {@link putBackRetiredReceipt} when a receipt a first setup moved aside could not go back to `receipt.json`, and by {@link retiredReceiptFateOf} when that receipt could not be read: its text names the private file and the way out, and it carries what made the put-back necessary (`failure`: the link's failure or a {@link changedRecordRefusal}), which the caller words as before and puts in front ({@link withUnrestoredNote}). The callers keep the publish record that names the private file ({@link Pending.retiresReceipt}), so the next run puts the receipt back ({@link settleRetiredReceipt}), or decides again when the record could not be marked {@link Pending.notLinked} ({@link UnrestoredReceiptError.withoutMark}).
@@ -1405,6 +1411,8 @@ class UnrestoredReceiptError extends Error {
  * - `unread`: the sentence that Codebook kept both files and looks again, which advises no removal
  * - `moved-unread`: the sentence that names the private file Codebook could not read and asks to delete neither record
  * - `moved-changed`: the sentence that the file at the private name changed while Codebook read it, so it kept both and looks again, which advises no removal
+ * - `superseded`: the sentence that Codebook's record of the entry the config holds stands at `receipt.json` again and asks to move the old record, never that record, to another folder
+ * - `config-unread`: the sentence that Codebook could not read the config to tell whether the record at `receipt.json` belongs to its entry, so it kept both and looks again, which names no record to move
  * @example
  * unrestoredSentence(context, retiredPath, 'other', true) // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
  */
@@ -1417,6 +1425,9 @@ function unrestoredSentence(
   // The moved file is no record of this config, so it is not called Codebook's old record, and the record of this config that stands stays where it is.
   if (standing === 'foreign')
     return `Codebook moved a file that is no record of Devin Desktop's MCP config at ${path} from ${receiptPath} to ${retiredPath} and kept it there, because its record of that config stands at ${receiptPath} again; move that file to another folder, ${retry}.`
+  // The record that stands owns the entry the config holds and the moved one owns nothing there: only the moved one is to be moved.
+  if (standing === 'superseded')
+    return `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and kept it there, because its record of the "${SERVER_NAME}" entry that Devin Desktop's MCP config at ${path} holds stands at ${receiptPath} again; move that old record to another folder, ${retry}.`
   // The private file failed, not receipt.json: a failed read says nothing about the record, so both records stay and none is to be deleted.
   if (standing === 'moved-unread')
     return `Codebook could not read its own old record of a setup whose entry is gone, which it had moved from ${receiptPath} to ${retiredPath}, so it kept that file and the publish record at ${pendingPath} and the next run reads it again; delete neither, make that file readable by you if it is not, ${retry}.`
@@ -1425,7 +1436,10 @@ function unrestoredSentence(
   // Another file stood at the private name by the end of the read: nothing the read compared may be deleted, so both stay.
   if (standing === 'moved-changed')
     return `${lead}, because the file at ${retiredPath} changed while Codebook read it. Codebook kept both files, so the next run looks again; ${retry}.`
-  // A folder, another file or a record of another entry: moving it away frees the name without deleting anything.
+  // Without the config nothing tells which record owns its entry, so neither is to be moved.
+  if (standing === 'config-unread')
+    return `${lead}, because it could not read Devin Desktop's MCP config at ${path} to tell whether the record at ${receiptPath} belongs to its "${SERVER_NAME}" entry. Codebook kept both files, so the next run looks again; look at that config, ${retry}.`
+  // A folder, another file or a record of an entry the config does not hold: moving it away frees the name without deleting anything.
   if (standing === 'other')
     return isMarked
       ? `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}; move it to another folder, ${retry}, and that run puts the old record back.`
@@ -3678,10 +3692,12 @@ function unrestoredStandingOf(
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
- * - `covers` when the moved record and a record that stands there are both records of this config with the same entry and the name still shows what was read, or the moved record is gone
+ * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read; or the moved record is gone
+ * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
+ * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry
  * - `absent` when the name is empty, or changed between the look and the check
  * - `foreign` when a record of this config stands there and the moved file, read in full, is no record (no regular file, too many bytes or bytes of another shape) or a record of another config: neither goes, and the moved one never replaces it
- * - `other` for a folder, a link or another kind of file, bytes that are no record, or a record of another config or entry
+ * - `other` for a folder, a link or another kind of file, bytes that are no record, a record of another config, or a record of another entry that owns nothing the config holds
  * - `unread` when a look at `receipt.json` or the read of what stands there failed
  * - `moved-unread` when the look at the moved record's private name or its read failed (an I/O failure, never bytes of another shape)
  * - `moved-changed` when the private name no longer shows the file that was read there: what the read compared is not what an unlink would delete
@@ -3699,7 +3715,35 @@ async function standingReceiptOf(
   if (standing.targetPath !== context.path) return 'other'
   // A moved file read as bytes that are no record, or as a record of another config: that file is the one to move.
   if (moved === 'other' || moved.targetPath !== context.path) return 'foreign'
-  return standing.entrySha256 === moved.entrySha256 ? 'covers' : 'other'
+  if (standing.entrySha256 === moved.entrySha256) return 'covers'
+  return ownerOfConfigEntry(context, standing, moved)
+}
+
+/**
+ * Compares two records of this config whose entry hashes differ against the entry the config holds, so the put-back never names a record that owns that entry as the one to move; called only by {@link standingReceiptOf}.
+ * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}).
+ * @param context - The run.
+ * @param standing - The record of this config at `receipt.json`.
+ * @param moved - The moved record of this config.
+ * @returns
+ * - `covers` when both own the entry the config holds: the moved one is a spare copy
+ * - `superseded` when only the record at `receipt.json` owns it: the moved one, which owns nothing the config holds, is the one to move
+ * - `other` when the record at `receipt.json` owns nothing the config holds, also when no config or no entry stands: that record is the one to move
+ * - `config-unread` when the config could not be read ({@link lookAtConfig} refused): neither is named
+ * @example
+ * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => 'superseded' while the config holds the entry only liveReceipt owns
+ */
+async function ownerOfConfigEntry(
+  context: Context,
+  standing: Receipt,
+  moved: Receipt,
+): Promise<'covers' | 'superseded' | 'other' | 'config-unread'> {
+  const look = await lookAtConfig(context).catch(() => undefined)
+  if (look === undefined) return 'config-unread'
+  const current = currentEntryOf(look)
+  // Only a record that owns nothing the config holds is ever named as the one to move.
+  if (!ownsEntry(current, standing)) return 'other'
+  return ownsEntry(current, moved) ? 'covers' : 'superseded'
 }
 
 /**
