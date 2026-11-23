@@ -2121,11 +2121,12 @@ function otherInodeRefusal(
  * - A staged or displaced name that is another link to the config itself: unlinked, whatever the config holds now; the config keeps the inode.
  * - The probe link of the hard-link check: deleted.
  * - A copy handed to the learner (a handed record): never touched. A record handed only because a put-back by bytes was cut short ({@link Pending.bytesUnverified}) is read as in progress ({@link leftoverPhaseOf}).
+ * - A displaced name of a change in progress that is gone while its dropping name stands (a drop cut short right after its rename, {@link dropCheckedName}): the file goes back to the displaced name and is settled from there ({@link lookPastCutShortDrop}).
  * - Anything else stays and is returned.
  * @param context - The run.
  * @param pending - The pending record of the interrupted run.
  * @returns The leftovers that stay, in the order of the record.
- * @throws A {@link journalRefusal} for a name that is not Codebook's own; nothing was touched.
+ * @throws A {@link journalRefusal} for a name that is not Codebook's own; nothing was touched. What {@link lookPastCutShortDrop} throws, before the displaced file and the leftovers after it are settled; the record stays.
  */
 async function recoverLeftovers(
   context: Context,
@@ -2139,7 +2140,13 @@ async function recoverLeftovers(
       look: await lookAtLeftover(context, leftover, leftoverPhaseOf(pending)),
     })
   const unsettled: Unsettled[] = []
-  for (const { leftover, look } of looked) {
+  for (const { leftover, look: firstLook } of looked) {
+    const look = await lookPastCutShortDrop(
+      context,
+      leftover,
+      firstLook,
+      leftoverPhaseOf(pending),
+    )
     if (look.kind === 'gone') continue
     try {
       if (look.kind === 'unreadable') throw look.cause
@@ -2149,6 +2156,32 @@ async function recoverLeftovers(
     }
   }
   return unsettled
+}
+
+/**
+ * Gives the look recovery settles a leftover from, after a drop of its displaced name that stopped right after its rename ({@link dropCheckedName}); called by {@link recoverLeftovers} once every leftover was looked at, so a bad name or inode still stops the run before anything moved.
+ * Only a displaced name of a change in progress is ever dropped that way, so only such a name that is gone has its dropping name put back ({@link settleDroppingName}) and is looked at again; every other look is returned as it is.
+ * @param context - The run.
+ * @param leftover - The accepted leftover.
+ * @param look - What the first {@link lookAtLeftover} found at its name.
+ * @param phase - The phase recovery reads the record in ({@link leftoverPhaseOf}).
+ * @returns The look at the displaced name once its file stands there again; `look` otherwise.
+ * @throws What {@link settleDroppingName} and {@link lookAtLeftover} throw.
+ * @example
+ * await lookPastCutShortDrop(context, keptLeftover, { kind: 'gone' }, undefined) // => { kind: 'found', copy } after a stop right after the drop's rename
+ */
+async function lookPastCutShortDrop(
+  context: Context,
+  leftover: Leftover,
+  look: LeftoverLook,
+  phase: Pending['phase'],
+): Promise<LeftoverLook> {
+  if (look.kind !== 'gone' || leftover.role !== 'kept' || phase !== undefined)
+    return look
+  // The file stands at the displaced name again: recovery looks at it there, with every check it makes before a name goes.
+  return (await settleDroppingName(context, leftover.path))
+    ? lookAtLeftover(context, leftover, phase)
+    : look
 }
 
 /**
@@ -2475,7 +2508,7 @@ const DROPPING_SUFFIX = 'codebook-dropping'
 /**
  * Deletes a private name that is a second name of the config only while it still names the file Codebook checked; called by {@link assertSharedPutBackBytes} and {@link putBackDisplaced} right after their last looks.
  * The name is renamed first to `<private name>.codebook-dropping` ({@link DROPPING_SUFFIX}), so a file another program swaps in at the private name after the last look moves with the rename instead of being deleted. The moved file is read again and deleted only while it has the checked inode, the checked bytes when they are given, and another name (the config's) that still reaches it; anything else is linked back to the private name, which a link never replaces, and the run refuses.
- * Limits: a write into the shared file or a save at the config name after that read is not seen (no Node primitive unlinks by inode or content); a stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds.
+ * Limits: a write into the shared file or a save at the config name after that read is not seen (no Node primitive unlinks by inode or content). A stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds; the record still holds the private name, so the next run puts the file back there and settles it again ({@link settleDroppingName}).
  * @param context - The run; its seam is called when the moved file is read.
  * @param path - The private name to drop.
  * @param checked - The inode the moved file must have, and the hash of the bytes it must hold when a check read them (a put-back by inode accepts any bytes).
@@ -2529,12 +2562,51 @@ async function moveBackFromDropping(
   try {
     await link(droppingPath, path)
   } catch {
-    throw new PutBackCheckError(
-      `Codebook moved the private file at ${path} to ${droppingPath} to delete that name and could not move it back, because a file stands at ${path} again or the link failed; Codebook left the config at ${context.path}, ${path} and ${droppingPath} as they are, so look at all of them before you use any, and never copy one over the config; ${context.retry}.`,
-      true,
-    )
+    throw notMovedBackError(context, path, droppingPath)
   }
   await unlink(droppingPath).catch(() => undefined)
+}
+
+/** The refusal for a file that stands at a dropping name ({@link DROPPING_SUFFIX}) and could not go back to its private name ({@link moveBackFromDropping}, {@link settleDroppingName}): the config, the private name and the dropping name stay as they are; handed, so no later run deletes any of them. */
+function notMovedBackError(
+  context: Context,
+  path: string,
+  droppingPath: string,
+): PutBackCheckError {
+  return new PutBackCheckError(
+    `Codebook moved the private file at ${path} to ${droppingPath} to delete that name and could not move it back, because a file stands at ${path} again or the link failed; Codebook left the config at ${context.path}, ${path} and ${droppingPath} as they are, so look at all of them before you use any, and never copy one over the config; ${context.retry}.`,
+    true,
+  )
+}
+
+/**
+ * Puts back the displaced file that a run which stopped inside {@link dropCheckedName} left under its dropping name (`<private name>.codebook-dropping`, {@link DROPPING_SUFFIX}), a name no record holds; called by {@link lookPastCutShortDrop} when the record still holds the private name and nothing stands there.
+ * A stop right after the drop's rename leaves the file only at the dropping name, a second name of the config that would make every later setup and removal refuse the config as linked from another path ({@link assertSingleLink}). The file goes back with a link, which never replaces a file that stands at the private name, and the dropping name goes only while both names show the inode the dropping name showed at the first look, so recovery checks the file under its private name as it did before the drop began. The name is Codebook's alone, so no record format changes.
+ * Limit: a swap at either name between the last look and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param context - The run.
+ * @param path - The private name the record holds.
+ * @returns `true` once the file stands at the private name again and the dropping name is gone; `false` when nothing stands at the dropping name.
+ * @throws The {@link notMovedBackError} when another file stands at the private name, the link failed or either name changed; every name stays, and so does the record. What a look or the unlink throws.
+ * @example
+ * await settleDroppingName(context, keptPath) // => true after a stop right after the drop's rename: keptPath stands again
+ */
+async function settleDroppingName(
+  context: Context,
+  path: string,
+): Promise<boolean> {
+  const droppingPath = `${path}.${DROPPING_SUFFIX}`
+  const moved = await lstatOrAbsent(droppingPath)
+  if (!moved) return false
+  // A failed link is no answer yet: the looks below decide whether the private name shows the moved file.
+  await link(droppingPath, path).catch(() => undefined)
+  // Both names must show the moved inode right before the dropping name goes, the private name first.
+  if (
+    !isLeftoverStill(context, path, { ino: moved.ino }) ||
+    !isLeftoverStill(context, droppingPath, { ino: moved.ino })
+  )
+    throw notMovedBackError(context, path, droppingPath)
+  await unlink(droppingPath)
+  return true
 }
 
 /** The refusal of {@link assertSharedPutBackBytes}: both paths stay, and the learner is asked to look at both and never to copy one over the other; handed, so no later run deletes either name. It claims no shared file, because it also fires when a name is gone or another file was saved at the config name. */

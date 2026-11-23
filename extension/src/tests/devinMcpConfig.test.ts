@@ -2596,6 +2596,72 @@ test('Recovery drops the extra displaced name of a put-back that was interrupted
   assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
 })
 
+test('A put-back whose drop of the private name stopped right after it moved that name aside is finished at the next run, so a later setup is not refused as a config linked from another path', async (context) => {
+  // Value: protects=a run that stopped between the rename of the private name to its dropping name and the unlink leaves no second name of the config for good: the next run finds the dropping name, puts the file back under the private name, finishes the drop with its checks and retires the record, so the next setup installs the entry; fails_when=the dropping name or the private name stays beside the config, the config's bytes change, pending.json stays, or the setup refuses the config as linked from another path; no_claim=a real process end (a manual link of the private file to the config name, then a manual rename of the private name to its dropping name, stand for a put-back that stopped right after that rename), and a swap at either name between the last look and the unlink; seam=hand-written pending record of a put-back by bytes (another inode)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  renameSync(keptPath, `${keptPath}.codebook-dropping`)
+
+  // Act
+  const refreshed = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+  const leftoversAfterRefresh = await leftoversBeside(configPath)
+  const configAfterRefresh = await readFile(configPath, 'utf8')
+  const isPendingAfterRefresh = existsSync(
+    join(storage, 'devin-mcp', 'pending.json'),
+  )
+  const setUp = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(refreshed.status, 'not-managed')
+  assert.deepEqual(leftoversAfterRefresh, [])
+  assert.equal(configAfterRefresh, '{"theme":"dark"}\n')
+  assert.equal(isPendingAfterRefresh, false)
+  assert.equal(setUp.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    theme: 'dark',
+    mcpServers: { codebook: ENTRY },
+  })
+})
+
+test('A dropping name that a cut-short drop left stays, with the file at the private name and the record, when another file is swapped in at the private name as it goes back, and the refusal names all three paths', async (context) => {
+  // Value: protects=recovery deletes a dropping name only while the private name shows the file it put back, so a file another program swapped in at the private name right after that link is never deleted, and neither is the dropping name, the only name left of the moved file besides the config; fails_when=the dropping name or the swapped-in file is deleted or changed, the config changes, pending.json changes, or the refusal is another sentence; no_claim=a real process end (a manual link to the config name, then a manual rename of the private name to its dropping name, stand for a put-back that stopped right after that rename), a real sync tool (seam.beforeLeftoverCheck swaps the private name once, at the look right after the link, in its place) and a swap in the syscall gap after the last look; seam=hand-written pending record of a put-back by bytes (another inode)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const droppingPath = `${keptPath}.codebook-dropping`
+  linkSync(keptPath, configPath)
+  renameSync(keptPath, droppingPath)
+  const pendingText = readFileSync(
+    join(storage, 'devin-mcp', 'pending.json'),
+    'utf8',
+  )
+  let isSwapped = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || isSwapped) return
+      isSwapped = true
+      swapFile(keptPath, '{"swapped in":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, {
+    message: `Codebook moved the private file at ${keptPath} to ${droppingPath} to delete that name and could not move it back, because a file stands at ${keptPath} again or the link failed; Codebook left the config at ${configPath}, ${keptPath} and ${droppingPath} as they are, so look at all of them before you use any, and never copy one over the config; then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(isSwapped, true)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped in":true}\n')
+  assert.equal(readFileSync(droppingPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(
+    readFileSync(join(storage, 'devin-mcp', 'pending.json'), 'utf8'),
+    pendingText,
+  )
+})
+
 test('A content-only put-back cut short before its check keeps the private name when the shared bytes changed', async (context) => {
   // Value: protects=a put-back that only the bytes proved and that ended between its link and its check never drops the private name unless the shared file still holds the recorded bytes, so Codebook never forgets that the config may hold bytes it did not verify; fails_when=the private name is deleted, either name's bytes change, the refusal omits a path or advises moving the copy back, or the record does not turn to handed; no_claim=what an older build does with the handed record (read from its code), and a write in the syscall gap after the last look; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, then an in-place append that keeps valid JSON, standing for a writer between the link and the check
   // Arrange
