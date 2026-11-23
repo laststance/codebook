@@ -3966,13 +3966,16 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
- * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay.
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
+ * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
  * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then.
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
-async function settleRollbackJournal(context: Context): Promise<void> {
+async function settleRollbackJournal(
+  context: Context,
+): Promise<HeldJournal | undefined> {
   const rollbackContext = rollbackContextOf(context)
   const pending = await readRecord(
     rollbackContext.pendingPath,
@@ -3981,7 +3984,7 @@ async function settleRollbackJournal(context: Context): Promise<void> {
     context.seam,
   )
   // No rollback was cut short, or the journal belongs to another config, which this run does not settle.
-  if (pending?.targetPath !== context.path) return
+  if (pending?.targetPath !== context.path) return undefined
   const unsettled = await recoverLeftovers(rollbackContext, pending)
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // An unverified put-back's handed journal is read as the change in progress it is, so its displaced file stays tracked.
@@ -3996,26 +3999,114 @@ async function settleRollbackJournal(context: Context): Promise<void> {
           reported: unsettled[0],
         }
       : undefined
-  await markTakeBackOwed(context, pending.publishGeneration, legacy)
-  await retirePending(
-    rollbackContext,
-    retainedRecord(
-      await recordAfterRecovery(
-        rollbackContext,
-        pending,
-        unsettled,
-        isHandedNow,
-      ),
-      tracked,
-    ),
+  const belonging = await markTakeBackOwed(
+    context,
+    pending.publishGeneration,
+    legacy,
+  )
+  const retained = retainedRecord(
+    await recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
+    tracked,
   )
   const [reported] = unsettled
+  // A legacy journal decided as another publish's on one read of the config is never deleted here: the publish record must lose its ability to adopt first.
+  const held =
+    belonging === 'another-config' && legacy?.restoredBytes
+      ? await holdLegacyJournal(
+          rollbackContext,
+          retained ?? legacyEvidenceOf(pending),
+          legacy,
+          legacy.restoredBytes,
+          reported !== undefined,
+        )
+      : undefined
+  if (!held) await retirePending(rollbackContext, retained)
   if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
+  return held
 }
 
-/** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `unmatched` (the evidence contradicts itself), `unread` (the config that decides could not be read) and `invalid` (it was read but is no valid JSON config, as while an editor saves it) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
+/** A rollback journal of an older build that {@link settleRollbackJournal} decided as another publish's on one read of the restored config and kept: {@link settleAfterRecovery} checks that its own look shows those bytes ({@link assertHeldJournalStill}) and retires the journal once the publish record can no longer adopt. */
+type HeldJournal = {
+  /** SHA-256 of the restored config's bytes that decided the journal. */
+  restoredSha256: string
+  /** The journal's evidence, which the refusal of a changed config names. */
+  legacy: LegacyJournalEvidence
+  /** Deletes the journal. */
+  retire: () => Promise<void>
+}
+
+/**
+ * Keeps a legacy rollback journal that one read decided as another publish's, so the publish record cannot adopt on a later read once the journal is gone; called only by {@link settleRollbackJournal}.
+ * When a leftover is refused in this run, the journal is rewritten to what stays ({@link retainedRecord}), or to its evidence alone ({@link legacyEvidenceOf}) when nothing stays tracked, so the next run still decides on its inode and hash; otherwise it stays as recovery left it.
+ * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal.
+ * @param kept - The journal to write when a leftover is refused.
+ * @param legacy - The journal's evidence.
+ * @param restoredBytes - The restored config's bytes that decided it.
+ * @param isRefused - Whether a leftover of the journal is refused in this run.
+ * @returns The held journal ({@link HeldJournal}).
+ * @throws What writing the journal throws; the journal on disk then stays byte for byte.
+ * @example
+ * const held = await holdLegacyJournal(rollbackContext, legacyEvidenceOf(journal), legacy, restoredBytes, true)
+ */
+async function holdLegacyJournal(
+  rollbackContext: Context,
+  kept: Pending,
+  legacy: LegacyJournalEvidence,
+  restoredBytes: Buffer,
+  isRefused: boolean,
+): Promise<HeldJournal> {
+  // A refused leftover ends this run: the journal keeps what the next run needs to decide again.
+  if (isRefused)
+    await writeRecord(rollbackContext, rollbackContext.pendingPath, kept)
+  return {
+    restoredSha256: bytesSha256(restoredBytes),
+    legacy,
+    retire: (): Promise<void> => retirePending(rollbackContext, undefined),
+  }
+}
+
+/**
+ * Reduces a legacy rollback journal to the evidence that tells whether it belongs to the publish record ({@link legacyBelonging}): its displaced file's inode and hash, without names, so no later recovery acts on a leftover from it; called by {@link settleRollbackJournal} when nothing of the journal stays tracked.
+ * @param journal - The journal as read.
+ * @returns A journal of the same config and generation with only `keptIno` and `keptSha256`.
+ * @example
+ * legacyEvidenceOf({ targetPath, createdFile: false, generation, keptName, keptIno: 5, keptSha256: 'b', stagedIno: 5 }) // => { targetPath, createdFile: false, generation, keptIno: 5, keptSha256: 'b' }
+ */
+function legacyEvidenceOf({
+  targetPath,
+  generation,
+  keptIno,
+  keptSha256,
+}: Pending): Pending {
+  return { targetPath, createdFile: false, generation, keptIno, keptSha256 }
+}
+
+/**
+ * Stops a run whose look at the config no longer shows the bytes on which a legacy rollback journal was decided as another publish's ({@link HeldJournal}); called by {@link settleAfterRecovery} right after its look, before anything is adopted.
+ * @param context - The run.
+ * @param held - The held journal; undefined when none is held.
+ * @param look - The run's look at the config.
+ * @throws The {@link unmatchedJournalRefusal} for a changed read when the config is gone or holds other bytes; nothing is written or retired then, so the next run decides again.
+ * @example
+ * assertHeldJournalStill(context, held, look) // throws when the config was saved again between the two reads
+ */
+function assertHeldJournalStill(
+  context: Context,
+  held: HeldJournal | undefined,
+  look: ConfigLook,
+): void {
+  if (!held) return
+  if (look.kind === 'present' && look.sha256 === held.restoredSha256) return
+  throw unmatchedJournalRefusal(context, 'reread', held.legacy)
+}
+
+/** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `another-config` leaves it too but was decided on one read of a restored config that is valid and lacks the setup's entry, so the journal is held until the run's own look shows those bytes ({@link settleRollbackJournal}), and `unmatched` (the evidence contradicts itself), `unread` (the config that decides could not be read) and `invalid` (it was read but is no valid JSON config, as while an editor saves it) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
 type JournalBelonging =
-  'belongs' | 'another' | 'unmatched' | 'unread' | 'invalid'
+  'belongs' | 'another' | 'another-config' | 'unmatched' | 'unread' | 'invalid'
+
+/** Why an older build's rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, or `reread` when the config changed between the read that decided the journal and the run's own look ({@link assertHeldJournalStill}). */
+type UnmatchedReason =
+  Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'> | 'reread'
 
 /** What a rollback journal of an older build (no publish generation) offers {@link legacyBelonging}: the journal (its displaced file's inode and hash), the config its recovery put back, and what that recovery could not settle. */
 type LegacyJournalEvidence = {
@@ -4102,7 +4193,8 @@ function configEntryHashOf(bytes: Buffer): ConfigEntryHash {
  * @param restoredBytes - The config the recovery put back ({@link restoredConfigBytes}); undefined when it could not be read.
  * @returns
  * - `belongs` when an inode or a hash is missing (nothing proves another publish, so take-back is marked as the previous release did), when inode and hash both match, or when the inode matches and the restored config holds the setup's entry and starts with the published bytes ({@link hasPrefixWithSha256})
- * - `another` for another inode, or for the same inode with another hash when the restored config holds no entry or another one
+ * - `another` for another inode
+ * - `another-config` for the same inode with another hash when the restored config is valid and holds no entry or another one; decided on that one read, so the journal is held until the run's own look shows the same bytes ({@link settleRollbackJournal})
  * - `unmatched` for the same inode with another hash when the restored config holds the setup's entry but does not start with the published bytes
  * - `unread` for the same inode with another hash when the restored config could not be read (gone, a link, no regular file, too large or a failed read): a transient failure proves no other publish, and a later read may find the published file
  * - `invalid` for the same inode with another hash when the restored config was read but is no valid JSON config ({@link configEntryHashOf}), as while an editor saves it: half-saved bytes prove no other publish either
@@ -4133,11 +4225,12 @@ function legacyBelonging(
   if (restoredBytes === undefined) return 'unread'
   const restored = configEntryHashOf(restoredBytes)
   if (restored.kind === 'invalid') return 'invalid'
+  // A valid config without the setup's entry, on this one read: the caller holds the journal until its own look agrees.
   if (
     restored.hash === undefined ||
     restored.hash !== plainEntryHashOf(publish.entrySha256)
   )
-    return 'another'
+    return 'another-config'
   // Text appended in place keeps the published bytes at the start; a reused inode with the same entry among other settings does not.
   return hasPrefixWithSha256(restoredBytes, stagedSha256)
     ? 'belongs'
@@ -4145,10 +4238,10 @@ function legacyBelonging(
 }
 
 /**
- * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record (`unmatched`), or cannot match yet because the config that decides could not be read (`unread`) or is no valid JSON config yet (`invalid`); thrown by {@link markTakeBackOwed} before any record is written or retired, so both records stay: the learner decides about the entry, or the next run reads the config again.
+ * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record (`unmatched`), or cannot match yet because the config that decides could not be read (`unread`), is no valid JSON config yet (`invalid`) or changed between the read that decided the journal and the run's own look (`reread`); thrown by {@link markTakeBackOwed} and {@link assertHeldJournalStill} before any record is written or retired, so both records stay: the learner decides about the entry, or the next run reads the config again.
  * The journal's recovery already ran (a displaced file may be back at the config name), so the sentence claims only what stays: the entry or the file's bytes, both records, and a leftover that recovery could not settle, which is named here because this refusal comes before its own ({@link unmatchedLeftoverSentence}).
  * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
- * @param belonging - Which of the three answers {@link legacyBelonging} gave.
+ * @param belonging - Which of the three answers {@link legacyBelonging} gave, or `reread`.
  * @param legacy - The journal and the first leftover its recovery could not settle, if any ({@link LegacyJournalEvidence}).
  * @returns The error, not thrown yet.
  * @example
@@ -4156,7 +4249,7 @@ function legacyBelonging(
  */
 function unmatchedJournalRefusal(
   context: Context,
-  belonging: Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'>,
+  belonging: UnmatchedReason,
   legacy: LegacyJournalEvidence | undefined,
 ): Error {
   const { path, pendingPath, retry } = context
@@ -4166,6 +4259,7 @@ function unmatchedJournalRefusal(
   const sentence = {
     unread: `${notYet}, and Codebook could not read ${path} again (it is gone, a link, no regular file, larger than ${DEVIN_MCP_CONFIG_LIMIT_BYTES} bytes or unreadable) to see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; make that file readable, or delete both records if it is gone, ${retry}.`,
     invalid: `${notYet}, and ${path} is no valid JSON config right now (an editor may still be saving it), so Codebook cannot see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; fix that file or wait until it is saved, ${retry}.`,
+    reread: `${notYet}, and ${path} changed between two of Codebook's reads of it, so Codebook cannot see yet whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; wait until it is saved, ${retry}.`,
     unmatched: `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "${SERVER_NAME}" entry in ${path} is the one the setup wrote. Codebook left that entry in place and kept both records (${records}); if you did not write that entry, remove it by hand, delete both records, ${retry}.`,
   }[belonging]
   // A leftover that stays with the kept journal is named once more, so the advice to delete both records never hides it.
@@ -4201,15 +4295,18 @@ function unmatchedLeftoverSentence(
  * @param context - The run.
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
+ * @returns
+ * - The belonging it decided ({@link JournalBelonging}): `belongs` once the mark is written, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`)
+ * - undefined when there is no publish record of this config, or it is marked already
  * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet; nothing is written then. What reading or writing the record throws.
  * @example
- * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
+ * await markTakeBackOwed(context, generation) // => 'belongs'; pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
   publishGeneration: string | undefined,
   legacy?: LegacyJournalEvidence,
-): Promise<void> {
+): Promise<JournalBelonging | undefined> {
   const publish = await readRecord(
     context.pendingPath,
     pendingSchema,
@@ -4217,7 +4314,7 @@ async function markTakeBackOwed(
     context.seam,
   )
   // No publish record, one of another config, or one already marked: nothing to mark.
-  if (publish?.targetPath !== context.path || publish.takeBack) return
+  if (publish?.targetPath !== context.path || publish.takeBack) return undefined
   // A journal of this build names the publish it rolled back (another generation is another installation's publish); one of an older build names none, so its displaced file and the restored config decide.
   const belonging: JournalBelonging =
     publishGeneration === undefined
@@ -4225,7 +4322,8 @@ async function markTakeBackOwed(
       : publish.generation === publishGeneration
         ? 'belongs'
         : 'another'
-  if (belonging === 'another') return
+  if (belonging === 'another' || belonging === 'another-config')
+    return belonging
   // Contradicting, unread or half-saved evidence keeps both records: the learner or the next run decides.
   if (belonging !== 'belongs')
     throw unmatchedJournalRefusal(context, belonging, legacy)
@@ -4233,6 +4331,7 @@ async function markTakeBackOwed(
     ...publish,
     takeBack: true,
   })
+  return belonging
 }
 
 /**
@@ -4352,8 +4451,8 @@ type Inspection = {
  * const { look, current, receipt } = await inspect(context)
  */
 async function inspect(context: Context): Promise<Inspection> {
-  // A rollback cut short comes first: its original may be the only copy of the learner's other servers.
-  await settleRollbackJournal(context)
+  // A rollback cut short comes first: its original may be the only copy of the learner's other servers. A legacy journal decided as another publish's is held until the publish record is settled.
+  const held = await settleRollbackJournal(context)
   const pending = await readRecord(
     context.pendingPath,
     pendingSchema,
@@ -4388,6 +4487,7 @@ async function inspect(context: Context): Promise<Inspection> {
     context,
     pending,
     retained,
+    held,
   ).catch((cause: unknown) => {
     throw mergeWithLeftover(context, cause, phase, reported, isHandedNow)
   })
@@ -4474,22 +4574,25 @@ function persistHandover(
 
 /**
  * Reads the config and the receipt once recovery settled the leftovers, finishes the take-back of a cut-short first setup and settles the pending record; called by {@link inspect}, which merges a refusal from here with a leftover that stays ({@link mergeWithLeftover}).
- * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the look that decided its put-back is the look this run goes on with.
+ * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the look that decided its put-back is the look this run goes on with. A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it, and is retired once the publish record is settled, so a refusal or failure before then leaves both records for the next run.
  * @param context - The run.
  * @param pending - The pending record as it was read; undefined when there is none.
  * @param retained - What stays of that record after recovery ({@link retainedRecord}); undefined when nothing stays.
+ * @param held - The legacy rollback journal {@link settleRollbackJournal} held; undefined when none is held.
  * @returns The {@link Inspection}.
- * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link readReceipt}, {@link finishCutShortSetup} and {@link settlePending} throw.
+ * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, {@link settlePending} and the held journal's retirement throw.
  * @example
- * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained)
+ * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held)
  */
 async function settleAfterRecovery(
   context: Context,
   pending: Pending | undefined,
   retained: Pending | undefined,
+  held?: HeldJournal,
 ): Promise<Inspection> {
   const decided = await settleRetiredReceipt(context, pending)
   let look = decided ?? (await lookAtConfig(context))
+  assertHeldJournalStill(context, held, look)
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
   const afterTakeBack =
@@ -4506,6 +4609,8 @@ async function settleAfterRecovery(
     look,
     retained,
   )
+  // The publish record can no longer adopt: a held legacy journal goes now.
+  await held?.retire()
   return {
     look,
     current,
