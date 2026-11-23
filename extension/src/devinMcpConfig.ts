@@ -1413,7 +1413,7 @@ async function linkRetiringStaleReceipt(
   if (retiredPath) await unlink(retiredPath).catch(() => undefined)
 }
 
-/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it or changed after the read that told; `undeleted` when the moved record was to be deleted beside a record that covers it and the delete failed; `moved-gone` when the setup that moved the record found its private name empty as it went to put it back ({@link endOnEmptyName}); `moved-foreign` when the file at the private name is no record of this config while nothing stands at `receipt.json` ({@link settleForeignMoved}). */
+/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it or changed after the read that told; `undeleted` when the moved record was to be deleted beside a record that covers it and the delete failed, or when its private name after a put-back's link that stood could not go, because the looks no longer showed the linked record at `receipt.json` and at that name as a second name of it or the delete failed ({@link dropLinkedPrivateName}); `moved-gone` when the setup that moved the record found its private name empty as it went to put it back ({@link endOnEmptyName}); `moved-foreign` when the file at the private name is no record of this config while nothing stands at `receipt.json` ({@link settleForeignMoved}). */
 type UnrestoredStanding =
   | 'other'
   | 'foreign'
@@ -2542,7 +2542,7 @@ async function nameStateOf(
 }
 
 /**
- * Looks at a name as {@link nameStateOf} does, synchronously, so nothing is awaited between this look and the step it guards; called by {@link stillnessOf}, whose last looks come right before a first setup's old record is deleted.
+ * Looks at a name as {@link nameStateOf} does, synchronously, so nothing is awaited between this look and the step it guards; called by {@link stillnessOf} and {@link dropLinkedPrivateName}, whose last looks come right before a first setup's old record or its private name is deleted.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -4032,7 +4032,7 @@ async function holdsReceipt(
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces what stands at that name by then. Only a regular file that parses as a record of this config, read at the private name, which a look right before the link still shows, is linked ({@link readMovedForPutBack}); a file there that is no record of this config is never linked and is named as the one to move. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). After a link that stood, the private name is unlinked only while a look still shows the file that was linked ({@link dropLinkedPrivateName}); otherwise that file and the publish record stay. A private name that the link or a look found empty is never unlinked, and it never ends the publish record that leads there by itself ({@link endOnEmptyName}): in the setup that moved the record there, Codebook put a verified file there moments earlier, so the setup keeps that record and says so; a later run ends that record only while a look right before that end still finds the name empty ({@link retirePending}).
+ * A hard link: it needs no free space and never replaces what stands at that name by then. Only a regular file that parses as a record of this config, read at the private name, which a look right before the link still shows, is linked ({@link readMovedForPutBack}); a file there that is no record of this config is never linked and is named as the one to move. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). After a link that stood, the private name is unlinked only while looks still show the file that was linked at `receipt.json` and at the private name as a second name of it ({@link dropLinkedPrivateName}); otherwise that file and the publish record stay. A private name that the link or a look found empty is never unlinked, and it never ends the publish record that leads there by itself ({@link endOnEmptyName}): in the setup that moved the record there, Codebook put a verified file there moments earlier, so the setup keeps that record and says so; a later run ends that record only while a look right before that end still finds the name empty ({@link retirePending}).
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
@@ -4040,7 +4040,7 @@ async function holdsReceipt(
  * @returns
  * - `settled` once the receipt stands at `receipt.json` again, or was dropped beside a record that covers it
  * - `empty` at a later run whose link or look found the private name empty: the caller ends the publish record that leads there only after one more look ({@link settleRetiredReceipt})
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell or changed by the last looks after it told, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, with `undeleted` when the moved record was to be deleted beside a record that covers it, or its private name after a link that stood, and that name showed another file or the delete failed, with `moved-gone` when a setup's own put-back (one with a `failure`) found the private name empty, with `moved-foreign` when the file at the private name is no record of this config and nothing stands at `receipt.json`, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell or changed by the last looks after it told, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, with `undeleted` when the moved record was to be deleted beside a record that covers it, or its private name after a link that stood, and that name showed another file or was that record's only name, `receipt.json` no longer showed that record, or the delete failed, with `moved-gone` when a setup's own put-back (one with a `failure`) found the private name empty, with `moved-foreign` when the file at the private name is no record of this config and nothing stands at `receipt.json`, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // => 'settled' once receipt.json stands again
  * await putBackRetiredReceipt(context, retiredPath, undefined, { mark: 'unmarked' }) // => 'empty' when a later run finds the private name empty
@@ -4219,15 +4219,15 @@ async function settleForeignMoved(
 }
 
 /**
- * Ends a put-back whose link stood: the private name goes only while a synchronous look still shows the file that was linked, so a file put there right after the link is never deleted unread; called only by {@link putBackRetiredReceipt}.
- * Limit: a file put there between that look and the unlink is not seen; no Node primitive unlinks by inode.
+ * Ends a put-back whose link stood: the private name goes only while synchronous looks still show the file that was linked, first at `receipt.json` and last at the private name as a second name of that file, so a file put at the private name right after the link is never deleted unread, and the old record never loses its last name when another program replaced or deleted `receipt.json` after the link; called only by {@link putBackRetiredReceipt}.
+ * Limit: a file put at either name between those looks and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run.
  * @param retiredPath - The private name that holds a second name of the record now at `receipt.json`.
  * @param failure - What made the setup's put-back necessary; undefined at a later run.
  * @param linked - The look at the private name before the read of the record that was linked; its change time is left out, because the link changed it.
  * @param mark - What the publish record tells about the setup's link ({@link PutBackOptions.mark}).
- * @returns `settled` once the private name is gone, or was gone already.
- * @throws An {@link UnrestoredReceiptError} with `undeleted`, worded by the {@link retiredDropRefusal}, when the name shows another file, the look failed or the delete failed; that file and the publish record stay.
+ * @returns `settled` once the private name is gone, or was gone already while `receipt.json` showed the linked record.
+ * @throws An {@link UnrestoredReceiptError} with `undeleted`, worded by the {@link retiredDropRefusal}, when `receipt.json` no longer shows the linked record, the private name shows another file or is that record's only name, a look failed or the delete failed; that file and the publish record stay.
  * @example
  * await dropLinkedPrivateName(context, retiredPath, linkError, look, 'marked') // => 'settled'
  */
@@ -4247,7 +4247,15 @@ async function dropLinkedPrivateName(
       'undeleted',
       mark,
     )
-  const state = nameStateNow(context, retiredPath, { ino, size, mtimeNs })
+  const linkedFile = { ino, size, mtimeNs }
+  // The put-back stands only while receipt.json still shows the record that was linked: another file or an empty name there leaves the private name as the way to that record.
+  if (nameStateNow(context, context.receiptPath, linkedFile) !== 'still')
+    throw undeleted(undefined)
+  // Last, right before the unlink: the private name goes only as a second name of that record, never as its only name.
+  const state = nameStateNow(context, retiredPath, {
+    ...linkedFile,
+    isShared: true,
+  })
   // Another program removed that name already: nothing is left there to delete.
   if (state === 'gone') return 'settled'
   // Another file there, or a look that failed: that file and the publish record stay.
