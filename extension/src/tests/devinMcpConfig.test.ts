@@ -5931,6 +5931,93 @@ test("A held legacy rollback journal is deleted only while its name still holds 
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('Another rollback journal a backup restores at the journal name after recovery settled a legacy journal, before that journal is held, stays for the next refresh instead of being deleted as the held one', async (context) => {
+  // Value: protects=the held legacy journal is the one recovery read and settled, so a journal a backup restored at its name between that recovery and the hold keeps its rollback for the next run; fails_when=the journal's name is empty or holds other bytes than the restored journal after the refresh, a receipt is written, or the refresh answers anything but not-managed; no_claim=a real backup tool (seam.afterStat renames another journal over the journal's name once, at the read of the config that decides the journal, which comes after recovery and before the hold), a restore in the syscall gap after the last look before the unlink, and what the next run does with the restored journal
+  // Arrange
+  const { home, storage, configPath, receiptPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000004',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000005',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let configReadCount = 0
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath) return
+      configReadCount += 1
+      if (configReadCount !== 1) return
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      writeFileSync(configPath, '{"mcpServers":{}}\n')
+      // A backup restores another journal at the journal's name after recovery settled the legacy journal and before it is held.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  assert.equal(configReadCount >= 2, true)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A held legacy rollback journal that the refresh itself rewrote while it put the displaced config back by its bytes is still deleted in that refresh once the setup record is settled', async (context) => {
+  // Value: protects=the version a held legacy journal is retired as follows the journals this run writes during its recovery (a put-back by bytes rewrites the journal twice), so the journal this run settled is deleted in this run instead of waiting for the next; fails_when=the journal's name still holds a file after the refresh, the journal was not rewritten as handed and unverified and then back, the config is not the one the read that decided the journal found, a receipt is written, or the refresh answers anything but not-managed; no_claim=a real sync tool (the displaced file is copied to another inode before the refresh, which leaves only its bytes to prove it; seam.afterStat writes the config without the entry once, at the first read of the config after the put-back's last journal write), a put-back by bytes that fails, and the hold of a journal whose leftover is refused (that run stops before any retirement)
+  // Arrange
+  const { home, storage, configPath, receiptPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      // A copy under another inode, with a line break appended, leaves only its bytes to prove the displaced file.
+      const keptText = `${readFileSync(keptPath, 'utf8')}\n`
+      const copyPath = `${keptPath}.copy`
+      writeFileSync(copyPath, keptText)
+      renameSync(copyPath, keptPath)
+      journal.keptSha256 = sha256(keptText)
+    })
+  const journalWrites: Array<{ phase: unknown; bytesUnverified: unknown }> = []
+  let isPutBackRecorded = false
+  let hasRewrittenConfig = false
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      if (path !== journalPath) return
+      // The journal as the write puts it on disk: fields without a value are left out.
+      const { phase, bytesUnverified } = JSON.parse(JSON.stringify(record))
+      journalWrites.push({ phase, bytesUnverified })
+      // The put-back's last journal write says again what the journal said before it.
+      isPutBackRecorded = phase === undefined && bytesUnverified === undefined
+    },
+    afterStat: (path) => {
+      if (path !== configPath || !isPutBackRecorded || hasRewrittenConfig)
+        return
+      hasRewrittenConfig = true
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      writeFileSync(configPath, '{"mcpServers":{}}\n')
+    },
+  })
+
+  // Assert
+  assert.deepEqual(journalWrites, [
+    { phase: 'handed', bytesUnverified: true },
+    { phase: undefined, bytesUnverified: undefined },
+  ])
+  assert.equal(result.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"mcpServers":{}}\n')
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A legacy rollback journal whose handed copy is refused while the config holds no entry keeps its inode and hash, so the next refresh takes the setup back once the published file is back', async (context) => {
   // Value: protects=a refused leftover never costs the inode and hash that later tell the journal belongs to the failed setup; fails_when=the journal is deleted, the refusal text changes, or the next refresh adopts; no_claim=an older build's handover (the test writes phase handed), a real sync tool (rename of the copy over the config)
   // Arrange
