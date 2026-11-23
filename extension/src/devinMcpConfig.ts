@@ -3771,11 +3771,11 @@ function isFailedRead(error: unknown): boolean {
 
 /**
  * Settles the private name of a stale receipt that a first setup moved aside and did not settle itself (it stopped between the move and the link, or right after the link, or the put-back failed); called by {@link settleAfterRecovery} before the receipt is read.
- * A setup whose own receipt stands (the same generation, {@link isPublishReceipted}) finished: its link stood, so the private name is deleted before any look, whatever the config shows. A record marked {@link Pending.notLinked} linked nothing: the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one, whatever inode the config shows (a freed staged inode may come back as the restored config's). Otherwise, while the config name shows the inode the setup published, its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. Otherwise the config is read once, and that one look decides ({@link retiredReceiptFateOf}): when it holds the setup's own entry and the old receipt does not own it (another bridge path), that entry is the setup's publish saved again, so the private name is deleted as when the link stood; when it holds the entry the old receipt covers, which the setup may have published before it stopped and a sync tool saved again, the run refuses and keeps both records; else nothing of that setup stands, and the receipt goes back. A config name that cannot be looked at, a config that cannot be read and a record that cannot be read decide nothing: the run stops, because a read that works a moment later could settle the publish record and leave the private name for good; the private name and the record stay, so the next run settles them again.
+ * A setup whose own receipt stands (the same generation, {@link isPublishReceipted}) finished: its link stood, so the old record is deleted before any look, whatever the config shows; every such delete acts only on a record of this config that the private name still shows as read ({@link dropRetiredReceipt}). A record marked {@link Pending.notLinked} linked nothing: the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one, whatever inode the config shows (a freed staged inode may come back as the restored config's). Otherwise, while the config name shows the inode the setup published, its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. Otherwise the config is read once, and that one look decides ({@link retiredReceiptFateOf}): when it holds the setup's own entry and the old receipt does not own it (another bridge path), that entry is the setup's publish saved again, so the private name is deleted as when the link stood; when it holds the entry the old receipt covers, which the setup may have published before it stopped and a sync tool saved again, the run refuses and keeps both records; else nothing of that setup stands, and the receipt goes back. A config name that cannot be looked at, a config that cannot be read and a record that cannot be read decide nothing: the run stops, because a read that works a moment later could settle the publish record and leave the private name for good; the private name and the record stay, so the next run settles them again.
  * @param context - The run.
  * @param pending - The publish record as read; only one of this config that names the move ({@link Pending.retiresReceipt}) with a valid generation leads to a private name.
  * @returns Resolves once the private name is settled; the caller reads the config afterwards, so a config restored while the old receipt went back is the one its run goes on with.
- * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link isPublishReceipted}, {@link lookAtConfig} and {@link retiredReceiptFateOf} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
+ * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link isPublishReceipted}, {@link lookAtConfig}, {@link retiredReceiptFateOf} and {@link dropRetiredReceipt} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
  * @example
  * await settleRetiredReceipt(context, pending) // receipt.json stands again after a setup whose link failed and whose put-back failed too
  */
@@ -3794,7 +3794,7 @@ async function settleRetiredReceipt(
   const retiredPath = retiredReceiptPathOf(context, generation)
   // That setup wrote its own receipt, so its link stood: the old receipt covers nothing, whatever the config shows now.
   if (await isPublishReceipted(context, retiredPath, generation)) {
-    await unlink(retiredPath).catch(() => undefined)
+    await dropRetiredReceipt(context, retiredPath)
     return
   }
   // A failed look decides nothing: the run stops here, so the private name and the record wait for the next run.
@@ -3813,7 +3813,7 @@ async function settleRetiredReceipt(
     stagedIno !== undefined &&
     isSameFileId(stagedIno, config.ino)
   ) {
-    await unlink(retiredPath).catch(() => undefined)
+    await dropRetiredReceipt(context, retiredPath)
     return
   }
   // One look decides the put-back; the run goes on with the config as it stands afterwards.
@@ -3821,7 +3821,7 @@ async function settleRetiredReceipt(
   const fate = await retiredReceiptFateOf(context, pending, retiredPath, look)
   if (fate === 'undecided') throw undecidedReceiptRefusal(context, retiredPath)
   // The config holds that setup's publish, which the old receipt does not own: it goes, as when the link stood.
-  if (fate === 'drop') await unlink(retiredPath).catch(() => undefined)
+  if (fate === 'drop') await dropRetiredReceipt(context, retiredPath)
   else await putBackRetiredReceipt(context, retiredPath)
 }
 
@@ -3853,6 +3853,81 @@ async function isPublishReceipted(
     return undefined
   })
   return receipt?.generation === generation
+}
+
+/**
+ * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there; called only by {@link dropRetiredReceipt}, which keeps that file and the publish record that names it, so the next run looks at it again.
+ * @param context - The run; gives the publish record's path and the command to run again.
+ * @param retiredPath - The private name that holds the old record.
+ * @param cause - What the delete threw; undefined when the name showed another file or could not be looked at.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw retiredDropRefusal(context, retiredPath, eio) // 'Codebook could not delete …/receipt.json.<generation>.retired, its own old record of a setup whose entry is gone (…), so it kept that file and the publish record at …/pending.json, and the next run looks at that file again; …'
+ */
+function retiredDropRefusal(
+  { pendingPath, retry }: Context,
+  retiredPath: string,
+  cause?: unknown,
+): Error {
+  return new Error(
+    `Codebook could not delete ${retiredPath}, its own old record of a setup whose entry is gone (the delete failed, or Codebook could not tell that this file is still the record it read), so it kept that file and the publish record at ${pendingPath}, and the next run looks at that file again; make the folder that holds them writable by you if it is not, ${retry}.`,
+    cause === undefined ? undefined : { cause },
+  )
+}
+
+/**
+ * Deletes a first setup's old record from its private name once that setup put its config in place, only while that name still shows the record of this config that was read there; called by {@link settleRetiredReceipt} wherever it drops that record.
+ * What proves the setup's link (its own receipt, the inode it published, its entry) identifies nothing at the private name, which a backup may have filled again: a file there that is no record of this config is never deleted and no longer looked at, and the delete acts only on the file that was read.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the old record.
+ * @returns Resolves once the old record is gone, or once the name holds nothing of Codebook's to delete.
+ * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the private name could not be looked at or read, and the {@link retiredDropRefusal} when the name no longer shows the file that was read or the delete failed for another reason than a name already gone; that file and the publish record stay then.
+ * @example
+ * await dropRetiredReceipt(context, retiredPath) // the old record is gone after a setup whose own record stands
+ */
+async function dropRetiredReceipt(
+  context: Context,
+  retiredPath: string,
+): Promise<void> {
+  const movedUnread = (cause: unknown): UnrestoredReceiptError =>
+    new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      undefined,
+      cause,
+      'moved-unread',
+    )
+  const read = await lstatOrAbsent(retiredPath).catch((cause: unknown) => {
+    throw movedUnread(cause)
+  })
+  // Nothing, or no regular file, stands there: nothing of Codebook's old record is left to delete.
+  if (!read?.isFile()) return
+  const retired = await readRecord(
+    retiredPath,
+    receiptSchema,
+    context.retry,
+    context.seam,
+  ).catch((error: unknown) => {
+    if (isFailedRead(error)) throw movedUnread(error)
+    // Bytes that are no record are not Codebook's old record.
+    return undefined
+  })
+  // Gone meanwhile, or a file that is no record of this config: it is never deleted.
+  if (retired?.targetPath !== context.path) return
+  const { ino, size, mtimeNs, ctimeNs } = read
+  // The delete acts on the name, which must still show the file that was read.
+  const isStill = await isNameStill(context, retiredPath, {
+    ino,
+    size,
+    mtimeNs,
+    ctimeNs,
+  }).catch(() => false)
+  if (!isStill) throw retiredDropRefusal(context, retiredPath)
+  await unlink(retiredPath).catch((cause: unknown) => {
+    // A name already gone is what the delete was for.
+    if (codeOf(cause) !== 'ENOENT')
+      throw retiredDropRefusal(context, retiredPath, cause)
+  })
 }
 
 /** What a later run does with a first setup's old record that waits under its private name ({@link retiredReceiptFateOf}). */

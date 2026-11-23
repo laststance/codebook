@@ -8837,6 +8837,136 @@ test("A refresh whose read of a finished first setup's own record fails once kee
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test("A refresh after a finished first setup never deletes a file that a backup put at the old record's private name when that file is no record of this config", async (context) => {
+  // Value: protects=a finished first setup's proof (its own record) says nothing about the file at the old record's private name, so a file there that is no record of this config is never deleted and the refresh still settles that setup; fails_when=that file is gone or changed, the refresh answers anything but current, the setup's own record changes, or the publish record stays; no_claim=a real backup tool (swapFile puts a record of another config at the private name), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  // Arrange
+  const { home, storage, setupReceipt, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  const backupText = `${JSON.stringify({
+    ...(await readRecordFile(storage, retiredName)),
+    targetPath: '/elsewhere/.config/devin/mcp_config.json',
+  })}\n`
+  swapFile(retiredPath, backupText)
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(result, 'current')
+  assert.equal(
+    existsSync(retiredPath) ? readFileSync(retiredPath, 'utf8') : undefined,
+    backupText,
+  )
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json', retiredName])
+})
+
+test("A refresh after a finished first setup that finds another file at the old record's private name right after it read the old record there deletes nothing, keeps its publish record and names both", async (context) => {
+  // Value: protects=the old record is deleted only while its private name still shows the file Codebook read, so a file a backup swapped in after that read survives, and the publish record that names that name stays so a later run looks again; fails_when=the swapped-in file is gone or changed, the refresh answers without the refusal that names both files, or a record is gone; no_claim=a real backup tool (seam.beforeLeftoverCheck swaps the file at the private name right before Codebook's last look), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  // Arrange
+  const { home, storage, pendingPath, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  const backupText = '{"restoredBy":"backup"}\n'
+  let hasSwapped = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      beforeLeftoverCheck: (path) => {
+        if (path !== retiredPath || hasSwapped) return
+        hasSwapped = true
+        swapFile(retiredPath, backupText)
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasSwapped, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook could not delete ${retiredPath}, its own old record of a setup whose entry is gone (the delete failed, or Codebook could not tell that this file is still the record it read), so it kept that file and the publish record at ${pendingPath}, and the next run looks at that file again; make the folder that holds them writable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(
+    existsSync(retiredPath) ? readFileSync(retiredPath, 'utf8') : undefined,
+    backupText,
+  )
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+})
+
+test("A refresh after a finished first setup whose old record's private file cannot be deleted keeps that file and its publish record, names both, and the next refresh deletes them", async (context) => {
+  // Value: protects=a failed delete of the old record's private file leaves the publish record that names it, so that file never stays behind untracked and the next run deletes it; fails_when=the refresh answers without the refusal that names both files, the publish record or the private file is gone after it, the next refresh answers anything but current, or any record but the setup's own stays after it; no_claim=why a real delete fails (the config module is loaded with an unlink that fails with EIO for the old record's private name), why the setup could not delete its records (unlink stub EBUSY for that name, rm stub EBUSY for pending.json)
+  // Arrange
+  const { home, storage, pendingPath, setupReceipt, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  const failingDelete = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path === retiredPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshError = await failingDelete
+    .refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const recordsAfterRefusal = await recordsIn(storage)
+  const next = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook could not delete ${retiredPath}, its own old record of a setup whose entry is gone (the delete failed, or Codebook could not tell that this file is still the record it read), so it kept that file and the publish record at ${pendingPath}, and the next run looks at that file again; make the folder that holds them writable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(next, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A refresh that cannot read the old record's private file once keeps both records, and the next refresh still refuses", async (context) => {
   // Value: protects=a failed read of the old record decides nothing: no put-back, both records stay, and the refusal names the private file and asks to keep both records, never to delete one; fails_when=receipt.json appears, a record is gone, a refresh answers current, or the first refusal advises removing the record or names another file; no_claim=a real I/O error (seam.afterStat throws once for the private file), a record whose bytes are invalid (that keeps readRecord's own sentence)
   // Arrange
