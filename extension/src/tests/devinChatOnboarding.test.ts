@@ -5443,6 +5443,55 @@ test("a Devin Desktop window whose every records read answers after the start bu
   }
 })
 
+// Value: protects=a window whose every records read gives no answer, each only after the 5-second budget (a storage that stays out of open files), ends its late mark after three fresh reads that gave no answer, four reads in all, stays unmarked, shows nothing and starts no read afterwards while its server runs, so the late mark no longer holds the descriptor queue up to 5 s per read for as long as the server runs (Cycle 0147 final-range CodeRabbit pass, CR13 at extension.ts:1741); fails_when=the late mark reads afresh after every late "no answer" for the whole run (no decision, the read count keeps growing), ends before its third such read, or marks the window; no_claim=a read that never answers (the late mark waits for it outside the queue), a late answer that decides (task 7's test), reads that give no answer within the budget (the read at the budget decides unmarked, unchanged), the in-flight reads of a server stopped meanwhile; the stand-in waits 5.5 s on each read and then answers with no answer
+test('a Devin window whose every records read gives no answer after the start budget ends its late mark after three fresh reads and stays unmarked', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: Array.from({ length: 8 }, () => 5_500),
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    const fieldAtPublication = await window.readDescriptorField()
+    // Act
+    const decision = await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision",
+      30_000,
+    ).then(
+      () => 'decided',
+      (error: Error) => error.message,
+    )
+    const readsAtDecision = window.receiptReadCount()
+    // Each fresh read started at once after the one before it answered, so a read the late mark still started would come within this wait.
+    const quietWait = await waitUntil(
+      () => window.receiptReadCount() > readsAtDecision,
+      'a records read after the late mark ended',
+      2_000,
+    ).then(
+      () => 'a read started',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(fieldAtPublication, undefined)
+    assert.equal(decision, 'decided')
+    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(readsAtDecision, 4)
+    assert.equal(
+      quietWait,
+      'Timed out waiting for a records read after the late mark ended',
+    )
+    assert.equal(await window.readDescriptorField(), undefined)
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a late mark's own late answer is not trusted across this window's finished removal: the decision reads the records again, finds the entry record removed, leaves the window unmarked (403) and offers nothing (Cycle 0147 task 7); fails_when=the late mark decides on the answer read before the removal and marks a removed setup; no_claim=a removal still running at the decision (the take-off decides then), another window's removal (test 7c); failSetupClear keeps the saved setup so only the turn check decides, the stand-in entry removal deletes the receipt as the real one does, the first read answers no answer after 5.5 s, the second reads the real records and waits at its gate
 test("a late Devin mark whose slow fresh read answered across this window's removal reads the records again and leaves the window unmarked", async (context) => {
   // Arrange

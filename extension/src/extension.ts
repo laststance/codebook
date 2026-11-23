@@ -65,6 +65,7 @@ import {
   DEVIN_MARK_READ_RETRY_BUDGET_MS,
   DEVIN_MARK_READ_RETRY_DELAY_MS,
   DEVIN_LATE_MARK_RUN_CHECK_MS,
+  DEVIN_LATE_MARK_UNANSWERED_READS_MAX,
   DEVIN_SETUP_FINAL_CHECK_MS,
   DEVIN_SETUP_ROLLBACK_BUDGET_MS,
   DEVIN_REFRESH_LOCK_ACQUIRE_BUDGET_MS,
@@ -1718,10 +1719,10 @@ export function activate(
       return { isMarked: true, turn }
     })
   /**
-   * Gives `server` its late mark in turns of {@link markLateInQueue} until a read answers: a fresh read still in flight at its own deadline is waited for outside the descriptor queue; its own answer then decides in the next turn when no descriptor turn came between, otherwise a fresh read decides, so a storage that answers every read only after its deadline still marks the window after two reads while each read stays bounded inside the queue. Before each turn it waits, outside the queue too, while a setup, take-back or removal of this window runs ({@link afterDevinRunsSettled}), and a turn that finds one started meanwhile gives way to it; after such a wait a fresh read decides. Called by {@link markDevinChatLate} once the start's or the sync's late read settled.
+   * Gives `server` its late mark in turns of {@link markLateInQueue} until a read answers: a fresh read still in flight at its own deadline is waited for outside the descriptor queue; its own answer then decides in the next turn when no descriptor turn came between, otherwise a fresh read decides, so a storage that answers every read only after its deadline still marks the window after two reads while each read stays bounded inside the queue. A fresh read whose own late answer is no answer at all (or a failure) decides nothing either, and after {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} of them the late mark ends with the window unmarked, so a storage that never answers in time does not hold the queue turn after turn for the whole run. Before each turn it waits, outside the queue too, while a setup, take-back or removal of this window runs ({@link afterDevinRunsSettled}), and a turn that finds one started meanwhile gives way to it; after such a wait a fresh read decides. Called by {@link markDevinChatLate} once the start's or the sync's late read settled.
    * @param server - The server whose start or sync read answered late.
    * @param lateMark - The number {@link markDevinChatLate} gave this late mark; a newer one takes over and this one ends at its next turn.
-   * @returns Whether it marked the window.
+   * @returns Whether it marked the window: `false` also once {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} fresh reads answered late with no answer.
    * @example await markLateUntilAnswered(server, 1) // => true once a read found the setup standing
    */
   const markLateUntilAnswered = async (
@@ -1730,6 +1731,7 @@ export function activate(
   ): Promise<boolean> => {
     let earlier: Parameters<typeof markLateInQueue>[2]
     let answer: LateMarkTurn
+    let unansweredReads = 0
     // A turn that waits for its read in flight, or that gave way to a run of this window, decides nothing yet; none of these waits holds a turn of the queue.
     do {
       // A run of this window may change the records (a take-back, a removal), so an answer read before it ended decides nothing.
@@ -1741,8 +1743,11 @@ export function activate(
           () => undefined,
           () => undefined,
         )
-        // A late answer of "no answer" (or a failed read) falls back to a fresh read in the next turn.
+        // A late answer of "no answer" (or a failed read) falls back to a fresh read in the next turn, until the bound ends the late mark unmarked.
         const fields = await answer.lateFields?.catch(() => undefined)
+        if (fields === undefined) unansweredReads += 1
+        if (unansweredReads >= DEVIN_LATE_MARK_UNANSWERED_READS_MAX)
+          return false
         earlier = { fields, turn: answer.turn }
       }
     } while (answer.lateRead || answer.hasGivenWay)
@@ -1750,7 +1755,7 @@ export function activate(
   }
   /**
    * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once, or names Set Up AI Chat instead when the bridge's own check finds the setup gone by then ({@link isSetupGoneAfterLateMark}); called by {@link startServer}'s queue turn, once per start, and by {@link syncDevinChatDescriptor}, once per sync whose read was still in flight at its deadline.
-   * A server stopped or replaced meanwhile, a setup removed meanwhile, or a window already marked is left as it is and shows nothing, also when the stop, a newer late mark or this window's removal comes during the bridge check after the mark ({@link isLateMarkStillOn}), and a setup of this window that succeeds during that check is followed by its own notice alone; while a setup, take-back or removal of this window runs (the one that ran the sync included), the mark waits for it to end and then reads afresh ({@link afterDevinRunsSettled}), because a run that ends without rewriting the descriptor leaves the mark to it. Only the newest late mark of the window goes on ({@link lateMarksScheduled}): it reads afresh once its own late read settled, so it decides everything an older one would have.
+   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a window whose fresh reads answered late with no answer {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} times is left as it is and shows nothing, also when the stop, a newer late mark or this window's removal comes during the bridge check after the mark ({@link isLateMarkStillOn}), and a setup of this window that succeeds during that check is followed by its own notice alone; while a setup, take-back or removal of this window runs (the one that ran the sync included), the mark waits for it to end and then reads afresh ({@link afterDevinRunsSettled}), because a run that ends without rewriting the descriptor leaves the mark to it. Only the newest late mark of the window goes on ({@link lateMarksScheduled}): it reads afresh once its own late read settled, so it decides everything an older one would have.
    * @param server - The server that just started, or the one the sync rewrote.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
    * @example markDevinChatLate(server, lateRead)

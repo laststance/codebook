@@ -546,6 +546,8 @@ export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
 /** How often a late mark of a Devin Desktop window's descriptor (the server start's or a sync's) checks, without reading storage, whether the setup, take-back or removal of the window it waits for (the one that ran that sync included) has ended before it decides the mark. */
 export const DEVIN_LATE_MARK_RUN_CHECK_MS = 500
+/** How many of a late mark's fresh reads of the setup receipts may give no answer at all, each only after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS} (a storage that stays out of file descriptors), before the late mark ends and leaves the window's descriptor unmarked, as a server start does when no read answered within that budget: each such read holds the descriptor queue, which a stop, a setup's mark and a removal's unmark wait behind, for up to that budget. */
+export const DEVIN_LATE_MARK_UNANSWERED_READS_MAX = 3
 /** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */
 export const DEVIN_MARK_READ_RETRY_BUDGET_MS = 5_000
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
