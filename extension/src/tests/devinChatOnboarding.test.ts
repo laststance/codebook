@@ -1264,8 +1264,14 @@ test('a reconnect whose refresh is passed by a confirmed removal starts no serve
   try {
     await window.refreshReached
     // Act
-    await window.commands.get('codebook.removeManagedDevinSetup')!()
+    // The removal waits for the setup lock the held refresh holds, so it is confirmed first and the refresh then goes on.
+    const removal = window.commands.get('codebook.removeManagedDevinSetup')!()
+    await waitUntil(
+      () => window.modalQuestions.length === 1,
+      "the removal's confirmed question",
+    )
     window.releaseRefresh()
+    await removal
     // Assert
     // The reconnect has ended; a start would show in the steps.
     await window.whenReconnected()
@@ -1584,6 +1590,54 @@ test('a Devin Desktop refresh retries a held storage lock and then refreshes the
     assert.equal(window.notices.length, 1)
   } finally {
     await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop window that opens on a set-up workspace while another window's setup holds the setup lock refreshes the MCP entry only once that setup ended, so the refresh never rewrites the entry between that setup's entry write and its end or take-back; fails_when=the activation refresh rewrites the entry while the other window's setup still runs, so a failed first setup's take-back finds a newer generation, answers superseded and leaves its failed entry installed (Cycle 0146 /ship pass 1, codex-structured extension.ts:1626); why_new=only setups and removals took the setup lock; seam=two windows on one storage folder in one extension host, a held final skill check of the first window's setup; no_claim=a window of another extension host (the lock's cross-process wait has its own tests) and a refresh refused after the lock's wait (it goes to the Output like any refused refresh)
+test("a Devin Desktop window's activation refresh waits for another window's setup that holds the setup lock", async (context) => {
+  // Arrange
+  const first = await devinWindow(context, { holdSkillCheck: true })
+  try {
+    const setup = first.commands.get('codebook.setupAiChat')!()
+    await waitUntil(
+      () => first.holds.skillCheck.reachedAtMs(),
+      "the first window's final skill check",
+    )
+    // Act
+    const second = await devinWindow(context, {
+      storageDirectory: first.directory,
+      instanceLabel: 'second',
+      savedSetup: true,
+    })
+    try {
+      // Without the lock the refresh follows the skill check and Node within milliseconds; half a second without it shows it waits.
+      await assert.rejects(
+        waitUntil(
+          () => second.steps.includes('refresh MCP entry'),
+          "the second window's refresh to run during the first window's setup",
+          500,
+        ),
+        {
+          message:
+            "Timed out waiting for the second window's refresh to run during the first window's setup",
+        },
+      )
+      first.holds.skillCheck.release()
+      await setup
+      await second.whenReconnected()
+      // Assert
+      assert.deepEqual(second.steps, [
+        'verify Devin skill',
+        'resolve Node',
+        'refresh MCP entry',
+        'start server',
+      ])
+    } finally {
+      await second.loaded.deactivate()
+    }
+  } finally {
+    first.holds.skillCheck.release()
+    await first.loaded.deactivate()
   }
 })
 

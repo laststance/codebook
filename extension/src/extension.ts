@@ -1553,7 +1553,7 @@ export function activate(
       },
     )
   }
-  /** Runs one Devin Desktop setup or removal alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so a removal never lands between another window's skill deployment and entry write. @example await underDevinLock(() => removeDevinSetupLocked()) */
+  /** Runs one Devin Desktop setup, removal or activation refresh of the entry alone across every window of the user, under the lock of the folder `devin-setup` in Codebook's global storage (waited for a moment when another window holds it), so neither a removal nor a refresh lands between another window's entry write and that setup's end or take-back. @example await underDevinLock(() => removeDevinSetupLocked()) */
   const underDevinLock = <Value>(
     operation: () => Promise<Value>,
   ): Promise<Value> =>
@@ -2089,7 +2089,7 @@ export function activate(
         .join(' '),
     )
   }
-  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link underDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
   const refreshDevinEntry = async (
     storageRoot: string,
   ): Promise<{
@@ -2111,9 +2111,14 @@ export function activate(
       return { status: 'refused', disabled: false }
     }
     try {
-      // Windows opened together may hold the entry's lock one after the other.
-      const refresh = await retryWhileStorageLockHeld(() =>
-        refreshManagedDevinMcpEntry(storageRoot, devinMcpEntry(nodeExecutable)),
+      // Under the setup lock, so the refresh never rewrites the entry between another window's entry write and that setup's take-back, which would then find a newer entry and leave the failed one installed; windows opened together may hold the entry's lock one after the other.
+      const refresh = await underDevinLock(() =>
+        retryWhileStorageLockHeld(() =>
+          refreshManagedDevinMcpEntry(
+            storageRoot,
+            devinMcpEntry(nodeExecutable),
+          ),
+        ),
       )
       // An entry edited after setup stays as the learner left it; the bridge it names may still connect.
       if (refresh.status === 'changed')
