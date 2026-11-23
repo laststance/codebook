@@ -1991,7 +1991,7 @@ async function readRecord<Schema extends z.ZodType>(
 }
 
 /**
- * Reads one of Codebook's own records like {@link readRecord}, together with the version it read: the inode and the bytes' hash from the same open handle; called by {@link readRecord}, and by {@link settleRollbackJournal}, which retires a held journal only as the version it settled.
+ * Reads one of Codebook's own records like {@link readRecord}, together with the version it read: the inode and the bytes' hash from the same open handle ({@link readRecordFile}); called by {@link readRecord}, and by {@link settleRollbackJournal}, which retires a held journal only as the version it settled.
  * @param path - The record file.
  * @param schema - The shape it must have.
  * @param retry - The command a refusal asks the learner to run again.
@@ -2007,6 +2007,32 @@ async function readVersionedRecord<Schema extends z.ZodType>(
   retry: string,
   seam?: DevinMcpTestSeam,
 ): Promise<{ record: z.infer<Schema>; version: RecordVersion } | undefined> {
+  const read = await readRecordFile(path, retry, seam)
+  if (read === undefined) return undefined
+  return {
+    record: parseRecord(path, schema, retry, read.bytes),
+    version: { ino: read.ino, sha256: bytesSha256(read.bytes) },
+  }
+}
+
+/** The bytes of one of Codebook's records and the inode of the open file they were read from ({@link readRecordFile}). */
+type RecordFileRead = { bytes: Buffer; ino: bigint }
+
+/**
+ * Reads the bytes of one of Codebook's own records through one handle opened without following a link; called by {@link readVersionedRecord} and {@link readRetiredRecord}, which parse them with {@link parseRecord}.
+ * @param path - The record file.
+ * @param retry - The command a refusal asks the learner to run again.
+ * @param seam - Test hook, see {@link DevinMcpTestSeam}.
+ * @returns The bytes and the inode of the file they came from; undefined when the name is empty.
+ * @throws When the record is a link, no regular file, larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} (also when it grew past that after its stat) or unreadable; a failed system call is the error's cause ({@link isFailedRead}).
+ * @example
+ * await readRecordFile(receiptPath, SET_UP_AGAIN) // => { bytes: <Buffer 7b 22 ...>, ino: 42n }
+ */
+async function readRecordFile(
+  path: string,
+  retry: string,
+  seam?: DevinMcpTestSeam,
+): Promise<RecordFileRead | undefined> {
   const unsafe = (cause?: unknown) =>
     new Error(
       `Codebook's Devin Desktop MCP record at ${path} is a link, no regular file, larger than ${DEVIN_MCP_RECORD_LIMIT_BYTES} bytes or not readable, so the config was left untouched; remove that record, ${retry}.`,
@@ -2019,8 +2045,6 @@ async function readVersionedRecord<Schema extends z.ZodType>(
     if (codeOf(error) === 'ENOENT') return undefined
     throw unsafe(error)
   }
-  let text: string
-  let version: RecordVersion
   try {
     const status = await file.stat({ bigint: true }).catch((error) => {
       throw unsafe(error)
@@ -2036,14 +2060,32 @@ async function readVersionedRecord<Schema extends z.ZodType>(
       throw unsafe(error)
     })
     if (!bytes) throw unsafe()
-    text = bytes.toString('utf8')
-    version = { ino: status.ino, sha256: bytesSha256(bytes) }
+    return { bytes, ino: status.ino }
   } finally {
     await file.close()
   }
+}
+
+/**
+ * Parses the bytes of one of Codebook's records and checks their shape; called by {@link readVersionedRecord} and {@link readRetiredRecord} after {@link readRecordFile}.
+ * @param path - The record file, for the refusal.
+ * @param schema - The shape it must have.
+ * @param retry - The command a refusal asks the learner to run again.
+ * @param bytes - The bytes that were read.
+ * @returns The record.
+ * @throws When the bytes are no JSON or of another shape; the config is not touched.
+ * @example
+ * parseRecord(receiptPath, receiptSchema, SET_UP_AGAIN, Buffer.from('{}')) // throws: '… is unreadable and the config was left untouched; …'
+ */
+function parseRecord<Schema extends z.ZodType>(
+  path: string,
+  schema: Schema,
+  retry: string,
+  bytes: Buffer,
+): z.infer<Schema> {
   let parsed: unknown
   try {
-    parsed = JSON.parse(text)
+    parsed = JSON.parse(bytes.toString('utf8'))
   } catch {
     parsed = undefined
   }
@@ -2052,7 +2094,7 @@ async function readVersionedRecord<Schema extends z.ZodType>(
     throw new Error(
       `Codebook's Devin Desktop MCP record at ${path} is unreadable and the config was left untouched; remove that record, ${retry}.`,
     )
-  return { record: record.data, version }
+  return record.data
 }
 
 /**
@@ -4066,8 +4108,8 @@ async function readRecordKind(
 }
 
 /**
- * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
- * @param error - What {@link readRecord} threw.
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} or {@link readRetiredRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
+ * @param error - What {@link readRecord} or {@link readRetiredRecord} threw.
  * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link (whose open without following it fails with `ELOOP`), no regular file, too many bytes or bytes that are no record.
  * @example
  * isFailedRead(new Error('…', { cause: Object.assign(new Error('i/o error'), { code: 'EIO' }) }))       // => true
@@ -4130,7 +4172,8 @@ async function settleRetiredReceipt(
   const fate = await retiredReceiptFateOf(context, pending, retiredPath, look)
   if (fate === 'undecided') throw undecidedReceiptRefusal(context, retiredPath)
   // The config holds that setup's publish, which the old receipt does not own: it goes, as when the link stood.
-  if (fate === 'drop') await dropRetiredReceipt(context, retiredPath, look)
+  if (typeof fate === 'object')
+    await dropRetiredReceipt(context, retiredPath, fate)
   else
     await putBackRetiredReceipt(context, retiredPath, undefined, {
       isMarked: pending.notLinked === true,
@@ -4227,10 +4270,10 @@ async function isPublishReceipted(
 }
 
 /**
- * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there; called only by {@link dropRetiredReceipt}, which keeps that file and the publish record that names it, so the next run looks at it again.
+ * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there or no longer held the record the drop was decided on; called by {@link dropRetiredReceipt} and {@link assertDecisionStill}, which keep that file and the publish record that names it, so the next run looks at it again.
  * @param context - The run; gives the publish record's path and the command to run again.
  * @param retiredPath - The private name that holds the old record.
- * @param cause - What the delete threw; undefined when the name showed another file or could not be looked at.
+ * @param cause - What the delete threw; undefined when the name showed another file, held another record or could not be looked at.
  * @returns The error, not thrown yet.
  * @example
  * throw retiredDropRefusal(context, retiredPath, eio) // 'Codebook could not delete …/receipt.json.<generation>.retired, its own old record of a setup whose entry is gone (…), so it kept that file and the publish record at …/pending.json, and the next run looks at that file again; …'
@@ -4248,20 +4291,20 @@ function retiredDropRefusal(
 
 /**
  * Deletes a first setup's old record from its private name once that setup put its config in place, only while that name still shows the record of this config that was read there; called by {@link settleRetiredReceipt} wherever it drops that record.
- * What proves the setup's link (its own receipt, the inode it published, its entry) identifies nothing at the private name, which a backup may have filled again: a file there that is no record of this config is never deleted and no longer looked at, and the delete acts only on the file that was read. A drop decided on a look at the config holds only while the config still holds that look's bytes and, right before the delete, its identity: a backup may restore the config the old record covers while that record is read.
+ * What proves the setup's link (its own receipt, the inode it published, its entry) identifies nothing at the private name, which a backup may have filled again: a file there that is no record of this config is never deleted and no longer looked at, and the delete acts only on the file that was read. A drop decided on a look at the config ({@link DecidedDrop}) deletes only the record that decision read, the same inode with the same bytes: another record put at the private name since may own the entry that stands, so it stays and the next run decides on it. It holds only while the config still holds that look's bytes and, right before the delete, its identity: a backup may restore the config the old record covers while that record is read.
  * @param context - The run.
  * @param retiredPath - The private name that holds the old record.
- * @param decidedOn - The look at the config the drop was decided on ({@link retiredReceiptFateOf}); undefined when the setup's own receipt or its published inode decided it.
+ * @param decided - The look at the config and the record the drop was decided on ({@link retiredReceiptFateOf}); undefined when the setup's own receipt or its published inode decided it.
  * @returns Resolves once the old record is gone, or once the name holds nothing of Codebook's to delete.
- * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the private name could not be looked at or read, the {@link changedWhileWorking} refusal and what {@link lookAtConfig} throws when the config is no longer what `decidedOn` read, and the {@link retiredDropRefusal} when the name no longer shows the file that was read or the delete failed for another reason than a name already gone; that file and the publish record stay then.
+ * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the private name could not be looked at or read, the {@link changedWhileWorking} refusal and what {@link lookAtConfig} throws when the config is no longer what `decided` read, and the {@link retiredDropRefusal} when the name no longer shows the file that was read or holds another record than `decided` read, or the delete failed for another reason than a name already gone; that file and the publish record stay then.
  * @example
  * await dropRetiredReceipt(context, retiredPath)       // the old record is gone after a setup whose own record stands
- * await dropRetiredReceipt(context, retiredPath, look) // rejects when a backup restored the old config meanwhile
+ * await dropRetiredReceipt(context, retiredPath, fate) // rejects when a backup restored the old config meanwhile
  */
 async function dropRetiredReceipt(
   context: Context,
   retiredPath: string,
-  decidedOn?: ConfigLook,
+  decided?: DecidedDrop,
 ): Promise<void> {
   const movedUnread = (cause: unknown): UnrestoredReceiptError =>
     new UnrestoredReceiptError(
@@ -4276,20 +4319,18 @@ async function dropRetiredReceipt(
   })
   // Nothing, or no regular file, stands there: nothing of Codebook's old record is left to delete.
   if (!read?.isFile()) return
-  const retired = await readRecord(
-    retiredPath,
-    receiptSchema,
-    context.retry,
-    context.seam,
-  ).catch((error: unknown) => {
-    if (isFailedRead(error)) throw movedUnread(error)
-    // Bytes that are no record are not Codebook's old record.
-    return undefined
-  })
+  const retired = await readRetiredRecord(context, retiredPath).catch(
+    (error: unknown) => {
+      if (isFailedRead(error)) throw movedUnread(error)
+      // Bytes that are no record are not Codebook's old record.
+      return undefined
+    },
+  )
   // Gone meanwhile, or a file that is no record of this config: it is never deleted.
-  if (retired?.targetPath !== context.path) return
-  // The config the drop was decided on must still hold the bytes of that look.
-  if (decidedOn) await assertDecidedConfigStill(context, decidedOn)
+  if (retired?.receipt.targetPath !== context.path) return
+  // The private name must still hold the record the drop was decided on, and the config the bytes of that look.
+  if (decided)
+    await assertDecisionStill(context, retiredPath, decided, read.ino, retired)
   const { ino, size, mtimeNs, ctimeNs } = read
   // The delete acts on the name, which must still show the file that was read.
   const isStill = await isNameStill(context, retiredPath, {
@@ -4300,10 +4341,10 @@ async function dropRetiredReceipt(
   }).catch(() => false)
   if (!isStill) throw retiredDropRefusal(context, retiredPath)
   // And the config name must still show the file of that look, right before the delete.
-  if (decidedOn)
+  if (decided)
     assertConfigUnchanged(
       context,
-      decidedOn.kind === 'present' ? decidedOn.identity : undefined,
+      decided.config.kind === 'present' ? decided.config.identity : undefined,
     )
   await unlink(retiredPath).catch((cause: unknown) => {
     // A name already gone is what the delete was for.
@@ -4313,26 +4354,69 @@ async function dropRetiredReceipt(
 }
 
 /**
- * Stops the drop of a first setup's old record when the config no longer holds the bytes the drop was decided on, as after a backup restored the config that record covers while Codebook read the record; called only by {@link dropRetiredReceipt}, before its last looks.
+ * Stops the drop of a first setup's old record when the private name no longer holds the record the drop was decided on, as after a backup put another record there that may own the entry that stands, or the config no longer holds the bytes the drop was decided on, as after a backup restored the config that record covers while Codebook read the record; called only by {@link dropRetiredReceipt}, before its last looks.
  * @param context - The run.
- * @param decidedOn - The look at the config the drop was decided on.
- * @throws The {@link changedWhileWorking} refusal when the config is gone or holds other bytes now, and what {@link lookAtConfig} throws; nothing is changed then.
+ * @param retiredPath - The private name that holds the old record.
+ * @param decided - The look at the config and the record the drop was decided on.
+ * @param nameIno - The inode the private name showed right before the record was read again.
+ * @param retired - The record as it was read again.
+ * @throws The {@link retiredDropRefusal} when the name or the file read again shows another inode than the decided record or its bytes differ, the {@link changedWhileWorking} refusal when the config is gone or holds other bytes now, and what {@link lookAtConfig} throws; nothing is changed then.
  * @example
- * await assertDecidedConfigStill(context, look) // rejects after a backup put the old config back
+ * await assertDecisionStill(context, retiredPath, fate, read.ino, retired) // rejects after a backup put the old config back
  */
-async function assertDecidedConfigStill(
+async function assertDecisionStill(
   context: Context,
-  decidedOn: ConfigLook,
+  retiredPath: string,
+  decided: DecidedDrop,
+  nameIno: bigint,
+  retired: RetiredRecordRead,
 ): Promise<void> {
+  const { record } = decided
+  // Another record at the private name since the decision stays: the next run decides on it.
+  if (
+    nameIno !== record.ino ||
+    retired.ino !== record.ino ||
+    retired.sha256 !== record.sha256
+  )
+    throw retiredDropRefusal(context, retiredPath)
   const now = await lookAtConfig(context)
   // An absent config has no bytes, so it matches only a look that found none.
   const bytesOf = (look: ConfigLook): string | undefined =>
     look.kind === 'present' ? look.sha256 : undefined
-  if (bytesOf(now) !== bytesOf(decidedOn)) throw changedWhileWorking(context)
+  if (bytesOf(now) !== bytesOf(decided.config))
+    throw changedWhileWorking(context)
 }
 
-/** What a later run does with a first setup's old record that waits under its private name ({@link retiredReceiptFateOf}); `compare` is a put-back that never links ({@link PutBackOptions.isBesideStanding}). */
-type RetiredReceiptFate = 'put-back' | 'compare' | 'drop' | 'undecided'
+/** A first setup's old record as one read of its private name found it ({@link readRetiredRecord}): the receipt, the inode of the file that was read and the SHA-256 of its bytes. */
+type RetiredRecordRead = { receipt: Receipt; ino: bigint; sha256: string }
+
+/** A drop of a first setup's old record decided on one look at the config ({@link retiredReceiptFateOf}): that look and the record it read, which the delete must find again ({@link assertDecisionStill}). */
+type DecidedDrop = { config: ConfigLook; record: RetiredRecordRead }
+
+/** What a later run does with a first setup's old record that waits under its private name ({@link retiredReceiptFateOf}); `compare` is a put-back that never links ({@link PutBackOptions.isBesideStanding}), and a {@link DecidedDrop} deletes the record it read. */
+type RetiredReceiptFate = 'put-back' | 'compare' | 'undecided' | DecidedDrop
+
+/**
+ * Reads a first setup's old record from its private name with the inode and the hash of the bytes read; called by {@link retiredReceiptFateOf}, whose drop carries them, and by {@link dropRetiredReceipt}, which deletes only the record they name.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the old record.
+ * @returns The record with its inode and bytes hash; undefined when the name is empty.
+ * @throws What {@link readRecordFile} and {@link parseRecord} throw.
+ * @example
+ * await readRetiredRecord(context, retiredPath) // => { receipt: oldReceipt, ino: 42n, sha256: '9f86…' }
+ */
+async function readRetiredRecord(
+  context: Context,
+  retiredPath: string,
+): Promise<RetiredRecordRead | undefined> {
+  const read = await readRecordFile(retiredPath, context.retry, context.seam)
+  if (read === undefined) return undefined
+  return {
+    receipt: parseRecord(retiredPath, receiptSchema, context.retry, read.bytes),
+    ino: read.ino,
+    sha256: bytesSha256(read.bytes),
+  }
+}
 
 /**
  * Decides what becomes of a first setup's old record that waits under its private name, on the one look at the config that a later run decides on; called only by {@link settleRetiredReceipt}.
@@ -4342,14 +4426,14 @@ type RetiredReceiptFate = 'put-back' | 'compare' | 'drop' | 'undecided'
  * @param retiredPath - The private name that holds the old record.
  * @param look - The look at the config the run decides on.
  * @returns
- * - `drop` when the config holds the setup's own entry and the old record is a receipt of this config that does not own it (another bridge path, as after an update moved Codebook's folder)
+ * - a {@link DecidedDrop} (that look and the record read) when the config holds the setup's own entry and the old record is a receipt of this config that does not own it (another bridge path, as after an update moved Codebook's folder)
  * - `undecided` when the config holds the setup's own entry, the old record owns it too and nothing stands at `receipt.json`
  * - `compare` in that same case while something stands at `receipt.json`: the put-back's own look settles it ({@link standingReceiptOf}) and never links the old record, so a name found empty by then is undecided again
  * - `put-back` otherwise: the config holds no entry of that setup, or the old record is gone or of another config
- * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the old record could not be read (it names that file and asks to delete neither record), what {@link readRecord} throws when its name holds a link or bytes that are no record, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
+ * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the old record could not be read (it names that file and asks to delete neither record), what {@link readRecordFile} and {@link parseRecord} throw when its name holds a link or bytes that are no record, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
  * @example
  * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'undecided' after a setup that stopped after its link and a config saved again with the same entry
- * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'drop' when that setup wrote another bridge path than the old record covers
+ * await retiredReceiptFateOf(context, pending, retiredPath, look) // => { config: look, record: { receipt: oldReceipt, ino: 42n, sha256: '9f86…' } } when that setup wrote another bridge path than the old record covers
  */
 async function retiredReceiptFateOf(
   context: Context,
@@ -4362,27 +4446,25 @@ async function retiredReceiptFateOf(
   // Only the entry the setup itself was about to publish leaves the question open.
   if (entrySha256 === undefined || coreHashOf(current) !== entrySha256)
     return 'put-back'
-  const retired = await readRecord(
-    retiredPath,
-    receiptSchema,
-    context.retry,
-    context.seam,
-  ).catch((error: unknown) => {
-    // A failed read says nothing about the record: both records stay, and no sentence asks to delete one. A link or bytes that are no record keep readRecord's own sentence.
-    if (isFailedRead(error))
-      throw new UnrestoredReceiptError(
-        context,
-        retiredPath,
-        undefined,
-        error,
-        'moved-unread',
-      )
-    throw error
-  })
+  const retired = await readRetiredRecord(context, retiredPath).catch(
+    (error: unknown) => {
+      // A failed read says nothing about the record: both records stay, and no sentence asks to delete one. A link or bytes that are no record keep their own sentence.
+      if (isFailedRead(error))
+        throw new UnrestoredReceiptError(
+          context,
+          retiredPath,
+          undefined,
+          error,
+          'moved-unread',
+        )
+      throw error
+    },
+  )
   // Gone, or no record of this config: the put-back settles it as before.
-  if (retired?.targetPath !== context.path) return 'put-back'
-  // That setup's publish stands and the old record owns none of it.
-  if (!ownsEntry(current, retired)) return 'drop'
+  if (retired?.receipt.targetPath !== context.path) return 'put-back'
+  // That setup's publish stands and the old record owns none of it: the drop deletes only the record read here.
+  if (!ownsEntry(current, retired.receipt))
+    return { config: look, record: retired }
   const standing = await lstatOrAbsent(context.receiptPath).catch(
     (cause: unknown) => {
       throw new UnrestoredReceiptError(

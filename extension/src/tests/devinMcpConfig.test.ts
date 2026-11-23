@@ -9493,6 +9493,74 @@ test('A refresh that decided to delete the old record on the entry a stopped fir
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test('A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps another record put at that private name before the delete, and the next refresh decides again on that record', async (context) => {
+  // Value: protects=the old record is deleted only while its private name still holds the file and the bytes the drop was decided on, so a record put there meanwhile that owns the entry that stands is never deleted and the next run decides on it; fails_when=the refresh deletes the record put there or answers without the refusal that keeps it, a record is gone or changed after it, the config changes, or the next refresh answers anything but the refusal that it cannot tell which setup the entry belongs to with both records kept; no_claim=a real backup tool (seam.afterStat renames another record over the private name once, while Codebook reads the old record there to decide), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    pendingPath,
+    receiptBefore,
+    retiredName,
+    retiredPath,
+    configText,
+  } = await arrangeResavedAfterStoppedFirstSetup(context, OTHER_ENTRY)
+  // A record of this config that owns the entry the stopped setup wrote: the plain hash of OTHER_ENTRY.
+  const ownerRecordText = `${JSON.stringify({
+    ...receiptBefore,
+    entrySha256:
+      'ac2315e6a57265f50d9ac50f2f4ea13720f46de69a96edf77f972d1912caa196',
+  })}\n`
+  let hasSwapped = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      afterStat: (path) => {
+        if (path !== retiredPath || hasSwapped) return
+        // A backup tool puts another record at the private name while Codebook reads the old record there.
+        hasSwapped = true
+        swapFile(retiredPath, ownerRecordText)
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordsAfterRefusal = await recordsIn(storage)
+  const retiredAfterRefusal = await readFile(retiredPath, 'utf8').catch(
+    (error: unknown) => error,
+  )
+  const nextError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasSwapped, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook could not delete ${retiredPath}, its own old record of a setup whose entry is gone (the delete failed, or Codebook could not tell that this file is still the record it read), so it kept that file and the publish record at ${pendingPath}, and the next run looks at that file again; make the folder that holds them writable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, ['pending.json', retiredName])
+  assert.equal(retiredAfterRefusal, ownerRecordText)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    `Codebook found a "codebook" entry in Devin Desktop's MCP config at ${configPath} that a setup which ended early may have written, and its own old record at ${retiredPath} covers that same entry, so it cannot tell which setup the entry belongs to. Codebook changed nothing and kept both records (${pendingPath}, ${retiredPath}); remove that entry by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), ownerRecordText)
+})
+
 test("A first setup with another bridge path that wrote its own record but could not delete its publish record or the old record's private file leaves its record standing, and the old record never comes back", async (context) => {
   // Value: protects=a first setup that wrote its own record finished, so the next run deletes the old record's private file whatever the config shows, never asks to move that setup's own record away and never puts the old record back; fails_when=the refresh rejects or answers anything but not-managed, receipt.json holds anything but that setup's record, or any other record stays; no_claim=why the unlinks fail (the config module is loaded with an unlink that fails with EBUSY for the old record's private name and an rm that fails with EBUSY for pending.json), a learner deleting mcp_config.json again (rmSync)
   // Arrange
