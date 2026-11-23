@@ -62,9 +62,9 @@ export type DevinMcpTestSeam = {
   afterCompare?: () => void
   /** Called right after a file's size was checked and before its bytes are read, with that file's path, so a test can make the file grow in between. */
   afterStat?: (path: string) => void
-  /** Called right before recovery looks again at a leftover's name ({@link isLeftoverStill}) with that name, so a test can swap the file there between the first look and the link or unlink. */
+  /** Called right before recovery looks again at a leftover's name ({@link isLeftoverStill}) with that name, so a test can swap the file there between the first look and the link, unlink or rename. */
   beforeLeftoverCheck?: (path: string) => void
-  /** Called right after that second look passed and before the link or unlink it guards, so a test can swap the file in the gap the second look cannot close. */
+  /** Called right after that second look passed and before the link, unlink or rename it guards, so a test can swap the file in the gap the second look cannot close. */
   afterLeftoverCheck?: (path: string) => void
   /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them; a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
   beforeRecordWrite?: (write: { path: string; record: unknown }) => void
@@ -313,6 +313,8 @@ type KeptFile = {
   holds: 'previous' | 'new'
   /** Set for a copy of the previous config that stays under a name a record on disk still holds ({@link discardDisplaced}, {@link keepFromRecovery}, {@link publishEntry}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
   isLeftover?: true
+  /** Set for the private name of a copy of the previous config where another program put another file before Codebook could move the copy out of recovery's reach ({@link keepFromRecovery}): the sentence that names it says that the file there is no longer that copy ({@link replacedCopySentence}). */
+  isReplaced?: true
 }
 
 /** The words that name a kept copy of the previous config, for a refusal and for {@link cleanupFailureOf}. */
@@ -356,8 +358,25 @@ function journalRefusal({ path, pendingPath, retry }: Context): Error {
   )
 }
 
-/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}) instead of leaving it to the learner. */
-function keptFileSentence({ path, holds, isLeftover }: KeptFile): string {
+/**
+ * Says that the private name of a copy of the previous config shows another program's file now ({@link KeptFile.isReplaced}), instead of naming that file the previous config; used by {@link keptFileSentence} and {@link alsoKeptSentence}.
+ * @param path - The private name.
+ * @returns One sentence that names the path and asks the learner to look at the file before using or deleting it.
+ * @example
+ * replacedCopySentence('/h/.config/devin/mcp_config.json.<generation>.codebook-displaced') // => 'Another program replaced the private copy … so look at it before you use or delete it.'
+ */
+function replacedCopySentence(path: string): string {
+  return `Another program replaced the private copy of your previous Devin MCP config that Codebook kept at ${path}, so the file at that path is no longer that copy; Codebook left that file untouched, so look at it before you use or delete it.`
+}
+
+/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}) instead of leaving it to the learner; a name another program put another file at says so ({@link replacedCopySentence}). */
+function keptFileSentence({
+  path,
+  holds,
+  isLeftover,
+  isReplaced,
+}: KeptFile): string {
+  if (isReplaced) return replacedCopySentence(path)
   const what =
     holds === 'previous'
       ? keptCopyPhrase(path)
@@ -990,15 +1009,17 @@ async function handOverCopy(
 
 /**
  * Keeps a changed displaced copy out of a later run's reach when its handed record could not be written and the completed record stays on disk; called by {@link handOverCopy}.
- * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds. A copy whose name shows another file or nothing stays as it is and is left to the learner; one that cannot be read, holds other bytes or cannot move stays tracked ({@link KeptFile.isLeftover}), and its sentence says that a later run deletes it while it still holds the recorded bytes.
- * @param context - The run; its seam is called when the copy is read.
+ * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds. The rename moves whatever stands at the name, not the file the read saw through its handle, so it runs only while a last look still shows that file with the size and times of the read ({@link lookBeforeMove}). Any other copy stays where it is and is worded by what its name shows ({@link copyAsItStands}): one that cannot be read or looked at, holds other bytes, changed after the read or cannot move stays tracked ({@link KeptFile.isLeftover}), and its sentence says that a later run deletes it while it still holds the recorded bytes; a name that shows another file is said to be no longer that copy ({@link KeptFile.isReplaced}).
+ * Limit: a swap between the last look and the rename is not seen; no Node primitive renames by inode.
+ * @param context - The run; its seam is called when the copy is read and around the last look.
  * @param journal - The record as it was written before the first move; its kept hash is the bytes recovery deletes.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared; its inode is the one the record holds.
  * @returns The copy as it stays:
  * - at its new name once it moved;
- * - at its private name when that name shows another file or nothing;
- * - at its private name marked {@link KeptFile.isLeftover} when it could not be read, holds other bytes or could not move.
+ * - at its private name marked {@link KeptFile.isLeftover} when it could not be read or looked at, the name shows the recorded file with other bytes, size or times, or the move failed;
+ * - at its private name marked {@link KeptFile.isReplaced} when the name shows another file;
+ * - at its private name when nothing stands there.
  * @example
  * await keepFromRecovery(context, journal, displacedPath, held) // => { path: '…/mcp_config.json.<generation>.codebook-kept', holds: 'previous' }
  */
@@ -1009,23 +1030,75 @@ async function keepFromRecovery(
   held: HeldCopy,
 ): Promise<KeptFile> {
   const copy: KeptFile = { path: displacedPath, holds: 'previous' }
-  const tracked: KeptFile = { ...copy, isLeftover: true }
   let now: InspectedCopy | undefined
   try {
     now = await inspectCopy(displacedPath, context.seam)
   } catch {
     // A copy that cannot be read now may still be the recorded file with the recorded bytes at the next run.
-    return tracked
+    return copyAsItStands(copy, 'unknown', held.ino)
   }
-  // Another file, or nothing: the recorded file does not stand at this name, so the next run never deletes what is here.
-  if (now?.ino !== held.ino) return copy
-  // The recorded file with other bytes stays where it is; a writer that still holds it can write the recorded bytes back before the next run, which then deletes it.
-  if (now.sha256 !== journal.keptSha256) return tracked
+  // Only the recorded file with the recorded bytes moves; a writer that still holds the recorded file can write those bytes back before the next run, which then deletes it.
+  if (now?.ino !== held.ino || now.sha256 !== journal.keptSha256)
+    return copyAsItStands(copy, now?.ino, held.ino)
+  const shown = lookBeforeMove(context, displacedPath, now)
+  // The name changed since the read: whatever stands there now stays.
+  if (shown !== 'held') return copyAsItStands(copy, shown, held.ino)
   const keptPath = `${displacedPath.slice(0, -JOURNAL_SUFFIX.kept.length)}${KEPT_COPY_SUFFIX}`
   return rename(displacedPath, keptPath).then(
     (): KeptFile => ({ path: keptPath, holds: 'previous' }),
-    () => tracked,
+    () => copyAsItStands(copy, 'unknown', held.ino),
   )
+}
+
+/**
+ * Looks at a displaced name right before {@link keepFromRecovery} renames it: the read's open handle proves the file it read, not what stands at the name, and the rename moves whatever stands there.
+ * Limit: a swap between this look and the rename is not seen; no Node primitive renames by inode.
+ * @param context - The run; its seam is called around the look ({@link isLeftoverStill}).
+ * @param displacedPath - The private name of the displaced copy.
+ * @param read - The copy as {@link inspectCopy} read it: its inode, size and times.
+ * @returns
+ * - `held` when the name shows the read's inode with its size and times;
+ * - the inode the name shows otherwise, undefined when nothing stands there;
+ * - `unknown` when the look throws (EIO, EACCES), which proves nothing.
+ * @example
+ * lookBeforeMove(context, displacedPath, read) // => 'held'
+ */
+function lookBeforeMove(
+  context: Context,
+  displacedPath: string,
+  read: InspectedCopy,
+): 'held' | 'unknown' | bigint | undefined {
+  try {
+    if (isLeftoverStill(context, displacedPath, read)) return 'held'
+    // A second look, only for the words of the copy that stays.
+    return lstatSync(displacedPath, { bigint: true, throwIfNoEntry: false })
+      ?.ino
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
+ * Words a displaced copy that {@link keepFromRecovery} leaves at its private name, by what that name shows.
+ * @param copy - The copy at its private name.
+ * @param shown - The inode the name shows; undefined when nothing stands there; `unknown` when the copy could not be read, looked at or moved.
+ * @param recordedIno - The inode the completed record holds for the copy.
+ * @returns
+ * - the copy marked {@link KeptFile.isLeftover} for the recorded inode or an unknown one: the completed record still lets a later run delete it while it holds the recorded bytes
+ * - the copy marked {@link KeptFile.isReplaced} for another inode: another program's file, which no later run deletes ({@link otherInodeRefusal})
+ * - the copy as given when nothing stands there
+ * @example
+ * copyAsItStands(copy, 42n, 42n) // => { ...copy, isLeftover: true }
+ * copyAsItStands(copy, 43n, 42n) // => { ...copy, isReplaced: true }
+ */
+function copyAsItStands(
+  copy: KeptFile,
+  shown: bigint | 'unknown' | undefined,
+  recordedIno: bigint,
+): KeptFile {
+  if (shown === 'unknown' || shown === recordedIno)
+    return { ...copy, isLeftover: true }
+  return shown === undefined ? copy : { ...copy, isReplaced: true }
 }
 
 /**
@@ -1999,7 +2072,7 @@ type LeftoverLookback = {
 }
 
 /**
- * Tells whether a leftover's name still shows the file that was checked; called right before each link and unlink of a leftover ({@link tidyLeftover}, {@link putBackDisplaced}, {@link discardDisplaced}), because a sync tool may swap another file in between the first look and the call.
+ * Tells whether a leftover's name still shows the file that was checked; called right before each link and unlink of a leftover ({@link tidyLeftover}, {@link putBackDisplaced}, {@link discardDisplaced}) and before the rename that keeps a copy out of recovery's reach ({@link lookBeforeMove}), because a sync tool may swap another file in between the first look and the call.
  * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode.
  * @param context - The run; its seam is called around the look.
  * @param path - The leftover's name.
@@ -3819,11 +3892,26 @@ function rollbackContextOf(
 function keptCopiesSentence(keptLeft: KeptFile[]): string {
   return keptLeft
     .filter(({ holds }) => holds === 'previous')
-    .map(
-      ({ path, isLeftover }) =>
-        ` Codebook also kept ${keptCopyPhrase(path)}${isLeftover ? `, ${LEFTOVER_CLAUSE}` : '; delete that copy when you no longer need it'}.`,
-    )
+    .map((kept) => ` ${alsoKeptSentence(kept)}`)
     .join('')
+}
+
+/**
+ * Words one copy of the previous config that a failed first setup left; called by {@link keptCopiesSentence}.
+ * @param kept - The copy, with what the record on disk still does with it.
+ * @returns
+ * - the {@link replacedCopySentence} when another program put another file at its name ({@link KeptFile.isReplaced})
+ * - a sentence with the {@link LEFTOVER_CLAUSE} for a copy a record still lets a later run delete ({@link KeptFile.isLeftover})
+ * - a sentence that leaves the copy to the learner otherwise
+ * @example
+ * alsoKeptSentence({ path, holds: 'previous' }) // => 'Codebook also kept a private copy of your previous Devin MCP config at … ; delete that copy when you no longer need it.'
+ */
+function alsoKeptSentence({ path, isLeftover, isReplaced }: KeptFile): string {
+  if (isReplaced) return replacedCopySentence(path)
+  const next = isLeftover
+    ? `, ${LEFTOVER_CLAUSE}`
+    : '; delete that copy when you no longer need it'
+  return `Codebook also kept ${keptCopyPhrase(path)}${next}.`
 }
 
 /**
