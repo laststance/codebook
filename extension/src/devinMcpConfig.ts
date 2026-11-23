@@ -1845,7 +1845,7 @@ type Unsettled = {
   cause: unknown
   /** Set when the copy was just handed to the learner ({@link HandedCopyError}): the record turns to handed and the refusal names the copy as kept. */
   isHandedOver?: boolean
-  /** The inode the handed copy's name showed when recovery looked at it; the handed record names it ({@link handedRecordOf}), because a copy that only its bytes proved has another inode than the recorded one. */
+  /** The inode the handed copy's name shows when the copy is handed over ({@link unsettledOf}); the handed record names it ({@link handedRecordOf}), because a copy that only its bytes proved, or a name a sync tool swapped meanwhile, has another inode than the recorded one. */
   handedIno?: bigint
   /** Set by {@link inspect} when the handed record could not be written: the refusal then says that a later run may check the copy again ({@link bothFilesRefusal}) instead of promising that both paths stay. */
   isHandoverUnrecorded?: boolean
@@ -2099,7 +2099,7 @@ async function recoverLeftovers(
       if (look.kind === 'unreadable') throw look.cause
       await tidyLeftover(context, leftover, look.copy, pending)
     } catch (cause) {
-      unsettled.push(unsettledOf(leftover, look, cause))
+      unsettled.push(await unsettledOf(leftover, look, cause))
     }
   }
   return unsettled
@@ -2110,23 +2110,28 @@ async function recoverLeftovers(
  * @param leftover - The accepted leftover.
  * @param look - What {@link lookAtLeftover} found at its name.
  * @param cause - What stopped its recovery.
- * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name showed, which its handed record names ({@link handedRecordOf}).
+ * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name shows now, which its handed record names ({@link handedRecordOf}): a sync tool may have swapped another file in at the name while recovery checked it, and a record naming the inode of the first look would refuse that file at every later run ({@link otherInodeRefusal}). When the name cannot be looked at (it is gone, for example), the first look's inode stays.
  * @example
- * unsettledOf(leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath)) // => { leftover, cause, isHandedOver: true, handedIno: copy.ino }
- * unsettledOf(leftover, { kind: 'found', copy }, new Error('busy'))                   // => { leftover, cause }
+ * await unsettledOf(leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath)) // => { leftover, cause, isHandedOver: true, handedIno: 42n } (the inode the name shows now)
+ * await unsettledOf(leftover, { kind: 'found', copy }, new Error('busy'))                   // => { leftover, cause }
  */
-function unsettledOf(
+async function unsettledOf(
   leftover: Leftover,
   look: LeftoverLook,
   cause: unknown,
-): Unsettled {
+): Promise<Unsettled> {
   if (!isHandedCause(cause)) return { leftover, cause }
-  // Only a found copy is ever handed over ({@link tidyLeftover}); its name showed that inode.
+  // Only a found copy is ever handed over ({@link tidyLeftover}).
+  const firstIno = look.kind === 'found' ? look.copy.ino : undefined
+  const handedIno = await lstat(leftover.path, { bigint: true }).then(
+    ({ ino }) => ino,
+    () => firstIno,
+  )
   return {
     leftover,
     cause,
     isHandedOver: true,
-    ...(look.kind === 'found' && { handedIno: look.copy.ino }),
+    ...(handedIno !== undefined && { handedIno }),
   }
 }
 

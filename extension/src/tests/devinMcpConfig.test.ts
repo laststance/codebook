@@ -2830,6 +2830,46 @@ test('A copy handed over after a failed shared-bytes check is named once by the 
   assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
 })
 
+test('A copy handed over after a sync tool swapped its private name during the shared-bytes check is named once by the next run, which then answers', async (context) => {
+  // Value: protects=the handed record names the file the private name shows when the copy is handed over, not the one recovery first read there, so after a sync tool swapped that name during the check the next run reports the copy once and the run after it answers, instead of refusing every run as if another file stood at the private name; fails_when=the second run refuses with the other-file sentence or does not name the copy, the third run refuses, or a run deletes or changes either name; no_claim=a swap after the handed record was written, what an older build does with the record (read from its code), and the wording of the second run's sentence; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name standing for a put-back that ended after its link, and seam.beforeLeftoverCheck swaps the private name at the check's look at it
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  let isSwapped = false
+  await assert.rejects(
+    refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeLeftoverCheck: (path) => {
+        if (path !== keptPath || isSwapped) return
+        isSwapped = true
+        swapFile(keptPath, '{"swapped in":true}\n')
+      },
+    }),
+  )
+
+  // Act
+  const secondRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(isSwapped, true)
+  await assert.rejects(secondRun, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(
+      !error.message.includes('is not the config Codebook moved aside'),
+      error.message,
+    )
+    return true
+  })
+
+  // Act
+  const thirdRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(thirdRun.status, 'not-managed')
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped in":true}\n')
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+})
+
 test('A put-back by bytes whose look before the link fails writes its record back as it was read', async (context) => {
   // Value: protects=a put-back by bytes that wrote its handed, unverified record and then could not link leaves the record as it was read, also where the run keeps pending.json as it finds it (an unrecorded removal), so no build reads the empty config name as a standing config or offers deleting the only copy; fails_when=the record after the run is handed or unverified or differs from the one read, the config name gets a file, or the private file is deleted; no_claim=a process that ends in that gap (the record then stays unverified by design), and a link that fails for another reason; seam=a receipt that stands and a removal's pending record (no entry hash) whose displaced file only its bytes prove, with the config name empty; seam.beforeLeftoverCheck rewrites the private file at the look right before the link
   // Arrange
@@ -2881,6 +2921,7 @@ function loadWithFailingDisplacedUnlink() {
     {
       'node:fs/promises': {
         link,
+        lstat,
         mkdir,
         open,
         rename: async (from: string, to: string) => {
