@@ -305,12 +305,21 @@ function recordFailureRefusal({ path, retry }: Context, cause: unknown): Error {
 }
 
 /** A file that stays beside the config, and what it holds: `previous` is the config as it was before the write or removal, `new` the staged config that was published. */
-type KeptFile = { path: string; holds: 'previous' | 'new' }
+type KeptFile = {
+  path: string
+  holds: 'previous' | 'new'
+  /** Set for a copy that stays under the name a completed record tracks because neither its handed record nor its move to a name no record tracks succeeded ({@link keepFromRecovery}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
+  isLeftover?: true
+}
 
 /** The words that name a kept copy of the previous config, for a refusal and for {@link cleanupFailureOf}. */
 function keptCopyPhrase(copyPath: string): string {
   return `a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers)`
 }
+
+/** What happens next to a kept copy that a completed record still tracks ({@link KeptFile.isLeftover}), said wherever such a copy is named instead of the advice to delete it. */
+const LEFTOVER_CLAUSE =
+  'but it could not record that it leaves that copy to you, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
 /** The refusal for a config that appeared while Codebook was replacing yours: that config stays, and so does the displaced copy, because a writer may still hold the old file open. */
 function newConfigRefusal({ path, retry }: Context, copyPath: string): Error {
@@ -344,13 +353,16 @@ function journalRefusal({ path, pendingPath, retry }: Context): Error {
   )
 }
 
-/** One sentence for a kept file that could not be deleted; the work itself is done. */
-function keptFileSentence({ path, holds }: KeptFile): string {
+/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a completed record still tracks says that a later run deletes it ({@link LEFTOVER_CLAUSE}) instead of leaving it to the learner. */
+function keptFileSentence({ path, holds, isLeftover }: KeptFile): string {
   const what =
     holds === 'previous'
       ? keptCopyPhrase(path)
       : `a private copy of the Devin MCP config it just wrote at ${path} (it holds the settings of your other servers)`
-  return `Codebook kept ${what} because it could not delete that file safely; delete it when you no longer need it.`
+  const next = isLeftover
+    ? `, ${LEFTOVER_CLAUSE}`
+    : '; delete it when you no longer need it'
+  return `Codebook kept ${what} because it could not delete that file safely${next}.`
 }
 
 /**
@@ -705,20 +717,26 @@ async function markCompleted(
  * Records that a copy was named to the learner (in a refusal or in `cleanupFailure`), so no later run deletes it, whatever its bytes; the next run reports it once and stops tracking it ({@link recoverLeftovers}).
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
- * @returns Nothing. When the record cannot be written (a full disk), a first setup's record or one marked for take-back stays as it is on disk: it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte. Any other record is dropped instead, so the copy is no longer tracked and stays for good.
+ * @returns
+ * - `true` when no record lets a later run delete the copy: the handed record was written, or, when that write failed (a full disk), the record was dropped, so the copy is no longer tracked and stays for good
+ * - `false` when the record stays as it is on disk: a first setup's record or one marked for take-back whose handed write failed (it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte), or another record that could not be dropped either; a caller whose record on disk is completed keeps the copy out of a later run's reach ({@link keepFromRecovery})
  * @example
- * await handOver(context, journal) // pending.json now says handed
+ * await handOver(context, journal) // => true; pending.json now says handed
  */
-async function handOver(context: Context, journal: Pending): Promise<void> {
+async function handOver(context: Context, journal: Pending): Promise<boolean> {
   try {
     await writeRecord(context, context.pendingPath, {
       ...journal,
       phase: 'handed',
     } satisfies Pending)
+    return true
   } catch {
-    // Dropping this record would let a stop before the receipt leave an entry that no record owns; the copy stays untracked and is named by the caller and, once, by the next run.
-    if (isFirstSetupRecord(journal) || journal.takeBack) return
-    await dropPending(context)
+    // Dropping this record would let a stop before the receipt leave an entry that no record owns: it stays, and the caller says what becomes of the copy.
+    if (isFirstSetupRecord(journal) || journal.takeBack) return false
+    return rm(context.pendingPath, { force: true }).then(
+      () => true,
+      () => false,
+    )
   }
 }
 
@@ -905,30 +923,75 @@ export async function didCopyChange(held: HeldCopy): Promise<boolean> {
 /** What {@link discardDisplaced} did with the displaced copy: `deleted`; `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
 type DiscardOutcome = 'deleted' | 'kept' | 'unrecorded'
 
+/** The outcome of {@link discardDisplaced} and the displaced copy as it stays: its path (another one when it was moved out of recovery's reach, {@link keepFromRecovery}) and what it holds; the copy is ignored for `deleted`. */
+type Discarded = { outcome: DiscardOutcome; copy: KeptFile }
+
+/** The end of the name a changed displaced copy moves to when its handover cannot be recorded ({@link keepFromRecovery}); no record names it, so no recovery of any build deletes it. */
+const KEPT_COPY_SUFFIX = 'codebook-kept'
+
 /**
  * Deletes the displaced copy after the config was published or removed, unless a writer changed it since the comparison; called by {@link settlePublished} and by the removal.
- * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) and never deleted by a later run. When the completed record cannot be written nothing is deleted.
+ * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) and never deleted by a later run, also when the handed record cannot be written ({@link keepFromRecovery}). When the completed record cannot be written nothing is deleted.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
- * @returns The {@link DiscardOutcome}.
+ * @returns The {@link Discarded} outcome with the copy as it stays.
  */
 async function discardDisplaced(
   context: Context,
   journal: Pending,
   displacedPath: string,
   held: HeldCopy,
-): Promise<DiscardOutcome> {
-  if (!(await markCompleted(context, journal))) return 'unrecorded'
+): Promise<Discarded> {
+  const copy: KeptFile = { path: displacedPath, holds: 'previous' }
+  if (!(await markCompleted(context, journal)))
+    return { outcome: 'unrecorded', copy }
   if (await didCopyChange(held)) {
-    await handOver(context, journal)
-    return 'kept'
+    // The completed record stays on disk when the handed one cannot be written, and the next run would delete a copy that still holds the recorded bytes.
+    const isRecorded = await handOver(context, journal)
+    return {
+      outcome: 'kept',
+      copy: isRecorded
+        ? copy
+        : await keepFromRecovery(context, journal, displacedPath, held),
+    }
   }
   // The held handle proves the file that was compared, not the name: a file swapped in at the name since is kept, never deleted. Limit: a swap between this look and the unlink is not seen.
   if (!(await isStillHeldOrUnprovable(context, journal, displacedPath, held)))
-    return 'kept'
-  return (await didUnlink(displacedPath)) ? 'deleted' : 'kept'
+    return { outcome: 'kept', copy }
+  const isDeleted = await didUnlink(displacedPath)
+  return { outcome: isDeleted ? 'deleted' : 'kept', copy }
+}
+
+/**
+ * Keeps a changed displaced copy out of a later run's reach when its handed record could not be written and the completed record stays on disk; called by {@link discardDisplaced}.
+ * Recovery deletes a completed record's copy only while it still is the recorded file with the recorded bytes ({@link tidyLeftover}), so only such a copy moves, by a rename to `<config file>.<generation>.codebook-kept` ({@link KEPT_COPY_SUFFIX}), a name no record holds; any other copy stays where it is, and the next run names it once and never deletes it. A copy that cannot move stays a leftover the next run deletes, and its sentence says so.
+ * @param context - The run; its seam is called when the copy is read.
+ * @param journal - The record as it was written before the first move; its kept hash is the bytes recovery deletes.
+ * @param displacedPath - The private name of the displaced copy.
+ * @param held - The copy as it was compared; its inode is the one the record holds.
+ * @returns The copy as it stays: at its new name, at its private name, or at its private name marked {@link KeptFile.isLeftover} when the move failed.
+ * @example
+ * await keepFromRecovery(context, journal, displacedPath, held) // => { path: '…/mcp_config.json.<generation>.codebook-kept', holds: 'previous' }
+ */
+async function keepFromRecovery(
+  context: Context,
+  journal: Pending,
+  displacedPath: string,
+  held: HeldCopy,
+): Promise<KeptFile> {
+  const copy: KeptFile = { path: displacedPath, holds: 'previous' }
+  const now = await inspectCopy(displacedPath, context.seam).catch(
+    () => undefined,
+  )
+  // Another file, other bytes, a copy that is gone or one that cannot be read: the next run never deletes it.
+  if (now?.ino !== held.ino || now.sha256 !== journal.keptSha256) return copy
+  const keptPath = `${displacedPath.slice(0, -JOURNAL_SUFFIX.kept.length)}${KEPT_COPY_SUFFIX}`
+  return rename(displacedPath, keptPath).then(
+    (): KeptFile => ({ path: keptPath, holds: 'previous' }),
+    (): KeptFile => ({ ...copy, isLeftover: true }),
+  )
 }
 
 /**
@@ -1277,14 +1340,17 @@ async function settlePublished(
   { temporary, displaced, journal }: Replacement,
   held: HeldCopy,
 ): Promise<Pick<Published, 'keptLeft' | 'isRecorded'>> {
-  const outcome = await discardDisplaced(context, journal, displaced.path, held)
+  const { outcome, copy } = await discardDisplaced(
+    context,
+    journal,
+    displaced.path,
+    held,
+  )
   const isStagedGone = await didUnlink(temporary)
   return {
     keptLeft: [
       ...(isStagedGone ? [] : [{ path: temporary, holds: 'new' as const }]),
-      ...(outcome === 'deleted'
-        ? []
-        : [{ path: displaced.path, holds: 'previous' as const }]),
+      ...(outcome === 'deleted' ? [] : [copy]),
     ],
     isRecorded: outcome !== 'unrecorded',
   }
@@ -1566,34 +1632,32 @@ async function settleHeldRemoval(
     throw mismatchRefusal(context, opened)
   }
   context.seam?.afterPublish?.(moved.path)
-  const outcome = await discardDisplaced(context, journal, moved.path, held)
-  if (outcome === 'unrecorded') {
+  const discarded = await discardDisplaced(context, journal, moved.path, held)
+  if (discarded.outcome === 'unrecorded') {
     // Without the completed record a later recovery would put the removed config back after the receipt was dropped: put it back now and keep the receipt.
     await restoreDisplaced(context, moved.path, opened)
     throw recordFailureRefusal(context, undefined)
   }
-  return finishRemoval(context, moved, outcome)
+  return finishRemoval(context, discarded)
 }
 
 /**
  * Ends a removal whose old file was compared: a config at the config name again means an editor saved meanwhile, so nothing is reported as removed; called by {@link settleHeldRemoval}.
  * @param context - The run.
- * @param moved - The private name of the old file.
- * @param outcome - What became of the old file ({@link DiscardOutcome}); `unrecorded` never reaches here.
+ * @param discarded - What became of the old file and where it stays ({@link Discarded}); `unrecorded` never reaches here.
  * @returns The copy that stays, if any.
  * @throws A {@link savedAgainRefusal} when a file stands at the config name; the receipt and that file stay as they are.
  */
 async function finishRemoval(
   context: Context,
-  moved: KeptCopy,
-  outcome: DiscardOutcome,
+  { outcome, copy }: Discarded,
 ): Promise<{ keptLeft: KeptFile[] }> {
   const isDeleted = outcome === 'deleted'
   if (lstatSync(context.path, { throwIfNoEntry: false })) {
     if (isDeleted) await dropPending(context)
     throw savedAgainRefusal(context)
   }
-  if (!isDeleted) return { keptLeft: [{ path: moved.path, holds: 'previous' }] }
+  if (!isDeleted) return { keptLeft: [copy] }
   await dropPending(context)
   return { keptLeft: [] }
 }
@@ -3137,8 +3201,8 @@ function keptCopiesSentence(keptLeft: KeptFile[]): string {
   return keptLeft
     .filter(({ holds }) => holds === 'previous')
     .map(
-      ({ path }) =>
-        ` Codebook also kept ${keptCopyPhrase(path)}; delete that copy when you no longer need it.`,
+      ({ path, isLeftover }) =>
+        ` Codebook also kept ${keptCopyPhrase(path)}${isLeftover ? `, ${LEFTOVER_CLAUSE}` : '; delete that copy when you no longer need it'}.`,
     )
     .join('')
 }

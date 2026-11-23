@@ -3769,6 +3769,77 @@ test('A first setup whose handed record hit a full disk but whose receipt was wr
   assert.equal(readFileSync(receiptPath, 'utf8'), receiptAfterSetup)
 })
 
+test('A first setup whose handed record hit a full disk after only the times of the displaced copy changed keeps the copy it names for good, also once the config is gone', async (context) => {
+  // Value: protects=a copy of the previous config that a setup names as kept is never deleted by a later run, also when its handed record could not be written and the completed record still names it with the recorded bytes, so it stays the learner's last copy once the config is gone; fails_when=the setup names no copy, the next run deletes the named copy or changes its bytes; no_claim=a real ENOSPC (the seam cancels only the handed record's write), a copy whose bytes changed (named once by the next run, covered above), and the wording beyond the named path; seam=seam.beforeRecordWrite fails only the handed record's write with ENOSPC, seam.afterPublish sets the displaced copy's times the way a program that saved the same bytes into it does
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      utimesSync(
+        displacedPath ?? '',
+        new Date(2020, 0, 1),
+        new Date(2020, 0, 1),
+      )
+    },
+  })
+  const namedCopy =
+    /config at (\S+) \(it holds/.exec(setup.cleanupFailure ?? '')?.[1] ?? ''
+  rmSync(configPath)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.notEqual(namedCopy, '', setup.cleanupFailure)
+  assert.equal(nextRun.status, 'not-managed')
+  assert.equal(readFileSync(namedCopy, 'utf8'), originalText)
+})
+
+test('A first setup whose handed record hit a full disk and whose changed copy cannot be moved says that a later run deletes that copy, which the next run then does', async (context) => {
+  // Value: protects=a setup never promises a copy for good that the completed record still lets a later run delete: when the copy can neither be recorded as handed nor moved out of the names recovery reads, its sentence says that a later run deletes it while it holds exactly the previous config, and that is what the next run does; fails_when=the sentence advises keeping or deleting the copy at will, omits the path, or the next run keeps the copy; no_claim=a real ENOSPC, and why the move fails (a read-only config folder stands for any failed rename); seam=seam.beforeRecordWrite fails only the handed record's write with ENOSPC, seam.afterPublish sets the displaced copy's times and makes the config folder read-only
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('a read-only folder does not stop root or Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath, beforeCleanup } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  // The folder is writable again before the test folder is removed, in the one cleanup.
+  beforeCleanup(() => chmod(dirname(configPath), 0o700))
+  let copyPath = ''
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      utimesSync(copyPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+      chmodSync(dirname(configPath), 0o500)
+    },
+  })
+  await chmod(dirname(configPath), 0o700)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but it could not record that it leaves that copy to you, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+})
+
 test('A first setup whose receipt cannot be written leaves a config that was saved again with the same entry unchanged', async (context) => {
   // protects: a file Codebook did not publish is never edited by the rollback / fails_when: a new config with the same codebook entry but another inode loses that entry or the refusal does not say it was left unchanged / no_claim: a save with different bytes
   // Arrange
