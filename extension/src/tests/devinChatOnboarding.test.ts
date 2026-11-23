@@ -121,6 +121,19 @@ async function leaveOwedTakeBack(
 }
 
 /**
+ * Whether the Devin Desktop setup lock is held now: its `writer.lock` file stands in the window's storage.
+ * @param directory - The window's global storage folder.
+ * @returns `true` while a hold of the setup lock has not released it.
+ * @example await isSetupLockHeld(window.directory) // => true while a refresh holds the lock
+ */
+async function isSetupLockHeld(directory: string): Promise<boolean> {
+  return stat(join(directory, 'devin-setup/writer.lock')).then(
+    () => true,
+    () => false,
+  )
+}
+
+/**
  * Holds the setup lock of a Devin Desktop window from a separate Node process, as another Devin Desktop window (another extension host) holds it.
  * The process says so when it holds the lock and releases it only when the test asks, so no run depends on how long a timer takes.
  * @param context - The test, which ends the process afterwards, also when the test failed before it released the lock.
@@ -275,6 +288,8 @@ async function devinWindow(
     owedTakeBackLooksWithoutAnswer?: number
     /** Makes every write of the record of an owed take-back fail, as on a full disk; the record's reads and deletes are the real ones. */
     failTakeBackRecord?: boolean
+    /** The position (1 for the window load's own) of the one look for an owed take-back that waits at `holds.owedTakeBackLook` before it reads the real record, as a read stuck on a failing disk until the test releases it. */
+    holdOwedTakeBackLookAt?: number
   } = {},
 ) {
   const directory =
@@ -367,6 +382,7 @@ async function devinWindow(
     skillCheck: createGate(),
     descriptorPublish: createGate(),
     lateMark: createGate(),
+    owedTakeBackLook: createGate(),
   }
   // Whether the one held write of the saved setup was reached; the writes after it are not held.
   let isSavedSetupWriteHeld = false
@@ -385,6 +401,8 @@ async function devinWindow(
   const lateMarkDecisions: unknown[] = []
   // How many looks for an owed take-back have answered; the window's load makes the first.
   let owedTakeBackReads = 0
+  // How many looks for an owed take-back have started, so `holdOwedTakeBackLookAt` holds the one at its position.
+  let owedTakeBackLooksStarted = 0
   // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
   let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
@@ -822,6 +840,10 @@ async function devinWindow(
         },
         clearOwedDevinTakeBack,
         readOwedDevinTakeBack: async (storageRoot: string) => {
+          owedTakeBackLooksStarted += 1
+          // The held look waits before it reads, as a read stuck on a failing disk.
+          if (owedTakeBackLooksStarted === options.holdOwedTakeBackLookAt)
+            await holds.owedTakeBackLook.wait()
           const look = await owedTakeBack.readOwedDevinTakeBack(storageRoot)
           owedTakeBackReads += 1
           return look
@@ -1016,7 +1038,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`, `holdLateMark`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`, `holdLateMark`, `holdOwedTakeBackLookAt`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -3875,6 +3897,50 @@ test('a Devin Desktop window whose look for an owed take-back gets no answer lea
     ])
     assert.deepEqual(window.outputLines, [
       `Codebook could not read ${join(storageDirectory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run Codebook: Set Up AI Chat again.`,
+      'Codebook did not refresh its Devin Desktop MCP entry: Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished.',
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop window whose activation refresh holds the setup lock while its look for an owed take-back never answers still publishes its server's descriptor within 6 seconds of its load, inside the 15 seconds the Devin bridge waits for it, says in the Output that the refresh could not confirm the take-back, and keeps the setup lock until that look ends, refreshing nothing after it (Cycle 0146 /ship final-range pass, CodeRabbit CLI extension.ts:2249); fails_when=the refresh waits for the look without a bound once it holds the lock, so the server never starts while the read hangs and the bridge Devin Local started at the window load gives up, or the lock is released while the look still runs, or the entry is refreshed after the refresh answered; no_claim=a look that answers within the bound (the tests above) and the bridge's own wait (its tests); the stand-in look waits at a gate before it reads the real record, and the lock is the real one
+test("a Devin Desktop window whose refresh's look for an owed take-back never answers still publishes its descriptor and keeps the setup lock until the look ends", async (context) => {
+  // Arrange
+  const loadedAtMs = performance.now()
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    holdOwedTakeBackLookAt: 2,
+  })
+  try {
+    // Act
+    const publishedAtMs = await waitUntil(
+      async () =>
+        (await window.descriptorReadable()) ? performance.now() : undefined,
+      "the reconnected server's descriptor while the refresh's look for an owed take-back hangs",
+      10_000,
+    )
+    await window.whenReconnected()
+    const isLockHeldWhileLookHangs = await isSetupLockHeld(window.directory)
+    window.holds.owedTakeBackLook.release()
+    await waitUntil(
+      async () => !(await isSetupLockHeld(window.directory)),
+      "the setup lock's release once the held look ended",
+      5_000,
+    )
+    // Assert
+    const publishedAfterMs = publishedAtMs - loadedAtMs
+    assert.ok(
+      publishedAfterMs < 6_000,
+      `the descriptor was published ${Math.round(publishedAfterMs)} ms after the window loaded`,
+    )
+    assert.equal(isLockHeldWhileLookHangs, true)
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'start server',
+    ])
+    assert.deepEqual(window.outputLines, [
       'Codebook did not refresh its Devin Desktop MCP entry: Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished.',
     ])
   } finally {
