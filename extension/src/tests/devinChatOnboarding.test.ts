@@ -30,12 +30,13 @@ import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { continueAfterLateRead } from '../utils/continueAfterLateRead'
 import { hasDevinSetupReceipts } from '../utils/hasDevinSetupReceipts'
+import type * as OwedDevinTakeBackModule from '../utils/owedDevinTakeBack'
 import {
   clearOwedDevinTakeBack,
-  readOwedDevinTakeBack,
   recordOwedDevinTakeBack,
 } from '../utils/owedDevinTakeBack'
 import { readDevinInstallationId } from '../utils/readDevinInstallationId'
+import { readPrivateJsonState } from '../utils/readPrivateJsonState'
 import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
 import { setDescriptorDevinChat } from '../utils/setDescriptorDevinChat'
 import { StorageLockHeldError } from '../utils/storageLockHeldError'
@@ -270,6 +271,8 @@ async function devinWindow(
     holdLateMark?: boolean
     /** Makes a server that starts serve the folder the window serves at that moment (`changeFolder` changes it), in its environment and its descriptor, as the real environment does; when left out, every server serves the window's first folder. */
     serverFollowsFolder?: boolean
+    /** How many of the first looks for an owed take-back get no answer from their read of the record (descriptor exhaustion, `EIO`), whatever the record holds; `failNextOwedTakeBackLooks` arms more later. */
+    owedTakeBackLooksWithoutAnswer?: number
   } = {},
 ) {
   const directory =
@@ -489,6 +492,24 @@ async function devinWindow(
       },
     },
   }
+  // How many of the next looks for an owed take-back get no answer from their read of the record.
+  let owedLooksWithoutAnswer = options.owedTakeBackLooksWithoutAnswer ?? 0
+  // The real record module, whose own read of the record gets no answer while a test asks for it; every other read is the real one.
+  const owedTakeBack = await loadModule<typeof OwedDevinTakeBackModule>(
+    resolve(__dirname, '../utils/owedDevinTakeBack.js'),
+    {
+      './readPrivateJsonState': {
+        readPrivateJsonState: async (
+          ...parameters: Parameters<typeof readPrivateJsonState>
+        ): ReturnType<typeof readPrivateJsonState> => {
+          if (owedLooksWithoutAnswer === 0)
+            return readPrivateJsonState(...parameters)
+          owedLooksWithoutAnswer -= 1
+          return { state: 'no-answer' }
+        },
+      },
+    },
+  )
   const loaded = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
@@ -793,9 +814,9 @@ async function devinWindow(
         recordOwedDevinTakeBack,
         clearOwedDevinTakeBack,
         readOwedDevinTakeBack: async (storageRoot: string) => {
-          const generation = await readOwedDevinTakeBack(storageRoot)
+          const look = await owedTakeBack.readOwedDevinTakeBack(storageRoot)
           owedTakeBackReads += 1
-          return generation
+          return look
         },
       },
       // The real continuation of a late mark, held at `holds.lateMark` before it runs when a test asks for it; each decision it settles with is recorded, before the window's own handler runs.
@@ -1018,6 +1039,10 @@ async function devinWindow(
     lateMarkDecisions,
     /** How many looks for an owed take-back have answered; the window's load makes the first. */
     owedTakeBackReads: (): number => owedTakeBackReads,
+    /** Makes the next `count` looks for an owed take-back get no answer from their read of the record, as under descriptor exhaustion. */
+    failNextOwedTakeBackLooks: (count: number): void => {
+      owedLooksWithoutAnswer = count
+    },
     /** Whether a read of the setup records is waiting for {@link releaseReceipts}; a test polls it with a time budget, so a hold that is never reached fails instead of hanging. */
     hasReceiptsReached: (): boolean => isReceiptsReached,
     releaseReceipts,
@@ -3612,6 +3637,146 @@ test('a Devin setup that runs while a take-back is owed takes that entry back be
       { expectedGeneration: 'generation-of-a-failed-setup' },
     ])
     assert.equal(await owedTakeBackRecord(window.directory), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Set Up AI Chat whose take-back of an owed entry fails (its removal throws, for example on a full disk) writes no entry, reports no ready setup and keeps the record, so no later run takes out an entry this setup reported ready (Cycle 0146 /ship pass 2, specialist-batched 1); fails_when=the setup goes on after the failed take-back, adopts the failed setup's entry as current with the same generation and reports ready while the record still names that generation; no_claim=the activation refresh and the removal (their own tests); a stand-in entry removal that throws stands for the full disk, and the record is the real file
+test('a Devin setup whose owed take-back fails writes no entry, reports no ready setup and keeps the record', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    failEntryRemoval: true,
+    entryWrite: 'current',
+  })
+  try {
+    await waitUntil(
+      () => window.owedTakeBackReads() >= 1,
+      "the window load's look for an owed take-back",
+    )
+    await leaveOwedTakeBack(window.directory, 'generation-of-this-setup')
+    // Act
+    const outcome = await window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(
+      outcome,
+      "Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished, so it did not set up Devin Desktop; see Codebook's Output for details, then run Codebook: Set Up AI Chat again.",
+    )
+    assert.deepEqual(window.steps, ['remove MCP entry'])
+    assert.deepEqual(window.notices, [])
+    assert.deepEqual(await owedTakeBackRecord(window.directory), {
+      schemaVersion: 1,
+      generation: 'generation-of-this-setup',
+    })
+    assert.deepEqual(window.outputLines, [
+      "Codebook is finishing the take-back of a failed Devin Desktop setup that a reload or a closed window stopped: it takes the codebook entry that setup wrote out of Devin Desktop's MCP config.",
+      'Codebook could not take back the Devin Desktop MCP entry this setup wrote: Injected entry removal failure',
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Set Up AI Chat whose look for an owed take-back gets no answer (descriptor exhaustion, EIO) writes no entry and reports no ready setup, and the Output names the record, because that record may name the entry the setup would adopt (Cycle 0146 /ship pass 2, red-team 1); fails_when=a look without answer reads as nothing owed, so the setup adopts the failed setup's entry as current and reports ready, and the next look that answers takes that entry out; no_claim=a record that cannot be used for good (the same refusal; the Output line asks to delete it when this repeats); the stand-in read of the record answers no-answer once, and the record is the real file
+test('a Devin setup whose look for an owed take-back gets no answer writes no entry and reports no ready setup', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, { entryWrite: 'current' })
+  try {
+    await waitUntil(
+      () => window.owedTakeBackReads() >= 1,
+      "the window load's look for an owed take-back",
+    )
+    await leaveOwedTakeBack(window.directory, 'generation-of-this-setup')
+    window.failNextOwedTakeBackLooks(1)
+    // Act
+    const outcome = await window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(
+      outcome,
+      "Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished, so it did not set up Devin Desktop; see Codebook's Output for details, then run Codebook: Set Up AI Chat again.",
+    )
+    assert.deepEqual(window.steps, [])
+    assert.deepEqual(window.notices, [])
+    assert.deepEqual(await owedTakeBackRecord(window.directory), {
+      schemaVersion: 1,
+      generation: 'generation-of-this-setup',
+    })
+    assert.deepEqual(window.outputLines, [
+      `Codebook could not read ${join(window.directory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run Codebook: Set Up AI Chat again.`,
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop window that loads on a set-up workspace while an owed take-back cannot finish (its removal throws) leaves the entry unrefreshed and reconnects nothing, so it never serves the failed setup's entry that a later run takes out, and the Output says what to do (Cycle 0146 /ship pass 2, red-team 1); fails_when=the refresh keeps the failed setup's entry and the window starts its server marked for it; no_claim=a look without answer (the next test: the window still reconnects) and a server the learner starts by hand; a stand-in entry removal that throws stands for the full disk, and the record is the real file
+test('a Devin Desktop window whose owed take-back fails leaves the entry unrefreshed and reconnects nothing', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await leaveOwedTakeBack(storageDirectory, 'generation-of-a-failed-setup')
+  // Act
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    failEntryRemoval: true,
+  })
+  try {
+    await window.whenReconnected()
+    // Assert
+    assert.deepEqual(
+      window.steps.filter(
+        (step) => step === 'refresh MCP entry' || step === 'start server',
+      ),
+      [],
+    )
+    assert.equal(
+      window.outputLines.filter(
+        (line) =>
+          line ===
+          'Codebook did not refresh its Devin Desktop MCP entry or reconnect this window because the take-back of the failed Devin Desktop setup that wrote that entry has not finished; run Codebook: Set Up AI Chat again once storage answers.',
+      ).length,
+      1,
+    )
+    assert.deepEqual(await owedTakeBackRecord(storageDirectory), {
+      schemaVersion: 1,
+      generation: 'generation-of-a-failed-setup',
+    })
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Devin Desktop window whose looks for an owed take-back get no answer at load leaves the entry unrefreshed and says so in the Output, and still reconnects, so one moment of descriptor exhaustion neither refreshes an entry a record may name nor leaves a set-up window without its server (Cycle 0146 /ship pass 2, red-team 1); fails_when=a look without answer reads as nothing owed and the refresh rewrites or keeps the entry as installed, or the window stops reconnecting for a read that only failed to look; no_claim=a record that stands after a failed removal (the test above: nothing reconnects); the stand-in read of the record answers no-answer twice (the load's look and the refresh's), and the record is the real file
+test('a Devin Desktop window whose look for an owed take-back gets no answer leaves the entry unrefreshed and still reconnects', async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await leaveOwedTakeBack(storageDirectory, 'generation-of-a-failed-setup')
+  // Act
+  const window = await devinWindow(context, {
+    storageDirectory,
+    savedSetup: true,
+    owedTakeBackLooksWithoutAnswer: 2,
+  })
+  try {
+    await window.whenReconnected()
+    // Assert
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'start server',
+    ])
+    assert.deepEqual(window.outputLines, [
+      `Codebook could not read ${join(storageDirectory, 'devin-setup', 'take-back.json')}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run Codebook: Set Up AI Chat again.`,
+      'Codebook did not refresh its Devin Desktop MCP entry: Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished.',
+    ])
   } finally {
     await window.loaded.deactivate()
   }

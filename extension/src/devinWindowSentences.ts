@@ -184,6 +184,25 @@ export const devinLateFailureLine = (
 export const DEVIN_OWED_TAKE_BACK_LINE =
   "Codebook is finishing the take-back of a failed Devin Desktop setup that a reload or a closed window stopped: it takes the codebook entry that setup wrote out of Devin Desktop's MCP config."
 
+/**
+ * The Output line when a Devin Desktop setup, removal or activation refresh could not use Codebook's record of an owed take-back (a read that got no answer, or a record that is not private or not of its shape): that record may name the entry the setup or refresh would keep, so they change nothing.
+ * @param recordPath - The `devin-setup/take-back.json` in Codebook's global storage.
+ * @returns One line that names the file and what to do when it stays unreadable.
+ * @example devinOwedTakeBackUnreadLine('/storage/devin-setup/take-back.json') // => "Codebook could not read /storage/devin-setup/take-back.json, its record of a failed Devin Desktop setup's take-back, …"
+ */
+export const devinOwedTakeBackUnreadLine = (recordPath: string): string =>
+  `Codebook could not read ${recordPath}, its record of a failed Devin Desktop setup's take-back, so it cannot tell whether that take-back has finished. If this repeats, delete that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** Why a Devin Desktop setup or activation refresh changed nothing when the record of an owed take-back still stands after its removal was tried, or could not be read ({@link devinOwedTakeBackUnreadLine}): the entry it would keep may be the failed setup's, which the next run takes out. */
+export const DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE =
+  'Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished.'
+
+/** What Set Up AI Chat answers in Devin Desktop when the take-back of an earlier failed setup is not confirmed finished ({@link DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE}): it wrote nothing, so it never reports ready on an entry that a later run takes out. */
+export const DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE = `Codebook could not confirm that the take-back of an earlier failed Devin Desktop setup has finished, so it did not set up Devin Desktop; see Codebook's Output for details, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+
+/** The Output line of the activation refresh when the record of an owed take-back still stands after its removal was tried: the entry is the failed setup's, so the window reconnects nothing instead of serving an entry that the next run takes out. */
+export const DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE = `Codebook did not refresh its Devin Desktop MCP entry or reconnect this window because the take-back of the failed Devin Desktop setup that wrote that entry has not finished; run ${SET_UP_AI_CHAT_COMMAND} again once storage answers.`
+
 /** The Output line when a Devin Desktop setup or removal ended but its setup lock was not released within 3 seconds ({@link DEVIN_SETUP_LOCK_RELEASE_MS}): the command answers, and this window's next setup or removal waits for the release. */
 export const DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE =
   "Codebook's Devin Desktop setup lock is still being released because storage does not answer; this window's next setup or removal waits for it."

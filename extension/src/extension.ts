@@ -103,12 +103,16 @@ import {
   DEVIN_SETUP_ROLLBACK_INCOMPLETE_SENTENCE,
   DEVIN_SETUP_FOLDER_CHANGED_SENTENCE,
   DEVIN_OWED_TAKE_BACK_LINE,
+  DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE,
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
+  DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE,
+  DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE,
   REMOVE_DEVIN_SETUP_COMMAND,
   devinBackgroundWorkEndedLine,
   devinBackgroundWorkSentence,
   devinLateFailureLine,
+  devinOwedTakeBackUnreadLine,
   devinStorageWaitSentence,
   type DevinBackgroundWorkKind,
   type DevinStorageStep,
@@ -225,6 +229,7 @@ import {
   clearOwedDevinTakeBack,
   readOwedDevinTakeBack,
   recordOwedDevinTakeBack,
+  type OwedDevinTakeBack,
 } from './utils/owedDevinTakeBack'
 import { readDevinInstallationId } from './utils/readDevinInstallationId'
 import { readDevinInstallationIdWithin } from './utils/readDevinInstallationIdWithin'
@@ -1730,17 +1735,30 @@ export function activate(
     )
   /**
    * Finishes the take-back of a failed Devin Desktop setup that a reload, a crash or a closed window stopped before its entry step ended ({@link recordTakeBackOwed}): takes that entry back by the generation its record names, so a newer setup's entry stays, and writes one line to the Output.
-   * Run under the setup lock, first, by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads ({@link finishOwedDevinTakeBackAtLoad}), so no later run adopts or refreshes the failed setup's entry.
-   * @returns Once the record was read and, when it named an entry, that entry's take-back answered; a failure went to the Output, and a failed removal keeps the record.
-   * @example await finishOwedDevinTakeBack()
+   * Run under the setup lock, first, by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads ({@link finishOwedDevinTakeBackAtLoad}), so no later run adopts or refreshes the failed setup's entry; a setup and a refresh go on only when it answers `none`.
+   * @returns What the last look found ({@link readOwedDevinTakeBack}), looked at again after a take-back it ran:
+   * - `none` when no record stood, or the one that stood is gone after its entry's take-back
+   * - `owed` when the record still stands (a failed removal keeps it)
+   * - `unknown` when the record could not be read, which the Output names
+   * @example await finishOwedDevinTakeBack() // => 'none'
    */
-  const finishOwedDevinTakeBack = async (): Promise<void> => {
-    const generation = await readOwedDevinTakeBack(
-      context.globalStorageUri.fsPath,
-    )
-    if (generation === undefined) return
-    diagnostics.info(DEVIN_OWED_TAKE_BACK_LINE)
-    await takeBackDevinEntry(generation)
+  const finishOwedDevinTakeBack = async (): Promise<
+    OwedDevinTakeBack['state']
+  > => {
+    const storageRoot = context.globalStorageUri.fsPath
+    const firstLook = await readOwedDevinTakeBack(storageRoot)
+    if (firstLook.state === 'owed') {
+      diagnostics.info(DEVIN_OWED_TAKE_BACK_LINE)
+      await takeBackDevinEntry(firstLook.generation)
+    }
+    // Only a record that is gone now leaves no later run that takes out the entry this run keeps: a removal that failed keeps it, and so may a failed delete of the record.
+    const lastLook =
+      firstLook.state === 'owed'
+        ? await readOwedDevinTakeBack(storageRoot)
+        : firstLook
+    if (lastLook.state === 'unknown')
+      diagnostics.info(devinOwedTakeBackUnreadLine(lastLook.recordPath))
+    return lastLook.state
   }
   /**
    * Finishes, once when a Devin Desktop window loads, a take-back that a reload, a crash or a closed window stopped ({@link finishOwedDevinTakeBack}), under the setup lock, so the window a reload opened takes that entry back even when it has no setup to reconnect; called by {@link activate}, which does not wait for it.
@@ -1755,7 +1773,7 @@ export function activate(
     )
       return
     const owed = await readOwedDevinTakeBack(context.globalStorageUri.fsPath)
-    if (owed === undefined) return
+    if (owed.state !== 'owed') return
     await underDevinLock(finishOwedDevinTakeBack).catch((error: unknown) => {
       diagnostics.info(
         `Codebook could not finish the take-back of a failed Devin Desktop setup: ${thrownMessage(error)}`,
@@ -1912,8 +1930,14 @@ export function activate(
   }> => {
     // Read when the command ran: a folder change since then means the earlier saved setup is not put back.
     const { folderGeneration } = invocation
-    // A failed setup's entry that a reload left is taken back first, so this setup never adopts it as its own.
-    await runSetupStep('MCP entry', finishOwedDevinTakeBack, onLapse)
+    // A failed setup's entry that a reload left is taken back first, so this setup never adopts it as its own; a record that still stands, or cannot be read, may name the entry this setup would keep and report ready, so it writes nothing.
+    const owedTakeBack = await runSetupStep(
+      'MCP entry',
+      finishOwedDevinTakeBack,
+      onLapse,
+    )
+    if (owedTakeBack !== 'none')
+      throw new Error(DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE)
     // The failure's own text can carry the executable's stderr; the learner gets a fixed sentence.
     const nodeExecutable = await resolveExternalNodeExecutable(
       vscode.workspace
@@ -2158,13 +2182,14 @@ export function activate(
         .join(' '),
     )
   }
-  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link underDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other; called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, or `refused` when nothing was refreshed; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
+  /** Brings Codebook's receipted Devin Desktop MCP entry to this installation, writing each refusal to the Output; a Node the configuration names that cannot be used gets one fixed line; the rewrite runs under the setup lock ({@link underDevinLock}), one after the setups and removals of every window, and a lock that stays held is a refusal like any other, as is a record of an owed take-back that cannot be read ({@link finishOwedDevinTakeBack}); called by {@link refreshDevinSetup}. @returns `status`: `refreshed`, `current`, `not-managed`, `changed`, `refused` when nothing was refreshed, or `owed` when an owed take-back's record still stands after its removal was tried, so the entry is the failed setup's and the window reconnects nothing; `disabled`: `true` when the entry stays turned off in Devin's Customize. @example await refreshDevinEntry(storageRoot) // => { status: 'current', disabled: false } */
   const refreshDevinEntry = async (
     storageRoot: string,
   ): Promise<{
     status:
       | Awaited<ReturnType<typeof refreshManagedDevinMcpEntry>>['status']
       | 'refused'
+      | 'owed'
     disabled: boolean
   }> => {
     let nodeExecutable: string
@@ -2182,8 +2207,11 @@ export function activate(
     try {
       // Under the setup lock, so the refresh never rewrites the entry between another window's entry write and that setup's take-back, which would then find a newer entry and leave the failed one installed; windows opened together may hold the entry's lock one after the other.
       const refresh = await underDevinLock(async () => {
-        // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed.
-        await finishOwedDevinTakeBack()
+        // A failed setup's entry that a reload left is taken back first, so the refresh never keeps it as installed; a record that cannot be read may name that entry, so the refresh changes nothing.
+        const owedTakeBack = await finishOwedDevinTakeBack()
+        if (owedTakeBack === 'unknown')
+          throw new Error(DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE)
+        if (owedTakeBack === 'owed') return { status: 'owed' as const }
         return retryWhileStorageLockHeld(() =>
           refreshManagedDevinMcpEntry(
             storageRoot,
@@ -2191,6 +2219,11 @@ export function activate(
           ),
         )
       })
+      // The failed setup's entry still stands: the window reconnects nothing, so it never serves an entry that the next run takes out.
+      if (refresh.status === 'owed') {
+        diagnostics.info(DEVIN_REFRESH_TAKE_BACK_UNFINISHED_LINE)
+        return { status: 'owed', disabled: false }
+      }
       // An entry edited after setup stays as the learner left it; the bridge it names may still connect.
       if (refresh.status === 'changed')
         diagnostics.info(
@@ -2206,7 +2239,7 @@ export function activate(
       return { status: 'refused', disabled: false }
     }
   }
-  /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. The setup counts as removed when the skill check fails and the entry's receipt is gone, decided before Node or the config is read. @returns `false` when the window is refused or the setup was removed, so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
+  /** Brings Codebook's Devin Desktop skill and MCP entry to this installation when a window opens on a workspace where setup ran, writing each refusal to the Output instead of stopping the reconnect; called by the reconnect at activation. The setup counts as removed when the skill check fails and the entry's receipt is gone, decided before Node or the config is read. @returns `false` when the window is refused, the setup was removed or the entry is a failed setup's whose take-back has not finished, so the reconnect starts nothing. @example await refreshDevinSetup() // => true */
   const refreshDevinSetup = async (): Promise<boolean> => {
     // Windows and remote windows have no Devin Desktop setup yet, so a saved setup there reconnects nothing.
     const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
@@ -2236,6 +2269,8 @@ export function activate(
       )
     const { status: entryStatus, disabled: entryDisabled } =
       await refreshDevinEntry(storageRoot)
+    // The entry is a failed setup's that the next run takes out: nothing reconnects onto it (the Output said so).
+    if (entryStatus === 'owed') return false
     // A removal finished in another window meanwhile took a receipt: the setup is not Codebook's any more, and nothing reconnects (both receipts are read right before the server starts).
     if (!(await hasDevinSetupReceipts(storageRoot))) {
       diagnostics.info(DEVIN_SETUP_REMOVED_LINE)

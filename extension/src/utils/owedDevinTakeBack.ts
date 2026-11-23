@@ -48,22 +48,36 @@ export async function recordOwedDevinTakeBack(
   )
 }
 
+/** What one look for an owed Devin Desktop take-back found: the generation its record names (`owed`), no record at all (`none`, the only proof that nothing is owed), or a record that cannot be used now (`unknown`: a read that got no answer, or a record that is not private, not a regular file or not of this shape), with the record's path for the line that names it. */
+export type OwedDevinTakeBack =
+  | { state: 'owed'; generation: string }
+  | { state: 'none' }
+  | { state: 'unknown'; recordPath: string }
+
 /**
- * Reads the generation of an owed Devin Desktop take-back ({@link recordOwedDevinTakeBack}); called under the setup lock by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads, so the next of them finishes a take-back that a reload stopped.
+ * Looks for an owed Devin Desktop take-back ({@link recordOwedDevinTakeBack}); called under the setup lock by every Devin Desktop setup, removal and activation refresh, and once when a Devin Desktop window loads, so the next of them finishes a take-back that a reload stopped, and a setup or refresh that cannot tell refuses instead of keeping an entry the record may name.
  * @param storageRoot - Codebook's global storage folder.
  * @returns
- * - The generation when a private record of this shape stands
- * - `undefined` when there is none, or it cannot be used now (not private, not a regular file, not of this shape, or a read that got no answer): nothing is taken back then, and a later run reads it again
+ * - `owed` with the generation when a private record of this shape stands
+ * - `none` only when there is no record
+ * - `unknown` with the record's path when it cannot be used now (a read that got no answer, not private, not a regular file, not of this shape): a later look reads it again
  * @example
- * await readOwedDevinTakeBack('/storage') // => 'f3b1c0de-…' after a reload stopped a take-back
+ * await readOwedDevinTakeBack('/storage') // => { state: 'owed', generation: 'f3b1c0de-…' } after a reload stopped a take-back
+ * await readOwedDevinTakeBack('/storage') // => { state: 'none' } where no take-back is owed
  */
 export async function readOwedDevinTakeBack(
   storageRoot: string,
-): Promise<string | undefined> {
-  const read = await readPrivateJsonState(owedTakeBackPath(storageRoot))
-  if (read.state !== 'read') return undefined
-  const record = owedTakeBackSchema.safeParse(read.value)
-  return record.success ? record.data.generation : undefined
+): Promise<OwedDevinTakeBack> {
+  const recordPath = owedTakeBackPath(storageRoot)
+  const read = await readPrivateJsonState(recordPath)
+  // Only a record that is not there proves that nothing is owed; a read that failed to look proves nothing.
+  if (read.state === 'removed' && read.reason === 'missing')
+    return { state: 'none' }
+  const record =
+    read.state === 'read' ? owedTakeBackSchema.safeParse(read.value) : undefined
+  return record?.success
+    ? { state: 'owed', generation: record.data.generation }
+    : { state: 'unknown', recordPath }
 }
 
 /**
