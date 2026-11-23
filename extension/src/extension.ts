@@ -100,6 +100,7 @@ import {
 import {
   DEVIN_ENTRY_MISSING_LINE,
   DEVIN_LATE_MARK_SENTENCE,
+  DEVIN_LATE_MARK_SETUP_GONE_SENTENCE,
   DEVIN_REFRESH_NODE_FAILURE_LINE,
   DEVIN_SERVER_RESTARTED_SENTENCE,
   DEVIN_SETUP_LOCK_RELEASE_STALLED_LINE,
@@ -1531,10 +1532,33 @@ export function activate(
     hasStoppedServer = false
     offerDevinReload('information', DEVIN_SERVER_RESTARTED_SENTENCE)
   }
-  /** Offers the Reload Window button once a late mark marked this Devin Desktop window: the bridge Devin Local started at the window load found the unmarked descriptor; also at the window's first start, unlike {@link offerReloadAfterServerRestart}, and not while a removal runs. @example offerDevinReloadAfterLateMark() */
-  const offerDevinReloadAfterLateMark = (): void => {
+  /** Offers the Reload Window button once a late mark marked this Devin Desktop window: the bridge Devin Local started at the window load found the unmarked descriptor; also at the window's first start, unlike {@link offerReloadAfterServerRestart}, and not while a removal runs. When the setup was removed or changed meanwhile ({@link isSetupGoneAfterLateMark}), a reload starts a bridge that refuses it, so the notice names Set Up AI Chat instead and offers no reload. @param isSetupGone - Whether the bridge's own check after the mark found the setup removed or changed. @example offerDevinReloadAfterLateMark(false) */
+  const offerDevinReloadAfterLateMark = (isSetupGone: boolean): void => {
     if (!isDevinHost || devinRemoving) return
+    // Only Set Up AI Chat connects Devin Local to a setup removed after the late mark's read.
+    if (isSetupGone) {
+      void showNotice('information', DEVIN_LATE_MARK_SETUP_GONE_SENTENCE)
+      return
+    }
     offerDevinReload('information', DEVIN_LATE_MARK_SENTENCE)
+  }
+  /**
+   * Whether the setup a late mark just marked this Devin Desktop window for is gone, as the bridge's own check of the marked descriptor and both records sees it ({@link checkDevinBridgeReceipts}): the late mark's read may have come before another window's removal, which never unmarks this window, and a reload then starts a bridge that refuses the removed setup. Called by {@link markDevinChatLate} once its late mark marked the window, before the decision settles, so the one notice says what a reload does.
+   * @param server - The server the late mark marked.
+   * @returns
+   * - `true` when the check observed a removed or changed setup record (skill or MCP receipt) within {@link DEVIN_SETUP_FINAL_CHECK_MS};
+   * - `false` when the setup stands, when the removal it saw is on this window's own descriptor (a stop or an unmark of this window, which changes no setup), or when the check had no answer by then (the read that marked the window decides).
+   * @example await isSetupGoneAfterLateMark(server) // => true after another window removed the setup during the late mark's read
+   */
+  const isSetupGoneAfterLateMark = async (
+    server: Running,
+  ): Promise<boolean> => {
+    const check = checkDevinBridgeReceipts(server.descriptorPath)
+    const answer = (await settledWithin(check, DEVIN_SETUP_FINAL_CHECK_MS))
+      ? await check
+      : undefined
+    // Only a record of the setup counts: a removal seen on this window's own descriptor is this window's stop or unmark.
+    return answer?.answer === 'removed' && answer.path !== server.descriptorPath
   }
   /**
    * Whether a removal of this window, or the take-back of a failed setup or of an owed entry that takes the mark off, counts as taking the window's Devin mark off now ({@link devinMarkTakeOffs}): the server start's queue turn then leaves the in-memory mark off whatever it decided, and no mark, sync or late mark turns it on, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn, {@link markDevinChatDescriptor}, {@link syncDevinChatDescriptor} and {@link isDevinSetupChanging}. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
@@ -1713,7 +1737,7 @@ export function activate(
     return answer.isMarked
   }
   /**
-   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start, and by {@link syncDevinChatDescriptor}, once per sync whose read was still in flight at its deadline.
+   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once, or names Set Up AI Chat instead when the bridge's own check finds the setup gone by then ({@link isSetupGoneAfterLateMark}); called by {@link startServer}'s queue turn, once per start, and by {@link syncDevinChatDescriptor}, once per sync whose read was still in flight at its deadline.
    * A server stopped or replaced meanwhile, a setup removed meanwhile, or a window already marked is left as it is and shows nothing; while a setup, take-back or removal of this window runs (the one that ran the sync included), the mark waits for it to end and then reads afresh ({@link afterDevinRunsSettled}), because a run that ends without rewriting the descriptor leaves the mark to it. Only the newest late mark of the window goes on ({@link lateMarksScheduled}): it reads afresh once its own late read settled, so it decides everything an older one would have.
    * @param server - The server that just started, or the one the sync rewrote.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
@@ -1727,13 +1751,17 @@ export function activate(
     // The newest late mark takes over: an older one of this window ends at its next turn instead of reading afresh in turns between this one's.
     lateMarksScheduled += 1
     const lateMark = lateMarksScheduled
-    void continueAfterLateRead(lateRead, () =>
-      markLateUntilAnswered(server, lateMark),
-    ).then(
+    let isSetupGone = false
+    void continueAfterLateRead(lateRead, async () => {
+      const isMarked = await markLateUntilAnswered(server, lateMark)
+      // The read that marked may have come before another window's removal: the bridge's own check decides the notice before the decision settles.
+      if (isMarked) isSetupGone = await isSetupGoneAfterLateMark(server)
+      return isMarked
+    }).then(
       (isMarked) => {
         if (!isMarked) return
         server.devinChat = true
-        offerDevinReloadAfterLateMark()
+        offerDevinReloadAfterLateMark(isSetupGone)
       },
       (error: unknown) => {
         diagnostics.info(

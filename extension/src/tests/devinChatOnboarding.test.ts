@@ -5442,8 +5442,8 @@ test("a late Devin mark whose slow fresh read answered across this window's remo
   }
 })
 
-// Value: protects=a window that a late mark marked for a setup another window removed meanwhile is refused by the bridge's own check of both records (removed, naming the missing entry record), so Devin Local opens no session on a removed setup; the stale mark and its one Reload Window are the designed state of any window marked before another window's removal (Cycle 0147 task 7, D13); fails_when=the check stands for that descriptor, or the late mark names another installation than its read found; no_claim=the late-mark notice is shown although the setup is gone (README line 95 says so; later candidate), a new setup in another window (the stand-in entry write reuses one installation id), the real removal's skill deletion; both windows share one extension host and storage folder, the second read of the first window reads the real records and waits at its gate
-test("another window's removal during a late Devin mark's fresh read leaves Devin Local refused by the bridge's own setup check", async (context) => {
+// Value: protects=a window that a late mark marked for a setup another window removed meanwhile is refused by the bridge's own check of both records (removed, naming the missing entry record), so Devin Local opens no session on a removed setup, and its one notice names Codebook: Set Up AI Chat without a Reload Window button, because a reload starts a bridge that refuses the removed setup; the stale mark itself is the designed state of any window marked before another window's removal (Cycle 0147 task 7, D13; ship pass 1, Codex structured P2 at extension.ts:1736); fails_when=the check stands for that descriptor, the late mark names another installation than its read found, or the notice still says a reload connects Devin Local; no_claim=a bridge check that has no answer within its 3 s bound (the reload is offered then), a new setup in another window (the stand-in entry write reuses one installation id), the real removal's skill deletion; both windows share one extension host and storage folder, the second read of the first window reads the real records and waits at its gate
+test("another window's removal during a late Devin mark's fresh read leaves Devin Local refused by the bridge's own setup check and names Set Up AI Chat instead of a reload", async (context) => {
   // Arrange
   const first = await devinWindow(context, {
     savedSetup: true,
@@ -5506,8 +5506,8 @@ test("another window's removal during a late Devin mark's fresh read leaves Devi
         {
           severity: 'information',
           message:
-            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
-          actions: ['Reload Window'],
+            "Codebook checked this window's Devin Desktop setup after storage answered late and found it removed or changed meanwhile (for example from another window), so reloading this window would not connect Devin Local. Run Codebook: Set Up AI Chat to set it up again.",
+          actions: [],
         },
       ])
     } finally {
