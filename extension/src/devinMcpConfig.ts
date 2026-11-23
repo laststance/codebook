@@ -3673,20 +3673,24 @@ type ConfigEntryHash =
  * Bytes that are no valid JSON config are told apart from a config without the entry: a file an editor is still saving proves nothing, while a config that holds no entry or another one is another publish's.
  * @param bytes - The config's bytes.
  * @returns
- * - `invalid` for bytes that are no JSON, a top level that is no object, or an `mcpServers` that is no object (what {@link parseConfig} refuses as well)
+ * - `invalid` for bytes that are no JSON, an object that names one member twice, a top level that is no object, or an `mcpServers` that is no object (what {@link parseConfig} refuses as well)
  * - `valid` with the hash; the hash is undefined for a config without `mcpServers` or without an entry, or an entry that is no object
  * @example
- * configEntryHashOf(Buffer.from('{"mcpServers":{}}')) // => { kind: 'valid', hash: undefined }
- * configEntryHashOf(Buffer.from('{"mcpServ'))         // => { kind: 'invalid' }
+ * configEntryHashOf(Buffer.from('{"mcpServers":{}}'))                     // => { kind: 'valid', hash: undefined }
+ * configEntryHashOf(Buffer.from('{"mcpServ'))                             // => { kind: 'invalid' }
+ * configEntryHashOf(Buffer.from('{"mcpServers":{"codebook":{}},"mcpServers":{}}')) // => { kind: 'invalid' }
  */
 function configEntryHashOf(bytes: Buffer): ConfigEntryHash {
+  const text = bytes.toString('utf8')
   let root: unknown
   try {
-    root = JSON.parse(bytes.toString('utf8'))
+    root = JSON.parse(text)
   } catch {
     return { kind: 'invalid' }
   }
-  if (!isJsonObject(root)) return { kind: 'invalid' }
+  // JSON.parse keeps only the last of two equal names, so an earlier "mcpServers" that holds the entry would read as none.
+  if (hasDuplicateJsonMember(text) || !isJsonObject(root))
+    return { kind: 'invalid' }
   const servers = root.mcpServers
   // No servers at all is a valid config without the entry; servers that are no object are no valid config.
   if (servers === undefined) return { kind: 'valid', hash: undefined }
