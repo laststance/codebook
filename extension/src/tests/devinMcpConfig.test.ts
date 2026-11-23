@@ -4548,6 +4548,40 @@ test('A first setup whose handed record hit a full disk after a writer changed t
   assert.equal(existsSync(copyPath), false)
 })
 
+test('A setup that cannot write its completed record warns that Codebook still tracks the moved-aside copy, which the next run then deletes', async (context) => {
+  // Value: protects=a setup whose completed record failed names the copy with the warning, because the record written before the move-aside still lets the next run delete it while the config is the published file; fails_when=the notice advises deleting at will or omits the path, the next run keeps the copy, or the published entry is lost; no_claim=a real ENOSPC between two record writes (seam.beforeRecordWrite fails only the completed record; the receipt and every later record are written), the take-back path's wording (unchanged), and a config replaced before the next run (that run hands the copy over)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  let copyPath = ''
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'completed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+  })
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.ok(
+    setup.cleanupFailure?.includes(
+      `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    ),
+    setup.cleanupFailure,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+  assert.deepEqual(
+    JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.codebook,
+    ENTRY,
+  )
+})
+
 test('A first setup whose receipt cannot be written leaves a config that was saved again with the same entry unchanged', async (context) => {
   // protects: a file Codebook did not publish is never edited by the rollback / fails_when: a new config with the same codebook entry but another inode loses that entry or the refusal does not say it was left unchanged / no_claim: a save with different bytes
   // Arrange

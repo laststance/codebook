@@ -311,7 +311,7 @@ function recordFailureRefusal({ path, retry }: Context, cause: unknown): Error {
 type KeptFile = {
   path: string
   holds: 'previous' | 'new'
-  /** Set for a copy of the previous config that stays under a name a record on disk still holds ({@link discardDisplaced}, {@link keepFromRecovery}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
+  /** Set for a copy of the previous config that stays under a name a record on disk still holds ({@link discardDisplaced}, {@link keepFromRecovery}, {@link publishEntry}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
   isLeftover?: true
 }
 
@@ -3908,7 +3908,7 @@ async function publishEntry(
   const installationId = installationIdOf(isFirst ? undefined : receipt)
   const root = rootWithEntry(look, entry)
   await context.seam?.afterRead?.()
-  const { config, keptLeft } = await publishRoot(
+  const { config, keptLeft, isRecorded } = await publishRoot(
     context,
     root,
     look,
@@ -3945,8 +3945,23 @@ async function publishEntry(
   }
   // A record that names a copy that stays is kept, so the next run settles that copy.
   if (keptLeft.length === 0) await dropPending(context)
-  const cleanupFailure = cleanupFailureOf(keptLeft)
+  // Without the completed record, the record written before the move-aside still lets the next run delete the copy.
+  const cleanupFailure = cleanupFailureOf(
+    isRecorded ? keptLeft : keptLeft.map(stillTracked),
+  )
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
+}
+
+/**
+ * Marks a kept copy of the previous config as one a record on disk still holds ({@link KeptFile.isLeftover}); used by {@link publishEntry} when the completed record could not be written, so the record written before the move-aside still names the copy and the next run deletes it while the config is the published file.
+ * @param kept - A file the publish left.
+ * @returns The same file, marked {@link KeptFile.isLeftover} when it holds the previous config; a staged copy of the new config is returned as it is.
+ * @example
+ * stillTracked({ path, holds: 'previous' }) // => { path, holds: 'previous', isLeftover: true }
+ * stillTracked({ path, holds: 'new' }) // => { path, holds: 'new' }
+ */
+function stillTracked(kept: KeptFile): KeptFile {
+  return kept.holds === 'previous' ? { ...kept, isLeftover: true } : kept
 }
 
 /** The leftovers of a pending record of this config that recovery could not settle; none for no record or a record of another config. */
