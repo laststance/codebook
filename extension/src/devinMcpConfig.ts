@@ -113,7 +113,7 @@ const pendingSchema = z.object({
   publishGeneration: z.string().optional(),
   /** Set by a first setup (no receipt owned an entry that stood, {@link isFirstSetup}) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
   firstSetup: z.boolean().optional(),
-  /** Set, with `phase: 'handed'`, right before the link of a put-back that only the displaced file's bytes prove ({@link putBackDisplaced}): a run that stops before the check leaves a record that older builds read as handed and never delete from, while this build reads it as in progress ({@link leftoverPhaseOf}) and checks the shared bytes before it deletes the private name ({@link assertSharedPutBackBytes}). Gone once the check passed; an older build drops it. */
+  /** Set, with `phase: 'handed'`, right before the link of a put-back that only the displaced file's bytes prove ({@link putBackDisplaced}): a run that stops before the check leaves a record that older builds read as handed and never delete from, while this build reads it as in progress ({@link leftoverPhaseOf}) and checks the shared bytes before it deletes the private name ({@link assertSharedPutBackBytes}). Gone once the check passed and the name is gone, or when the put-back failed before a second name of the config stood ({@link restoreUnlessSecondName}); an older build drops it. */
   bytesUnverified: z.boolean().optional(),
 })
 type Receipt = z.infer<typeof receiptSchema>
@@ -2083,11 +2083,10 @@ async function tidyLeftover(
     role === 'kept' &&
     (await putBackDisplaced(
       context,
-      path,
+      leftover,
       pending,
       !config,
       proofOfRecordedCopy(expectedIno, copy, expectedSha256),
-      expectedSha256,
       copy,
     ))
   )
@@ -2326,26 +2325,25 @@ async function keepOriginalUnlessPublished(
  * Puts the displaced config of an interrupted move-aside back at the config name, even if it is not the bytes that were read; called by {@link tidyLeftover}.
  * The name is looked at again right before the link and before the unlink ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so.
  * Limit: a swap between a look and the syscall after it is not seen.
- * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort.
+ * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}).
  * @param context - The run.
- * @param path - The displaced name.
+ * @param leftover - The displaced name and the hash the record holds for it.
  * @param pending - The pending record of the interrupted run; its phase as recovery reads it ({@link leftoverPhaseOf}) must be absent.
  * @param isConfigAbsent - Whether nothing stands at the config name.
  * @param proof - What shows the displaced file is the recorded one: `inode` (the recorded inode) or `bytes` (another inode whose bytes equal the recorded hash); undefined when neither, and such a file is never published. When only the bytes prove it, the file is hashed again right before the link, its name is looked at synchronously with the size and times of that hash, and the file at the config name is hashed once more after the link: an in-place write in between is refused and nothing stays published from it.
- * @param expectedSha256 - The recorded hash of the displaced file.
  * @param copy - What {@link lookAtLeftover} found; its inode is the one that may be linked.
  * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
  * @throws When the unverified record cannot be written, the link or unlink fails, the name no longer shows the checked file, or the link produced another file.
  */
 async function putBackDisplaced(
   context: Context,
-  path: string,
+  leftover: Leftover,
   pending: Pending,
   isConfigAbsent: boolean,
   proof: 'inode' | 'bytes' | undefined,
-  expectedSha256: string | undefined,
   copy: InspectedCopy,
 ): Promise<boolean> {
+  const { path, sha256: expectedSha256 } = leftover
   if (
     leftoverPhaseOf(pending) !== undefined ||
     !isConfigAbsent ||
@@ -2364,20 +2362,27 @@ async function putBackDisplaced(
       phase: 'handed',
       bytesUnverified: true,
     } satisfies Pending)
-  assertLeftoverStill(context, path, lastLook)
-  await link(path, context.path)
-  const linked = lstatSync(context.path, {
-    bigint: true,
-    throwIfNoEntry: false,
-  })
-  if (!linked || copy.ino !== linked.ino)
-    await undoForeignLink(context, path, linked?.ino)
-  if (proof === 'bytes')
-    await assertLinkedBytes(context, path, copy.ino, expectedSha256)
-  // The config name is checked first and the displaced name last, right before the unlink: only the syscall gap after that last look remains.
-  assertConfigStill(context, copy.ino, path)
-  assertLeftoverStill(context, path, { ino: copy.ino })
-  await unlink(path)
+  try {
+    assertLeftoverStill(context, path, lastLook)
+    await link(path, context.path)
+    const linked = lstatSync(context.path, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })
+    if (!linked || copy.ino !== linked.ino)
+      await undoForeignLink(context, path, linked?.ino)
+    if (proof === 'bytes')
+      await assertLinkedBytes(context, path, copy.ino, expectedSha256)
+    // The config name is checked first and the displaced name last, right before the unlink: only the syscall gap after that last look remains.
+    assertConfigStill(context, copy.ino, path)
+    assertLeftoverStill(context, path, { ino: copy.ino })
+    await unlink(path)
+  } catch (cause) {
+    // The unverified record must not outlive the state it describes: also where the run keeps pending.json as it finds it (an unrecorded removal).
+    if (proof === 'bytes')
+      await restoreUnlessSecondName(context, leftover, pending)
+    throw cause
+  }
   // Checked and done: the record says what it said before the put-back; a failed write leaves an unverified record whose private name is gone, which the next run settles as gone.
   if (proof === 'bytes')
     await writeRecord(context, context.pendingPath, {
@@ -2386,6 +2391,57 @@ async function putBackDisplaced(
       bytesUnverified: undefined,
     } satisfies Pending).catch(() => undefined)
   return true
+}
+
+/**
+ * Writes a pending record back as it was read after a step of a put-back by bytes threw past its unverified write; called by {@link putBackDisplaced}.
+ * A put-back that never linked, or whose link was taken away again or replaced, leaves no second name of the config that an older build could delete by the shared inode, so the unverified mark ({@link Pending.bytesUnverified}) would only make older builds read an empty config name as handed: the record says again what it said. A displaced name that stays an unverified second name of the config ({@link isUnverifiedSecondName}) keeps the mark.
+ * @param context - The run; its pending path is written.
+ * @param leftover - The displaced name and the inode the record holds for it.
+ * @param pending - The record as it was read.
+ * @returns Nothing; best effort: a failed write leaves the unverified record, which this build reads as in progress ({@link leftoverPhaseOf}).
+ * @example
+ * await restoreUnlessSecondName(context, leftover, pending) // pending.json says again what it said when the look before the link failed
+ */
+async function restoreUnlessSecondName(
+  context: Context,
+  leftover: Leftover,
+  pending: Pending,
+): Promise<void> {
+  if (isUnverifiedSecondName(context, leftover)) return
+  await writeRecord(context, context.pendingPath, pending).catch(
+    () => undefined,
+  )
+}
+
+/**
+ * Tells whether a displaced name is a second name of the config that no check cleared: both names show one inode, and it is not the inode the record holds, as a put-back by bytes leaves it after its link; called by {@link restoreUnlessSecondName}.
+ * Only such a name needs the unverified mark ({@link Pending.bytesUnverified}): it keeps an older build from deleting the name on the strength of the shared inode alone.
+ * @param context - The run; its config path is looked at.
+ * @param leftover - The displaced name and the inode the record holds for it.
+ * @returns `true` for a second name with another inode than the recorded one, and when a look fails (the mark deletes nothing); `false` when either name is gone, they show two files, or the inode is the recorded one.
+ * @example
+ * isUnverifiedSecondName(context, leftover) // => true after a put-back by bytes whose unlink of the private name failed
+ */
+function isUnverifiedSecondName(
+  context: Context,
+  { path, ino: recordedIno }: Pick<Leftover, 'path' | 'ino'>,
+): boolean {
+  try {
+    const displaced = lstatSync(path, { bigint: true, throwIfNoEntry: false })
+    const config = lstatSync(context.path, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })
+    return (
+      displaced !== undefined &&
+      displaced.ino === config?.ino &&
+      !isSameFileId(recordedIno, displaced.ino)
+    )
+  } catch {
+    // A name that cannot be looked at may still be a second name: the mark is the side that deletes nothing.
+    return true
+  }
 }
 
 /**

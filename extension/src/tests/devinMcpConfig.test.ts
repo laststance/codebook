@@ -2761,6 +2761,44 @@ test('A copy handed over after a failed shared-bytes check is named once by the 
   assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
 })
 
+test('A put-back by bytes whose look before the link fails writes its record back as it was read', async (context) => {
+  // Value: protects=a put-back by bytes that wrote its handed, unverified record and then could not link leaves the record as it was read, also where the run keeps pending.json as it finds it (an unrecorded removal), so no build reads the empty config name as a standing config or offers deleting the only copy; fails_when=the record after the run is handed or unverified or differs from the one read, the config name gets a file, or the private file is deleted; no_claim=a process that ends in that gap (the record then stays unverified by design), and a link that fails for another reason; seam=a receipt that stands and a removal's pending record (no entry hash) whose displaced file only its bytes prove, with the config name empty; seam.beforeLeftoverCheck rewrites the private file at the look right before the link
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const recordAsRead = await readRecordFile(storage, 'pending.json')
+  await writeRecordFile(storage, 'receipt.json', {
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    installed: true,
+    generation: JOURNAL_GENERATION,
+    installationId: 'c0ffee00-0000-4000-8000-000000000147',
+    config: { ino: 1 },
+  })
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== keptPath || isRewritten) return
+      isRewritten = true
+      writeFileSync(keptPath, '{"theme":"evil"}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  assert.equal(isRewritten, true)
+  assert.deepEqual(await readRecordFile(storage, 'pending.json'), recordAsRead)
+  assert.equal(existsSync(configPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"theme":"evil"}\n')
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange
