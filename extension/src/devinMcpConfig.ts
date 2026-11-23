@@ -66,7 +66,7 @@ export type DevinMcpTestSeam = {
   beforeLeftoverCheck?: (path: string) => void
   /** Called right after that second look passed and before the link, unlink or rename it guards, so a test can swap the file in the gap the second look cannot close. */
   afterLeftoverCheck?: (path: string) => void
-  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them; a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
+  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them, or for a claim of a rollback journal's empty name before the link publishes them ({@link claimJournal}); a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
   beforeRecordWrite?: (write: { path: string; record: unknown }) => void
 }
 
@@ -170,7 +170,7 @@ type Context = {
   retry: string
   /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
   rollbackOf?: string
-  /** Set only on the context {@link settleRollbackJournal} settles a journal with: the version of the journal that run read, replaced by each version it writes at its pending path ({@link writeRecord}), so the journal it may retire or rewrite is the one it settled ({@link retireHeldJournal}, {@link retirePending}). */
+  /** Set only on the context {@link settleRollbackJournal} settles a journal with, which makes its pending path a tracked journal: the version of the journal that run read, replaced by each version it writes at its pending path ({@link writeRecord}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}). */
   journalVersion?: { current: RecordVersion | undefined }
 }
 
@@ -754,9 +754,22 @@ function linkedElsewhereRefusal({ path, retry }: Context): Error {
   )
 }
 
-/** Removes the pending record; a failure leaves a record that the next run finds stale. */
+/** Removes the pending record; a failure leaves a record that the next run finds stale. A tracked journal ({@link Context.journalVersion}) goes only while its name shows the version this run settled or wrote ({@link removeRecord}). */
 function dropPending(context: Context): Promise<void> {
-  return rm(context.pendingPath, { force: true }).catch(() => undefined)
+  return removeRecord(context).catch(() => undefined)
+}
+
+/**
+ * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending} and {@link retirePending}.
+ * @param context - The run; its pending path is deleted.
+ * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (nothing is deleted then); what the delete throws other than for a name that is gone.
+ * @example
+ * await removeRecord(context) // pending.json is gone
+ */
+function removeRecord(context: Context): Promise<void> {
+  return context.journalVersion
+    ? dropTrackedJournal(context)
+    : rm(context.pendingPath, { force: true })
 }
 
 /**
@@ -2184,11 +2197,11 @@ function parseRecord<Schema extends z.ZodType>(
 
 /**
  * Writes one of Codebook's own records (the receipt, `pending.json` or a rollback's journal) atomically; every record write of a run goes through here, so a test sees each one at {@link DevinMcpTestSeam.beforeRecordWrite}.
- * A write at the pending path of a context that tracks its journal's version ({@link Context.journalVersion}) replaces that version with the one it published ({@link publishedVersionOf}).
- * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename.
+ * A write at the pending path of a context that tracks its journal's version ({@link Context.journalVersion}) goes on only while that name shows the version this run settled or last wrote, or nothing ({@link writeTrackedJournal}), and then replaces that version with the one it published ({@link publishedVersionOf}).
+ * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename (for a tracked journal also before the last look at its name).
  * @param path - The record file.
  * @param value - The complete record.
- * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam throws; the previous record then stays byte for byte, and so does a tracked version.
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam throws; a {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again. The previous record then stays byte for byte, and so does a tracked version.
  * @example
  * await writeRecord(context, context.pendingPath, { ...journal, phase: 'completed' })
  */
@@ -2197,20 +2210,80 @@ async function writeRecord(
   path: string,
   value: unknown,
 ): Promise<void> {
-  await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () =>
-    context.seam?.beforeRecordWrite?.({ path, record: value }),
-  )
-  // Only the journal a settlement tracks learns the version this write published.
-  if (context.journalVersion && path === context.pendingPath)
-    context.journalVersion.current = await publishedVersionOf(path, value)
+  const tracked =
+    path === context.pendingPath ? context.journalVersion : undefined
+  // Every record but a tracked journal is replaced whatever stands at its name.
+  if (!tracked) {
+    await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () =>
+      context.seam?.beforeRecordWrite?.({ path, record: value }),
+    )
+    return
+  }
+  await writeTrackedJournal(context, value)
+  // Only a write that went through moves the version: after a refused one the next guarded step on that name finds the conflict again.
+  tracked.current = await publishedVersionOf(path, value)
 }
 
 /**
- * Gives the version of a journal that this run itself just published; called only by {@link writeRecord} for a context that tracks its journal ({@link Context.journalVersion}), so the held journal {@link settleRollbackJournal} may retire is the one this run left, never one another program put at its name.
- * The hash is of the bytes {@link atomicPrivateWrite} wrote (the value's JSON); the inode is the one the name shows right after the rename, looked at without holding the extension host's thread. A file another program renamed in meanwhile pairs its inode with this run's hash, a version no file shows, so nothing is deleted then.
+ * Writes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote, or nothing; called only by {@link writeRecord}.
+ * A name with no known version, or one found empty, is claimed ({@link claimJournal}). Otherwise the bytes are staged and flushed first, and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced.
+ * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * @param context - The run; its pending path is the journal, its seam is called right before the last look.
+ * @param value - The complete journal.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again; what the write throws. The name then stays as it was.
+ * @example
+ * await writeTrackedJournal(rollbackContext, retained) // pending.json.rollback holds `retained` while it held this run's version
+ */
+async function writeTrackedJournal(
+  context: Context,
+  value: unknown,
+): Promise<void> {
+  // No version of this run stands at the name: the write claims it, never replacing what stands there.
+  if (context.journalVersion?.current === undefined)
+    return claimJournal(context, value)
+  const look = await lookAtTrackedJournal(context)
+  // The name went empty since this run's version: the write claims it.
+  if (!look) return claimJournal(context, value)
+  const path = context.pendingPath
+  await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () => {
+    context.seam?.beforeRecordWrite?.({ path, record: value })
+    assertTrackedJournalStill(context, look)
+  })
+}
+
+/**
+ * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file; called by {@link writeTrackedJournal} when no version is known or the name was found empty.
+ * The bytes are first written and flushed under a fresh private name beside the journal, which goes again whatever happens.
+ * @param context - The run; its pending path is the journal, its seam is called right before the link.
+ * @param value - The complete journal.
+ * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is; what the write or the link throws otherwise.
+ * @example
+ * await claimJournal(rollbackContext, journal) // pending.json.rollback holds `journal`, or the call throws and the name stays as it was
+ */
+async function claimJournal(context: Context, value: unknown): Promise<void> {
+  const path = context.pendingPath
+  const staged = `${path}.${randomUUID()}.tmp`
+  try {
+    await atomicPrivateWrite(staged, value, DEVIN_MCP_RECORD_LIMIT_BYTES)
+    context.seam?.beforeRecordWrite?.({ path, record: value })
+    await link(staged, path).catch((error: unknown) => {
+      // Something stands at the name already: it is never replaced.
+      throw codeOf(error) === 'EEXIST'
+        ? journalConflictError(context, 'changed', error)
+        : error
+    })
+  } finally {
+    // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened.
+    await unlink(staged).catch(() => undefined)
+  }
+}
+
+/**
+ * Gives the version of a journal that this run itself just published; called only by {@link writeRecord} for a context that tracks its journal ({@link Context.journalVersion}), so the journal this run writes or deletes next is the one it left, never one another program put at its name.
+ * The hash is of the bytes {@link atomicPrivateWrite} wrote (the value's JSON); the inode is the one the name shows right after the rename or link, looked at without holding the extension host's thread. A file another program renamed in meanwhile pairs its inode with this run's hash, a version no file shows, so nothing is written over or deleted then.
  * @param path - The journal's path.
  * @param value - The record just written.
- * @returns The inode its name shows and the hash of the bytes written; undefined when the name shows nothing or cannot be looked at, so no later retirement deletes anything.
+ * @returns The inode its name shows and the hash of the bytes written; undefined when the name shows nothing or cannot be looked at, so a later write claims the name and a later delete removes nothing that stands there.
  * @example
  * await publishedVersionOf(journalPath, record) // => { ino: 43n, sha256: 'cd…' }
  */
@@ -2623,6 +2696,17 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
 
+/** Thrown by a write or delete of a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`); nothing was written or deleted at that name ({@link journalConflictError}), and {@link settleRollbackJournal} ends the run with it. */
+class JournalConflictError extends Error {
+  constructor(
+    message: string,
+    readonly kind: 'changed' | 'unread',
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+  }
+}
+
 /**
  * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of {@link leftCopyRefusal}'s general advice.
  * `isHanded` is set when the config name may hold a file Codebook did not verify: the record then turns to handed, so no later run deletes the displaced name on the strength of a shared inode.
@@ -2883,23 +2967,26 @@ function retainedRecord(
   }
 }
 
-/** Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay. A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link showsSettledJournal}); another journal a backup restored there stays for the next run. A publish record whose old record's private name this run's put-back found empty (`emptiedRetiredPath`, {@link settleRetiredReceipt}) is the only pointer to that name, so it ends only while one synchronous look right before the write or delete still finds that name empty; otherwise the run throws the {@link retiredBackRefusal}, the record stays byte for byte and the run goes no further. */
+/**
+ * Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay; called by {@link settleRollbackJournal} for a rollback's journal, and for `pending.json` by {@link settlePending}, {@link adoptPending} and {@link finishCutShortSetup}.
+ * A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link writeRecord}, {@link removeRecord}); another journal a backup restored there stays for the next run, and the call rejects. A publish record whose old record's private name this run's put-back found empty (`emptiedRetiredPath`, {@link settleRetiredReceipt}) is the only pointer to that name, so it ends only while one synchronous look right before the write or delete still finds that name empty.
+ * @param context - The run; its pending path is the record.
+ * @param retained - What stays of the record; undefined when nothing does.
+ * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
+ * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (the name stays as it is); the {@link retiredBackRefusal} when a file stands at `emptiedRetiredPath` again or that look fails (the record stays byte for byte and the run goes no further); what the write or delete throws.
+ * @example
+ * await retirePending(rollbackContext, undefined) // pending.json.rollback is gone while it held the version this run settled
+ */
 async function retirePending(
   context: Context,
   retained: Pending | undefined,
   emptiedRetiredPath?: string,
 ): Promise<void> {
-  // Another journal at a settled journal's name is not this run's to delete or overwrite.
-  if (
-    context.journalVersion &&
-    !(await showsSettledJournal(context, context.journalVersion.current))
-  )
-    return
   // A file back at the private name found empty (or a look that failed): the record that leads there stays.
   if (emptiedRetiredPath !== undefined && !isNameEmptyNow(emptiedRetiredPath))
     throw retiredBackRefusal(context, emptiedRetiredPath)
   if (retained) await writeRecord(context, context.pendingPath, retained)
-  else await rm(context.pendingPath, { force: true })
+  else await removeRecord(context)
 }
 
 /**
@@ -5240,7 +5327,7 @@ function currentEntryOf(look: ConfigLook): unknown {
  * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
  * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired, after the first leftover's refusal when one stays ({@link refusalWithConflict}): that name stays as it is and the run goes no further.
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -5285,18 +5372,29 @@ async function settleRollbackJournal(
     tracked,
   )
   const [reported] = unsettled
-  // A legacy journal decided as another publish's on one read of the config is never deleted here: the publish record must lose its ability to adopt first.
-  const held =
-    belonging === 'another-config' && legacy?.restoredBytes
-      ? await holdLegacyJournal(
-          rollbackContext,
-          heldJournalOf(pending, retained),
-          legacy,
-          legacy.restoredBytes,
-          reported !== undefined,
+  let held: HeldJournal | undefined
+  try {
+    // A legacy journal decided as another publish's on one read of the config is never deleted here: the publish record must lose its ability to adopt first.
+    held =
+      belonging === 'another-config' && legacy?.restoredBytes
+        ? await holdLegacyJournal(
+            rollbackContext,
+            heldJournalOf(pending, retained),
+            legacy,
+            legacy.restoredBytes,
+            reported !== undefined,
+          )
+        : undefined
+    if (!held) await retirePending(rollbackContext, retained)
+  } catch (error) {
+    // Another file at the journal's name ends the run here, named after the leftover this recovery could not settle.
+    throw error instanceof JournalConflictError && reported
+      ? refusalWithConflict(
+          unsettledRefusal(rollbackContext, phase, reported),
+          error,
         )
-      : undefined
-  if (!held) await retirePending(rollbackContext, retained)
+      : error
+  }
   if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
   return held
 }
@@ -5307,20 +5405,20 @@ type HeldJournal = {
   restoredSha256: string
   /** The journal's evidence, which the refusal of a changed config names. */
   legacy: LegacyJournalEvidence
-  /** Deletes the journal, only while its name still shows the version this run held ({@link retireHeldJournal}). */
+  /** Deletes the journal, only while its name still shows the version this run settled or last wrote ({@link dropTrackedJournal}); rejects with a {@link JournalConflictError} and leaves the name as it is otherwise. */
   retire: () => Promise<void>
 }
 
 /**
  * Keeps a legacy rollback journal that one read decided as another publish's, so the publish record cannot adopt on a later read once the journal is gone; called only by {@link settleRollbackJournal}.
- * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it. The retirement deletes only the version this run settled ({@link Context.journalVersion}): the one its recovery read, or the last one this run wrote itself, never what its name shows by now, so a journal a backup restores at its name after that read stays for the next run.
+ * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it. That rewrite and the retirement act only on the version this run settled ({@link Context.journalVersion}): the one its recovery read, or the last one this run wrote itself, never what its name shows by now, so a journal a backup restores at its name after that read stays for the next run ({@link writeRecord}, {@link dropTrackedJournal}).
  * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, and it tracks the journal's version.
  * @param kept - The journal to write when a leftover is refused.
  * @param legacy - The journal's evidence.
  * @param restoredBytes - The restored config's bytes that decided it.
  * @param isRefused - Whether a leftover of the journal is refused in this run.
  * @returns The held journal ({@link HeldJournal}).
- * @throws What writing the journal throws; the journal on disk then stays byte for byte.
+ * @throws What writing the journal throws, a {@link JournalConflictError} when its name no longer shows the version this run settled; the journal on disk then stays byte for byte.
  * @example
  * const held = await holdLegacyJournal(rollbackContext, legacyEvidenceOf(journal), legacy, restoredBytes, true)
  */
@@ -5334,54 +5432,76 @@ async function holdLegacyJournal(
   // A refused leftover ends this run: the journal keeps what the next run needs to decide again.
   if (isRefused)
     await writeRecord(rollbackContext, rollbackContext.pendingPath, kept)
-  // The version recovery read, or the one this run last wrote: a journal another program put at the name since is never it.
-  const version = rollbackContext.journalVersion?.current
   return {
     restoredSha256: bytesSha256(restoredBytes),
     legacy,
-    retire: (): Promise<void> => retireHeldJournal(rollbackContext, version),
+    // Nothing writes through this context between the hold and the retirement: the version it tracks is the one this run settled or last wrote.
+    retire: (): Promise<void> => dropTrackedJournal(rollbackContext),
   }
 }
 
 /**
- * Deletes a held legacy rollback journal ({@link HeldJournal}) only while its name still shows the version {@link holdLegacyJournal} held, the one this run settled: the same inode and bytes, looked at synchronously once more right before the unlink; called by {@link settleAfterRecovery} through the held journal's `retire`, once the publish record can no longer adopt.
- * A backup or sync tool may restore another journal at that name after recovery read the journal, also before the hold; that journal may hold a rollback this run never settled, so it stays and the next run decides on it.
- * Limit: a restore between the last look and the unlink is not seen; no Node primitive unlinks by inode.
- * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param held - The version of the journal this run settled ({@link Context.journalVersion}); undefined when its name showed nothing right after this run's last write, and nothing is deleted.
- * @throws What the unlink throws other than for a name that is gone.
+ * Looks at a tracked rollback journal's name ({@link Context.journalVersion}) before this run writes or deletes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, which look once more synchronously right before their rename or unlink ({@link assertTrackedJournalStill}).
+ * @param context - The run; its pending path is the journal.
+ * @returns
+ * - undefined when nothing stands at the name
+ * - the journal as this read saw it (inode, hash, size and times) while it shows the version this run settled or last wrote
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another inode or other bytes, or any file while this run knows no version of it; `unread` when the name cannot be read (a link, no regular file, too large or unreadable). Nothing is written or deleted then.
  * @example
- * await retireHeldJournal(rollbackContext, version) // pending.json.rollback is gone when it still holds the version that was held
+ * await lookAtTrackedJournal(rollbackContext) // => undefined once the journal's name is empty
  */
-async function retireHeldJournal(
-  rollbackContext: Context,
-  held: RecordVersion | undefined,
-): Promise<void> {
-  if (await showsSettledJournal(rollbackContext, held))
-    await rm(rollbackContext.pendingPath, { force: true })
+async function lookAtTrackedJournal(
+  context: Context,
+): Promise<InspectedCopy | undefined> {
+  let now: InspectedCopy | undefined
+  try {
+    now = await inspectCopy(context.pendingPath)
+  } catch (cause) {
+    throw journalConflictError(context, 'unread', cause)
+  }
+  if (!now) return undefined
+  const settled = context.journalVersion?.current
+  // Only this run's own version is written over or deleted; whatever else stands at the name stays for the next run.
+  if (now.ino !== settled?.ino || now.sha256 !== settled.sha256)
+    throw journalConflictError(context, 'changed')
+  return now
 }
 
 /**
- * Tells whether a rollback journal's name still shows the version this run settled ({@link Context.journalVersion}): the same inode and bytes, looked at synchronously once more at the end; called right before the journal is deleted or rewritten, by {@link retireHeldJournal} and {@link retirePending}, so a journal a backup or sync tool restored at that name since stays for the next run.
- * Limit: a restore between the last look and the unlink or rename that follows is not seen.
- * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param settled - The version of the journal this run settled; undefined when its name showed nothing right after this run's last write.
- * @returns `true` while the name shows that version; `false` when it is gone, unreadable or shows another version, or no version is known.
+ * Looks synchronously, once more, at a tracked rollback journal's name right before the rename or unlink that writes or deletes it; called by {@link writeTrackedJournal} inside its publish step and by {@link dropTrackedJournal}.
+ * Limit: a file put at the name between this look and the syscall that follows is not seen.
+ * @param context - The run; its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
+ * @param look - The journal as {@link lookAtTrackedJournal} read it: its inode, size and times must still show.
+ * @throws A {@link JournalConflictError} (`changed`) when the name is gone or shows another file, size or times.
  * @example
- * await showsSettledJournal(rollbackContext, version) // => false once a backup restored another journal at pending.json.rollback
+ * assertTrackedJournalStill(rollbackContext, look) // throws once a backup renamed another journal over the name
  */
-async function showsSettledJournal(
-  rollbackContext: Context,
-  settled: RecordVersion | undefined,
-): Promise<boolean> {
-  if (!settled) return false
-  const journalPath = rollbackContext.pendingPath
-  const now = await inspectCopy(journalPath).catch(() => undefined)
-  // Gone, unreadable or another version: whatever stands at the name now stays for the next run.
-  if (!now || now.ino !== settled.ino || now.sha256 !== settled.sha256)
-    return false
-  // The hash came from the open handle; the unlink or rename acts on the name, which must still show that same file.
-  return isLeftoverStill(rollbackContext, journalPath, now)
+function assertTrackedJournalStill(
+  context: Context,
+  look: InspectedCopy,
+): void {
+  if (!isLeftoverStill(context, context.pendingPath, look))
+    throw journalConflictError(context, 'changed')
+}
+
+/**
+ * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
+ * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
+ * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode.
+ * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then); what the unlink throws other than for a name that is gone.
+ * @example
+ * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
+ */
+async function dropTrackedJournal(context: Context): Promise<void> {
+  const look = await lookAtTrackedJournal(context)
+  // Nothing stands at the name: nothing is deleted.
+  if (!look) return
+  assertTrackedJournalStill(context, look)
+  await unlink(context.pendingPath).catch((error: unknown) => {
+    // Another program removed it first: the name is empty, as the delete wanted.
+    if (codeOf(error) !== 'ENOENT') throw error
+  })
 }
 
 /**
@@ -5610,6 +5730,49 @@ function unmatchedJournalRefusal(
   }[belonging]
   // A leftover that stays with the kept journal is named once more, so the advice to delete both records never hides it.
   return new Error(`${sentence}${unmatchedLeftoverSentence(context, legacy)}`)
+}
+
+/**
+ * Builds the refusal for a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`); thrown by {@link lookAtTrackedJournal}, {@link assertTrackedJournalStill} and {@link claimJournal}, so nothing is written or deleted at that name and the run goes no further ({@link settleRollbackJournal}).
+ * @param context - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its retry ends the sentence.
+ * @param kind - What the look found.
+ * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw journalConflictError(rollbackContext, 'changed') // 'While Codebook settled its rollback record at …/pending.json.rollback (a rollback that ended early), another program changed, removed or replaced it …'
+ */
+function journalConflictError(
+  context: Context,
+  kind: JournalConflictError['kind'],
+  cause?: unknown,
+): JournalConflictError {
+  const { pendingPath: journal, retry } = context
+  const sentence = {
+    changed: `While Codebook settled its rollback record at ${journal} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`,
+    unread: `While Codebook settled its rollback record at ${journal} (a rollback that ended early), it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, ${retry}, and that run reads that name first.`,
+  }[kind]
+  return new JournalConflictError(
+    sentence,
+    kind,
+    cause === undefined ? undefined : { cause },
+  )
+}
+
+/**
+ * Joins the refusal of a leftover recovery could not settle with the conflict at the journal's name that ended the run, so the learner reads both in one message; called by {@link settleRollbackJournal}.
+ * @param leftoverRefusal - The leftover's refusal ({@link unsettledRefusal}).
+ * @param conflict - The {@link JournalConflictError} the journal's write or delete threw.
+ * @returns One error: the leftover's sentence, a space, then the conflict's.
+ * @example
+ * refusalWithConflict(unsettledRefusal(rollbackContext, phase, reported), conflict) // => 'Codebook found a private file at … While Codebook settled its rollback record at …'
+ */
+function refusalWithConflict(
+  leftoverRefusal: Error,
+  conflict: JournalConflictError,
+): Error {
+  return new Error(`${leftoverRefusal.message} ${conflict.message}`, {
+    cause: conflict,
+  })
 }
 
 /**
