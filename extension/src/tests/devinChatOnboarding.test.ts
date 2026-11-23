@@ -3251,7 +3251,7 @@ test('a failed Devin setup whose take-back waits on storage answers within the b
     instanceLabel: 'second',
     onResolveNode: (): void => {
       hadFirstEndedWhenSecondStarted = first.outputLines.includes(
-        'Codebook is done taking back an earlier Devin Desktop setup now that storage answered.',
+        "Codebook's take-back of this Devin Desktop setup ended now that storage answered, so Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup run again in this window.",
       )
     },
   })

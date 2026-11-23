@@ -1,3 +1,6 @@
+import { DEVIN_SETUP_ROLLBACK_BUDGET_MS } from './constants'
+import { SET_UP_AI_CHAT_COMMAND } from './utils/startOverBy'
+
 /** What Set Up AI Chat, the activation refresh and the removal answer in a Devin Desktop window that runs in a remote (WSL, SSH, a container): Devin's skill and MCP config folders and the bridge Devin starts are those of the remote machine, which no check has covered (Cycle 0143). */
 export const DEVIN_REMOTE_UNSUPPORTED_SENTENCE =
   'Devin Desktop setup in a remote window is not supported yet.'
@@ -130,7 +133,7 @@ export const devinStorageWaitSentence = (
   kind: DevinBackgroundWorkKind,
   step: DevinStorageStep,
 ): string =>
-  `${BACKGROUND_WORK[kind].subject} is still waiting on storage (${step}) after 10 seconds; ${BACKGROUND_WORK[kind].ending}. Until then Codebook: Set Up AI Chat and ${REMOVE_DEVIN_SETUP_COMMAND} refuse in this window.`
+  `${BACKGROUND_WORK[kind].subject} is still waiting on storage (${step}) after ${DEVIN_SETUP_ROLLBACK_BUDGET_MS / 1_000} seconds; ${BACKGROUND_WORK[kind].ending}. Until then ${SET_UP_AI_CHAT_COMMAND} and ${REMOVE_DEVIN_SETUP_COMMAND} refuse in this window.`
 
 /**
  * What a Devin Desktop setup or removal answers at once while this window still runs a setup, take-back or removal whose command answered because storage did not.
@@ -146,15 +149,15 @@ export const devinBackgroundWorkSentence = (
   `Codebook is still ${BACKGROUND_WORK[kind].doing} because storage does not answer. Run ${command} again once it finishes, or reload the window.`
 
 /**
- * The Output line once a setup, take-back or removal that answered its command early has ended, so the window takes setup and removal again.
+ * The Output line once a setup, take-back or removal that answered its command early has ended, so the window takes setup and removal again; written whether the work succeeded or failed (a failure gets its own line, {@link devinLateFailureLine}), so it says only that the work ended.
  * @param kind - The work that ended.
  * @returns One line.
- * @example devinBackgroundWorkEndedLine('removal') // => 'Codebook is done removing the Devin Desktop setup now that storage answered.'
+ * @example devinBackgroundWorkEndedLine('removal') // => "Codebook's removal of the Devin Desktop setup ended now that storage answered, so Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup run again in this window."
  */
 export const devinBackgroundWorkEndedLine = (
   kind: DevinBackgroundWorkKind,
 ): string =>
-  `Codebook is done ${BACKGROUND_WORK[kind].doing} now that storage answered.`
+  `${BACKGROUND_WORK[kind].subject} ended now that storage answered, so ${SET_UP_AI_CHAT_COMMAND} and ${REMOVE_DEVIN_SETUP_COMMAND} run again in this window.`
 
 /**
  * The Output line of a setup, take-back or removal that answered its command early and then failed, since the command can no longer show the failure.
