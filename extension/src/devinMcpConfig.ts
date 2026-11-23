@@ -330,7 +330,7 @@ function keptCopyPhrase(copyPath: string): string {
 const LEFTOVER_CLAUSE =
   'but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
-/** What may happen next to a kept copy of the previous config whose record could not be read back as one that names it ({@link unrecordedRemovalRefusal}): another program may have replaced or removed that record, so the sentence promises neither the delete nor that the copy stays. */
+/** What may happen next to a kept copy of the previous config whose record could not be read back as one of this config that names it and still lets a later run delete it ({@link unrecordedRemovalRefusal}): another program may have replaced, removed or restored that record, so the sentence promises neither the delete nor that the copy stays. */
 const UNCONFIRMED_CLAUSE =
   'but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
@@ -5809,7 +5809,7 @@ export class DevinMcpUnrecordedRemovalError extends Error {}
 
 /**
  * Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses; called by {@link takeEntryOut}.
- * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back naming the copy ({@link isNamedByRecord}), and the {@link UNCONFIRMED_CLAUSE} when another program replaced or removed the record.
+ * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link isNamedByRecord}), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record.
  * @param context - The run; gives the paths and the command to run again.
  * @param keptLeft - The files the publish left.
  * @returns The error, not thrown yet.
@@ -5834,12 +5834,13 @@ async function unrecordedRemovalRefusal(
 }
 
 /**
- * Tells whether the pending record on disk still names a kept copy, read back after the completed record could not be written; called by {@link unrecordedRemovalRefusal}, because another program may have replaced or removed that record, and only a record that names the copy lets a later run delete it.
- * @param context - The run; gives the pending record's path.
+ * Tells whether the pending record on disk still lets a later run delete a kept copy, read back after the completed record could not be written; called by {@link unrecordedRemovalRefusal}, because another program may have replaced, removed or restored that record, and only a record of this config that recovery deletes from ({@link recoverOwnLeftovers}, {@link tidyLeftover}) and that names the copy lets a later run delete it.
+ * @param context - The run; gives the pending record's path and the config path.
  * @param copyPath - The copy's private name.
- * @returns `true` when the record reads back and names that copy; `false` when it is gone, cannot be read as a record (a folder, a link) or names another copy.
+ * @returns `true` when the record reads back as one of this config that names that copy and is not handed over as recovery reads it ({@link leftoverPhaseOf}); `false` when it is gone, cannot be read as a record (a folder, a link), is of another config, hands the copy over or names another copy.
  * @example
  * await isNamedByRecord(context, copyPath) // => false once another program put a folder where pending.json was
+ * await isNamedByRecord(context, copyPath) // => false once a backup put back a handed record that names the same copy
  */
 async function isNamedByRecord(
   context: Context,
@@ -5850,7 +5851,12 @@ async function isNamedByRecord(
     pendingSchema,
     context.retry,
   ).catch(() => undefined)
-  return pending?.keptName === basename(copyPath)
+  // Recovery settles only a record of this config, and never deletes a copy its handed record holds.
+  return (
+    pending?.targetPath === context.path &&
+    leftoverPhaseOf(pending) !== 'handed' &&
+    pending.keptName === basename(copyPath)
+  )
 }
 
 /**
