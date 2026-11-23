@@ -3780,7 +3780,7 @@ async function holdsReceipt(
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
+ * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). The private name is unlinked afterwards; one that cannot be is only a second name of the receipt. A private name that the link or a look found empty is never unlinked: nothing is left there to keep, and a file put there after that look is not the record.
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
@@ -3803,20 +3803,22 @@ async function putBackRetiredReceipt(
     () => undefined,
     (error: unknown) => error,
   )
-  // ENOENT: the private name is gone already.
-  if (cause !== undefined && codeOf(cause) !== 'ENOENT') {
-    if (codeOf(cause) === 'EEXIST')
-      return settleTakenName(context, retiredPath, failure, cause, options)
-    throw new UnrestoredReceiptError(
-      context,
-      retiredPath,
-      failure,
-      cause,
-      undefined,
-      options.isMarked ?? true,
-    )
+  if (cause === undefined) {
+    await unlink(retiredPath).catch(() => undefined)
+    return
   }
-  await unlink(retiredPath).catch(() => undefined)
+  // ENOENT: the private name is gone already, and nothing is unlinked there, so a file put at that name after the link is never deleted unchecked.
+  if (codeOf(cause) === 'ENOENT') return
+  if (codeOf(cause) === 'EEXIST')
+    return settleTakenName(context, retiredPath, failure, cause, options)
+  throw new UnrestoredReceiptError(
+    context,
+    retiredPath,
+    failure,
+    cause,
+    undefined,
+    options.isMarked ?? true,
+  )
 }
 
 /** How {@link putBackRetiredReceipt} runs; every field is optional. */
@@ -3836,7 +3838,7 @@ type PutBackOptions = {
  * @param failure - What made the put-back necessary; undefined at a later run.
  * @param cause - The link's EEXIST; undefined when no link was made (`options.isBesideStanding`).
  * @param options - How the put-back runs ({@link PutBackOptions}).
- * @returns Resolves once the moved record was dropped beside a record that covers it, or put back by a later link.
+ * @returns Resolves once the moved record was dropped beside a record that covers it, its private name was found empty (nothing is unlinked there), or it was put back by a later link.
  * @throws What {@link putBackRetiredReceipt} throws.
  * @example
  * await settleTakenName(context, retiredPath, linkError, eexist, {}) // the moved record goes beside a newer record of the same entry
@@ -3850,6 +3852,8 @@ async function settleTakenName(
 ): Promise<void> {
   const { attempt = 1, isMarked = true, isBesideStanding = false } = options
   const standing = await standingReceiptOf(context, retiredPath)
+  // The private name was found empty: nothing is left there to keep, and a file put there after that look is never unlinked unchecked.
+  if (standing === 'gone') return
   // Only a record of this config's same entry makes the moved one a spare copy.
   if (standing === 'covers') {
     await unlink(retiredPath).catch(() => undefined)
@@ -3875,8 +3879,8 @@ async function settleTakenName(
   )
 }
 
-/** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken: `covers` and `absent` decide the put-back, every other answer keeps the moved record ({@link UnrestoredStanding}). */
-type StandingReceipt = 'covers' | 'absent' | UnrestoredStanding
+/** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken: `covers`, `gone` and `absent` decide the put-back, every other answer keeps the moved record ({@link UnrestoredStanding}). */
+type StandingReceipt = 'covers' | 'gone' | 'absent' | UnrestoredStanding
 
 /**
  * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link settleTakenName}.
@@ -3888,7 +3892,7 @@ type StandingReceipt = 'covers' | 'absent' | UnrestoredStanding
  * unrestoredStandingOf('absent') // => 'unread'
  */
 function unrestoredStandingOf(
-  standing: Exclude<StandingReceipt, 'covers'>,
+  standing: Exclude<StandingReceipt, 'covers' | 'gone'>,
 ): UnrestoredStanding {
   if (standing === 'absent') return 'unread'
   return standing
@@ -3900,7 +3904,8 @@ function unrestoredStandingOf(
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
- * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read; or the moved record is gone, by its first look or by the last: nothing is left there to keep
+ * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read
+ * - `gone` when the moved record's private name is empty, by its first look or by the last: nothing is left there to keep, and nothing there is unlinked
  * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
  * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry
  * - `absent` when the name is empty, or changed between the look and the check
@@ -4006,8 +4011,8 @@ async function readStandingReceipt(
   if (standing === 'unread') return 'unread'
   if (standing.read === 'other') return 'other'
   const moved = await readLookedRecord(context, retiredPath)
-  // Nothing is left under the private name to keep.
-  if (moved === undefined) return 'covers'
+  // Nothing is left under the private name to keep, and a file put there after this look is not the record.
+  if (moved === undefined) return 'gone'
   // The private file could not be read, not receipt.json: its own sentence names that file. One that was read and holds no record goes on, so the comparison can name it.
   if (moved === 'unread') return 'moved-unread'
   return {
@@ -4062,7 +4067,7 @@ async function readLookedRecord(
  * - `still` when both names show the files that were read
  * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
  * - `moved-changed` when the private name shows another file; `moved-unread` when that look failed
- * - `covers` when nothing stands at the private name any more: nothing is left there to keep, as when its first look found it empty ({@link readStandingReceipt})
+ * - `gone` when nothing stands at the private name any more: nothing is left there to keep, as when its first look found it empty ({@link readStandingReceipt})
  * @example
  * await stillnessOf(context, retiredPath, standingLook, movedLook) // => 'moved-changed' after a sync tool put another file at the private name during the read
  */
@@ -4072,7 +4077,7 @@ async function stillnessOf(
   standingLook: LeftoverLookback,
   movedLook: LeftoverLookback,
 ): Promise<
-  'still' | 'absent' | 'unread' | 'covers' | 'moved-changed' | 'moved-unread'
+  'still' | 'absent' | 'unread' | 'gone' | 'moved-changed' | 'moved-unread'
 > {
   const isStandingStill = await isNameStill(
     context,
@@ -4085,8 +4090,8 @@ async function stillnessOf(
     (): 'unread' => 'unread',
   )
   if (movedState === 'unread') return 'moved-unread'
-  // The private name is empty by now: no file is left there to keep or to name.
-  if (movedState === 'gone') return 'covers'
+  // The private name is empty by now: no file is left there to keep, to name or to unlink.
+  if (movedState === 'gone') return 'gone'
   // Another file at the private name since the look: what the read compared is not what an unlink would delete.
   return movedState === 'still' ? 'still' : 'moved-changed'
 }
