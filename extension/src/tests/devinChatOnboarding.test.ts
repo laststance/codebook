@@ -2333,6 +2333,8 @@ test('a set-up Devin Desktop window offers Reload Window after its agent server 
       () => window.steps.includes('start server'),
       'the reconnect at activation',
     )
+    // The first Stop waits for the reconnect's start to end: a Stop while it still starts makes the reconnect answer "did not reconnect", a notice this test does not exercise. The activation's notices are counted once it ended, so a reload offered at the first start cannot pass for the restart's.
+    await window.whenReconnected()
     const noticesAtActivation = window.notices.length
     // Act
     await window.commands.get('codebook.stopAgentServer')!()
@@ -3451,6 +3453,8 @@ test('a Devin Desktop window offers no reload after a restart whose new descript
     )
     await rm(join(window.directory, 'devin-mcp/receipt.json'), { force: true })
     // Act
+    // The first Stop waits for the reconnect's start to end: a Stop while it still starts makes the reconnect answer "did not reconnect", a notice this test does not exercise.
+    await window.whenReconnected()
     await window.commands.get('codebook.stopAgentServer')!()
     await window.commands.get('codebook.startAgentServer')!()
     // Assert
@@ -4257,6 +4261,8 @@ test('a restarted Devin Desktop server whose receipts read answers after the sta
         (await window.readDescriptorField()) === true,
       "the reconnect's marked descriptor",
     )
+    // The first Stop waits for the reconnect's start to end: a Stop while it still starts makes the reconnect answer "did not reconnect", a notice this test does not exercise.
+    await window.whenReconnected()
     await window.commands.get('codebook.stopAgentServer')!()
     await window.commands.get('codebook.startAgentServer')!()
     const fieldAtRestart = await window.readDescriptorField()
