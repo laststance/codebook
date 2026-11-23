@@ -2888,6 +2888,39 @@ test('A put-back by bytes whose private name cannot be deleted after its link ke
   assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
 })
 
+test('A put-back by bytes whose private name cannot be deleted after its link keeps the record handed and unverified, also where the run keeps the record as it finds it', async (context) => {
+  // Value: protects=a put-back by bytes that leaves its private name as a second name of the config keeps the handed, unverified record it wrote before the link even in a run that rewrites no record afterwards (an unrecorded removal), so an older build never deletes that second name by its inode alone; fails_when=the record after the run is the one read (no phase, no mark), a name is deleted, or the config holds other bytes; no_claim=what an older build does with the record (read from its code); seam=a receipt that stands and a removal's pending record (no entry hash) whose displaced file only its bytes prove, with the config name empty, and the config module loaded with an unlink that fails for the displaced name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  await writeRecordFile(storage, 'receipt.json', {
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    installed: true,
+    generation: JOURNAL_GENERATION,
+    installationId: 'c0ffee00-0000-4000-8000-000000000148',
+    config: { ino: 1 },
+  })
+  const failing = await loadWithFailingDisplacedUnlink()
+
+  // Act
+  const attempt = failing.refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    return true
+  })
+  const retained = await readRecordFile(storage, 'pending.json')
+  assert.equal(retained.phase, 'handed')
+  assert.equal(retained.bytesUnverified, true)
+  assert.equal(retained.keptName, basename(keptPath))
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+})
+
 test('A handover after a failed shared-bytes check whose record cannot be written is not reported as kept for good, and the next run finishes it once the bytes are back', async (context) => {
   // Value: protects=a refusal says a copy is left to the learner for good only once a record holds that: when the handed record cannot be written and the config read then fails too, the refusal says a later run may check both paths again and removes the private name only while the config holds the bytes Codebook kept, which the next run then does; fails_when=the refusal lacks that sentence or a path, the record turns handed, or the next run with the bytes back keeps the private name or changes the config; no_claim=a real full disk (the seam cancels each handed write the way a full disk at the temporary file does); seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name and an in-place append of an opening brace (the shared bytes changed and the config is no valid JSON), seam.beforeRecordWrite fails every write of a handed pending record
   // Arrange
