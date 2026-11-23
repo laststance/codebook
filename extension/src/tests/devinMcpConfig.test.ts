@@ -7373,8 +7373,8 @@ test('A write that published the config still writes its receipt when the rechec
   assert.equal((await readRecordFile(storage, 'receipt.json')).installed, true)
 })
 
-test('A displaced original of a record without a staged inode is not reported as handed over because another config stands', async (context) => {
-  // Value: protects=the hand-over needs a recorded staged inode that differs from the config's, so a record without stagedIno keeps the displaced original untouched, names it as a copy Codebook could not settle and never records it as handed; fails_when=the refresh resolves, rejects with any other refusal (the false another-config-was-saved one included), changes the config or the copy, or leaves a handed record, or pending.json cannot be read or parsed for any reason but its absence; no_claim=what a later run does with the copy; seam=none (a hand-written record of a write that ended right after its move-aside, without stagedIno)
+test('A displaced original of a record without a staged inode is not reported as handed over because another config stands, and its notice never advises moving it over that config', async (context) => {
+  // Value: protects=the hand-over needs a recorded staged inode that differs from the config's, so a record without stagedIno keeps the displaced original untouched, names it as a copy Codebook could not settle, never records it as handed, and asks the learner to compare both files and move only the settings they need instead of moving the copy over the config that stands; fails_when=the refresh resolves, rejects with any other refusal (the false another-config-was-saved one and the move-it-back-over-the-config advice included), changes the config or the copy, or leaves a handed record, or pending.json cannot be read or parsed for any reason but its absence; no_claim=what a later run does with the copy, and what the learner then does; seam=none (a hand-written record of a write that ended right after its move-aside, without stagedIno)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await mkdir(dirname(configPath), { recursive: true })
@@ -7388,7 +7388,12 @@ test('A displaced original of a record without a staged inode is not reported as
   await assert.rejects(refresh, (error: Error) => {
     assert.equal(
       error.message,
-      `Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at that copy, move it back over the config or delete it, then run Codebook: Set Up AI Chat again.`,
+      `Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+    )
+    // The config that stands holds settings the copy never had: no advice may lead to copying the copy over it.
+    assert.ok(
+      !error.message.includes('move it back over the config'),
+      error.message,
     )
     return true
   })

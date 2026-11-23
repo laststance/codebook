@@ -275,7 +275,7 @@ function changedWhileWorking({ path, retry }: Context): Error {
   )
 }
 
-/** The refusal for a copy of the config that Codebook kept and cannot settle: it stays where it is, named here. */
+/** The refusal for a copy of the config that Codebook kept and cannot settle: it stays where it is, named here. A config may stand at the config path meanwhile (an editor's save, or a file another program put there) and hold settings the copy never had, so the copy goes back only to an empty config path; otherwise the learner moves only the settings they need, never the copy over the config. */
 function leftCopyRefusal(
   { path, retry }: Context,
   copyPath: string,
@@ -284,7 +284,7 @@ function leftCopyRefusal(
   return refusal(
     `a copy of your config that Codebook kept at ${copyPath} and could not settle`,
     path,
-    `look at that copy, move it back over the config or delete it`,
+    'look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere',
     retry,
     cause,
   )
@@ -2448,7 +2448,7 @@ function assertConfigStill(
 }
 
 /**
- * Thrown by {@link configChangedError} when the config name changed while recovery read a private copy or was about to unlink it; its own text names both files and says never to copy the copy over the config, so {@link unsettledRefusal} shows it as it is instead of the move-it-back advice, which would put an old file over a new save.
+ * Thrown by {@link configChangedError} when the config name changed while recovery read a private copy or was about to unlink it; its own text names both files and says never to copy the copy over the config, so {@link unsettledRefusal} shows it as it is instead of {@link leftCopyRefusal}'s general advice, which cannot say that the config changed during this run.
  */
 class ConfigChangedError extends Error {}
 
@@ -2506,7 +2506,7 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 class HandedCopyError extends Error {}
 
 /**
- * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of the move-it-back advice.
+ * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of {@link leftCopyRefusal}'s general advice.
  * `isHanded` is set when the config name may hold a file Codebook did not verify: the record then turns to handed, so no later run deletes the displaced name on the strength of a shared inode.
  */
 class PutBackCheckError extends Error {
@@ -5198,7 +5198,7 @@ function unmatchedJournalRefusal(
 
 /**
  * Words the leftover that an {@link unmatchedJournalRefusal} names beside both records; called only by that refusal.
- * The leftover's own sentence is kept when it advises no move: its text names both files ({@link namesBothFiles}), the copy was handed over, or its change had finished. A leftover of a change in progress gets its own sentence instead of the move-it-back advice ({@link leftCopyRefusal}): the config that stands may hold settings that file never had (the published inode reused for another config), so copying the file over the config would lose them.
+ * The leftover's own sentence is kept when it advises no move: its text names both files ({@link namesBothFiles}), the copy was handed over, or its change had finished. A leftover of a change in progress gets its own sentence instead of {@link leftCopyRefusal}'s general advice, which also covers an empty config path: the config that stands may hold settings that file never had (the published inode reused for another config), so copying the file over the config would lose them.
  * @param context - The run; its config path is named, and the rollback's journal context words the leftover's own sentence ({@link rollbackContextOf}).
  * @param legacy - The journal and the first leftover its recovery could not settle, if any.
  * @returns The sentence with a leading space; empty when no leftover stays.
