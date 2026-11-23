@@ -3366,7 +3366,7 @@ test('a Devin setup and a removal refuse at once while an earlier take-back stil
   }
 })
 
-// protects=a failed first Devin setup stops serving the Devin bridge as soon as its take-back starts, also while the take-back's entry removal waits on storage (Cycle 0146 task 1a, v2 finding 5) / fails_when=the window's mark stays on until the take-back's last step, so the bridge is served for a setup that is being taken back / no_claim=the descriptor file's content; the held stand-in entry removal stands for the stalled storage, the server is the real one
+// Value: protects=a failed first Devin setup stops serving the Devin bridge as soon as its take-back starts, also while the take-back's entry removal waits on storage (Cycle 0146 task 1a, v2 finding 5); fails_when=the window's mark stays on until the take-back's last step, so the bridge is served for a setup that is being taken back; no_claim=the descriptor file's content; the held stand-in entry removal stands for the stalled storage, the server is the real one
 test("a failed first Devin setup's bridge request is refused while its take-back waits on storage", async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -3398,7 +3398,7 @@ test("a failed first Devin setup's bridge request is refused while its take-back
   }
 })
 
-// protects=a failed first Devin setup whose descriptor rewrite waits on storage answers within the budget, refuses the Devin bridge meanwhile and leaves the descriptor and the served token as they are until the write lands, then rotates the token, so a bridge with the old token is refused (Cycle 0146 task 1a, v2 finding 12) / fails_when=the command waits for the write for ever, the server switches token before the descriptor carries the new one, or the old token is still served afterwards / no_claim=a removal's unmark (the removal tests); the held stand-in rewrite runs the real one once released, the server is the real one
+// Value: protects=a failed first Devin setup whose descriptor rewrite waits on storage answers within the budget, refuses the Devin bridge meanwhile and leaves the descriptor and the served token as they are until the write lands, then rotates the token, so a bridge with the old token is refused (Cycle 0146 task 1a, v2 finding 12); fails_when=the command waits for the write for ever, the server switches token before the descriptor carries the new one, or the old token is still served afterwards; no_claim=a removal's unmark (the removal tests); the held stand-in rewrite runs the real one once released, the server is the real one
 test('a failed first Devin setup whose descriptor unmark waits on storage keeps the old token until the write lands, then rotates it', async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -3585,7 +3585,7 @@ for (const holdCase of REMOVAL_HOLD_CASES) {
   })
 }
 
-// protects=a Devin setup whose first read of the installation id never returns ends 3 seconds after that read started with the retry sentence, and takes back what it saved (the saved setup and the entry it installed), so a stalled disk never holds the setup lock before the commit (Cycle 0146 task 1b) / fails_when=the setup waits on that read for ever, or ends without taking the entry and the saved setup back / no_claim=a read that answers late (it is not waited for); a stand-in read held at a gate stands for the stalled disk
+// Value: protects=a Devin setup whose first read of the installation id never returns ends 3 seconds after that read started with the retry sentence, and takes back what it saved (the saved setup and the entry it installed), so a stalled disk never holds the setup lock before the commit (Cycle 0146 task 1b); fails_when=the setup waits on that read for ever, or ends without taking the entry and the saved setup back; no_claim=a read that answers late (it is not waited for); a stand-in read held at a gate stands for the stalled disk
 test('a Devin setup whose first installation-id read never returns ends within 3 s and takes back what it saved', async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -3974,7 +3974,7 @@ test('a late Devin mark whose read settles while a re-setup still runs leaves th
   }
 })
 
-// protects=a failed Devin setup re-run whose window changed its workspace folder after the run began, and before the failure, leaves no saved setup of the folder that closed, and the Output says why (Cycle 0146 task 6) / fails_when=the take-back writes the old folder's setup back over the folder change's clear / no_claim=a folder change after the take-back's restore started (the next test); the skill check stand-in, armed after the reconnect at activation, changes the folder as the editor does and then fails
+// Value: protects=a failed Devin setup re-run whose window changed its workspace folder after the run began, and before the failure, leaves no saved setup of the folder that closed, and the Output says why (Cycle 0146 task 6); fails_when=the take-back writes the old folder's setup back over the folder change's clear; no_claim=a folder change after the take-back's restore started (the next test); the skill check stand-in, armed after the reconnect at activation, changes the folder as the editor does and then fails
 test('a failed Devin setup re-run whose folder changed after it began leaves no saved setup of the old folder', async (context) => {
   // Arrange
   const options: Parameters<typeof devinWindow>[1] = { savedSetup: true }
@@ -4014,7 +4014,7 @@ test('a failed Devin setup re-run whose folder changed after it began leaves no 
   }
 })
 
-// protects=a folder change that comes while a failed Devin setup's restore of the earlier saved setup is being written still ends with no saved setup, because the folder change's clear lands after that restore (Cycle 0146 task 6, v2 finding 8) / fails_when=the clear lands first and the held restore writes the old folder's setup back last / no_claim=a folder change before the restore started (the test above); the held stand-in write stands for a slow editor storage
+// Value: protects=a folder change that comes while a failed Devin setup's restore of the earlier saved setup is being written still ends with no saved setup, because the folder change's clear lands after that restore (Cycle 0146 task 6, v2 finding 8); fails_when=the clear lands first and the held restore writes the old folder's setup back last; no_claim=a folder change before the restore started (the test above); the held stand-in write stands for a slow editor storage
 test("a folder change while a failed Devin setup's restore is written leaves no saved setup", async (context) => {
   // Arrange
   const options: Parameters<typeof devinWindow>[1] = {
@@ -4048,10 +4048,14 @@ test("a folder change while a failed Devin setup's restore is written leaves no 
   }
 })
 
-// protects=a failed Devin setup re-run in the same folder still puts back the setup saved before it and writes no folder line (Cycle 0146 task 6 guard) / fails_when=the folder check clears the earlier setup although no folder changed / no_claim=the folder change cases above; the skill check stand-in is armed after the reconnect at activation
+// Value: protects=a failed Devin setup re-run in the same folder, whose entry write found the earlier setup's entry unchanged, still puts back the setup saved before it, keeps that entry and writes no folder line (Cycle 0146 task 6 guard); fails_when=the folder check clears the earlier setup although no folder changed, or the take-back removes an entry it did not install; no_claim=the folder change cases above; the skill check stand-in is armed after the reconnect at activation
 test('a failed Devin setup re-run without a folder change puts back the setup saved before it', async (context) => {
   // Arrange
-  const options: Parameters<typeof devinWindow>[1] = { savedSetup: true }
+  // The re-run finds the entry of the earlier setup unchanged, as a re-run in the same folder does.
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    entryWrite: 'current',
+  }
   const window = await devinWindow(context, options)
   try {
     await window.whenReconnected()
@@ -4071,6 +4075,7 @@ test('a failed Devin setup re-run without a folder change puts back the setup sa
     assert.deepEqual(window.state.get('codebook.aiChatSetup'), {
       workspace: window.directory,
     })
+    assert.equal(window.steps.includes('remove MCP entry'), false)
     assert.equal(
       window.outputLines.includes(
         "Codebook did not put back this window's earlier Devin Desktop setup because the folder changed.",
@@ -4082,7 +4087,7 @@ test('a failed Devin setup re-run without a folder change puts back the setup sa
   }
 })
 
-// protects=a Devin setup whose skill deployment never returns answers within the setup budget with the step that waits, a Remove Devin Desktop Setup issued meanwhile refuses at once without its question, and the setup's own notice with Reload Window follows once storage answers (Cycle 0146 task 13) / fails_when=the command waits for the deployment for ever, the removal waits for the setup or asks its question, or the setup's end is never shown / no_claim=a forward step that fails after it answered (its warning); the held stand-in deployment stands for the stalled storage
+// Value: protects=a Devin setup whose skill deployment never returns answers within the setup budget with the step that waits, a Remove Devin Desktop Setup issued meanwhile refuses at once without its question, and the setup's own notice with Reload Window follows once storage answers (Cycle 0146 task 13); fails_when=the command waits for the deployment for ever, the removal waits for the setup or asks its question, or the setup's end is never shown; no_claim=a forward step that fails after it answered (its warning); the held stand-in deployment stands for the stalled storage
 test('a Devin setup whose skill deployment never returns answers within the budget, a removal meanwhile refuses, and its own notice follows once storage answers', async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -4095,8 +4100,13 @@ test('a Devin setup whose skill deployment never returns answers within the budg
       () => ({ atMs: performance.now(), message: 'resolved' }),
       (error: Error) => ({ atMs: performance.now(), message: error.message }),
     )
-    const deployReachedAtMs = await window.deployReached.then(() =>
-      performance.now(),
+    // A setup that fails before its deployment ends the race too, so the test fails in its assertion instead of waiting.
+    const deployReachedAtMs = await within(
+      Promise.race([
+        window.deployReached.then(() => performance.now()),
+        setupEnd.then(() => 'setup ended first'),
+      ]),
+      5_000,
     )
     const setupOutcome = await within(setupEnd, 16_000)
     const removalRefusal = await within(
@@ -4109,6 +4119,10 @@ test('a Devin setup whose skill deployment never returns answers within the budg
     window.releaseDeploy()
     await waitUntil(() => window.notices.length > 0, "the setup's own notice")
     // Assert
+    assert.ok(
+      typeof deployReachedAtMs === 'number',
+      'the setup reached its deployment',
+    )
     assert.ok(setupOutcome !== 'still waiting', 'the setup command answered')
     const answeredAfterMs = setupOutcome.atMs - deployReachedAtMs
     assert.ok(
