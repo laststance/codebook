@@ -286,6 +286,8 @@ async function devinWindow(
     holdLateMark?: boolean
     /** Holds every check of the bridge's records (a late mark's check after its mark, a setup's final check) once it read them, until `holds.bridgeCheck` is released, and then answers what it read before it waited, as a slow storage whose answer comes after the window moved on. */
     holdBridgeCheck?: boolean
+    /** The position (1 for the first) of the one check of the bridge's records that `holdBridgeCheck` would hold: it reads them, waits at `holds.bridgeCheck` and answers what it read before it waited; every other check is the real one. */
+    holdBridgeCheckAt?: number
     /** Makes a server that starts serve the folder the window serves at that moment (`changeFolder` changes it), in its environment and its descriptor, as the real environment does; when left out, every server serves the window's first folder. */
     serverFollowsFolder?: boolean
     /** How many of the first looks for an owed take-back get no answer from their read of the record (descriptor exhaustion, `EIO`), whatever the record holds; `failNextOwedTakeBackLooks` arms more later. */
@@ -408,6 +410,8 @@ async function devinWindow(
   let owedTakeBackReads = 0
   // How many looks for an owed take-back have started, so `holdOwedTakeBackLookAt` holds the one at its position.
   let owedTakeBackLooksStarted = 0
+  // How many checks of the bridge's records have started, so `holdBridgeCheckAt` holds the one at its position.
+  let bridgeChecksStarted = 0
   // Whether a provisional setup value was written; the failing writes of {@link devinWindow}'s options start after it.
   let hasWrittenProvisional = false
   // A setup saved by an earlier window names the workspace this window opens.
@@ -886,8 +890,12 @@ async function devinWindow(
         ) => {
           if (options.hangFinalReceiptsCheck)
             return new Promise<never>(() => {})
+          bridgeChecksStarted += 1
           const check = checkDevinBridgeReceipts(...parameters)
-          if (!options.holdBridgeCheck) return check
+          const isHeld =
+            options.holdBridgeCheck ||
+            bridgeChecksStarted === options.holdBridgeCheckAt
+          if (!isHeld) return check
           // The held check answers what it read before it waited, so a continuation that trusted it would see the window as it was then.
           return check.then(async (answer) => {
             await holds.bridgeCheck.wait()
@@ -1058,7 +1066,7 @@ async function devinWindow(
     },
     /** Opens the gate every hung read of the setup receipts waits at (`receiptReadsHang`): the reads waiting there, and every later one, answer with no answer. */
     releaseHungReceiptReads: hungReceiptReads.release,
-    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`, `holdLateMark`, `holdOwedTakeBackLookAt`, `holdBridgeCheck`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
+    /** The held storage steps (`holdEntryRemoval`, `holdSkillRemoval`, `holdSavedSetupWrite`, `holdDescriptorUnmark`, `holdDescriptorMark`, `hangFirstInstallationRead`, `holdReceiptReadAt`, `holdEntryWrite`, `holdProvisionalSave`, `holdSkillCheck`, `holdDescriptorPublish`, `holdLateMark`, `holdOwedTakeBackLookAt`, `holdBridgeCheck`, `holdBridgeCheckAt`): each `reachedAtMs()` reads when a step first waited there, and `release()` lets it go on. */
     holds,
     /** Settles when the reconnect at activation ended, with or without a server start. */
     whenReconnected: activated.whenReconnected,
@@ -5659,6 +5667,86 @@ test("a late Devin mark whose bridge check waits on storage while this window's 
     ])
   } finally {
     await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Set Up AI Chat that succeeds in this window while the late mark's bridge check after its mark still waits on storage ends with only that setup's own notice (its Reload Window), also when that check, read before the setup rewrote the records, answers that another window removed the setup: the late mark's notice speaks for the mark it checked, which the setup's mark and final check replaced (Cycle 0147 final-range CodeRabbit pass, CR8 at extension.ts:1612-1615); fails_when=the late mark's handler, which sees the same server, the same late mark and the mark still on, follows the setup's success with "Run Codebook: Set Up AI Chat to set it up again" (or a second Reload Window) for a setup that now stands; no_claim=a setup still running or failed when the check answers (the late mark's notice then stays, as before), a check with no answer within its 3 s bound (the window then decides before the setup ends), the real removal's skill deletion; both windows share one extension host and storage folder, the first window's second records read reads the real records and waits at its gate, its first bridge check (the late mark's) reads the real records and answers what it read once the test released it, the setup's own final check is the real one
+test("a Set Up AI Chat that succeeds while a late Devin mark's bridge check waits on storage is followed by no late-mark notice", async (context) => {
+  // Arrange
+  const first = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+    holdReceiptReadAt: 2,
+    holdBridgeCheckAt: 1,
+  })
+  try {
+    const second = await devinWindow(context, {
+      storageDirectory: first.directory,
+      instanceLabel: 'second',
+      savedSetup: true,
+      confirmRemoval: true,
+      removalDeletesReceipt: true,
+    })
+    try {
+      await second.whenReconnected()
+      await waitUntil(
+        () => first.holds.receiptRead.reachedAtMs(),
+        "the first window's fresh read",
+        15_000,
+      )
+      const removal = await within(
+        second.commands.get('codebook.removeManagedDevinSetup')!().then(
+          () => 'resolved',
+          (error: Error) => error.message,
+        ),
+        3_000,
+      )
+      // The held read answers the setup standing, as it read it before the other window's removal; the late mark marks, and its bridge check reads the removed entry record and waits.
+      first.holds.receiptRead.release()
+      await waitUntil(
+        () => first.holds.bridgeCheck.reachedAtMs(),
+        "the late mark's bridge check, held after it read the records",
+        15_000,
+      )
+      // Act
+      const setup = await within(
+        first.commands.get('codebook.setupAiChat')!().then(
+          () => 'resolved',
+          (error: Error) => error.message,
+        ),
+        2_500,
+      )
+      const decisionsAtSetupEnd = [...first.lateMarkDecisions]
+      first.holds.bridgeCheck.release()
+      await waitUntil(
+        () => first.lateMarkDecisions.length > 0,
+        "the late mark's decision",
+        15_000,
+      )
+      // Assert
+      assert.equal(removal, 'resolved')
+      assert.equal(setup, 'resolved')
+      // No decision before the setup ended: the check still waited within its 3 s bound, so its held answer is the one the window decides on.
+      assert.deepEqual(decisionsAtSetupEnd, [])
+      assert.deepEqual(first.lateMarkDecisions, [true])
+      assert.equal(await first.readDescriptorField(), true)
+      assert.equal(
+        await first.readDescriptorInstallation(),
+        'installation-test',
+      )
+      assert.deepEqual(first.notices, [
+        {
+          severity: 'information',
+          message:
+            "Codebook skill and MCP server saved for Devin Local. Reload this window so Devin Local loads Codebook's MCP server, then type /devin:codebook in a Local session.",
+          actions: ['Reload Window'],
+        },
+      ])
+    } finally {
+      await second.loaded.deactivate()
+    }
+  } finally {
+    await first.loaded.deactivate()
   }
 })
 
