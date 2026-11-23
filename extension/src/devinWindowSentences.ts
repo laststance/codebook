@@ -120,7 +120,7 @@ const BACKGROUND_WORK: Record<
     doing: 'taking back an earlier Devin Desktop setup',
     ending: "it finishes when storage answers, and Codebook's Output says when",
     reload:
-      'or reload the window, which finishes that take-back when it loads again',
+      "or reload the window, which tries that take-back again when it loads; Codebook's Output says whether it finished",
   },
   removal: {
     subject: "Codebook's removal of the Devin Desktop setup",
@@ -153,10 +153,10 @@ export const DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE = `Codebook has not record
  * What a Devin Desktop setup or removal answers at once while this window still runs a setup, take-back or removal whose command answered because storage did not.
  * @param kind - The work still going on.
  * @param command - The title of the command that refused, which the learner runs again.
- * @param isTakeBackRecorded - For a take-back: whether nothing it owes is left unrecorded (its setup installed no entry, or its record of that entry was written), so a reload finishes it; `false` gives the plain reload clause. Ignored for a setup and a removal.
+ * @param isTakeBackRecorded - For a take-back: whether nothing it owes is left unrecorded (its setup installed no entry, or its record of that entry was written), so a reload tries it again; `false` gives the plain reload clause. Ignored for a setup and a removal.
  * @returns One sentence that says what still runs, then how to go on.
  * @example
- * devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat', true) // => 'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which finishes that take-back when it loads again.'
+ * devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat', true) // => 'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which tries that take-back again when it loads; Codebook's Output says whether it finished.'
  * devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat', false) // => '… Run Codebook: Set Up AI Chat again once it finishes, or reload the window.'
  */
 export const devinBackgroundWorkSentence = (
