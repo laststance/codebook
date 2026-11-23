@@ -1348,22 +1348,32 @@ export function activate(
     offerDevinReload('information', DEVIN_LATE_MARK_SENTENCE)
   }
   /**
-   * Whether a removal of this window, or a take-back whose command already answered while a step waits on storage, is taking the window's Devin mark off now: the server start's queue turn then leaves the in-memory mark off whatever it decided before, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn and by {@link isLateMarkTarget}. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
+   * Whether a removal of this window, or a take-back whose command already answered while a step waits on storage, is taking the window's Devin mark off now: the server start's queue turn then leaves the in-memory mark off whatever it decided before, because that run's own descriptor step rewrites the file after it; read by the server start's queue turn. A setup's forward steps are no such run: a server started during them keeps the mark it earns.
    * @returns `true` from the removal's start until its last step settled, and while a take-back goes on after its command answered.
    * @example isDevinMarkBeingTakenOff() // => true while Remove Devin Desktop Setup waits on storage
    */
   const isDevinMarkBeingTakenOff = (): boolean =>
     devinRemoving || devinBackgroundWork?.kind === 'take-back'
-  /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no removal or take-back is taking the mark off ({@link isDevinMarkBeingTakenOff}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
+  /**
+   * Whether a Devin Desktop setup, its take-back or a removal of this window runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-back and the removal rewrite the descriptor), so a late mark gives way to it; read by {@link isLateMarkTarget}.
+   * @returns `true` while such a run goes on.
+   * @example isDevinSetupChanging() // => true while Set Up AI Chat runs
+   */
+  const isDevinSetupChanging = (): boolean =>
+    devinRemoving ||
+    devinSetup !== undefined ||
+    devinBackgroundWork !== undefined
+  /** Whether a late mark may still mark `server`: it is the server running now, no stop is under way, no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start read answered late. @example isLateMarkTarget(server) // => false after Stop Agent Server */
   const isLateMarkTarget = (server: Running): boolean =>
     running === server &&
     !stopping &&
-    !isDevinMarkBeingTakenOff() &&
+    !isDevinSetupChanging() &&
     setupMatchesCurrentWorkspace()
-  /** Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read finds the setup standing; it writes nothing (and never renews the token) when the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. @param server - The server whose start read answered late. @returns Whether it marked the window. @example await markLateInQueue(server) // => true */
+  /** Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. @param server - The server whose start read answered late. @returns Whether it marked the window. @example await markLateInQueue(server) // => true */
   const markLateInQueue = (server: Running): Promise<boolean> =>
     inDescriptorQueue(async () => {
-      if (!isLateMarkTarget(server)) return false
+      // A window marked since its start (by its setup) already carries the mark and offered its reload.
+      if (isDevinChatMarked || !isLateMarkTarget(server)) return false
       // A fresh read decides, never the late read's own answer.
       const field = await devinChatFieldAtStart()
       if (field.devinChat !== true || !isLateMarkTarget(server)) return false
@@ -1380,7 +1390,7 @@ export function activate(
     })
   /**
    * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides, and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start.
-   * A server stopped or replaced meanwhile, a setup removed meanwhile, or a removal or take-back of this window that runs ({@link isLateMarkTarget}) is left as it is and shows nothing.
+   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a setup, take-back or removal of this window that runs ({@link isLateMarkTarget}) is left as it is and shows nothing.
    * @param server - The server that just started.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
    * @example markDevinChatLate(server, lateRead)
