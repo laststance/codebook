@@ -9447,6 +9447,62 @@ test("A refresh that cannot read the old record's private file once keeps both r
   assert.deepEqual(recordsAfterSecond, ['pending.json', retiredName])
 })
 
+test("A refresh whose folder at the old record's name is moved away right after the refresh decided to compare with it never links the old record into that name and refuses instead of guessing", async (context) => {
+  // Value: protects=a put-back chosen only because something stood at receipt.json, while the config holds the entry the old record covers, compares with what stands there and never links the old record into that name once it is empty: the run refuses as undecided, keeps both records and never brings back the removed installation's record; fails_when=receipt.json appears, the refresh answers anything but the undecided refusal, or a record is gone; no_claim=a real sync tool (the config module is loaded with an lstat that removes the folder at receipt.json right after the first look that finds it), a real process end (seam.afterPublish throws), why the private name's unlink failed in that setup (unlink stub EBUSY)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+  } = await arrangeResavedAfterStoppedFirstSetup(context)
+  mkdirSync(receiptPath)
+  let hasMovedAway = false
+  const movingAwayAfterLook = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          const status = await lstat(...args)
+          // A sync tool moves the folder away right after the first look that finds it.
+          if (args[0] === receiptPath && !hasMovedAway) {
+            hasMovedAway = true
+            rmSync(receiptPath, { recursive: true })
+          }
+          return status
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshError = await movingAwayAfterLook
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasMovedAway, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a "codebook" entry in Devin Desktop's MCP config at ${configPath} that a setup which ended early may have written, and its own old record at ${retiredPath} covers that same entry, so it cannot tell which setup the entry belongs to. Codebook changed nothing and kept both records (${pendingPath}, ${retiredPath}); remove that entry by hand, delete both records, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+})
+
 test("A refresh after the old record's private file was deleted by hand never keeps the stopped first setup's entry as installed", async (context) => {
   // Value: protects=a learner who deletes the old record's private file anyway (against the refusal's advice) never gets the stopped first setup's entry adopted or the old installation back: the publish record of a first setup is taken back, never adopted; fails_when=the refresh answers current or changed, any receipt stands, or a record stays; no_claim=a real learner (rmSync deletes the private file), a real process end (seam.afterPublish throws), why the private name's unlink failed (unlink stub EBUSY), a real sync tool (swapFile); guard of the first-setup take-back that already holds at the unfixed source, so it shows no red run
   // Arrange

@@ -3626,12 +3626,12 @@ async function holdsReceipt(
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
+ * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
  * @param options - How this put-back runs ({@link PutBackOptions}); a setup passes none.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.isMarked` is `false`. That file stays, and so does the publish record that names it.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.isMarked` is `false`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
  * await putBackRetiredReceipt(context, retiredPath, undefined, { isMarked: false }) // a later run settling a record without the notLinked mark
@@ -3642,33 +3642,25 @@ async function putBackRetiredReceipt(
   failure?: unknown,
   options: PutBackOptions = {},
 ): Promise<void> {
-  const { attempt = 1, isMarked = true } = options
+  // Chosen only because something stood at receipt.json: compare with what stands there, and never link into that name, which may be empty by now.
+  if (options.isBesideStanding)
+    return settleTakenName(context, retiredPath, failure, undefined, options)
   const cause = await link(retiredPath, context.receiptPath).then(
     () => undefined,
     (error: unknown) => error,
   )
   // ENOENT: the private name is gone already.
   if (cause !== undefined && codeOf(cause) !== 'ENOENT') {
-    const standing =
-      codeOf(cause) === 'EEXIST'
-        ? await standingReceiptOf(context, retiredPath)
-        : undefined
-    // The name was empty again by the look: link again, a bounded number of times.
-    if (standing === 'absent' && attempt < DEVIN_RECEIPT_PUT_BACK_ATTEMPTS)
-      return putBackRetiredReceipt(context, retiredPath, failure, {
-        ...options,
-        attempt: attempt + 1,
-      })
-    // Only a record of this config's same entry makes the moved one a spare copy.
-    if (standing !== 'covers')
-      throw new UnrestoredReceiptError(
-        context,
-        retiredPath,
-        failure,
-        cause,
-        unrestoredStandingOf(standing),
-        isMarked,
-      )
+    if (codeOf(cause) === 'EEXIST')
+      return settleTakenName(context, retiredPath, failure, cause, options)
+    throw new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      cause,
+      undefined,
+      options.isMarked ?? true,
+    )
   }
   await unlink(retiredPath).catch(() => undefined)
 }
@@ -3679,30 +3671,77 @@ type PutBackOptions = {
   attempt?: number
   /** Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}), as a setup's own put-back and a later run's put-back of a marked record do; `false` from a later run that settles a record without that mark ({@link settleRetiredReceipt}), whose refusal then promises no put-back, because the run after it decides again ({@link retiredReceiptFateOf}). Defaults to `true`. */
   isMarked?: boolean
+  /** Set by a later run whose decision to put the record back rested only on something standing at `receipt.json` while the config holds the entry the old record covers ({@link retiredReceiptFateOf}'s `compare`): the put-back compares with what stands there and never links the old record into that name, so an empty name is the undecided case again. */
+  isBesideStanding?: boolean
+}
+
+/**
+ * Settles a put-back whose link found `receipt.json` taken, or one chosen only beside what stands there, by what the look at that name finds ({@link standingReceiptOf}); called only by {@link putBackRetiredReceipt}.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the receipt.
+ * @param failure - What made the put-back necessary; undefined at a later run.
+ * @param cause - The link's EEXIST; undefined when no link was made (`options.isBesideStanding`).
+ * @param options - How the put-back runs ({@link PutBackOptions}).
+ * @returns Resolves once the moved record was dropped beside a record that covers it, or put back by a later link.
+ * @throws What {@link putBackRetiredReceipt} throws.
+ * @example
+ * await settleTakenName(context, retiredPath, linkError, eexist, {}) // the moved record goes beside a newer record of the same entry
+ */
+async function settleTakenName(
+  context: Context,
+  retiredPath: string,
+  failure: unknown,
+  cause: unknown,
+  options: PutBackOptions,
+): Promise<void> {
+  const { attempt = 1, isMarked = true, isBesideStanding = false } = options
+  const standing = await standingReceiptOf(context, retiredPath)
+  // Only a record of this config's same entry makes the moved one a spare copy.
+  if (standing === 'covers') {
+    await unlink(retiredPath).catch(() => undefined)
+    return
+  }
+  if (standing === 'absent') {
+    // Chosen only beside what stood there: an empty name is the undecided case, and nothing is linked into it.
+    if (isBesideStanding) throw undecidedReceiptRefusal(context, retiredPath)
+    // The name was empty again by the look: link again, a bounded number of times.
+    if (attempt < DEVIN_RECEIPT_PUT_BACK_ATTEMPTS)
+      return putBackRetiredReceipt(context, retiredPath, failure, {
+        ...options,
+        attempt: attempt + 1,
+      })
+  }
+  throw new UnrestoredReceiptError(
+    context,
+    retiredPath,
+    failure,
+    cause,
+    unrestoredStandingOf(standing),
+    isMarked,
+  )
 }
 
 /** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken: `covers` and `absent` decide the put-back, every other answer keeps the moved record ({@link UnrestoredStanding}). */
 type StandingReceipt = 'covers' | 'absent' | UnrestoredStanding
 
 /**
- * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link putBackRetiredReceipt}.
- * @param standing - What the look found; undefined when the link failed with another error than EEXIST.
+ * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link settleTakenName}.
+ * @param standing - What the look found.
  * @returns
- * - `other`, `foreign`, `moved-unread` and `moved-changed` as they are
- * - `unread` for `unread` and for `absent` past the last attempt (the name kept changing)
- * - undefined without a look, so the error keeps its first sentence
+ * - `unread` for `absent` past the last attempt (the name kept changing)
+ * - every other answer as it is
  * @example
  * unrestoredStandingOf('absent') // => 'unread'
  */
 function unrestoredStandingOf(
-  standing: Exclude<StandingReceipt, 'covers'> | undefined,
-): UnrestoredStanding | undefined {
+  standing: Exclude<StandingReceipt, 'covers'>,
+): UnrestoredStanding {
   if (standing === 'absent') return 'unread'
   return standing
 }
 
 /**
- * Tells what stands at `receipt.json` when a put-back's link found that name taken, so the moved record is dropped only beside a record that covers the same entry of the same config; called only by {@link putBackRetiredReceipt}.
+ * Tells what stands at `receipt.json` when a put-back's link found that name taken, or the put-back was chosen only beside what stands there, so the moved record is dropped only beside a record that covers the same entry of the same config; called only by {@link settleTakenName}.
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
@@ -3946,6 +3985,7 @@ async function settleRetiredReceipt(
   else
     await putBackRetiredReceipt(context, retiredPath, undefined, {
       isMarked: pending.notLinked === true,
+      isBesideStanding: fate === 'compare',
     })
 }
 
@@ -4142,8 +4182,8 @@ async function assertDecidedConfigStill(
   if (bytesOf(now) !== bytesOf(decidedOn)) throw changedWhileWorking(context)
 }
 
-/** What a later run does with a first setup's old record that waits under its private name ({@link retiredReceiptFateOf}). */
-type RetiredReceiptFate = 'put-back' | 'drop' | 'undecided'
+/** What a later run does with a first setup's old record that waits under its private name ({@link retiredReceiptFateOf}); `compare` is a put-back that never links ({@link PutBackOptions.isBesideStanding}). */
+type RetiredReceiptFate = 'put-back' | 'compare' | 'drop' | 'undecided'
 
 /**
  * Decides what becomes of a first setup's old record that waits under its private name, on the one look at the config that a later run decides on; called only by {@link settleRetiredReceipt}.
@@ -4155,7 +4195,8 @@ type RetiredReceiptFate = 'put-back' | 'drop' | 'undecided'
  * @returns
  * - `drop` when the config holds the setup's own entry and the old record is a receipt of this config that does not own it (another bridge path, as after an update moved Codebook's folder)
  * - `undecided` when the config holds the setup's own entry, the old record owns it too and nothing stands at `receipt.json`
- * - `put-back` otherwise: the config holds no entry of that setup, the old record is gone or of another config, or something stands at `receipt.json`, which the put-back's own look settles ({@link standingReceiptOf})
+ * - `compare` in that same case while something stands at `receipt.json`: the put-back's own look settles it ({@link standingReceiptOf}) and never links the old record, so a name found empty by then is undecided again
+ * - `put-back` otherwise: the config holds no entry of that setup, or the old record is gone or of another config
  * @throws An {@link UnrestoredReceiptError} marked `moved-unread` when the old record could not be read (it names that file and asks to delete neither record), what {@link readRecord} throws when its bytes are no record, and an {@link UnrestoredReceiptError} marked `unread` when `receipt.json` cannot be looked at; nothing is changed then.
  * @example
  * await retiredReceiptFateOf(context, pending, retiredPath, look) // => 'undecided' after a setup that stopped after its link and a config saved again with the same entry
@@ -4204,7 +4245,7 @@ async function retiredReceiptFateOf(
       )
     },
   )
-  return standing ? 'put-back' : 'undecided'
+  return standing ? 'compare' : 'undecided'
 }
 
 /**
