@@ -7910,12 +7910,16 @@ test("A first setup that stopped after its link while the old record's private n
 /**
  * Leaves what a first setup leaves when it moved the old record aside, linked its config and stopped before its receipt while the old record's private name could not be deleted, then saves the config again with the same bytes at another inode, as a sync tool restoring it does.
  * @param context - The test context.
+ * @param firstSetupEntry - The entry the stopped first setup wrote; the old record covers {@link ENTRY}, so another entry stands for a setup after an update moved Codebook's folder.
  * @returns The home, storage, config, receipt and publish record paths, the old receipt, the private name of the old record (bare and as a path) and the config text that stands.
  * @example
  * const { home, storage, retiredName } = await arrangeResavedAfterStoppedFirstSetup(context)
  * await refreshManagedDevinMcpEntry(storage, ENTRY, home) // rejects: it cannot tell which setup the entry belongs to
  */
-async function arrangeResavedAfterStoppedFirstSetup(context: TestContext) {
+async function arrangeResavedAfterStoppedFirstSetup(
+  context: TestContext,
+  firstSetupEntry: DevinMcpEntry = ENTRY,
+) {
   const { home, storage, configPath } = await arrange(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
@@ -7942,7 +7946,7 @@ async function arrangeResavedAfterStoppedFirstSetup(context: TestContext) {
     { Error, TextDecoder },
   )
   await assert.rejects(
-    busyRetiredName.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    busyRetiredName.writeManagedDevinMcpEntry(storage, firstSetupEntry, home, {
       afterPublish: () => {
         throw new Error('process ended')
       },
@@ -8010,6 +8014,29 @@ test('A first setup that stopped after its link, whose config was saved again wi
   assert.equal(configAfterRefusal, configText)
   assert.equal(next.status, 'installed')
   assert.notEqual(receiptAfter.installationId, receiptBefore.installationId)
+})
+
+test('A first setup with another bridge path that stopped after its link, whose config was saved again before the next run, deletes the old record instead of bringing back the old installation', async (context) => {
+  // Value: protects=an old record that owns no entry that stands never comes back beside the entry a stopped first setup published, also when that setup wrote another entry than the old record covers (another bridge path, as after an update moved Codebook's folder); fails_when=receipt.json stands after the refresh (the old record put back), the refresh answers anything but not-managed, a record stays, or the config changes; no_claim=a real process end (seam.afterPublish throws), why the private name's unlink fails (unlink stub EBUSY), a real sync tool (swapFile saves the same bytes at another inode), and what a later setup does with the entry that stays
+  // Arrange
+  const { home, storage, configPath, receiptPath, configText } =
+    await arrangeResavedAfterStoppedFirstSetup(context, OTHER_ENTRY)
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(result, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(await recordsIn(storage), [])
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
 test("A refresh that cannot read the old record's private file once keeps both records, and the next refresh still refuses", async (context) => {
