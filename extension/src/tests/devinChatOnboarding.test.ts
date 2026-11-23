@@ -6049,6 +6049,227 @@ test("a sync's late Devin mark whose fresh read answers while a setup of this wi
   }
 })
 
+// Value: protects=a late mark whose fresh read has no answer for its whole budget while this window's setup runs gives way and marks once that setup failed before writing (Cycle 0148 task 6); fails_when=the turn ends unmarked on the empty answer, leaving 403 for a standing setup; no_claim=the bound exit (the next test), a run starting and ending inside the budget, a setup that succeeds; the server start's read reads the real records and waits at its gate until the test saw the unmarked descriptor, every later read gives no answer at once until the test sets their counter to 0, the setup's look for an owed take-back waits at its gate, the Node stand-in fails, the server is the real one
+test("a late Devin mark whose fresh read gets no answer for its whole budget while this window's Set Up AI Chat runs waits for that setup and, once it failed at its Node check, serves the Devin bridge again and offers Reload Window once", async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    realServer: true,
+    holdReceiptReadAt: 1,
+    receiptReadsWithoutAnswer: 1_000,
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the descriptor the server start published unmarked at its read's deadline",
+      15_000,
+    )
+    const descriptorFile = await window.descriptorPath()
+    const fieldAtPublication = await window.readDescriptorField()
+    const statusAtPublication = await postInitialize(descriptorFile, true)
+    // The held read answers the setup standing; the late mark then reads afresh, and every read of that fresh read gives no answer at once.
+    window.holds.receiptRead.release()
+    await waitUntil(
+      () => window.receiptReadCount() >= 2,
+      "the late mark's fresh read",
+      15_000,
+    )
+    const freshReadSeenAtMs = performance.now()
+    // Armed once every earlier look for an owed take-back answered: the next setup waits at its own look, then fails at its Node check, before it writes anything.
+    options.holdOwedTakeBackLookAt = window.owedTakeBackReads() + 1
+    options.nodeFailure = true
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    const lookHeldAtMs = await waitUntil(
+      () => window.holds.owedTakeBackLook.reachedAtMs(),
+      "the setup's look for an owed take-back",
+    )
+    // The fresh read's own budget is a production deadline; it ends with no answer while the setup still waits at its look.
+    await waitUntil(
+      () =>
+        performance.now() - freshReadSeenAtMs >=
+        DEVIN_MARK_READ_RETRY_BUDGET_MS + 1_000,
+      "the end of the fresh read's own budget",
+      15_000,
+    )
+    // Act
+    // A request takes I/O, so the late mark's step after its empty answer has run by the time it is answered.
+    const statusWhileSetupRuns = await postInitialize(descriptorFile, true)
+    const decisionsWhileSetupRuns = [...window.lateMarkDecisions]
+    // Storage answers again; the setup goes on and fails at its Node check.
+    options.receiptReadsWithoutAnswer = 0
+    window.holds.owedTakeBackLook.release()
+    const setupOutcome = await within(setup, 10_000)
+    const isServedAgain = await waitUntil(
+      async () => (await postInitialize(descriptorFile, true)) === 200,
+      'the Devin bridge served again once the setup ended',
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
+    // The mark serves the Devin bridge before the bridge's own check after it answers; the decision and its notice follow that check (up to 3 s).
+    const isNoticeShown = await waitUntil(
+      () =>
+        window.notices.some(
+          (notice) =>
+            notice.message ===
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        ),
+      "the late mark's Reload Window notice",
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
+    // Assert
+    assert.equal(fieldAtPublication, undefined)
+    assert.equal(statusAtPublication, 403)
+    assert.ok(
+      lookHeldAtMs - freshReadSeenAtMs < 4_000,
+      `the setup waited at its look ${lookHeldAtMs - freshReadSeenAtMs} ms after the fresh read was seen`,
+    )
+    assert.deepEqual(decisionsWhileSetupRuns, [])
+    assert.equal(statusWhileSetupRuns, 403)
+    assert.equal(
+      setupOutcome,
+      'Codebook could not use the Node.js named by codebook.nodeExecutable, so it did not set up Devin Desktop. Check that setting, then run Codebook: Set Up AI Chat again.',
+    )
+    assert.equal(isServedAgain, true)
+    assert.equal(isNoticeShown, true)
+    assert.deepEqual(window.lateMarkDecisions, [true])
+    assert.equal(await window.readDescriptorField(), true)
+    assert.equal(await window.readDescriptorInstallation(), 'installation-test')
+    assert.deepEqual(
+      window.notices.filter(
+        (notice) =>
+          notice.message ===
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+      ),
+      [
+        {
+          severity: 'information',
+          message:
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+          actions: ['Reload Window'],
+        },
+      ],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=the bound of three late "no answer" reads gives way to a run of this window, and the valid late answer of the read after it still decides (Cycle 0148 task 6; D5 Codex P1); fails_when=the counter ends the mark while the setup runs, or drops read 5's valid answer, leaving 403; no_claim=the first exit (the test above), the bound with no run (the four-read test), a run after the mark ended; the first four reads each give no answer after 5.5 s, the fifth reads the real records and answers them after 5.5 s, the setup's look for an owed take-back waits at its gate, the Node stand-in fails, the server is the real one
+test("a late Devin mark whose third fresh read gives no answer while this window's Set Up AI Chat runs waits for that setup and, once it failed at its Node check, marks the window on the late answer of the read after it and offers Reload Window once", async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    realServer: true,
+    receiptReadDelaysMs: Array.from({ length: 4 }, () => 5_500),
+    receiptReadAnswerDelaysMs: [
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      5_500,
+    ],
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the descriptor the server start published unmarked at its read's deadline",
+      15_000,
+    )
+    const descriptorFile = await window.descriptorPath()
+    const fieldAtPublication = await window.readDescriptorField()
+    const statusAtPublication = await postInitialize(descriptorFile, true)
+    // The start's read and the first two fresh reads each give no answer after 5.5 s, so the third fresh read, the fourth read, starts about 11 s after the descriptor.
+    await waitUntil(
+      () => window.receiptReadCount() >= 4,
+      "the late mark's third fresh read",
+      20_000,
+    )
+    const thirdFreshReadSeenAtMs = performance.now()
+    // Armed once every earlier look for an owed take-back answered: the next setup waits at its own look, then fails at its Node check, before it writes anything.
+    options.holdOwedTakeBackLookAt = window.owedTakeBackReads() + 1
+    options.nodeFailure = true
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    const lookHeldAtMs = await waitUntil(
+      () => window.holds.owedTakeBackLook.reachedAtMs(),
+      "the setup's look for an owed take-back",
+    )
+    // The third fresh read gives no answer 5.5 s after it started, while the setup still waits at its look.
+    await waitUntil(
+      () => performance.now() - thirdFreshReadSeenAtMs >= 6_500,
+      "the third fresh read's late answer",
+      15_000,
+    )
+    // Act
+    // A request takes I/O, so the late mark's step after that answer has run by the time it is answered.
+    const statusWhileSetupRuns = await postInitialize(descriptorFile, true)
+    const decisionsWhileSetupRuns = [...window.lateMarkDecisions]
+    const readsWhileSetupRuns = window.receiptReadCount()
+    window.holds.owedTakeBackLook.release()
+    const setupOutcome = await within(setup, 10_000)
+    // The fifth read answers the setup standing only after its own 5-second budget; the turn after it decides on that answer, and the decision follows the bridge's own check after the mark (up to 3 s).
+    const decision = await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision once the setup ended",
+      15_000,
+    ).then(
+      () => 'decided',
+      (error: Error) => error.message,
+    )
+    const readsAtDecision = window.receiptReadCount()
+    const statusAfterDecision = await postInitialize(descriptorFile, true)
+    // Assert
+    assert.equal(fieldAtPublication, undefined)
+    assert.equal(statusAtPublication, 403)
+    assert.ok(
+      lookHeldAtMs - thirdFreshReadSeenAtMs < 4_000,
+      `the setup waited at its look ${lookHeldAtMs - thirdFreshReadSeenAtMs} ms after the third fresh read was seen`,
+    )
+    assert.deepEqual(decisionsWhileSetupRuns, [])
+    assert.equal(statusWhileSetupRuns, 403)
+    assert.equal(readsWhileSetupRuns, 4)
+    assert.equal(
+      setupOutcome,
+      'Codebook could not use the Node.js named by codebook.nodeExecutable, so it did not set up Devin Desktop. Check that setting, then run Codebook: Set Up AI Chat again.',
+    )
+    assert.equal(decision, 'decided')
+    assert.deepEqual(window.lateMarkDecisions, [true])
+    assert.equal(readsAtDecision, 5)
+    assert.equal(statusAfterDecision, 200)
+    assert.equal(await window.readDescriptorField(), true)
+    assert.equal(await window.readDescriptorInstallation(), 'installation-test')
+    assert.deepEqual(
+      window.notices.filter(
+        (notice) =>
+          notice.message ===
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+      ),
+      [
+        {
+          severity: 'information',
+          message:
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+          actions: ['Reload Window'],
+        },
+      ],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a late mark that waits for this window's removal, whose entry step waits on storage past its 10-second lapse, ends once Stop Agent Server stopped its server: it decides without reading the records while the removal still holds the setup lock, and offers nothing (Cycle 0147 review round, W4: OCR lens 1 P3 at extension.ts:1542); fails_when=the wait ignores the stop and goes on until the removal ends, or the late mark reads the records or marks a stopped server; no_claim=a new start ending the wait (the same check of the running server), the removal's own end and notice; the server start's read waits at its gate, the late mark's continuation waits at its gate until the removal answered at its lapse, the held stand-in entry removal stands for the stalled storage
 test("a late Devin mark that waits for this window's removal ends at Stop Agent Server without reading the records while the removal still waits on storage", async (context) => {
   // Arrange
