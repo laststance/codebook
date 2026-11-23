@@ -1403,7 +1403,7 @@ class UnrestoredReceiptError extends Error {
  * @param context - The run; gives the config's, the receipt's and the publish record's paths and the command to run again.
  * @param retiredPath - The private name that holds the old record.
  * @param standing - What stood at `receipt.json` when the link found it taken ({@link standingReceiptOf}), or `moved-unread` when the old record could not be read; undefined when the link failed otherwise.
- * @param isMarked - Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}), or the error comes from a later run; `false` only from {@link UnrestoredReceiptError.withoutMark}, and then no sentence promises that a later run puts the record back, because that run cannot tell and decides again.
+ * @param isMarked - Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}); `false` from {@link UnrestoredReceiptError.withoutMark} and from a later run that settles a record without that mark ({@link PutBackOptions.isMarked}), and then no sentence promises that a later run puts the record back, because that run cannot tell and decides again.
  * @returns
  * - Without `standing`: the sentence that the next run puts the record back; unmarked, that it decides again whether it goes back
  * - `other`: the sentence that asks the learner to move what stands there to another folder, after which that run puts the old record back (unmarked: decides again)
@@ -3630,17 +3630,19 @@ async function holdsReceipt(
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
- * @param attempt - Which link this is, from 1; only the put-back itself passes more.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; that file stays, and so does the publish record that names it.
+ * @param options - How this put-back runs ({@link PutBackOptions}); a setup passes none.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.isMarked` is `false`. That file stays, and so does the publish record that names it.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
+ * await putBackRetiredReceipt(context, retiredPath, undefined, { isMarked: false }) // a later run settling a record without the notLinked mark
  */
 async function putBackRetiredReceipt(
   context: Context,
   retiredPath: string,
   failure?: unknown,
-  attempt = 1,
+  options: PutBackOptions = {},
 ): Promise<void> {
+  const { attempt = 1, isMarked = true } = options
   const cause = await link(retiredPath, context.receiptPath).then(
     () => undefined,
     (error: unknown) => error,
@@ -3653,7 +3655,10 @@ async function putBackRetiredReceipt(
         : undefined
     // The name was empty again by the look: link again, a bounded number of times.
     if (standing === 'absent' && attempt < DEVIN_RECEIPT_PUT_BACK_ATTEMPTS)
-      return putBackRetiredReceipt(context, retiredPath, failure, attempt + 1)
+      return putBackRetiredReceipt(context, retiredPath, failure, {
+        ...options,
+        attempt: attempt + 1,
+      })
     // Only a record of this config's same entry makes the moved one a spare copy.
     if (standing !== 'covers')
       throw new UnrestoredReceiptError(
@@ -3662,9 +3667,18 @@ async function putBackRetiredReceipt(
         failure,
         cause,
         unrestoredStandingOf(standing),
+        isMarked,
       )
   }
   await unlink(retiredPath).catch(() => undefined)
+}
+
+/** How {@link putBackRetiredReceipt} runs; every field is optional. */
+type PutBackOptions = {
+  /** Which link this is, from 1; only the put-back itself passes more. */
+  attempt?: number
+  /** Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}), as a setup's own put-back and a later run's put-back of a marked record do; `false` from a later run that settles a record without that mark ({@link settleRetiredReceipt}), whose refusal then promises no put-back, because the run after it decides again ({@link retiredReceiptFateOf}). Defaults to `true`. */
+  isMarked?: boolean
 }
 
 /** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken: `covers` and `absent` decide the put-back, every other answer keeps the moved record ({@link UnrestoredStanding}). */
@@ -3929,7 +3943,10 @@ async function settleRetiredReceipt(
   if (fate === 'undecided') throw undecidedReceiptRefusal(context, retiredPath)
   // The config holds that setup's publish, which the old receipt does not own: it goes, as when the link stood.
   if (fate === 'drop') await dropRetiredReceipt(context, retiredPath, look)
-  else await putBackRetiredReceipt(context, retiredPath)
+  else
+    await putBackRetiredReceipt(context, retiredPath, undefined, {
+      isMarked: pending.notLinked === true,
+    })
 }
 
 /**
