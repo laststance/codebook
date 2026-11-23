@@ -5799,6 +5799,60 @@ test("a Set Up AI Chat that succeeds while a late Devin mark's bridge check wait
   }
 })
 
+// Value: protects=a late Devin mark whose bridge check after the mark answers while a Set Up AI Chat of this window, started during that check, still runs offers no Reload Window in the middle of that setup, and the setup's own notice with its Reload Window is the window's only notice once it ends (Cycle 0147 last fix-check, p4n/adversarial-native#2 at extension.ts:1615-1623); fails_when=the late mark's handler, which sees the same server, the same late mark, the mark still on and no setup succeeded yet, offers "Reload this window so Devin Local connects." while the setup still waits on storage, so a press reloads the window in the middle of that setup; no_claim=a setup that then fails without touching the mark (the late mark's notice is then not offered either; the setup's failure speaks), a check with no answer within its 3 s bound (the setup is held past it, so the same decision follows), a setup that succeeds during the check (its own test above); the first stand-in read waits 5.5 s and then has no answer, the late mark's fresh read is the real one, its bridge check (the first) reads the real records and answers what it read once the test released it, the setup's provisional save waits at its gate until the test released it, the setup's own final check is the real one
+test("a late Devin mark whose bridge check answers while this window's Set Up AI Chat still runs offers no Reload Window in the middle of that setup", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+    holdBridgeCheckAt: 1,
+    holdProvisionalSave: true,
+  })
+  try {
+    await window.whenReconnected()
+    await waitUntil(
+      () => window.holds.bridgeCheck.reachedAtMs(),
+      "the late mark's bridge check, held after it read the records",
+      15_000,
+    )
+    // The setup starts during the check and waits at its provisional save, so it still runs when the check answers.
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.provisionalSave.reachedAtMs(),
+      "the setup's held provisional save",
+      15_000,
+    )
+    // Act
+    window.holds.bridgeCheck.release()
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision",
+      15_000,
+    )
+    const noticesWhileSetupRuns = [...window.notices]
+    window.holds.provisionalSave.release()
+    const setupOutcome = await within(setup, 10_000)
+    // Assert
+    assert.deepEqual(window.lateMarkDecisions, [true])
+    assert.deepEqual(noticesWhileSetupRuns, [])
+    assert.equal(setupOutcome, 'resolved')
+    assert.equal(await window.readDescriptorField(), true)
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          "Codebook skill and MCP server saved for Devin Local. Reload this window so Devin Local loads Codebook's MCP server, then type /devin:codebook in a Local session.",
+        actions: ['Reload Window'],
+      },
+    ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a window whose storage answers every records read after the 5-second budget, and whose removal refused before it changed the setup during the start's late mark's first fresh read, is marked once, offers Reload Window once and then reads the records no more while its server runs: the removal-end sync's late mark replaces the start's, so the two never take turns that each make the other's late answer stale (Cycle 0147 review round, W1: OCR lens 1 P1 and CodeRabbit major at extension.ts:1565); fails_when=the start's late mark and the sync's late mark both stay alive, each sees the other's turn between two of its own, both read afresh for as long as the server runs (5-second queue holds that Stop waits behind) and the window is never marked; no_claim=a removal that changed the setup, another window's removal, a read that never answers; the stand-in reads the real records and answers them after 5.5 s, the skill removal stand-in throws before any bytes are read
 test("a Devin window whose removal-end sync's records read also answers late during the start's late mark is marked once and then reads nothing more", async (context) => {
   // Arrange

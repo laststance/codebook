@@ -1599,7 +1599,7 @@ export function activate(
     void syncDevinChatDescriptor().catch(reportDescriptorUpdateFailure)
   }
   /**
-   * Whether a Devin Desktop setup, its take-back, a removal of this window or the take-back of an owed entry that takes the mark off runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-backs and the removal rewrite the descriptor), so a late mark waits for it to end ({@link afterDevinRunsSettled}); read by {@link isLateMarkTarget} and {@link isLateMarkWaitingForRun}.
+   * Whether a Devin Desktop setup, its take-back, a removal of this window or the take-back of an owed entry that takes the mark off runs now, before or after its command answered: each of them decides the window's mark itself (the setup marks, the take-backs and the removal rewrite the descriptor), so a late mark waits for it to end ({@link afterDevinRunsSettled}) and offers no notice while it runs ({@link isLateMarkStillOn}); read by {@link isLateMarkTarget}, {@link isLateMarkWaitingForRun} and {@link isLateMarkStillOn}.
    * @returns `true` while such a run goes on.
    * @example isDevinSetupChanging() // => true while Set Up AI Chat runs
    */
@@ -1611,7 +1611,7 @@ export function activate(
   /** Whether the late mark `lateMark` of `server` still goes on: it is the newest late mark of this window ({@link lateMarksScheduled}), its server is the one running now and no stop is under way; read by {@link isLateMarkTarget} and {@link isLateMarkWaitingForRun}. @param server - The server whose start or sync read answered late. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @example isLateMarkCurrent(server, 1) // => false after Stop Agent Server */
   const isLateMarkCurrent = (server: Running, lateMark: number): boolean =>
     lateMark === lateMarksScheduled && running === server && !stopping
-  /** Whether the mark a late mark gave `server` still stands once the bridge's check after it answered ({@link isSetupGoneAfterLateMark}, which can wait on storage for up to {@link DEVIN_SETUP_FINAL_CHECK_MS}): the late mark still goes on ({@link isLateMarkCurrent}), this window's mark is on, no take-off of it is under way ({@link isDevinMarkBeingTakenOff}) and no setup of this window succeeded since the mark ({@link devinSetupsReady}); a stop, a newer late mark or a removal of this window during that check leaves the server's record and the notices as they are, and a setup that succeeded meanwhile already said what the window needs. Read by {@link markDevinChatLate} before it records the mark and offers its notice. @param server - The server the late mark marked. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @param setupsReadyAtMark - {@link devinSetupsReady} when the late mark marked the window. @example isLateMarkStillOn(server, 1, 0) // => false after Stop Agent Server during the bridge check */
+  /** Whether the mark a late mark gave `server` still stands once the bridge's check after it answered ({@link isSetupGoneAfterLateMark}, which can wait on storage for up to {@link DEVIN_SETUP_FINAL_CHECK_MS}): the late mark still goes on ({@link isLateMarkCurrent}), this window's mark is on, no setup, take-back, removal or take-off of the mark of this window runs ({@link isDevinSetupChanging}) and no setup of this window succeeded since the mark ({@link devinSetupsReady}); a stop, a newer late mark or a removal of this window during that check leaves the server's record and the notices as they are, a setup that succeeded meanwhile already said what the window needs, and a setup still running then ends with its own notice, so no Reload Window comes in the middle of it. Read by {@link markDevinChatLate} before it records the mark and offers its notice. @param server - The server the late mark marked. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @param setupsReadyAtMark - {@link devinSetupsReady} when the late mark marked the window. @example isLateMarkStillOn(server, 1, 0) // => false after Stop Agent Server during the bridge check */
   const isLateMarkStillOn = (
     server: Running,
     lateMark: number,
@@ -1619,7 +1619,7 @@ export function activate(
   ): boolean =>
     isLateMarkCurrent(server, lateMark) &&
     isDevinChatMarked &&
-    !isDevinMarkBeingTakenOff() &&
+    !isDevinSetupChanging() &&
     devinSetupsReady === setupsReadyAtMark
   /** Whether a late mark may still mark `server`: it still goes on ({@link isLateMarkCurrent}), no setup, take-back or removal of this window runs ({@link isDevinSetupChanging}), and this window's setup stands for its workspace; asked before the fresh read, after it and after the descriptor write. @param server - The server whose start or sync read answered late. @param lateMark - The number {@link markDevinChatLate} gave this late mark. @example isLateMarkTarget(server, 1) // => false after Stop Agent Server */
   const isLateMarkTarget = (server: Running, lateMark: number): boolean =>
@@ -1755,7 +1755,7 @@ export function activate(
   }
   /**
    * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline and then decides on that read's own answer when no descriptor turn of this window came between), and a window marked then offers Reload Window once, or names Set Up AI Chat instead when the bridge's own check finds the setup gone by then ({@link isSetupGoneAfterLateMark}); called by {@link startServer}'s queue turn, once per start, and by {@link syncDevinChatDescriptor}, once per sync whose read was still in flight at its deadline.
-   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a window whose fresh reads answered late with no answer {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} times is left as it is and shows nothing, also when the stop, a newer late mark or this window's removal comes during the bridge check after the mark ({@link isLateMarkStillOn}), and a setup of this window that succeeds during that check is followed by its own notice alone; while a setup, take-back or removal of this window runs (the one that ran the sync included), the mark waits for it to end and then reads afresh ({@link afterDevinRunsSettled}), because a run that ends without rewriting the descriptor leaves the mark to it. Only the newest late mark of the window goes on ({@link lateMarksScheduled}): it reads afresh once its own late read settled, so it decides everything an older one would have.
+   * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a window whose fresh reads answered late with no answer {@link DEVIN_LATE_MARK_UNANSWERED_READS_MAX} times is left as it is and shows nothing, also when the stop, a newer late mark or this window's removal comes during the bridge check after the mark ({@link isLateMarkStillOn}), and a setup of this window that succeeds during that check, or still runs when it answers, is followed by its own notice alone; while a setup, take-back or removal of this window runs (the one that ran the sync included), the mark waits for it to end and then reads afresh ({@link afterDevinRunsSettled}), because a run that ends without rewriting the descriptor leaves the mark to it. Only the newest late mark of the window goes on ({@link lateMarksScheduled}): it reads afresh once its own late read settled, so it decides everything an older one would have.
    * @param server - The server that just started, or the one the sync rewrote.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
    * @example markDevinChatLate(server, lateRead)
@@ -1779,7 +1779,7 @@ export function activate(
       return isMarked
     }).then(
       (isMarked) => {
-        // The bridge check may have waited on storage: a stop, a newer late mark, a removal of this window or a setup that succeeded meanwhile gets no record and no notice from this mark.
+        // The bridge check may have waited on storage: a stop, a newer late mark, a removal of this window, or a setup of this window that runs or succeeded meanwhile gets no record and no notice from this mark.
         if (
           !isMarked ||
           !isLateMarkStillOn(server, lateMark, setupsReadyAtMark)
