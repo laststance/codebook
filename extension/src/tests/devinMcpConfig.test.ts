@@ -4519,6 +4519,43 @@ test('A first setup whose handed record hit a full disk does not move a changed 
   assert.equal(readFileSync(copyPath, 'utf8'), rewrittenText)
 })
 
+test('A first setup whose handed record hit a full disk never moves the changed copy over a file another program put at the .codebook-kept name, and warns that Codebook still tracks that copy', async (context) => {
+  // Value: protects=the move out of recovery's reach claims the .codebook-kept name without replacing anything, so a file another program put there keeps its bytes, and the copy stays at its private name with the warning that a later run deletes it while it holds exactly the previous config, which the next run then does without touching that other file; fails_when=the file at the .codebook-kept name is replaced or changed, the copy is moved or changed before the next run, the notice names the .codebook-kept name or leaves the copy to the learner, or the next run keeps the copy; no_claim=a real sync tool (seam.afterPublish writes the file at the .codebook-kept name once, right after the publish), a real ENOSPC (seam.beforeRecordWrite fails only the handed record), and a file put there after the claim
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  const otherText = '{"put there by another program":true}\n'
+  let copyPath = ''
+  let keptPath = ''
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'handed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      keptPath = copyPath.replace(/codebook-displaced$/, 'codebook-kept')
+      utimesSync(copyPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+      writeFileSync(keptPath, otherText)
+    },
+  })
+  // The copy the notice names still stands, with the previous config, until the next run.
+  assert.equal(readFileSync(copyPath, 'utf8'), originalText)
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(setup.status, 'installed')
+  assert.equal(
+    setup.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  )
+  assert.equal(nextRun.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+  assert.equal(readFileSync(keptPath, 'utf8'), otherText)
+})
+
 test('A first setup whose handed record hit a full disk names no copy of the previous config when another program removed the moved-aside copy', async (context) => {
   // Value: protects=a notice never says that Codebook kept a private copy at a path where nothing stands: a copy another program removed from its private name before Codebook could move it out of recovery's reach is not named; fails_when=the notice names the empty private name or another copy, the setup is not installed, or the next run refuses; no_claim=a real ENOSPC (seam.beforeRecordWrite fails only the handed record) and a real program that removes the copy (seam.afterPublish unlinks the private name once, right after the publish)
   // Arrange
