@@ -3350,7 +3350,7 @@ test('a live entry from the Study layout arranges the application above the sour
 })
 
 for (const besideChat of [false, true])
-  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read while the chat does not hold the keyboard (a keyboard borrowed from the chat reads the layout once more within the same measurement); why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154); no_claim=where the final arrangement runs, during preparation or at the explicit open
+  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read while the chat does not hold the keyboard (a keyboard borrowed from the chat reads the layout once more within the same measurement); why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); the reader's own refresh began a second Live entry while the run prepared, whose final arrangement started after the explicit open returned on a loaded machine (Cycle 0147 FT3); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154), the reader's own refresh timer stopped so the explicit open is the run's only Live entry; no_claim=a Live entry the reader's own refresh begins, and its keyboard return
   test(`live entry waits for retired Study tabs before measurement and measures its final arrangement once${besideChat ? ', returning the keyboard to chat' : ''}`, async () => {
     // Arrange: native tab retirement is delayed, and App preparation has its own separate measurements.
     const harness = await workspaceHarness()
@@ -3372,7 +3372,9 @@ for (const besideChat of [false, true])
       harness.closeDisposedPanelTabsLater()
       // The editor closes the retired Study context tab only once the final arrangement began, so that arrangement meets the tab and must wait for its close (F240).
       harness.holdDisposedPanelTabCloses()
-      // Observe actual native effects without changing their arguments, responses or timing, from before the run starts: the live entry's final arrangement can run while the run prepares, on a loaded machine before the explicit open below (F154).
+      // The reader's own refresh would begin a second Live entry while the run prepares (F154); on a loaded machine that entry's final arrangement started after the explicit open below returned, and its start knew no chat keyboard to give back (Cycle 0147 FT3). With its timer stopped, the explicit open is the run's only Live entry.
+      readerSeams(harness).stopOwnTimer()
+      // Observe actual native effects without changing their arguments, responses or timing, from before the run starts.
       harness.editor.commands.executeCommand = async (...args) => {
         if (args[0] === 'vscode.getEditorLayout') {
           chatKeyboardAtReads.push(chat?.focused() === true)
