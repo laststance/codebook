@@ -5472,6 +5472,91 @@ test("another window's removal during a late Devin mark's fresh read leaves Devi
   }
 })
 
+// Value: protects=a window whose storage answers every records read after the 5-second budget, and whose removal refused before it changed the setup during the start's late mark's first fresh read, is marked once, offers Reload Window once and then reads the records no more while its server runs: the removal-end sync's late mark replaces the start's, so the two never take turns that each make the other's late answer stale (Cycle 0147 review round, W1: OCR lens 1 P1 and CodeRabbit major at extension.ts:1565); fails_when=the start's late mark and the sync's late mark both stay alive, each sees the other's turn between two of its own, both read afresh for as long as the server runs (5-second queue holds that Stop waits behind) and the window is never marked; no_claim=a removal that changed the setup, another window's removal, a read that never answers; the stand-in reads the real records and answers them after 5.5 s, the skill removal stand-in throws before any bytes are read
+test("a Devin window whose removal-end sync's records read also answers late during the start's late mark is marked once and then reads nothing more", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    confirmRemoval: true,
+    failSkillRemoval: true,
+    receiptReadAnswerDelaysMs: Array.from({ length: 10 }, () => 5_500),
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    await waitUntil(
+      () => window.receiptReadCount() === 2,
+      "the start's late mark's first fresh read",
+      15_000,
+    )
+    const freshReadSeenAtMs = performance.now()
+    // Act
+    const removalOutcome = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      4_000,
+    )
+    const removalEndedAfterMs = performance.now() - freshReadSeenAtMs
+    const isMarkedInTime = await waitUntil(
+      async () => (await window.readDescriptorField()) === true,
+      'the late mark',
+      25_000,
+    ).then(
+      () => true,
+      () => false,
+    )
+    const readsAtMark = window.receiptReadCount()
+    // The server keeps running through a wait longer than one delayed read, so a read started after the mark would be counted.
+    const quietWait = await waitUntil(
+      () => window.receiptReadCount() > readsAtMark,
+      'a receipts read after the late mark',
+      6_000,
+    ).then(
+      () => 'a read started',
+      (error: Error) => error.message,
+    )
+    const readsAfterQuiet = window.receiptReadCount()
+    // Assert
+    assert.equal(removalOutcome, 'Injected skill removal failure')
+    // The removal ended within the fresh read's own budget, so its sync waited behind that late mark's turn.
+    assert.ok(
+      removalEndedAfterMs < 4_500,
+      `the removal ended ${Math.round(removalEndedAfterMs)} ms after the fresh read started`,
+    )
+    assert.equal(isMarkedInTime, true)
+    // The start's late mark ends at its first turn after the sync, and the sync's own late mark marks.
+    assert.deepEqual(window.lateMarkDecisions, [false, true])
+    assert.equal(readsAtMark, 4)
+    assert.equal(
+      quietWait,
+      'Timed out waiting for a receipts read after the late mark',
+    )
+    assert.equal(readsAfterQuiet, 4)
+    assert.deepEqual(
+      window.notices.filter(
+        (notice) =>
+          notice.message ===
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+      ),
+      [
+        {
+          severity: 'information',
+          message:
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+          actions: ['Reload Window'],
+        },
+      ],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a Devin re-setup after Stop Agent Server whose own server start read answered after the start budget ends with one Reload Window, its own: the late mark finds the window already marked by the setup and writes and offers nothing (Cycle 0146 review round, ocr-lens1 P3); fails_when=the late mark rewrites the descriptor the setup marked and offers a second Reload Window; no_claim=a late read that settles while the setup still runs (the next test); the setup's server start read reads the real records and waits at its gate until the setup answered
 test('a Devin re-setup whose server start read answers after the setup offers only its own Reload Window', async (context) => {
   // Arrange
