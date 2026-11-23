@@ -655,3 +655,30 @@ test('a bridge input released below its limit is not resumed after its release',
   assert.equal(resumesAfterRelease, 0)
   assert.equal(input.isPaused(), true)
 })
+
+// Value: protects=a bridge input put back below its limit (the Devin bridge's attempt that failed before 1 MiB came, before its next attempt holds the input again) starting no read after its put-back, once its error listener is gone, so a read error then cannot crash the bridge, while its chunk stays for the next reader (Cycle 0147 ship pass 1, adversarial-native#4 holdBridgeInput.ts:164); fails_when=the put-back resumes and pauses the stream although the hold never stopped at its limit, which sets process.stdin reading for one more tick with no error listener; no_claim=process.stdin's read stop after a put-back (the Cursor bridge child-process tests of a failed first handshake with Cursor's stdin still open)
+test('a bridge input put back below its limit is not resumed after its put-back and keeps its chunk for the next reader', async () => {
+  // Arrange
+  const input = standInInput()
+  const hold = holdBridgeInput(input, () => undefined, 4)
+  input.push(Buffer.from('ab'))
+  await waitUntil(
+    () => input.readableLength === 0,
+    'the hold reading the input',
+    2_000,
+    undefined,
+    5,
+  )
+  let resumesAfterPutBack = 0
+  input.on('resume', () => {
+    resumesAfterPutBack += 1
+  })
+  // Act
+  hold.putBack()
+  // A resume emits on the next tick, which runs before setImmediate.
+  await new Promise((resolve) => setImmediate(resolve))
+  // Assert
+  assert.equal(resumesAfterPutBack, 0)
+  assert.equal(input.isPaused(), true)
+  assert.equal(input.readableLength, 2)
+})

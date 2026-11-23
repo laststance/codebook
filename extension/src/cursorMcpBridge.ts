@@ -95,13 +95,16 @@ async function releaseHalfOpenSession(
   // Set only once initialize was answered in full; a release before that goes without it, as the SDK's own would.
   if (protocolVersion !== undefined) release.setProtocolVersion(protocolVersion)
   await release.start()
+  const releaseEnded = new AbortController()
   try {
     await Promise.race([
       release.terminateSession().catch(() => undefined),
       // Unreferenced, so a finished release never keeps the process alive.
-      BRIDGE_RELEASE_BOUND.wait(),
+      BRIDGE_RELEASE_BOUND.wait(releaseEnded.signal),
     ])
   } finally {
+    // A DELETE answered first ends the bound's timer too, so a running bridge keeps none per release.
+    releaseEnded.abort()
     // Aborts a DELETE the server never answered, so it cannot keep the process alive.
     await release.close()
   }

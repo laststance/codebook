@@ -16,6 +16,7 @@ import { SESSION_IDLE_TIMEOUT_MS } from '../constants'
 import { runCursorMcpBridge } from '../cursorMcpBridge'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { BRIDGE_RELEASE_BOUND } from '../utils/bridgeReleaseBound'
 import { readBridgeDescriptor } from '../utils/readBridgeDescriptor'
 
 import { createHarness } from './helpers'
@@ -1142,6 +1143,20 @@ const STDIN_ERROR_PRELOAD = `process.on('SIGUSR2', () => {
 const RELEASE_WITHOUT_BOUND_PRELOAD = `require(${JSON.stringify(require.resolve('../utils/bridgeReleaseBound'))}).BRIDGE_RELEASE_BOUND.wait = () => new Promise(() => undefined)
 `
 
+/** Source of a preload that lifts the bound on the bridge's wait for the answer to a session release ({@link BRIDGE_RELEASE_BOUND}), as {@link RELEASE_WITHOUT_BOUND_PRELOAD} does, and marks `RELEASE_BOUND_CANCELLED <n>` each time the bridge ends that wait through the signal it passed, so only the release's own end can produce the mark. Appended to {@link bridgeStopMarksPreload}. */
+const RELEASE_BOUND_CANCEL_MARKS_PRELOAD = `{
+  let releaseBoundsCancelled = 0
+  require(${JSON.stringify(require.resolve('../utils/bridgeReleaseBound'))}).BRIDGE_RELEASE_BOUND.wait = (releaseEnded) =>
+    new Promise((resolve) => {
+      releaseEnded?.addEventListener('abort', () => {
+        releaseBoundsCancelled += 1
+        require('node:fs').writeSync(2, 'RELEASE_BOUND_CANCELLED ' + releaseBoundsCancelled + '\\n')
+        resolve()
+      })
+    })
+}
+`
+
 /** Ends a bridge child the way a stop-path test names the stop. */
 function stopBridgeChild(
   bridge: CursorBridgeChild,
@@ -1709,5 +1724,52 @@ test(
       true,
     )
     assert.equal(requestsOf(endpoint.received, 'initialize').length, 1)
+  },
+)
+
+// Value: protects=the bound on a bridge's session release ending, its timer with it, as soon as the release it bounds ended, so a promptly answered DELETE leaves no one-second timer behind in a running bridge (Cycle 0147 ship pass 1, Codex structured review bridgeReleaseBound.ts:19); fails_when=the wait ignores its release's end and runs its full second; no_claim=that the bridge passes that end (the Cursor bridge child-process test below), a release nobody answers (the Devin bridge test of a never-answered DELETE)
+test("the bound on a bridge's session release ends as soon as that release ended, without waiting out its second", async () => {
+  // Arrange
+  const releaseEnded = new AbortController()
+  const waiting = BRIDGE_RELEASE_BOUND.wait(releaseEnded.signal).then(
+    () => 'ended',
+  )
+  // Act
+  releaseEnded.abort()
+  // The abort settles the wait in microtasks, which all run before setImmediate.
+  const outcome = await Promise.race([
+    waiting,
+    new Promise((resolve) => setImmediate(() => resolve('still waiting'))),
+  ])
+  // Assert
+  assert.equal(outcome, 'ended')
+})
+
+// Value: protects=Cursor's bridge ending the bound on its session release once the server answered that release's DELETE, so the bound's timer goes with the release (Cycle 0147 ship pass 1, Codex structured review bridgeReleaseBound.ts:19); fails_when=the release waits for its bound without telling it the DELETE settled, so each answered release leaves the bound's timer running; no_claim=that the real bound clears its timer (the unit test above), a release nobody answers (the Devin bridge test of a never-answered DELETE)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge whose stdin closes ends the wait on its session release once the server answered the DELETE',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const endpoint = await startScriptedEndpoint(context, () => false)
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload() + RELEASE_BOUND_CANCEL_MARKS_PRELOAD,
+    )
+    await bridge.handshake()
+    // Act
+    bridge.closeStdin()
+    const exitCode = await within(bridge.exited, 5_000)
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+    assert.equal(
+      bridge
+        .readStderr()
+        .split('\n')
+        .filter((line) => line.startsWith('RELEASE_BOUND_CANCELLED ')).length,
+      1,
+    )
   },
 )

@@ -167,12 +167,16 @@ export function holdBridgeInput(
     stream.resume()
     stream.pause()
   }
+  // Only a pause inside a data event, at the limit, leaves Node reading on; below it the pause of stopListening already stopped the read, and a resume after it would start one with no error listener.
+  const stopReadingAtLimit = (): void => {
+    if (isStoppedAtLimit) stopReading()
+  }
   const putChunksBack = (): void => {
     stopListening()
     // Each unshift goes in front of the last, so the chunks go back last first and are read in the order they came, each as its own chunk.
     while (kept.length > 0 && !isInputOver(stream)) stream.unshift(kept.pop())
     kept.length = 0
-    stopReading()
+    stopReadingAtLimit()
   }
   // The hold ends once: a later call on an ended hold would pause the stream that a later hold of it reads, or forget that hold's limit moment.
   const endingOnce = (end: () => void) => (): void => {
@@ -218,8 +222,7 @@ export function holdBridgeInput(
       stopListening()
       kept.length = 0
       limitWaitEnds.delete(stream)
-      // Only a pause inside a data event, at the limit, leaves Node reading on; below it the pause above already stopped the read, and a resume now would start one with no error listener.
-      if (isStoppedAtLimit) stopReading()
+      stopReadingAtLimit()
     }),
     settleHandshake,
   }
