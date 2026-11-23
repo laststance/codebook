@@ -7440,12 +7440,13 @@ test('A receipt of an older build whose entry the learner edited still gets an i
 })
 
 test('A displaced original that could not be read in the first recovery is handed over, not deleted, when an editor saves a new config before the second recovery', async (context) => {
-  // protects=the only copy of the learner's other servers survives a recovery that could not read it, followed by an editor save; fails_when=the retained record loses the staged inode and the second recovery deletes the original because its hash still matches; no_claim=the wording of the refusal; seam=seam.afterStat throws on the first read of the displaced original
+  // Value: protects=the only copy of the learner's other servers survives a recovery that could not read it, followed by an editor save; fails_when=the retained record loses the staged inode and the second recovery deletes the original because its hash still matches; no_claim=the wording of the refusal; seam=seam.afterStat throws on the first read of the displaced original
   // Arrange
   const { home, storage, configPath } = await arrange(context)
+  // A publish keeps the learner's other servers, so the original's alpha is in the published config too.
   await writeConfig(
     configPath,
-    `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
   )
   const keptPath = privateNameOf(configPath, 'codebook-displaced')
   const stagedPath = privateNameOf(configPath, 'tmp')
@@ -7519,27 +7520,13 @@ test('A config rewritten in place after a crashed publish keeps the displaced or
 })
 
 test('A displaced original is kept and named when an editor saves over the published config during its last read', async (context) => {
-  // protects=the only copy of the learner's other servers survives an editor save that lands between the check of the published config and the delete of the displaced original; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a save after the last look at the config name; seam=seam.afterStat renames another file over the config during the last read of the displaced original
+  // Value: protects=the only copy of the learner's other servers survives an editor save that lands between the check of the published config and the delete of the displaced original; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a save after the last look at the config name; seam=hand-written pending record of a publish that ended after its link, seam.afterStat renames another file over the config during the last read of the displaced original
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  const keptPath = privateNameOf(configPath, 'codebook-displaced')
-  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
-  await writeConfig(
+  const { keptPath, originalBytes } = await arrangePublishedWithOriginal(
+    storage,
     configPath,
-    `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`,
   )
-  await writeFile(keptPath, originalBytes)
-  await writeRecordFile(storage, 'pending.json', {
-    targetPath: configPath,
-    entrySha256: sha256(ENTRY_CANONICAL),
-    createdFile: false,
-    generation: JOURNAL_GENERATION,
-    keptName: basename(keptPath),
-    keptIno: (await stat(keptPath)).ino,
-    keptSha256: sha256(originalBytes),
-    stagedIno: (await stat(configPath)).ino,
-    stagedSha256: sha256(readFileSync(configPath, 'utf8')),
-  })
   let keptReadCount = 0
 
   // Act
@@ -7562,26 +7549,12 @@ test('A displaced original is kept and named when an editor saves over the publi
 })
 
 test('A displaced original is kept and named when an editor rewrites the published config in place during its last read', async (context) => {
-  // protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that keeps its inode and size; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite after the last read of the config; seam=seam.afterStat rewrites the config in place with other bytes of the same size during the last read of the displaced original
+  // Value: protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that keeps its inode and size; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite after the last read of the config; seam=hand-written pending record of a publish that ended after its link, seam.afterStat rewrites the config in place with other bytes of the same size during the last read of the displaced original
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  const keptPath = privateNameOf(configPath, 'codebook-displaced')
-  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
-  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
-  await writeConfig(configPath, publishedBytes)
-  await writeFile(keptPath, originalBytes)
+  const { keptPath, originalBytes, publishedBytes } =
+    await arrangePublishedWithOriginal(storage, configPath)
   const publishedIno = (await stat(configPath)).ino
-  await writeRecordFile(storage, 'pending.json', {
-    targetPath: configPath,
-    entrySha256: sha256(ENTRY_CANONICAL),
-    createdFile: false,
-    generation: JOURNAL_GENERATION,
-    keptName: basename(keptPath),
-    keptIno: (await stat(keptPath)).ino,
-    keptSha256: sha256(originalBytes),
-    stagedIno: publishedIno,
-    stagedSha256: sha256(publishedBytes),
-  })
   let keptReadCount = 0
 
   // Act
@@ -7608,28 +7581,12 @@ test('A displaced original is kept and named when an editor rewrites the publish
 })
 
 test("A displaced original is kept and named when an editor rewrites the published config in place with the same size during the displaced copy's last read", async (context) => {
-  // protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that lands during the displaced copy's final read, after the config was hashed; fails_when=the displaced original is deleted because the final look checks the config's inode alone; no_claim=a rewrite in the syscall gap after the last synchronous look; seam=seam.afterStat rewrites the config in place with other bytes of the same size during the third read of the displaced original
+  // Value: protects=the only copy of the learner's other servers survives an in-place rewrite of the published config that lands during the displaced copy's final read, after the config was hashed; fails_when=the displaced original is deleted because the final look checks the config's inode alone; no_claim=a rewrite in the syscall gap after the last synchronous look; seam=hand-written pending record of a publish that ended after its link (the config's modification time set old so the rewrite stays visible on a file system with coarse timestamps), seam.afterStat rewrites the config in place with other bytes of the same size during the third read of the displaced original
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  const keptPath = privateNameOf(configPath, 'codebook-displaced')
-  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
-  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
-  await writeConfig(configPath, publishedBytes)
-  // An old modification time keeps the rewrite visible on a file system with coarse timestamps.
-  utimesSync(configPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
-  await writeFile(keptPath, originalBytes)
+  const { keptPath, originalBytes, publishedBytes } =
+    await arrangePublishedWithOriginal(storage, configPath)
   const publishedIno = (await stat(configPath)).ino
-  await writeRecordFile(storage, 'pending.json', {
-    targetPath: configPath,
-    entrySha256: sha256(ENTRY_CANONICAL),
-    createdFile: false,
-    generation: JOURNAL_GENERATION,
-    keptName: basename(keptPath),
-    keptIno: (await stat(keptPath)).ino,
-    keptSha256: sha256(originalBytes),
-    stagedIno: publishedIno,
-    stagedSha256: sha256(publishedBytes),
-  })
   let keptReadCount = 0
 
   // Act
@@ -7799,26 +7756,12 @@ test('A published config that stays unchanged while the last private copy is rea
 })
 
 test('A displaced original is kept and named when a writer rewrites it with the same length while the published config is read again', async (context) => {
-  // protects=the displaced copy's content is the last async read before the unlink, so a same-length rewrite during the config's re-read is not deleted; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite in the syscall gap after the last hash; seam=seam.afterStat rewrites the displaced copy in place with the same length during the config's re-read
+  // Value: protects=the displaced copy's content is the last async read before the unlink, so a same-length rewrite during the config's re-read is not deleted; fails_when=the displaced original is deleted or the refusal omits its path; no_claim=a rewrite in the syscall gap after the last hash; seam=hand-written pending record of a publish that ended after its link, seam.afterStat rewrites the displaced copy in place with the same length during the config's re-read
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  const keptPath = privateNameOf(configPath, 'codebook-displaced')
-  const originalBytes = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  const { keptPath } = await arrangePublishedWithOriginal(storage, configPath)
+  // The same length as the original's bytes: only the command's letter differs.
   const changedBytes = '{"mcpServers":{"alpha":{"command":"b"}}}\n'
-  const publishedBytes = `${JSON.stringify({ mcpServers: { codebook: ENTRY } })}\n`
-  await writeConfig(configPath, publishedBytes)
-  await writeFile(keptPath, originalBytes)
-  await writeRecordFile(storage, 'pending.json', {
-    targetPath: configPath,
-    entrySha256: sha256(ENTRY_CANONICAL),
-    createdFile: false,
-    generation: JOURNAL_GENERATION,
-    keptName: basename(keptPath),
-    keptIno: (await stat(keptPath)).ino,
-    keptSha256: sha256(originalBytes),
-    stagedIno: (await stat(configPath)).ino,
-    stagedSha256: sha256(publishedBytes),
-  })
   let keptReadCount = 0
 
   // Act
