@@ -2136,6 +2136,44 @@ test('A removal that keeps other servers and cannot write its completed record k
   assert.equal(existsSync(displacedPath), true)
 })
 
+test('A removal that cannot write its completed record warns that Codebook still tracks the moved-aside copy, which the retry then deletes', async (context) => {
+  // Value: protects=the refusal of a removal by rewrite whose completed record failed names the copy of the previous config with the warning that a later run deletes it while it holds exactly that config, because the record written before the move-aside still lets the retry delete it, which the retry then does; fails_when=the refusal names the copy without the warning or omits its path, the copy is gone before the retry, or the retry keeps it; no_claim=a real ENOSPC (seam.beforeRecordWrite fails only the removal's completed record), and a copy changed before the retry (the retry names it instead)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const configBeforeRemoval = readFileSync(configPath, 'utf8')
+  let copyPath = ''
+  const removal = removeManagedDevinMcpEntry(storage, home, {
+    beforeRecordWrite: ({ record }) => {
+      if (phaseOfRecord(record) === 'completed') throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+  })
+  await assert.rejects(removal, (error: Error) => {
+    assert.ok(
+      error.message.includes(
+        `so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it; make room for that record, then run Codebook: Remove Devin Desktop Setup again.`,
+      ),
+      error.message,
+    )
+    return true
+  })
+  assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
+
+  // Act
+  const retry = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(retry, { status: 'removed', path: configPath })
+  assert.equal(existsSync(copyPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test('A whole-file removal whose moved-aside file grew past the limit puts the config back and refuses', async (context) => {
   // Value: protects=a removal never leaves mcp_config.json missing when the moved-aside file cannot be compared; fails_when=the removal refuses without linking the file back, so the config stays gone and a retry hits the same limit; why_new=Cycle 0143 /ship last-round finding v3/outside-voice#3; seam=seam.afterMoveAside grows the moved file past 1 MiB through the same inode
   // Arrange

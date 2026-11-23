@@ -4986,13 +4986,15 @@ async function takeEntryOut(
  */
 export class DevinMcpUnrecordedRemovalError extends Error {}
 
-/** Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses. */
+/** Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses. The record written before the move-aside still names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE}. */
 function unrecordedRemovalRefusal(
   { path, retry }: Context,
   keptLeft: KeptFile[],
 ): DevinMcpUnrecordedRemovalError {
   const previous = keptLeft.find(({ holds }) => holds === 'previous')
-  const copy = previous ? ` and ${keptCopyPhrase(previous.path)}` : ''
+  const copy = previous
+    ? ` and ${keptCopyPhrase(previous.path)}, ${LEFTOVER_CLAUSE}`
+    : ''
   return new DevinMcpUnrecordedRemovalError(
     `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step, so it kept its receipt${copy}; make room for that record, ${retry}.`,
   )
