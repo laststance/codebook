@@ -563,7 +563,7 @@ export function activate(
       stopWaiting.abort()
     }
   }
-  /** The mark fields for the sync of a rollback, as {@link readFieldsAtStart} reads them; a read that settles after the deadline changes nothing here. Called by {@link syncDevinChatDescriptor} and by the late mark. @example { ...(await devinChatFieldAtStart()) } */
+  /** The mark fields for the sync of a rollback, as {@link readFieldsAtStart} reads them; a read that settles after the deadline changes nothing here. Called by {@link syncDevinChatDescriptor}. @example { ...(await devinChatFieldAtStart()) } */
   const devinChatFieldAtStart = async (): Promise<DevinChatFields> =>
     (await readFieldsAtStart()).fields
   let reader: StudyWorkspace | undefined
@@ -1430,27 +1430,58 @@ export function activate(
     !stopping &&
     !isDevinSetupChanging() &&
     setupMatchesCurrentWorkspace()
-  /** Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. @param server - The server whose start read answered late. @returns Whether it marked the window. @example await markLateInQueue(server) // => true */
-  const markLateInQueue = (server: Running): Promise<boolean> =>
+  /**
+   * Marks the descriptor of `server` in its turn of {@link inDescriptorQueue} when a fresh read ({@link readFieldsAtStart}, bounded by its own deadline) finds the setup standing; it writes nothing (and never renews the token) when the window is already marked or the mark is no longer its to give, and it turns the in-memory mark on only while it still is, so a removal or take-back that took the mark off during the write keeps it off. Called by {@link markLateUntilAnswered}.
+   * @param server - The server whose start read answered late.
+   * @returns
+   * - `{ isMarked: true }` when it marked the window;
+   * - `{ isMarked: false, lateRead }` when the fresh read was still in flight at its own deadline, so nothing was decided yet;
+   * - `{ isMarked: false }` otherwise.
+   * @example await markLateInQueue(server) // => { isMarked: true }
+   */
+  const markLateInQueue = (
+    server: Running,
+  ): Promise<{ isMarked: boolean; lateRead?: Promise<unknown> }> =>
     inDescriptorQueue(async () => {
       // A window marked since its start (by its setup) already carries the mark and offered its reload.
-      if (isDevinChatMarked || !isLateMarkTarget(server)) return false
-      // A fresh read decides, never the late read's own answer.
-      const field = await devinChatFieldAtStart()
-      if (field.devinChat !== true || !isLateMarkTarget(server)) return false
+      if (isDevinChatMarked || !isLateMarkTarget(server))
+        return { isMarked: false }
+      // A fresh read decides, never the late read's own answer; one still in flight at its own deadline decides nothing yet.
+      const { fields, lateRead } = await readFieldsAtStart()
+      if (lateRead) return { isMarked: false, lateRead }
+      if (fields.devinChat !== true || !isLateMarkTarget(server))
+        return { isMarked: false }
       await writeSyncedDescriptor(
         server,
         true,
-        field.devinSetupInstallation,
+        fields.devinSetupInstallation,
         false,
       )
       // The write waited on storage: a removal, take-back, stop or folder change meanwhile keeps the in-memory mark off, and its own step rewrites the file.
-      if (!isLateMarkTarget(server)) return false
+      if (!isLateMarkTarget(server)) return { isMarked: false }
       isDevinChatMarked = true
-      return true
+      return { isMarked: true }
     })
   /**
-   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides, and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start.
+   * Gives `server` its late mark in turns of {@link markLateInQueue} until a fresh read answers in time: a fresh read still in flight at its own deadline is waited for outside the descriptor queue, then read afresh, so a storage that answers only after two deadlines still marks the window while each read stays bounded inside the queue; called by {@link markDevinChatLate} once the start's late read settled.
+   * @param server - The server whose start read answered late.
+   * @returns Whether it marked the window.
+   * @example await markLateUntilAnswered(server) // => true once a fresh read found the setup standing
+   */
+  const markLateUntilAnswered = async (server: Running): Promise<boolean> => {
+    let answer = await markLateInQueue(server)
+    // Only the settling of the read in flight counts; it holds no turn of the queue while it is waited for.
+    while (answer.lateRead) {
+      await answer.lateRead.then(
+        () => undefined,
+        () => undefined,
+      )
+      answer = await markLateInQueue(server)
+    }
+    return answer.isMarked
+  }
+  /**
+   * Marks a Devin Desktop window's descriptor after its server start published it unmarked because the receipts read was still in flight at the start's deadline: once that read settled, whatever it answered, a fresh read decides ({@link markLateUntilAnswered}, which also waits for a fresh read still in flight at its own deadline), and a window marked then offers Reload Window once; called by {@link startServer}'s queue turn, once per start.
    * A server stopped or replaced meanwhile, a setup removed meanwhile, a window already marked, or a setup, take-back or removal of this window that runs ({@link isLateMarkTarget}) is left as it is and shows nothing.
    * @param server - The server that just started.
    * @param lateRead - The read in flight at the deadline, or `undefined` when none was (nothing to wait for).
@@ -1461,7 +1492,9 @@ export function activate(
     lateRead: Promise<unknown> | undefined,
   ): void => {
     if (!lateRead) return
-    void continueAfterLateRead(lateRead, () => markLateInQueue(server)).then(
+    void continueAfterLateRead(lateRead, () =>
+      markLateUntilAnswered(server),
+    ).then(
       (isMarked) => {
         if (!isMarked) return
         server.devinChat = true

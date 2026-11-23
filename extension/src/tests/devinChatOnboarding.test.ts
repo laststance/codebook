@@ -18,6 +18,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   CONNECTION_DESCRIPTOR_SUFFIX,
+  DEVIN_MARK_READ_RETRY_BUDGET_MS,
   DEVIN_SETUP_LOCK_RETRY_DELAY_MS,
   DEVIN_SETUP_LOCK_WAIT_ATTEMPTS,
 } from '../constants'
@@ -4231,6 +4232,61 @@ test("Stop and Start Agent Server in a failed setup take-back's first seconds st
     assert.equal(statusWhileTakingBack, 403)
     assert.equal(setupOutcome, 'Injected skill check failure')
     assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a late Devin mark whose fresh read is itself still in flight at its own start budget waits for that read too and reads afresh once it settled, so a window whose storage answers only after two budgets is still marked and offers Reload Window once (/ship pass 1, Codex outside voice 10); fails_when=the late mark takes the fresh read's missed deadline for an unmarked setup, so the window stays unmarked for the rest of its server's run although its setup stands; no_claim=a fresh read that gets no answer at all within its budget (no read is in flight then, and the mark gives up as before) and a stop meanwhile; the first stand-in read waits 5.5 s and then has no answer, the second reads the real records and waits at its gate until the test released it after that read's own budget passed, the later reads are the real ones
+test('a late Devin mark whose fresh read also outlasts the start budget marks the window once that read answers and offers Reload Window once', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    receiptReadDelaysMs: [5_500],
+    holdReceiptReadAt: 2,
+  })
+  try {
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+      15_000,
+    )
+    const fieldAtPublication = await window.readDescriptorField()
+    const freshReadStartedAtMs = await waitUntil(
+      () => window.holds.receiptRead.reachedAtMs(),
+      "the late mark's fresh read",
+      15_000,
+    )
+    // The fresh read's own budget is a production deadline; it has to pass before the read answers.
+    await waitUntil(
+      () =>
+        performance.now() - freshReadStartedAtMs >=
+        DEVIN_MARK_READ_RETRY_BUDGET_MS + 500,
+      "the fresh read's own start budget",
+      15_000,
+    )
+    // Act
+    window.holds.receiptRead.release()
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision",
+      15_000,
+    )
+    const fieldAfterLateMark = await window.readDescriptorField()
+    // A stop queues behind every descriptor change, so a second offer would be shown before it ends.
+    await window.commands.get('codebook.stopAgentServer')!()
+    // Assert
+    assert.equal(fieldAtPublication, undefined)
+    assert.deepEqual(window.lateMarkDecisions, [true])
+    assert.equal(fieldAfterLateMark, true)
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'information',
+        message:
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+        actions: ['Reload Window'],
+      },
+    ])
   } finally {
     await window.loaded.deactivate()
   }
