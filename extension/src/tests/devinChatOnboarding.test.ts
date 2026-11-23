@@ -197,6 +197,8 @@ async function devinWindow(
     holdEntryRemoval?: boolean
     /** Holds every removal of the skill until `holds.skillRemoval` is released. */
     holdSkillRemoval?: boolean
+    /** Makes every removal of the skill fail (after its hold, when one is set), as a storage that answers late with a refusal. */
+    failSkillRemoval?: boolean
     /** Holds the first write of the saved setup that is not a provisional one (a take-back's restore, a removal's clear) until `holds.savedSetupWrite` is released; the writes after it are not held. */
     holdSavedSetupWrite?: boolean
     /** Makes the write held by `holdSavedSetupWrite` fail once it is released, as a storage that answers late with a failure. */
@@ -543,6 +545,8 @@ async function devinWindow(
         removeManagedDevinSkill: async () => {
           steps.push('remove Devin skill')
           if (options.holdSkillRemoval) await holds.skillRemoval.wait()
+          if (options.failSkillRemoval)
+            throw new Error('Injected skill removal failure')
           return { status: 'removed' }
         },
       },
@@ -4409,6 +4413,56 @@ test('a folder change whose clear of the saved Devin setup fails after storage a
         actions: [],
       },
     ])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a Remove Devin Desktop Setup whose skill step waits on storage and then fails shows that failure as a warning once storage answers, as its pending warning promised that it shows its result, and the Output keeps its line (Cycle 0146 task 26); fails_when=the late failure only reaches the Output, so the learner never learns that the removal ended without removing anything; no_claim=a late success (the hold cases above) and a setup's late failure (its own warning); the held stand-in skill removal stands for the stalled storage, then throws
+test('a Devin removal whose skill step waits on storage and then fails shows that failure as a warning once storage answers', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    confirmRemoval: true,
+    holdSkillRemoval: true,
+    failSkillRemoval: true,
+  })
+  try {
+    await window.whenReconnected()
+    const removalOutcome = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      16_000,
+    )
+    // Act
+    window.holds.skillRemoval.release()
+    await waitUntil(
+      () => window.notices.length === 2,
+      "the removal's late failure warning",
+    )
+    // Assert
+    assert.equal(removalOutcome, 'resolved')
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'warning',
+        message:
+          "Codebook's removal of the Devin Desktop setup is still waiting on storage (skill) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+        actions: [],
+      },
+      {
+        severity: 'warning',
+        message: 'Injected skill removal failure',
+        actions: [],
+      },
+    ])
+    assert.equal(
+      window.outputLines.includes(
+        "Codebook's removal of the Devin Desktop setup ended after storage answered: Injected skill removal failure",
+      ),
+      true,
+    )
   } finally {
     await window.loaded.deactivate()
   }

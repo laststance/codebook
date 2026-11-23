@@ -1917,15 +1917,16 @@ export function activate(
         .join(' '),
     )
   }
-  /** Tells how a Devin Desktop setup that answered its command early ended in failure: always in the Output, and as a warning when the command answered before the failure (its step waited on storage), because the learner has not read that failure yet; a take-back's command already named it. @param firstLapse - The lapse the command answered with. @param error - What the setup ended with. @example reportLateDevinSetupFailure({ kind: 'setup', step: 'skill' }, error) */
-  const reportLateDevinSetupFailure = (
+  /** Tells how a Devin Desktop setup or removal that answered its command early ended in failure: always in the Output, and as a warning when the command answered before the failure (a setup's or removal's step waited on storage), because the learner has not read that failure yet, while the pending sentence promised the result; a take-back's command already named it. Called by {@link performDevinSetup} and {@link removeDevinSetup} once the run that answered early rejected. @param firstLapse - The lapse the command answered with. @param error - What the run ended with. @example reportLateDevinFailure({ kind: 'removal', step: 'skill' }, error) */
+  const reportLateDevinFailure = (
     firstLapse: DevinLapse,
     error: unknown,
   ): void => {
     diagnostics.info(
       devinLateFailureLine(firstLapse.kind, thrownMessage(error)),
     )
-    if (firstLapse.kind === 'setup')
+    // A take-back's answer named the failure already.
+    if (firstLapse.kind !== 'take-back')
       void showNotice('warning', thrownMessage(error))
   }
   /** Sets up Devin Local in this window: the bundled skill in Devin's user skill folder, the agent server, and Codebook's receipted entry in Devin's user MCP config, all under one lock; called by {@link setupAiChat} in Devin Desktop. A step that outlasts its budget answers the command with the step that waits (after the failure, for a take-back), and the setup's end follows once storage answers. @example await performDevinSetup() */
@@ -1945,7 +1946,7 @@ export function activate(
     }
     // The setup's own end comes once storage answers: its ready notice, or its failure.
     void answer.run.then(offerDevinSetupReady, (error: unknown) =>
-      reportLateDevinSetupFailure(answer.lapse, error),
+      reportLateDevinFailure(answer.lapse, error),
     )
     throw new Error(
       [
@@ -2145,9 +2146,9 @@ export function activate(
       }
       const pending = devinRemovalPendingNotice(progress, answer.lapse.step)
       void showNotice(pending.severity, pending.text)
-      // The removal's own notice follows once storage answers; a failure then has no command left to show it.
+      // The removal's own notice follows once storage answers, or its failure as a warning: the pending warning promised its result.
       void answer.run.then(showDevinRemovalNotice, (error: unknown) =>
-        diagnostics.info(devinLateFailureLine('removal', thrownMessage(error))),
+        reportLateDevinFailure(answer.lapse, error),
       )
     })()
     devinRemoval = attempt
