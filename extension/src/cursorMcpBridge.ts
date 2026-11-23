@@ -20,6 +20,7 @@ import {
   CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS,
   EXTENSION_VERSION,
 } from './constants'
+import { BRIDGE_INPUT_CLOCK } from './utils/bridgeInputClock'
 import { holdBridgeInput, type BridgeInputHold } from './utils/holdBridgeInput'
 import {
   readBridgeDescriptor,
@@ -30,14 +31,18 @@ import { runUnderAbortSignal } from './utils/runUnderAbortSignal'
 /** The error of a request refused because the bridge's stop began, and the reason its stop signal carries. */
 const BRIDGE_CLOSED_SENTENCE = 'Codebook Cursor MCP bridge has closed.'
 
+/** The error of a handshake that did not finish within its time limit. */
+const HANDSHAKE_TIMEOUT_SENTENCE = 'Codebook connection did not finish in time.'
+
 /**
  * Connects `client` over `http` and bounds the whole handshake (initialize, then the initialized notification) by `timeoutMs`, and ends the wait at once when the bridge's stop begins; called by {@link runCursorMcpBridge} for its first connection and for every reconnect.
  * The bundled SDK applies its `timeout` to the initialize request alone, so a server that answers initialize and then holds the notification would otherwise keep the bridge waiting past its deadline. The SDK is not given `stop`: the handshake keeps running until the caller closes the client.
+ * A handshake that completes only after `timeoutMs`, before the limit's timer ran (Node runs a due timer only on a later turn of its event loop), did not finish in time either: it is measured on {@link BRIDGE_INPUT_CLOCK}, the clock {@link BridgeInputHold.settleHandshake} judges the same limit on, so a first handshake past its own limit keeps that limit's outcome against the wait at the startup input limit (Cycle 0147 review round).
  * @param client - The MCP client to connect.
  * @param http - The HTTP transport to the instance.
  * @param timeoutMs - The budget for the complete handshake; the SDK's own request timeout applies when left out.
  * @param stop - The bridge's stop signal; once it fires, the wait ends with its reason.
- * @throws When the handshake fails or does not finish in time; with `stop`'s reason when the stop began before or during it. The caller closes the client.
+ * @throws When the handshake fails or does not finish in time, also when it completed after `timeoutMs`; with `stop`'s reason when the stop began before or during it. The caller closes the client.
  * @example
  * await connectWithin(client, http, 3_000, stopping.signal)
  */
@@ -50,17 +55,21 @@ async function connectWithin(
   if (timeoutMs === undefined)
     return runUnderAbortSignal(() => client.connect(http), stop)
   const timer = new AbortController()
+  const startedAtMs = BRIDGE_INPUT_CLOCK.now()
   try {
     await runUnderAbortSignal(
       () =>
         Promise.race([
           client.connect(http, { timeout: timeoutMs }),
           sleep(timeoutMs, undefined, { signal: timer.signal }).then(() => {
-            throw new Error('Codebook connection did not finish in time.')
+            throw new Error(HANDSHAKE_TIMEOUT_SENTENCE)
           }),
         ]),
       stop,
     )
+    // A continuation that ran past the limit before its timer did: the handshake still did not finish in time.
+    if (BRIDGE_INPUT_CLOCK.now() - startedAtMs >= timeoutMs)
+      throw new Error(HANDSHAKE_TIMEOUT_SENTENCE)
   } finally {
     timer.abort()
   }

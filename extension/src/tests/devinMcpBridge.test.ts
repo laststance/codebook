@@ -5380,6 +5380,71 @@ test(
   },
 )
 
+// Value: protects=the Devin bridge's own answer and exit code 1, with no connected line and its session released, when its first handshake completes only after its own time limit and then the wait at its startup input limit ended, before that time limit's timer ran, as on a busy event loop (Cycle 0147 review round, CodeRabbit holdBridgeInput.ts:169); fails_when=a connection completed past its time limit is accepted (the settlement counts it as ended at that limit, before the wait's end), so the bridge serves a connection that finished within neither bound and writes its connected line; no_claim=a completion within its time limit after the wait ended (a stop: the Cursor bridge test), the real clock's timing
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a Devin bridge whose first handshake completes only after its own time limit and then the wait at its startup input limit ended serves nothing and still says Codebook is not running, with exit code 1',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    let heldNotification: ServerResponse | undefined,
+      releases = 0
+    const inputClock = await handMovedInputClock(context)
+    const { bridge } = await launchDevinBridge(context, {
+      preloadSource: bridgeStopMarksPreload() + inputClock.preloadSource,
+      decide: async (
+        method,
+        _initializes,
+        httpMethod,
+        _session,
+        _isGone,
+        out,
+      ) => {
+        if (httpMethod === 'DELETE') releases += 1
+        if (method !== 'notifications/initialized') return undefined
+        // Answered by the test once both bounds have passed.
+        heldNotification = out
+        return 'answered'
+      },
+    })
+    const notification = await waitUntil(
+      () => heldNotification,
+      "the first attempt's initialized notification held",
+      15_000,
+      undefined,
+      5,
+    )
+    // The attempt's time limit ends at most 15 s of the input clock after its hold began at 0; the limit is reached at 12 s, so the wait ends at 17 s.
+    await inputClock.advance(bridge, 12_000)
+    bridge.write('x'.repeat(1_048_576))
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // Both have passed, the time limit first, and neither the time limit's timer nor the wait has run.
+    await inputClock.advance(bridge, 6_000, { runsDueWaits: false })
+    // Act
+    notification.writeHead(202)
+    notification.end()
+    const exitCode = await within(bridge.exited, 20_000)
+    // Assert
+    const stderr = bridge.readStderr()
+    assert.equal(exitCode, 1)
+    assert.equal(
+      stderr.includes(
+        `Codebook is not running for ${await realpath(bridge.directory)} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
+      ),
+      true,
+    )
+    assert.equal(stderr.includes('Codebook bridge: instance'), false)
+    assert.equal(bridge.counts.initializes, 1)
+    assert.equal(releases, 1)
+  },
+)
+
 // Value: protects=runDevinMcpBridge ending with no refusal, no connected line and no second attempt, after calling its onClosed once, when a signal stops the first handshake, also for a caller whose onClosed returns instead of ending the process (Cycle 0146 /ship pass 1, Codex review of the FB design); fails_when=connectOnce treats the stopped connection as connected (writes the connected line) or as a failed one (tries again, then returns a refusal line), or onClosed runs twice or never; no_claim=the bridge entry's process exit (the child-process tests above)
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(

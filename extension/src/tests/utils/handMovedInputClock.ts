@@ -14,7 +14,7 @@ interface ClockedBridgeChild {
 
 /** The input clock of a bridge child process that a test moves by hand, as {@link handMovedInputClock} makes it. */
 interface HandMovedInputClock {
-  /** Source of a preload, appended to {@link bridgeStopMarksPreload}, that replaces the members of the child's {@link BRIDGE_INPUT_CLOCK}: its time stands at 0 until `advance` moves it, and the wait it armed at the startup input limit runs only from `advance`. */
+  /** Source of a preload, appended to {@link bridgeStopMarksPreload}, that replaces the members of the child's {@link BRIDGE_INPUT_CLOCK}: its time, which the wait at the startup input limit and the check of a completed handshake against its own time limit read, stands at 0 until `advance` moves it, and the wait it armed at the startup input limit runs only from `advance`. */
   preloadSource: string
   /**
    * Moves the child's input clock forward and resolves once the child marked it (`INPUT_CLOCK_ADVANCED <n>` on stderr, after every wait it ran).

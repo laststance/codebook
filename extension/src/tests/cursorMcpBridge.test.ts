@@ -1379,6 +1379,54 @@ test(
   },
 )
 
+// Value: protects=Cursor's bridge ending as a stop with exit code 0, its first session released, when its first handshake comes up only after the wait at its startup input limit ended but before that wait's timer ran (a busy event loop), so it never hands Cursor's stdin to a server it already marked closed (Cycle 0147 review round, OCR lens 4 cursorMcpBridge.ts:268); fails_when=the late success is accepted because the settlement's answer is ignored or the stop it began is not raised, so the bridge serves while closed: it keeps running and releases no session; no_claim=the real clock's timing (the child's input clock is moved by hand), a late failure (the hold's unit test of the settlement)
+// Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
+test(
+  'Cursor stdio bridge whose first handshake comes up only after the wait at its startup input limit ended, before that wait ran, ends with exit code 0 and asks the server to end the session it named',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    let heldNotification: ScriptedRequest | undefined
+    const endpoint = await startScriptedEndpoint(context, (request) => {
+      if (request.method !== 'notifications/initialized') return false
+      // Answered by the test once the wait at the limit has ended.
+      heldNotification = request
+      return true
+    })
+    const inputClock = await handMovedInputClock(context)
+    const bridge = await startCursorBridgeChild(
+      endpoint,
+      bridgeStopMarksPreload() + inputClock.preloadSource,
+    )
+    bridge.sendInitialize()
+    const notification = await waitUntil(
+      () => heldNotification,
+      'the first initialized notification held',
+      10_000,
+      undefined,
+      5,
+    )
+    bridge.write('x'.repeat(1_048_576))
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // The wait at the limit has ended and its timer has not run, as on a busy event loop.
+    await inputClock.advance(bridge, 5_000, { runsDueWaits: false })
+    // Act
+    notification.outgoing.writeHead(202)
+    notification.outgoing.end()
+    const exitCode = await within(bridge.exited, 5_000)
+    // Assert
+    assert.equal(exitCode, 0)
+    assert.equal(requestsOf(endpoint.received, 'DELETE', 'session-1').length, 1)
+    assert.equal(bridge.readStderr().includes('could not connect'), false)
+  },
+)
+
 // Value: protects=a prompt end of Cursor's bridge, without an initialized notification, when Cursor closes it while the server has not answered its first initialize at all (Cycle 0146 /ship pass 1, outside-voice 9); fails_when=the bridge waits for the SDK's 60 s initialize timeout, then prints that it could not connect; no_claim=a session the server may have opened for that initialize (no answer named one, so the bridge has no id to release; the server closes idle sessions itself)
 // Windows reports 0o666 for every file, so the private-file check refuses before the connection this test reaches.
 test(
