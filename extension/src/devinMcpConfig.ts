@@ -275,7 +275,11 @@ function changedWhileWorking({ path, retry }: Context): Error {
   )
 }
 
-/** The refusal for a copy of the config that Codebook kept and cannot settle: it stays where it is, named here. A config may stand at the config path meanwhile (an editor's save, or a file another program put there) and hold settings the copy never had, so the copy goes back only to an empty config path; otherwise the learner moves only the settings they need, never the copy over the config. */
+/** What a refusal that names a private file beside a config that may stand asks the learner ({@link leftCopyRefusal}, {@link otherInodeRefusal}): a config there may hold settings that file never had, so the file goes back only to an empty config path; otherwise the learner moves only the settings they need, never that file over the config. */
+const LEFT_COPY_ADVICE =
+  'look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere'
+
+/** The refusal for a copy of the config that Codebook kept and cannot settle: it stays where it is, named here. A config may stand at the config path meanwhile (an editor's save, or a file another program put there) and hold settings the copy never had, so the copy goes back only to an empty config path; otherwise the learner moves only the settings they need, never the copy over the config ({@link LEFT_COPY_ADVICE}). */
 function leftCopyRefusal(
   { path, retry }: Context,
   copyPath: string,
@@ -284,7 +288,7 @@ function leftCopyRefusal(
   return refusal(
     `a copy of your config that Codebook kept at ${copyPath} and could not settle`,
     path,
-    'look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere',
+    LEFT_COPY_ADVICE,
     retry,
     cause,
   )
@@ -2289,7 +2293,7 @@ async function lookAtLeftover(
     isEmptyOrSameFile(context.path, copy.ino)
   )
     return { kind: 'found', copy }
-  // A file under a Codebook name that is not the inode Codebook recorded is somebody else's; the displaced one is named with the way to get it back.
+  // A file under a Codebook name that is not the inode Codebook recorded is somebody else's; the displaced one is named with {@link LEFT_COPY_ADVICE}, which never moves it over the config that stands.
   throw leftover.role === 'kept'
     ? otherInodeRefusal(context, leftover.path)
     : journalRefusal(context)
@@ -2540,13 +2544,13 @@ function isHandedCause(cause: unknown): boolean {
   )
 }
 
-/** The refusal for a displaced file that has another inode than the record says while a config stands at the config name: it may be a newer save of the learner's, so nothing is moved or deleted and the record stays. */
+/** The refusal for a displaced file that has another inode than the record says while a config stands at the config name: it may be a newer save of the learner's, so nothing is moved or deleted and the record stays. The config that stands may hold settings that file never had, so the advice is {@link leftCopyRefusal}'s ({@link LEFT_COPY_ADVICE}), never to move that file over the config. */
 function otherInodeRefusal(
   { path, pendingPath, retry }: Context,
   copyPath: string,
 ): Error {
   return new Error(
-    `Codebook's Devin Desktop MCP record at ${pendingPath} names a private file at ${copyPath} that is not the config Codebook moved aside (it may be a newer save of yours) while another config stands at ${path}, so nothing was moved or deleted; to get that file back move it over the config, or delete it, then remove that record, ${retry}.`,
+    `Codebook's Devin Desktop MCP record at ${pendingPath} names a private file at ${copyPath} that is not the config Codebook moved aside (it may be a newer save of yours) while another config stands at ${path}, so nothing was moved or deleted; ${LEFT_COPY_ADVICE}, then remove that record, ${retry}.`,
   )
 }
 

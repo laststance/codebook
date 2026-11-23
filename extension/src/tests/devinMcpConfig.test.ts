@@ -1340,8 +1340,8 @@ test('Recovery refuses a pending record that names a bare file Codebook does not
   assert.deepEqual(await leftoversBeside(configPath), ['notes.txt'])
 })
 
-test('Recovery refuses a displaced file with another inode than the record says while a config stands, names it with the way back and keeps the record', async (context) => {
-  // Value: protects=a file under a Codebook name with another inode is never deleted or moved over a standing config, and the learner learns where it is and how to get it back; fails_when=the file is touched, the refusal omits its path or the record is dropped; why_new=recovery compared bytes only and the refusal said only to remove the record; seam=hand-written pending record with an inode that is not the file's, beside a standing config
+test('Recovery refuses a displaced file with another inode than the record says while a config stands, names it, keeps the record and never advises moving it over that config', async (context) => {
+  // Value: protects=a file under a Codebook name with another inode is never deleted or moved over a standing config, and the learner learns where it is and is asked to compare both files and move only the settings they need instead of moving that file over the config that stands; fails_when=the file is touched, the refusal omits its path, gives any other sentence (the move-it-over-the-config advice included) or the record is dropped; no_claim=what the learner then does, and what a later run does once the record is removed; why_new=recovery compared bytes only and the refusal said only to remove the record; seam=hand-written pending record with an inode that is not the file's, beside a standing config
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"theme":"standing config"}\n')
@@ -1361,9 +1361,12 @@ test('Recovery refuses a displaced file with another inode than the record says 
 
   // Assert
   await assert.rejects(attempt, (error: Error) => {
-    assert.match(error.message, /record at .*pending\.json/)
-    assert.ok(error.message.includes(keptPath))
-    assert.match(error.message, /move it over the config/)
+    assert.equal(
+      error.message,
+      `Codebook's Devin Desktop MCP record at ${join(storage, 'devin-mcp', 'pending.json')} names a private file at ${keptPath} that is not the config Codebook moved aside (it may be a newer save of yours) while another config stands at ${configPath}, so nothing was moved or deleted; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then remove that record, then run Codebook: Remove Devin Desktop Setup again.`,
+    )
+    // The config that stands holds settings that file never had: no advice may lead to moving that file over it.
+    assert.ok(!error.message.includes('move it over the config'), error.message)
     return true
   })
   assert.equal(await readFile(keptPath, 'utf8'), '{"theme":"dark"}\n')
