@@ -2676,7 +2676,7 @@ test(
   },
 )
 
-// protects=receipt reads of a stalled disk not piling up: one timed-out check holds three file reads and a request that comes while it hangs fails at once without starting any (Cycle 0145 /ship pass 1, FX6 item 3; CodeRabbit final-range F4; Codex last-round O5); fails_when=a second hanging check is allowed, so two checks hold six file reads, more than libuv's four pool threads; no_claim=how long a real stalled read takes to settle
+// Value: protects=receipt reads of a stalled disk not piling up: one timed-out check holds three file reads and a request that comes while it hangs fails at once without starting any (Cycle 0145 /ship pass 1, FX6 item 3; CodeRabbit final-range F4; Codex last-round O5); fails_when=a second hanging check is allowed, so two checks hold six file reads, more than libuv's four pool threads; no_claim=how long a real stalled read takes to settle
 test(
   'requests that time out one after another on a stalled disk start only three file reads',
   { timeout: 30_000 },
@@ -4170,7 +4170,7 @@ test(
   },
 )
 
-// protects=a Devin bridge ending with the not-set-up line when the server refuses the reconnect handshake (403) after an expired session, not staying up for a removed setup (Cycle 0145 /ship pass 1, p1/outside-voice#7); fails_when=only the first forwarded request runs the refusal check, so a 403 on the new session's initialize reaches the caller with no check and no exit; no_claim=the 403 of a first request (the test above)
+// Value: protects=a Devin bridge ending with the not-set-up line when the server refuses the reconnect handshake (403) after an expired session, not staying up for a removed setup (Cycle 0145 /ship pass 1, p1/outside-voice#7); fails_when=only the first forwarded request runs the refusal check, so a 403 on the new session's initialize reaches the caller with no check and no exit; no_claim=the 403 of a first request (the test above)
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose reconnect handshake is refused with 403 after the setup was removed ends with the not-set-up line',
@@ -4195,7 +4195,7 @@ test(
   },
 )
 
-// protects=a Devin bridge ending with the not-set-up line when the single replay after a reconnect is refused with 403 (Cycle 0145 /ship pass 1, p1/outside-voice#7); fails_when=the replay escapes the refusal handling, so the caller gets the 403 and the bridge stays up for a removed setup; no_claim=a refused request being sent a third time (it never is)
+// Value: protects=a Devin bridge ending with the not-set-up line when the single replay after a reconnect is refused with 403 (Cycle 0145 /ship pass 1, p1/outside-voice#7); fails_when=the replay escapes the refusal handling, so the caller gets the 403 and the bridge stays up for a removed setup; no_claim=a refused request being sent a third time (it never is)
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose replayed request is refused with 403 after the setup was removed ends with the not-set-up line',
@@ -4220,7 +4220,7 @@ test(
   },
 )
 
-// protects=the refusal line and exit code 1 of a Devin bridge whose stdin closes while its 403 receipt check is still reading (Cycle 0145 /ship pass 1, Codex structured P1 shutdown); fails_when=shutdown waits only for a reconnect, so the process exits 0 before the check wrote its line; no_claim=a refusal after the bridge ended
+// Value: protects=the refusal line and exit code 1 of a Devin bridge whose stdin closes while its 403 receipt check is still reading (Cycle 0145 /ship pass 1, Codex structured P1 shutdown); fails_when=shutdown waits only for a reconnect, so the process exits 0 before the check wrote its line; no_claim=a refusal after the bridge ended
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose stdin closes while the 403 setup check is reading still ends with exit code 1 and the not-set-up line',
@@ -4264,7 +4264,7 @@ fsPromises.open = async (path, ...rest) => {
   },
 )
 
-// protects=the refusal line and exit code 1 of a Devin bridge whose request is answered 403 while its upstream session is being released after stdin closed (Cycle 0145 final-range review, CodeRabbit final-range F3); fails_when=shutdown drains only the refusal checks present when stdin closed, so the check this 403 starts is not awaited and the process ends before its line with exit code 0; no_claim=a refusal that arrives after the upstream is released
+// Value: protects=the refusal line and exit code 1 of a Devin bridge whose request is answered 403 while its upstream session is being released after stdin closed (Cycle 0145 final-range review, CodeRabbit final-range F3); fails_when=shutdown drains only the refusal checks present when stdin closed, so the check this 403 starts is not awaited and the process ends before its line with exit code 0; no_claim=a refusal that arrives after the upstream is released
 // Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
 test(
   'a connected bridge whose request is answered 403 during the session release after stdin closed still ends with exit code 1 and the not-set-up line',
