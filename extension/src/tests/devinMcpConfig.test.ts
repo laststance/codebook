@@ -4691,6 +4691,39 @@ test('A setup that cannot delete the unchanged moved-aside copy warns that Codeb
   assert.equal(existsSync(copyPath), false)
 })
 
+test('A setup keeps and names the moved-aside copy when a writer that still holds the previous config saves a change of the same length into it right before Codebook would delete it', async (context) => {
+  // Value: protects=the last look before the moved-aside copy is deleted also compares the nanosecond times the comparison read through the open handle, so an in-place save that keeps the inode and the size after that comparison keeps the copy with the saved bytes and names it; fails_when=the copy is deleted, its bytes change, or the notice omits its path or does not leave the copy to the learner; no_claim=a real editor (seam.beforeLeftoverCheck rewrites the copy in place once, with as many bytes, right before that last look), a save between that last look and the unlink (the documented gap), and a clock that stamps the save with the mtime the copy already had (the config's mtime is set to 2020 first)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  // Any later write changes the mtime, also where the clock ticks coarsely.
+  utimesSync(configPath, new Date(2020, 0, 1), new Date(2020, 0, 1))
+  const savedText = '{"mcpServers":{"alpha":{"command":"b"}}}\n'
+  let copyPath = ''
+  let isSaved = false
+
+  // Act
+  const setup = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== copyPath || isSaved) return
+      isSaved = true
+      writeFileSync(copyPath, savedText)
+    },
+  })
+
+  // Assert
+  assert.equal(isSaved, true)
+  assert.equal(setup.status, 'installed')
+  assert.equal(
+    setup.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely; delete it when you no longer need it.`,
+  )
+  assert.equal(readFileSync(copyPath, 'utf8'), savedText)
+})
+
 test('A first setup whose handed record hit a full disk after a writer changed the copy at its last look warns that Codebook still tracks that copy, which the next run deletes once the previous bytes are back', async (context) => {
   // Value: protects=a copy whose name changed at the last look and whose handover could not be recorded goes through the same keep-out step as a changed copy, so it is named with the warning while the completed record still holds its inode; fails_when=the notice advises deleting at will or omits the path, or the next run keeps the copy once its bytes are back; no_claim=a real writer (seam.beforeLeftoverCheck appends to the copy in place once, after the comparison) and a real ENOSPC (seam.beforeRecordWrite fails only the handed record)
   // Arrange

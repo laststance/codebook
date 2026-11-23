@@ -852,14 +852,14 @@ function isExpectedCopy(
   return copy.sha256 === expected.sha256 && copy.ino === expected.ino
 }
 
-/** The displaced copy as it was read through its open handle: the bytes' hash, the inode, and the size and times that a later write to the same file changes. */
+/** The displaced copy as it was read through its open handle: the bytes' hash, the inode, and the size and times (nanoseconds) that a later write to the same file changes; the last look at its name before the delete compares them too ({@link lookAtComparedName}), so an in-place write that keeps the inode and the size is seen there. */
 export type HeldCopy = {
   handle: FileHandle
   sha256: string
   ino: bigint
   size: bigint
-  mtimeMs: bigint
-  ctimeMs: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
 }
 
 /** The open displaced copy and the permission bits that very file had before Codebook made it private; only that inode ever gets them back. `isShared` is set when another name reached the file by the time it was opened: its mode was then left alone. */
@@ -916,8 +916,8 @@ export async function readHeld(handle: FileHandle): Promise<HeldCopy> {
     DEVIN_MCP_CONFIG_LIMIT_BYTES,
   )
   if (!bytes) throw unsaneCopyError()
-  const { ino, size, mtimeMs, ctimeMs } = status
-  return { handle, sha256: bytesSha256(bytes), ino, size, mtimeMs, ctimeMs }
+  const { ino, size, mtimeNs, ctimeNs } = status
+  return { handle, sha256: bytesSha256(bytes), ino, size, mtimeNs, ctimeNs }
 }
 
 /**
@@ -931,8 +931,8 @@ export async function didCopyChange(held: HeldCopy): Promise<boolean> {
     const now = await held.handle.stat({ bigint: true })
     if (
       now.size !== held.size ||
-      now.mtimeMs !== held.mtimeMs ||
-      now.ctimeMs !== held.ctimeMs
+      now.mtimeNs !== held.mtimeNs ||
+      now.ctimeNs !== held.ctimeNs
     )
       return true
     // Size and times can be equal after a same-size write within one tick: only the bytes tell.
@@ -1108,14 +1108,14 @@ function copyAsItStands(
 }
 
 /**
- * Looks at the displaced name right before {@link discardDisplaced} deletes it: the held handle proves the compared file, not the name.
- * Limit: a swap between this look and the unlink is not seen; no Node primitive unlinks by inode.
+ * Looks at the displaced name right before {@link discardDisplaced} deletes it: the held handle proves the compared file, not the name, and the size and times of the comparison's read show an in-place write since then.
+ * Limit: a swap or a write between this look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run; its seam is called around the look ({@link isLeftoverStill}).
  * @param displacedPath - The private name of the displaced copy.
  * @param held - The copy as it was compared.
  * @returns
- * - `held` when the name shows the compared inode and size;
- * - `changed` when it is gone or shows another file or size;
+ * - `held` when the name shows the compared inode with its size and times;
+ * - `changed` when it is gone or shows another file, size or times;
  * - `unknown` when the look throws (EIO, EACCES), which proves nothing.
  * @example
  * lookAtComparedName(context, displacedPath, held) // => 'held'
