@@ -199,6 +199,8 @@ async function devinWindow(
     holdSkillRemoval?: boolean
     /** Holds the first write of the saved setup that is not a provisional one (a take-back's restore, a removal's clear) until `holds.savedSetupWrite` is released; the writes after it are not held. */
     holdSavedSetupWrite?: boolean
+    /** Makes the write held by `holdSavedSetupWrite` fail once it is released, as a storage that answers late with a failure. */
+    failHeldSavedSetupWrite?: boolean
     /** Holds every descriptor rewrite that removes the mark (a take-back's sync, a removal's unmark) until `holds.descriptorUnmark` is released, then runs the real rewrite. */
     holdDescriptorUnmark?: boolean
     /** Holds every descriptor rewrite that sets the mark (a setup's mark, a sync that keeps a mark) until `holds.descriptorMark` is released, then runs the real rewrite. */
@@ -840,6 +842,8 @@ async function devinWindow(
           ) {
             isSavedSetupWriteHeld = true
             await holds.savedSetupWrite.wait()
+            if (options.failHeldSavedSetupWrite)
+              throw new Error('Injected late workspace state write failure')
           }
         }
         // The committed value is written last: a test seam runs just before it lands.
@@ -4315,6 +4319,96 @@ test("a Devin removal that refused while a setup still runs leaves that setup's 
       removalOutcome,
       'Codebook is still setting up Devin Desktop because storage does not answer. Run Codebook: Remove Devin Desktop Setup again once it finishes, or reload the window.',
     )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a change of the workspace's folders whose clear of the saved Devin setup waits on a storage that stops answering still stops the old folder's server and lets Codebook: Start Agent Server start one for the new folder, and the clear still lands once storage answers (Cycle 0146 task 16); fails_when=the handling of the folder change waits for that clear, so the old server keeps running and the new folder's start waits for ever; no_claim=the order of the clear after a take-back's restore (the restore test above) and the notice of a clear that fails (the next test); the held stand-in write stands for the stalled storage
+test("a folder change whose clear of the saved Devin setup waits on storage still stops the old server and lets the new folder's server start", async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    holdSavedSetupWrite: true,
+  })
+  try {
+    await window.whenReconnected()
+    await waitUntil(
+      window.descriptorReadable,
+      "the reconnect's connection descriptor",
+    )
+    // Act
+    window.changeFolder('/other/folder')
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the folder change's clear of the saved setup",
+    )
+    const startOutcome = await within(
+      window.commands.get('codebook.startAgentServer')!().then(
+        () => 'started',
+        (error: Error) => error.message,
+      ),
+      5_000,
+    )
+    const descriptorsWhileHeld = await window.descriptorNames()
+    const savedWhileHeld = window.state.get('codebook.aiChatSetup')
+    window.holds.savedSetupWrite.release()
+    await waitUntil(
+      () => window.state.get('codebook.aiChatSetup') === undefined,
+      "the folder change's clear of the saved setup to land",
+    )
+    // Assert
+    assert.equal(startOutcome, 'started')
+    assert.deepEqual(descriptorsWhileHeld, [
+      `instance-2${CONNECTION_DESCRIPTOR_SUFFIX}`,
+    ])
+    assert.deepEqual(savedWhileHeld, { workspace: window.directory })
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a folder change whose clear of the saved Devin setup waits on storage and then fails still lets the new folder's server start meanwhile, and tells that late failure in a cleanup notice of its own once storage answered (Cycle 0146 task 16); fails_when=the late failure is lost because the handling's notice was already decided, or the handling waits for the clear; no_claim=a clear that fails at once (it joins the handling's one notice); the held stand-in write stands for the stalled storage, then fails
+test('a folder change whose clear of the saved Devin setup fails after storage answered late tells that failure in its own notice', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    holdSavedSetupWrite: true,
+    failHeldSavedSetupWrite: true,
+  })
+  try {
+    await window.whenReconnected()
+    window.changeFolder('/other/folder')
+    await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      "the folder change's clear of the saved setup",
+    )
+    const startOutcome = await within(
+      window.commands.get('codebook.startAgentServer')!().then(
+        () => 'started',
+        (error: Error) => error.message,
+      ),
+      5_000,
+    )
+    const noticesWhileHeld = structuredClone(window.notices)
+    // Act
+    window.holds.savedSetupWrite.release()
+    await waitUntil(
+      () => window.notices.length > 0,
+      "the notice of the clear's late failure",
+    )
+    // Assert
+    assert.equal(startOutcome, 'started')
+    assert.deepEqual(noticesWhileHeld, [])
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'error',
+        message:
+          "Codebook did not finish its cleanup after the workspace's folders changed. The saved AI chat setup could not be cleared: Injected late workspace state write failure. It is still in use; run Codebook: Set Up AI Chat to replace it. Codebook goes on with new readers.",
+        actions: [],
+      },
+    ])
   } finally {
     await window.loaded.deactivate()
   }

@@ -1027,8 +1027,28 @@ export function activate(
     }
   }
   /**
+   * Clears this window's saved AI chat setup for a change of the workspace's folders, in its turn of {@link inSavedSetupQueue}, so a Devin take-back's restore that started before it never lands after it; called first by {@link replaceReadersAfterFolderChange}, which does not wait for it, so a write that storage does not answer never holds the stop of the old folder's server, the new readers or the next start.
+   * @returns Reads the clear's failure for the handling's notice once the handling's other steps ran: the failure when the clear failed by then, none when it ended or still waits; a clear that fails after that read is told in a notice of its own.
+   * @example const clearFailures = clearSavedSetupForFolderChange(); await stop(); const failures = [...clearFailures()]
+   */
+  const clearSavedSetupForFolderChange =
+    (): (() => FolderChangeCleanupFailure[]) => {
+      let failure: FolderChangeCleanupFailure | undefined
+      let isRead = false
+      void writeSavedSetup(() => undefined).catch((thrown: unknown) => {
+        failure = { step: 'chat-setup', thrown }
+        // The handling's notice was shown without it: this failure gets its own.
+        if (isRead)
+          void showNotice('error', folderChangeCleanupNotice([failure]))
+      })
+      return (): FolderChangeCleanupFailure[] => {
+        isRead = true
+        return failure ? [failure] : []
+      }
+    }
+  /**
    * Handles one change of the workspace's folders: clears the saved AI chat setup, stops the agent server, closes both readers and the DeepWiki reader, and makes both readers anew; called by the folders' listener, one change after the one before it.
-   * Every step runs whatever the step before it did. A step that threw used to end the handling: after a stop or a Repository Wiki reader that failed, that reader stayed in its variable, disposed, so every later start failed with "Repository reader is disposed.", and the Study reader of the folders that were left stayed in use. The failures are told together in one notice ({@link folderChangeCleanupNotice}).
+   * The clear of the saved setup is queued first and not waited for ({@link clearSavedSetupForFolderChange}). Every step runs whatever the step before it did. A step that threw used to end the handling: after a stop or a Repository Wiki reader that failed, that reader stayed in its variable, disposed, so every later start failed with "Repository reader is disposed.", and the Study reader of the folders that were left stayed in use. The failures are told together in one notice ({@link folderChangeCleanupNotice}).
    * A server whose resources could not be released is still owned afterwards and keeps waiting for Stop Agent Server, which retires it on the Study reader made here.
    * @returns Nothing, and it does not reject: a failed step is in the notice.
    * @example replacingReaders = (replacingReaders ?? Promise.resolve()).then(replaceReadersAfterFolderChange)
@@ -1046,8 +1066,8 @@ export function activate(
         failures.push({ step, thrown })
       }
     }
-    // In the queue of the Devin setup's writes, so a take-back's restore that started before it never lands after it.
-    await attempt('chat-setup', () => writeSavedSetup(() => undefined))
+    // In the queue of the Devin setup's writes, so a take-back's restore that started before it never lands after it; not waited for, so a write that storage does not answer never holds the stop and the new readers.
+    const clearFailures = clearSavedSetupForFolderChange()
     const closingWikiReader = deepWikiReader
     deepWikiReader = undefined
     try {
@@ -1078,9 +1098,11 @@ export function activate(
       repository()
     })
     await attempt('wiki-reader', () => closingWikiReader?.close())
+    // The clear of the saved setup comes first, as it was asked for first.
+    const settledFailures = [...clearFailures(), ...failures]
     // The notice stays until the learner closes it, so it is not waited for.
-    if (failures.length)
-      void showNotice('error', folderChangeCleanupNotice(failures))
+    if (settledFailures.length)
+      void showNotice('error', folderChangeCleanupNotice(settledFailures))
   }
   /** Stops the server because the learner or the closing window asked for it, and counts that for a start that waits ({@link awaitReplacedReaders}); the stop a change of the workspace's folders makes on its own way is not counted. Called by Stop Agent Server and by the extension's shutdown. @example registerCommand('codebook.stopAgentServer', stopOnRequest) */
   const stopOnRequest = (): Promise<void> => {
