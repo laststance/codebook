@@ -765,13 +765,14 @@ function didUnlink(path: string): Promise<boolean> {
   )
 }
 
-/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode, and the size and times (nanoseconds) a later look must still see; an in-place write that keeps inode and size changes the times. */
+/** A kept copy as {@link inspectCopy} read it: the bytes' hash, the inode, and the size and times (nanoseconds) a later look must still see; an in-place write that keeps inode and size changes the times. `nlink` is how many names the inode had at that read ({@link dropCheckedName} deletes a name only while another one still reaches the file). */
 type InspectedCopy = {
   sha256: string
   ino: bigint
   size: bigint
   mtimeNs: bigint
   ctimeNs: bigint
+  nlink: bigint
 }
 
 /**
@@ -809,6 +810,7 @@ async function inspectCopy(
       size: status.size,
       mtimeNs: status.mtimeNs,
       ctimeNs: status.ctimeNs,
+      nlink: status.nlink,
     }
   } finally {
     await file.close()
@@ -1944,7 +1946,7 @@ function assertLeftoverStill(
 }
 
 /**
- * Throws when the config name no longer shows the given inode; called right before a leftover name is unlinked while the config name is what makes that safe ({@link tidyLeftover}, {@link putBackDisplaced}).
+ * Throws when the config name no longer shows the given inode; called right before a leftover name is unlinked while the config name is what makes that safe ({@link dropSecondName}, {@link assertConfigStillPublished}).
  * Limit: a swap between this look and the unlink is not seen.
  * @param context - The run.
  * @param ino - The inode the config name must show.
@@ -1968,7 +1970,7 @@ function assertConfigStill(
 class ConfigChangedError extends Error {}
 
 /**
- * Builds the refusal for a config name that changed while a leftover was read or about to be unlinked; called by {@link assertConfigStill}, {@link assertConfigStillPublished} and {@link assertConfigUnchangedSince}, which keep the leftover.
+ * Builds the refusal for a config name that changed while a leftover was read or about to be unlinked; called by {@link assertConfigStill}, {@link assertConfigStillPublished}, {@link assertConfigUnchangedSince} and {@link dropPutBackName}, which keep the leftover.
  * @param context - The run; its config path and retry are named.
  * @param leftoverPath - The private copy that stays.
  * @returns The {@link ConfigChangedError}, not thrown yet: both files stay untouched, and the learner is asked to look at both and never to copy the private file over the config.
@@ -2405,13 +2407,83 @@ async function assertSharedPutBackBytes(
     privateLook.sha256 !== expectedSha256
   )
     throw sharedBytesError(context, path)
-  // Only synchronous looks follow: the config name first, the private name last, right before the unlink.
+  // Synchronous looks follow: the config name first, the private name last, right before that name is dropped.
   if (
     !isLeftoverStill(context, context.path, configLook) ||
     !isLeftoverStill(context, path, privateLook)
   )
     throw sharedBytesError(context, path)
-  await unlink(path)
+  await dropCheckedName(context, path, privateLook, () =>
+    sharedBytesError(context, path),
+  )
+}
+
+/** The end Codebook gives a private name while it drops that name ({@link dropCheckedName}): the name is renamed to `<private name>.codebook-dropping` first, a name no other program uses. */
+const DROPPING_SUFFIX = 'codebook-dropping'
+
+/**
+ * Deletes a private name that is a second name of the config only while it still names the file Codebook checked; called by {@link assertSharedPutBackBytes} and {@link putBackDisplaced} right after their last looks.
+ * The name is renamed first to `<private name>.codebook-dropping` ({@link DROPPING_SUFFIX}), so a file another program swaps in at the private name after the last look moves with the rename instead of being deleted. The moved file is read again and deleted only while it has the checked inode, the checked bytes when they are given, and another name (the config's) that still reaches it; anything else is linked back to the private name, which a link never replaces, and the run refuses.
+ * Limits: a write into the shared file or a save at the config name after that read is not seen (no Node primitive unlinks by inode or content); a stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds.
+ * @param context - The run; its seam is called when the moved file is read.
+ * @param path - The private name to drop.
+ * @param checked - The inode the moved file must have, and the hash of the bytes it must hold when a check read them (a put-back by inode accepts any bytes).
+ * @param refuse - Builds the error thrown once the moved file stands at the private name again.
+ * @throws `refuse()` when the moved file is not the checked one, holds other bytes, cannot be read or is the only name of its file; a {@link PutBackCheckError} naming the moved name when that file cannot go back; what the rename throws (nothing moved then) and what the unlink throws (the file went back first).
+ * @example
+ * await dropCheckedName(context, keptPath, { ino: copy.ino, sha256: pending.keptSha256 }, () => sharedBytesError(context, keptPath))
+ */
+async function dropCheckedName(
+  context: Context,
+  path: string,
+  checked: { ino: bigint; sha256?: string },
+  refuse: () => Error,
+): Promise<void> {
+  const droppingPath = `${path}.${DROPPING_SUFFIX}`
+  await rename(path, droppingPath)
+  const moved = await inspectCopy(droppingPath, context.seam).catch(
+    () => undefined,
+  )
+  // The checked file with the checked bytes, which the config name also reaches: dropping this name loses nothing.
+  const isChecked =
+    moved?.ino === checked.ino &&
+    (checked.sha256 === undefined || moved.sha256 === checked.sha256) &&
+    moved.nlink > 1n
+  if (!isChecked) {
+    await moveBackFromDropping(context, path, droppingPath)
+    throw refuse()
+  }
+  try {
+    await unlink(droppingPath)
+  } catch (error) {
+    await moveBackFromDropping(context, path, droppingPath)
+    throw error
+  }
+}
+
+/**
+ * Puts a file that {@link dropCheckedName} moved to its dropping name back at the private name: a link, which never replaces a file that appeared there meanwhile, then the dropping name goes; called by {@link dropCheckedName}.
+ * @param context - The run; its config path and retry are named when the file cannot go back.
+ * @param path - The private name.
+ * @param droppingPath - The dropping name that holds the moved file.
+ * @throws A {@link PutBackCheckError} (handed) naming the config, the private name and the dropping name when the link fails; the file stays at the dropping name then. A failed unlink of the dropping name after the link is no failure: both names reach the file that stands at the private name.
+ * @example
+ * await moveBackFromDropping(context, keptPath, `${keptPath}.codebook-dropping`)
+ */
+async function moveBackFromDropping(
+  context: Context,
+  path: string,
+  droppingPath: string,
+): Promise<void> {
+  try {
+    await link(droppingPath, path)
+  } catch {
+    throw new PutBackCheckError(
+      `Codebook moved the private file at ${path} to ${droppingPath} to delete that name and could not move it back, because a file stands at ${path} again or the link failed; Codebook left the config at ${context.path}, ${path} and ${droppingPath} as they are, so look at all of them before you use any, and never copy one over the config; ${context.retry}.`,
+      true,
+    )
+  }
+  await unlink(droppingPath).catch(() => undefined)
 }
 
 /** The refusal of {@link assertSharedPutBackBytes}: both paths stay, and the learner is asked to look at both and never to copy one over the other; handed, so no later run deletes either name. It claims no shared file, because it also fires when a name is gone or another file was saved at the config name. */
@@ -2515,8 +2587,8 @@ async function keepOriginalUnlessPublished(
 
 /**
  * Puts the displaced config of an interrupted move-aside back at the config name, even if it is not the bytes that were read; called by {@link tidyLeftover}.
- * The name is looked at again right before the link and before the unlink ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so.
- * Limit: a swap between a look and the syscall after it is not seen.
+ * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted.
+ * Limit: a swap between the look before the link and the link is not seen.
  * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}).
  * @param context - The run.
  * @param leftover - The displaced name and the hash the record holds for it.
@@ -2563,12 +2635,12 @@ async function putBackDisplaced(
     })
     if (!linked || copy.ino !== linked.ino)
       await undoForeignLink(context, path, linked?.ino)
-    if (proof === 'bytes')
-      await assertLinkedBytes(context, path, copy.ino, expectedSha256)
-    // The config name is checked first and the displaced name last, right before the unlink: only the syscall gap after that last look remains.
-    assertConfigStill(context, copy.ino, path)
-    assertLeftoverStill(context, path, { ino: copy.ino })
-    await unlink(path)
+    // A put-back by bytes drops the private name only with the size, times and bytes its check read; a put-back by inode accepts any bytes.
+    const published =
+      proof === 'bytes'
+        ? await assertLinkedBytes(context, path, copy.ino, expectedSha256)
+        : undefined
+    await dropPutBackName(context, path, published ?? { ino: copy.ino })
   } catch (cause) {
     // The unverified record must not outlive the state it describes: also where the run keeps pending.json as it finds it (an unrecorded removal).
     if (proof === 'bytes')
@@ -2583,6 +2655,29 @@ async function putBackDisplaced(
       bytesUnverified: undefined,
     } satisfies Pending).catch(() => undefined)
   return true
+}
+
+/**
+ * Drops the displaced name of a put-back once the file went back to the config name; called by {@link putBackDisplaced}.
+ * Synchronous looks come first, the config name before the displaced name, each against what the put-back last read: for a put-back by bytes the inode, size and times of its check's read, because an in-place write after that read keeps the inode; for a put-back by inode the inode alone. The name then goes only through {@link dropCheckedName}, which also checks the bytes of a put-back by bytes again.
+ * @param context - The run.
+ * @param path - The displaced name; it stays whenever a check fails.
+ * @param checked - What the put-back last read: the config as {@link assertLinkedBytes} read it, or only the linked inode.
+ * @throws A {@link ConfigChangedError} naming both files when the config name changed; the error of {@link assertLeftoverStill} when the displaced name changed; what {@link dropCheckedName} throws, with a {@link sharedBytesError} once the moved file went back.
+ * @example
+ * await dropPutBackName(context, keptPath, { ino: copy.ino })
+ */
+async function dropPutBackName(
+  context: Context,
+  path: string,
+  checked: LeftoverLookback & { sha256?: string },
+): Promise<void> {
+  if (!isLeftoverStill(context, context.path, checked))
+    throw configChangedError(context, path)
+  assertLeftoverStill(context, path, checked)
+  await dropCheckedName(context, path, checked, () =>
+    sharedBytesError(context, path),
+  )
 }
 
 /**
@@ -2664,24 +2759,28 @@ async function rehashBeforeLink(
 /**
  * Checks the file that a put-back just linked to the config name: its inode and bytes must still be the checked ones before the private name is retired; called by {@link putBackDisplaced}.
  * A file that changed in the gap between the last look and the link stays at the private name only: the config name is unlinked again, while it still shows that inode.
- * Limit: a write after this read is not seen.
+ * Limit: a write after this read is not seen here; the caller's last looks compare the size and times this read returns ({@link dropPutBackName}).
  * @param context - The run.
  * @param path - The displaced name; it stays.
  * @param ino - The linked inode.
  * @param expectedSha256 - The recorded hash.
+ * @returns The config as this read saw it: the linked inode with the recorded bytes, and the size and times the last looks before the displaced name goes must still see.
  * @throws When the read fails (an I/O error, the size limit) or the config name shows other bytes or another inode; it names `path`. The config name is taken away only while both names still show the linked inode; otherwise both stay and the error says so.
+ * @example
+ * const published = await assertLinkedBytes(context, keptPath, copy.ino, pending.keptSha256)
  */
 async function assertLinkedBytes(
   context: Context,
   path: string,
   ino: bigint,
   expectedSha256: string | undefined,
-): Promise<void> {
+): Promise<InspectedCopy> {
   // Any failure of this read (an I/O error, a file past the size limit) is as unverified as a hash mismatch and takes the same undo.
   const published = await inspectCopy(context.path, context.seam).catch(
     () => undefined,
   )
-  if (published?.ino === ino && published.sha256 === expectedSha256) return
+  if (published?.ino === ino && published.sha256 === expectedSha256)
+    return published
   // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so. The displaced name is looked at first and the config name last, synchronously right before the unlink: only the syscall gap after that last look remains.
   if (
     !isLeftoverStill(context, path, { ino }) ||

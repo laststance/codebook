@@ -2613,6 +2613,36 @@ test('A content-only put-back cut short before its check names both files and re
   assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
 })
 
+test('A content-only put-back cut short before its check keeps a file that a sync tool swapped in at the private name right after the check’s last look, and names both paths', async (context) => {
+  // Value: protects=the shared-bytes check of an interrupted put-back never deletes a file another program put at the private name after its last look, because the name is moved aside and checked again before it goes, and the run names both paths and records the handover; fails_when=the swapped-in file is deleted or changed, the config changes, a moved-aside name is left behind, the refusal omits a path, or pending.json is not handed; no_claim=a swap in the syscall gap between the rename and its check (no program knows the moved name), and the wording beyond both paths; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name standing for a put-back that ended after its link, and seam.afterLeftoverCheck swaps the private name at its look, the check's last one
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  let isSwapped = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath || isSwapped) return
+      isSwapped = true
+      swapFile(keptPath, '{"swapped in":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(isSwapped, true)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped in":true}\n')
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  assert.equal((await readRecordFile(storage, 'pending.json')).phase, 'handed')
+})
+
 test('A content-only put-back that stopped right before it deleted the private name leaves a handed, unverified record, and the next run checks the bytes and finishes', async (context) => {
   // Value: protects=a put-back that only the bytes proved records itself as handed and unverified before its link, so a run that stops before the private name is deleted leaves a record older builds never delete from, and the next run of this build checks the shared bytes and finishes the put-back; fails_when=the record at the stop is not handed or not marked unverified, the next run refuses, keeps the private name, changes the config or leaves the record; no_claim=what an older build does with that record (read from its code); seam=hand-written pending record of a put-back by bytes with the config name empty, seam.afterLeftoverCheck reads pending.json at the last look at the private name and throws there (the process ends), and that record is written back afterwards because a process that ended there never rewrote it
   // Arrange
@@ -2803,7 +2833,7 @@ test('A put-back by bytes whose look before the link fails writes its record bac
 })
 
 /**
- * Loads the config module with an `unlink` that fails for every displaced name, as a busy file system does, and works for every other path.
+ * Loads the config module with an `unlink` and a `rename` that fail for every displaced name, as a busy file system does, and work for every other path: the displaced name can neither be deleted nor moved aside to be deleted.
  * @returns The loaded module.
  * @example
  * const failing = await loadWithFailingDisplacedUnlink()
@@ -2817,7 +2847,11 @@ function loadWithFailingDisplacedUnlink() {
         link,
         mkdir,
         open,
-        rename,
+        rename: async (from: string, to: string) => {
+          if (from.endsWith('.codebook-displaced'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return rename(from, to)
+        },
         rm,
         unlink: async (path: string) => {
           if (path.endsWith('.codebook-displaced'))
@@ -5061,6 +5095,68 @@ test('A put-back keeps the displaced name when the config was replaced after the
     return true
   })
   assert.equal(readFileSync(keptPath, 'utf8'), '{"a":1}\n')
+})
+
+test('A put-back keeps a file that a sync tool swapped in at the displaced name right after the last look before that name goes, and names both paths', async (context) => {
+  // Value: protects=a file another program puts at Codebook's displaced name after the last look of a put-back is never deleted, because the name is moved aside and checked again before it goes, and the run names both paths instead of reporting the put-back done; fails_when=the swapped-in file is deleted or changed, the original config at the config name changes, a moved-aside name is left behind, or the refusal omits a path; no_claim=a swap in the syscall gap between the rename and its check (no program knows the moved name), and the wording beyond both paths; seam=a write whose run ended right after its move-aside, so the config name is empty, and seam.afterLeftoverCheck swaps the displaced name at its second look, which comes right before that name is dropped
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const keptPath = await arrangeMovedAside(storage, configPath, '{"a":1}\n')
+  let keptLookCount = 0
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== keptPath) return
+      keptLookCount += 1
+      // Look 1 comes right before the link, look 2 right before the displaced name is dropped.
+      if (keptLookCount === 2) swapFile(keptPath, '{"swapped in":true}\n')
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(keptLookCount, 2)
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"swapped in":true}\n')
+  assert.equal(readFileSync(configPath, 'utf8'), '{"a":1}\n')
+  assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+})
+
+test('A put-back by bytes keeps the displaced name when the config is rewritten in place at the same size after its check read it', async (context) => {
+  // Value: protects=a put-back that only the bytes proved drops the displaced name, the only sign that the config may hold bytes Codebook did not verify, only while the config still has the size and times its check read, so an in-place save after that read that keeps the inode and the size leaves both names and the unverified mark; fails_when=the displaced name is deleted, either name's bytes change, the refusal omits a path, or the record is not handed and unverified; no_claim=a write in the syscall gap after the last look, and the wording beyond both paths; seam=hand-written pending record of a put-back by bytes (another inode) with the config name empty, seam.beforeLeftoverCheck rewrites the config in place with other bytes of the same size at the first look at the config name, which comes after the check's read
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const rewrittenBytes = '{"theme":"evil"}\n'
+  let isRewritten = false
+
+  // Act
+  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      if (path !== configPath || isRewritten) return
+      isRewritten = true
+      // The same file, written in place with the same size: the inode stays.
+      writeFileSync(configPath, rewrittenBytes)
+    },
+  })
+
+  // Assert
+  await assert.rejects(attempt, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(error.message.includes(`config at ${configPath} `), error.message)
+    return true
+  })
+  assert.equal(isRewritten, true)
+  assert.equal(readFileSync(configPath, 'utf8'), rewrittenBytes)
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+  const retained = await readRecordFile(storage, 'pending.json')
+  assert.equal(retained.phase, 'handed')
+  assert.equal(retained.bytesUnverified, true)
 })
 
 test('A write that published the config still writes its receipt when the recheck of the displaced copy fails', async (context) => {
