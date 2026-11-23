@@ -1929,7 +1929,7 @@ function isLeftoverStill(
 }
 
 /**
- * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed.
+ * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed, and by {@link settleDroppingName}, whose dropping name holds only a file the private name also reaches once its looks passed.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -2581,7 +2581,7 @@ function notMovedBackError(
 
 /**
  * Puts back the displaced file that a run which stopped inside {@link dropCheckedName} left under its dropping name (`<private name>.codebook-dropping`, {@link DROPPING_SUFFIX}), a name no record holds; called by {@link lookPastCutShortDrop} when the record still holds the private name and nothing stands there.
- * A stop right after the drop's rename leaves the file only at the dropping name, a second name of the config that would make every later setup and removal refuse the config as linked from another path ({@link assertSingleLink}). The file goes back with a link, which never replaces a file that stands at the private name, and the dropping name goes only while both names show the inode the dropping name showed at the first look, so recovery checks the file under its private name as it did before the drop began. The name is Codebook's alone, so no record format changes.
+ * A stop right after the drop's rename leaves the file only at the dropping name, a second name of the config that would make every later setup and removal refuse the config as linked from another path ({@link assertSingleLink}). The file goes back with a link, which never replaces a file that stands at the private name, and the dropping name goes only while both names show the inode the dropping name showed at the first look, so recovery checks the file under its private name as it did before the drop began. The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the private name first and the dropping name last, right before its unlink. The name is Codebook's alone, so no record format changes.
  * Limit: a swap at either name between the last look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run.
  * @param path - The private name the record holds.
@@ -2601,8 +2601,8 @@ async function settleDroppingName(
   await link(droppingPath, path).catch(() => undefined)
   // Both names must show the moved inode right before the dropping name goes, the private name first.
   if (
-    !isLeftoverStill(context, path, { ino: moved.ino }) ||
-    !isLeftoverStill(context, droppingPath, { ino: moved.ino })
+    !(await isNameStill(context, path, { ino: moved.ino })) ||
+    !(await isNameStill(context, droppingPath, { ino: moved.ino }))
   )
     throw notMovedBackError(context, path, droppingPath)
   await unlink(droppingPath)

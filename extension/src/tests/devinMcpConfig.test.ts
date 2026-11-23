@@ -2800,6 +2800,68 @@ test('A content-only put-back cut short before its check keeps the window runnin
   assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
 })
 
+test('A put-back whose drop stopped right after its rename keeps the window running while the look at the dropping name after the file went back stalls, and finishes once storage answers', async (context) => {
+  // Value: protects=the looks recovery takes after it linked a cut-short drop's file back to the private name, before the dropping name goes, wait for the file system without holding the extension host's thread, so a stalled disk never freezes the window, and once storage answers the private name is looked at first and the dropping name last, then the drop finishes; fails_when=the look at the dropping name never reaches the file system's asynchronous call while the refresh runs (it blocked the thread instead), the looks while both names stand are not the private name's then the dropping name's, the refresh settles while the look is held, or after the release the config changes, a private or dropping name stays or the record stays; no_claim=a real stalled disk (an lstat of the dropping name held while both names stand, until the test releases it, stands for it), a real process end (a manual link of the private file to the config name, then a manual rename of the private name to its dropping name, stand for a put-back that stopped right after that rename), and the first look at the dropping name, which was asynchronous before; seam=hand-written pending record of a put-back by bytes (another inode), and the config module loaded with an lstat that records every look while both names stand and holds the dropping name's
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const droppingPath = `${keptPath}.codebook-dropping`
+  linkSync(keptPath, configPath)
+  renameSync(keptPath, droppingPath)
+  const release = defer<void>()
+  const looksWhileBothStand: string[] = []
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // Both names stand only between the link that puts the file back and the unlink of the dropping name.
+          if (existsSync(keptPath) && existsSync(droppingPath)) {
+            looksWhileBothStand.push(String(args[0]))
+            if (args[0] === droppingPath) {
+              heldLooks += 1
+              await release.promise
+            }
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    'the held look at the dropping name',
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const result = await attempt
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.deepEqual(looksWhileBothStand, [keptPath, droppingPath])
+  assert.equal(result.status, 'not-managed')
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  assert.equal(existsSync(join(storage, 'devin-mcp', 'pending.json')), false)
+})
+
 test('A put-back keeps the window running while its look at the displaced name before that name goes stalls, and finishes once storage answers', async (context) => {
   // Value: protects=the looks a put-back takes after its link, before the displaced name goes, wait for the file system without holding the extension host's thread, so a stalled disk never freezes the window, and once storage answers the displaced name goes only after those looks; fails_when=the look at the displaced name never reaches the file system's asynchronous call while the refresh runs, the refresh settles while the look is held, or after the release the config is not the original, the displaced name stays or the record stays; no_claim=a real stalled disk (an lstat of the displaced name held until the test releases it stands for it), and the synchronous look right before the link, which this cycle did not add; seam=a write whose run ended right after its move-aside, so the config name is empty, and the config module loaded with an lstat that holds every look at the displaced name until the test releases it
   // Arrange
