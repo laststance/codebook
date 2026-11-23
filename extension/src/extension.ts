@@ -110,6 +110,7 @@ import {
   DEVIN_SETUP_SERVER_CHANGED_SENTENCE,
   DEVIN_SETUP_STORAGE_DIRECTORY,
   DEVIN_SETUP_TAKE_BACK_UNCONFIRMED_SENTENCE,
+  DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE,
   DEVIN_TAKE_BACK_UNCONFIRMED_SENTENCE,
   REMOVE_DEVIN_SETUP_COMMAND,
   devinBackgroundWorkEndedLine,
@@ -395,6 +396,8 @@ export function activate(
     devinRemoving = false
   /** What this window still runs after its Devin Desktop command answered because a step waited {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS} on storage, with the step it waits on now; while it is set, setup and removal refuse at once ({@link assertNoDevinBackgroundWork}). */
   let devinBackgroundWork: DevinLapse | undefined
+  /** Whether the take-back of a failed Devin Desktop setup that runs in this window now owes nothing a reload of the window would lose: `true` when its setup installed no entry, or once its record of that entry was written ({@link recordTakeBackOwed}); `false` while that write waits on storage or after it failed. Set by {@link rollBackDevinSetup}; read by {@link assertNoDevinBackgroundWork} for the reload its refusal offers. */
+  let isOwedTakeBackRecorded = true
   /** The last write of this window's saved AI chat setup queued by {@link inSavedSetupQueue}; it never rejects. */
   let savedSetupQueue: Promise<unknown> = Promise.resolve()
   /** How many clears of the saved setup for a change of the workspace's folders ({@link clearSavedSetupForFolderChange}) wait for their turn or their write: while one does, the saved setup reads as cleared ({@link savedSetupNow}), because the editor still holds the old folder's value until that clear lands. */
@@ -1742,10 +1745,14 @@ export function activate(
       `Codebook could not update this window's connection descriptor: ${thrownMessage(error)}`,
     )
   }
-  /** The take-back's first step, only for an entry this setup installed: records that this entry is still to be taken back, before any other step waits on storage, so a reload, a crash or a closed window before the entry step ended leaves it to the next run ({@link finishOwedDevinTakeBack}). A failed write only goes to the Output and leaves the take-back complete, because the entry step still takes the entry back in this run. @param generation - The generation the setup's entry write answered. @returns `true`, also after a failed write. @example await recordTakeBackOwed('g1') */
+  /** The take-back's first step, only for an entry this setup installed: records that this entry is still to be taken back, before any other step waits on storage, so a reload, a crash or a closed window before the entry step ended leaves it to the next run ({@link finishOwedDevinTakeBack}). A failed write only goes to the Output and leaves the take-back complete, because the entry step still takes the entry back in this run; only a written record turns {@link isOwedTakeBackRecorded} on, so a refusal while the take-back waits never promises a reload that finishes it. @param generation - The generation the setup's entry write answered. @returns `true`, also after a failed write. @example await recordTakeBackOwed('g1') */
   const recordTakeBackOwed = (generation: string): Promise<boolean> =>
     recordOwedDevinTakeBack(context.globalStorageUri.fsPath, generation).then(
-      () => true,
+      () => {
+        // The record is on disk: a reload from now on leaves this take-back to the next window load.
+        isOwedTakeBackRecorded = true
+        return true
+      },
       (error: unknown) => {
         diagnostics.info(
           `Codebook could not record that the Devin Desktop MCP entry of this setup is still to be taken back, so a reload before the take-back ends leaves that entry: ${thrownMessage(error)}`,
@@ -1825,6 +1832,8 @@ export function activate(
     onLapse: (step: DevinStorageStep) => void,
   ): Promise<boolean> => {
     let isComplete = true
+    // An entry this setup installed owes a record before a reload can leave the take-back to the next window load.
+    isOwedTakeBackRecorded = entryWrite.status !== 'installed'
     /** One take-back step that keeps whether it took back everything; it never rejects, so the steps after it run. */
     const takeBackStep = (
       name: DevinStorageStep,
@@ -2131,12 +2140,21 @@ export function activate(
       lapsed.then((lapse) => ({ lapse, run })),
     ])
   }
-  /** Refuses a Devin Desktop setup or removal at once while this window still runs one whose command answered because storage did not; called first by {@link setupDevinChat}, and by {@link removeDevinSetup} before its question, after it, and once a setup it waited for answered. @param command - The title of the command that refuses, which the sentence asks to run again. @throws With {@link devinBackgroundWorkSentence}. @example assertNoDevinBackgroundWork(SET_UP_AI_CHAT_COMMAND) */
+  /** Refuses a Devin Desktop setup or removal at once while this window still runs one whose command answered because storage did not; called first by {@link setupDevinChat}, and by {@link removeDevinSetup} before its question, after it, and once a setup it waited for answered. A take-back whose record of the owed entry is not written ({@link isOwedTakeBackRecorded}) gets the plain reload clause and the Output line of what a reload leaves. @param command - The title of the command that refuses, which the sentence asks to run again. @throws With {@link devinBackgroundWorkSentence}. @example assertNoDevinBackgroundWork(SET_UP_AI_CHAT_COMMAND) */
   const assertNoDevinBackgroundWork = (command: string): void => {
-    if (devinBackgroundWork)
-      throw new Error(
-        devinBackgroundWorkSentence(devinBackgroundWork.kind, command),
-      )
+    if (!devinBackgroundWork) return
+    // A take-back whose record of the owed entry is not on disk is not finished by a reload: the refusal promises no such reload, and the Output says what a reload leaves.
+    const isTakeBackRecorded =
+      devinBackgroundWork.kind !== 'take-back' || isOwedTakeBackRecorded
+    if (!isTakeBackRecorded)
+      diagnostics.info(DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE)
+    throw new Error(
+      devinBackgroundWorkSentence(
+        devinBackgroundWork.kind,
+        command,
+        isTakeBackRecorded,
+      ),
+    )
   }
   /** Offers the reload that ends a Devin Desktop setup; a kept copy of the previous config holds other servers' settings, so the notice names it. @param outcome - What the setup's steps answered. @example offerDevinSetupReady({ disabled: undefined }) */
   const offerDevinSetupReady = ({

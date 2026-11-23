@@ -143,18 +143,28 @@ export const devinStorageWaitSentence = (
 ): string =>
   `${BACKGROUND_WORK[kind].subject} is still waiting on storage (${step}) after ${DEVIN_SETUP_ROLLBACK_BUDGET_MS / 1_000} seconds; ${BACKGROUND_WORK[kind].ending}. Until then ${SET_UP_AI_CHAT_COMMAND} and ${REMOVE_DEVIN_SETUP_COMMAND} refuse in this window.`
 
+/** How a refusal names the reload while a take-back's record of the owed entry is not on disk (its write still waits, or it failed): a reload then does not finish that take-back ({@link DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE}). */
+const RELOAD_WITHOUT_RECORD = 'or reload the window'
+
+/** The Output line of a Devin Desktop setup or removal refused while the take-back of a failed setup waits on storage before its record of the owed entry was written, or after that write failed: a reload then stops that take-back for good, and the next run finds the entry with nothing that names it as owed. */
+export const DEVIN_TAKE_BACK_RELOAD_LEAVES_ENTRY_LINE = `Codebook has not recorded that the codebook entry of the failed Devin Desktop setup is still to be taken back, so a reload of this window now leaves that entry in Devin Desktop's MCP config: ${SET_UP_AI_CHAT_COMMAND} then keeps it as its own, and ${REMOVE_DEVIN_SETUP_COMMAND} takes it out.`
+
 /**
  * What a Devin Desktop setup or removal answers at once while this window still runs a setup, take-back or removal whose command answered because storage did not.
  * @param kind - The work still going on.
  * @param command - The title of the command that refused, which the learner runs again.
+ * @param isTakeBackRecorded - For a take-back: whether nothing it owes is left unrecorded (its setup installed no entry, or its record of that entry was written), so a reload finishes it; `false` gives the plain reload clause. Ignored for a setup and a removal.
  * @returns One sentence that says what still runs, then how to go on.
- * @example devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat') // => 'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which finishes that take-back when it loads again.'
+ * @example
+ * devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat', true) // => 'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window, which finishes that take-back when it loads again.'
+ * devinBackgroundWorkSentence('take-back', 'Codebook: Set Up AI Chat', false) // => '… Run Codebook: Set Up AI Chat again once it finishes, or reload the window.'
  */
 export const devinBackgroundWorkSentence = (
   kind: DevinBackgroundWorkKind,
   command: string,
+  isTakeBackRecorded: boolean,
 ): string =>
-  `Codebook is still ${BACKGROUND_WORK[kind].doing} because storage does not answer. Run ${command} again once it finishes, ${BACKGROUND_WORK[kind].reload}.`
+  `Codebook is still ${BACKGROUND_WORK[kind].doing} because storage does not answer. Run ${command} again once it finishes, ${isTakeBackRecorded ? BACKGROUND_WORK[kind].reload : RELOAD_WITHOUT_RECORD}.`
 
 /**
  * The Output line once a setup, take-back or removal that answered its command early has ended, so the window takes setup and removal again; written whether the work succeeded or failed (a failure gets its own line, {@link devinLateFailureLine}), so it says only that the work ended.

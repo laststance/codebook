@@ -273,6 +273,8 @@ async function devinWindow(
     serverFollowsFolder?: boolean
     /** How many of the first looks for an owed take-back get no answer from their read of the record (descriptor exhaustion, `EIO`), whatever the record holds; `failNextOwedTakeBackLooks` arms more later. */
     owedTakeBackLooksWithoutAnswer?: number
+    /** Makes every write of the record of an owed take-back fail, as on a full disk; the record's reads and deletes are the real ones. */
+    failTakeBackRecord?: boolean
   } = {},
 ) {
   const directory =
@@ -811,7 +813,13 @@ async function devinWindow(
       },
       // The real record of an owed take-back; each look that answered is counted, so a test knows the window's load has looked.
       './utils/owedDevinTakeBack': {
-        recordOwedDevinTakeBack,
+        recordOwedDevinTakeBack: async (
+          ...parameters: Parameters<typeof recordOwedDevinTakeBack>
+        ): Promise<void> => {
+          if (options.failTakeBackRecord)
+            throw new Error('Injected take-back record failure')
+          return recordOwedDevinTakeBack(...parameters)
+        },
         clearOwedDevinTakeBack,
         readOwedDevinTakeBack: async (storageRoot: string) => {
           const look = await owedTakeBack.readOwedDevinTakeBack(storageRoot)
@@ -3587,6 +3595,50 @@ test('a Devin setup and a removal refuse at once while an earlier take-back stil
     assert.deepEqual(window.modalQuestions, [])
     assert.equal(
       window.steps.filter((step) => step === 'resolve Node').length,
+      1,
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=while a failed first setup's take-back waits on storage after its record of the owed entry could not be written (a full disk), a new Set Up AI Chat refuses with the plain reload clause and the Output says what a reload leaves, because a reload then stops that take-back for good (Cycle 0146 /ship pass 2, red-team 3); fails_when=the refusal promises that a reload finishes the take-back although no record is on disk, so a learner who reloads as advised leaves the failed setup's entry installed; no_claim=a record write that itself waits on storage (the same flag stays off until it answers) and a take-back whose record was written (the test above keeps the full clause); the failing stand-in record write stands for the full disk and the held stand-in entry removal for the stalled storage
+test('a Devin setup refused while a take-back without its record waits on storage promises no reload that finishes it', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    failSetupCommit: true,
+    holdEntryRemoval: true,
+    failTakeBackRecord: true,
+  })
+  try {
+    const firstOutcome = await within(
+      window.commands.get('codebook.setupAiChat')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      16_000,
+    )
+    // Act
+    const setupRefusal = await within(
+      window.commands.get('codebook.setupAiChat')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      2_000,
+    )
+    // Assert
+    assert.notEqual(firstOutcome, 'still waiting')
+    assert.equal(
+      setupRefusal,
+      'Codebook is still taking back an earlier Devin Desktop setup because storage does not answer. Run Codebook: Set Up AI Chat again once it finishes, or reload the window.',
+    )
+    assert.equal(await owedTakeBackRecord(window.directory), undefined)
+    assert.equal(
+      window.outputLines.filter(
+        (line) =>
+          line ===
+          "Codebook has not recorded that the codebook entry of the failed Devin Desktop setup is still to be taken back, so a reload of this window now leaves that entry in Devin Desktop's MCP config: Codebook: Set Up AI Chat then keeps it as its own, and Codebook: Remove Devin Desktop Setup takes it out.",
+      ).length,
       1,
     )
   } finally {
