@@ -32,6 +32,10 @@ export const DEVIN_SETUP_LOCK_HELD_SENTENCE =
 export const DEVIN_SETUP_LOCK_UNANSWERED_SENTENCE =
   'Codebook could not take its Devin Desktop setup lock because storage does not answer or this window is still finishing an earlier setup or removal. Try again in a moment, or reload the window.'
 
+/** What a Devin Desktop setup or removal answers when another window's lock refused a taking of the setup lock and the taking after it still had no answer when the 15 seconds ({@link DEVIN_SETUP_LOCK_ACQUIRE_BUDGET_MS}) ran out: that window may have released the lock meanwhile, so the sentence tells only what Codebook saw, in the past tense. */
+export const DEVIN_SETUP_LOCK_UNANSWERED_AFTER_HELD_SENTENCE =
+  'Another Codebook window was changing the Devin Desktop setup, and storage has not answered since Codebook tried to take the setup lock again. Try again in a moment, or reload the window.'
+
 /** What the Devin Desktop setup answers when this window's connection descriptor cannot be read as a JSON object; fixed text, because the descriptor holds the bearer token and a parser's own message quotes part of the file. */
 export const DEVIN_DESCRIPTOR_UNREADABLE_SENTENCE =
   "Codebook could not read this window's connection descriptor. Run Codebook: Stop Agent Server and Codebook: Start Agent Server, then try again."
