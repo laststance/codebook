@@ -60,6 +60,26 @@ const ENTRY_SENTENCES: Record<
     `The codebook entry in ${path} belongs to a newer setup, so Codebook left it in place.`,
 }
 
+/**
+ * Words what became of the MCP entry: its sentence, then the sentence of a record or kept copy Codebook could not delete after the entry went; called by {@link devinRemovalNotice} and {@link devinRemovalPendingNotice}, so the warning a removal shows while a later step waits names that leftover too.
+ * @param entryRemoval - How the entry's removal ended.
+ * @returns The entry's sentence, and the cleanup sentence when there is one.
+ * @example
+ * entrySentences({ status: 'not-managed', path: '/home/user/.config/devin/mcp_config.json' })
+ * // => ["/home/user/.config/devin/mcp_config.json holds no codebook entry of Codebook's, so it is unchanged."]
+ */
+function entrySentences(entryRemoval: DevinMcpRemovalResult): string[] {
+  // A record Codebook could not delete after the entry went is named after the entry.
+  const cleanupFailure =
+    'cleanupFailure' in entryRemoval && entryRemoval.cleanupFailure
+      ? [entryRemoval.cleanupFailure]
+      : []
+  return [
+    ENTRY_SENTENCES[entryRemoval.status](entryRemoval.path),
+    ...cleanupFailure,
+  ]
+}
+
 /** Why a reload follows a removed entry: Devin Local keeps the MCP servers it started when the window loaded. */
 const RELOAD_SENTENCE =
   "Reload this window so Devin Local stops Codebook's MCP server."
@@ -110,17 +130,12 @@ export function devinRemovalNotice(
       text: `Nothing to remove: no Codebook-owned Devin Desktop skill was found and ${entryRemoval.path} holds no codebook entry of Codebook's. No file was changed.`,
       reload: false,
     }
+  // A record Codebook could not delete after the entry went does not change that the reload is needed.
   const reload =
     entryRemoval.status === 'removed' || entryRemoval.status === 'file-removed'
-  // A record Codebook could not delete after the entry went is named after the entry; the reload is still needed.
-  const cleanupFailure =
-    'cleanupFailure' in entryRemoval && entryRemoval.cleanupFailure
-      ? [entryRemoval.cleanupFailure]
-      : []
   const sentences = [
     SKILL_SENTENCES[skillRemoval],
-    ENTRY_SENTENCES[entryRemoval.status](entryRemoval.path),
-    ...cleanupFailure,
+    ...entrySentences(entryRemoval),
     ...(reload ? [RELOAD_SENTENCE] : []),
     // An edited entry stays, and setup would refuse it, so the way back starts with that entry.
     entryRemoval.status === 'changed'
@@ -131,7 +146,7 @@ export function devinRemovalNotice(
 }
 
 /**
- * Words the warning a learner reads when **Codebook: Remove Devin Desktop Setup** answers while one of its steps still waits on storage: what the steps that ended did, then the step that waits; called by the removal command of {@link activate} once that step outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, before {@link devinRemovalNotice} words the removal's end.
+ * Words the warning a learner reads when **Codebook: Remove Devin Desktop Setup** answers while one of its steps still waits on storage: what the steps that ended did (with a record or kept copy the entry step could not delete), then the step that waits; called by the removal command of {@link activate} once that step outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, before {@link devinRemovalNotice} words the removal's end.
  * @param progress - What the steps that ended answered.
  * @param step - The step that waits on storage.
  * @returns A warning without a reload: the removal's own notice offers one once its steps ended.
@@ -147,14 +162,12 @@ export function devinRemovalPendingNotice(
   const sentences = [
     // Only a step that ended is named; the skill step comes first.
     ...(skill === undefined ? [] : [SKILL_SENTENCES[skill]]),
-    // An entry that was refused stays as it is, and the refusal says why.
+    // An entry that was refused stays as it is, and the refusal says why; a removed entry's leftover record or copy is named after it.
     ...(entry === undefined
       ? []
-      : [
-          'refusal' in entry
-            ? entry.refusal
-            : ENTRY_SENTENCES[entry.status](entry.path),
-        ]),
+      : 'refusal' in entry
+        ? [entry.refusal]
+        : entrySentences(entry)),
     devinStorageWaitSentence('removal', step),
   ]
   return { severity: 'warning', text: sentences.join(' '), reload: false }
