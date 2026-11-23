@@ -646,15 +646,31 @@ function assertConfigUnchanged(
   context: Context,
   expected: FileIdentity | undefined,
 ): void {
+  if (!isConfigUnchanged(context, expected)) throw changedWhileWorking(context)
+}
+
+/**
+ * Tells, by one synchronous look, whether the config name still shows the file that was read: the same inode, size and modification and change times in nanoseconds; called by {@link assertConfigUnchanged} and by {@link stillnessOf}, for a drop of a first setup's old record that the config decided ({@link ownerOfConfigEntry}).
+ * @param context - The run.
+ * @param expected - The identity read earlier; undefined when the file was absent.
+ * @returns `true` when the name shows that file (for an absent file: still nothing); `false` otherwise.
+ * @throws What the look throws other than for a missing name.
+ * @example
+ * isConfigUnchanged(context, look.identity) // => false after a sync tool saved the config again
+ */
+function isConfigUnchanged(
+  context: Context,
+  expected: FileIdentity | undefined,
+): boolean {
   const now = lstatSync(context.path, { bigint: true, throwIfNoEntry: false })
-  const didChange = expected
-    ? !now ||
-      now.ino !== expected.ino ||
-      now.size !== expected.size ||
-      now.mtimeNs !== expected.mtimeNs ||
-      now.ctimeNs !== expected.ctimeNs
-    : Boolean(now)
-  if (didChange) throw changedWhileWorking(context)
+  if (!expected) return !now
+  return (
+    now !== undefined &&
+    now.ino === expected.ino &&
+    now.size === expected.size &&
+    now.mtimeNs === expected.mtimeNs &&
+    now.ctimeNs === expected.ctimeNs
+  )
 }
 
 /** What a private file beside the config is for: the config moved aside, the staged new config, or the probe link of the hard-link check. */
@@ -1378,7 +1394,7 @@ async function linkRetiringStaleReceipt(
   if (retiredPath) await unlink(retiredPath).catch(() => undefined)
 }
 
-/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it. */
+/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it or changed after the read that told; `undeleted` when the moved record was to be deleted beside a record that covers it and the delete failed. */
 type UnrestoredStanding =
   | 'other'
   | 'foreign'
@@ -1387,6 +1403,7 @@ type UnrestoredStanding =
   | 'moved-changed'
   | 'superseded'
   | 'config-unread'
+  | 'undeleted'
 
 /** What the publish record tells about a first setup's link when that setup's moved record could not go back ({@link Pending.notLinked}): `marked` when it says that nothing of the setup was linked; `unwritten` when the setup itself could not write that mark ({@link UnrestoredReceiptError.withoutMark}); `unmarked` when a later run settles a record without that mark ({@link PutBackOptions.mark}), which also a setup that linked its config leaves, so the records that remain cannot tell whether the old record may go back. */
 type PublishMark = 'marked' | 'unwritten' | 'unmarked'
@@ -1441,17 +1458,22 @@ class UnrestoredReceiptError extends Error {
  * - `moved-unread`: the sentence that names the private file Codebook could not read and asks to delete neither record
  * - `moved-changed`: the sentence that the file at the private name changed while Codebook read it, so it kept both and looks again, which advises no removal
  * - `superseded`: the sentence that Codebook's record of the entry the config holds stands at `receipt.json` again and asks to move the old record, never that record, to another folder
- * - `config-unread`: the sentence that Codebook could not read the config to tell whether the record at `receipt.json` belongs to its entry, so it kept both and looks again, which names no record to move
+ * - `config-unread`: the sentence that Codebook could not read the config to tell whether the record at `receipt.json` belongs to its entry, or that config changed after that read, so it kept both and looks again, which names no record to move
+ * - `undeleted`: what {@link keptNameSentence} words
  * @example
  * unrestoredSentence(context, retiredPath, 'other', 'marked')   // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
  * unrestoredSentence(context, retiredPath, 'other', 'unmarked') // => '… stands at …/receipt.json, and it cannot tell from the remaining records whether the old record may go back; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.'
  */
 function unrestoredSentence(
-  { path, receiptPath, pendingPath, retry }: Context,
+  context: Context,
   retiredPath: string,
   standing: UnrestoredStanding | undefined,
   mark: PublishMark,
 ): string {
+  const { path, receiptPath, pendingPath, retry } = context
+  // The old record's private file itself decided the end: its own sentence names that file.
+  const keptName = keptNameSentence(context, retiredPath, standing)
+  if (keptName !== undefined) return keptName
   // The moved file is no record of this config, so it is not called Codebook's old record, and the record of this config that stands stays where it is.
   if (standing === 'foreign')
     return `Codebook moved a file that is no record of Devin Desktop's MCP config at ${path} from ${receiptPath} to ${retiredPath} and kept it there, because its record of that config stands at ${receiptPath} again; move that file to another folder, ${retry}.`
@@ -1470,9 +1492,9 @@ function unrestoredSentence(
   // Another file stood at the private name by the end of the read: nothing the read compared may be deleted, so both stay.
   if (standing === 'moved-changed')
     return `${lead}, because the file at ${retiredPath} changed while Codebook read it. Codebook kept both files, so the next run looks again; ${retry}.`
-  // Without the config nothing tells which record owns its entry, so neither is to be moved.
+  // Without the config, or with a config that changed after the read that told, nothing tells which record owns its entry, so neither is to be moved.
   if (standing === 'config-unread')
-    return `${lead}, because it could not read Devin Desktop's MCP config at ${path} to tell whether the record at ${receiptPath} belongs to its "${SERVER_NAME}" entry. Codebook kept both files, so the next run looks again; look at that config, ${retry}.`
+    return `${lead}, because it could not read Devin Desktop's MCP config at ${path} to tell whether the record at ${receiptPath} belongs to its "${SERVER_NAME}" entry, or that config changed after Codebook read it to tell. Codebook kept both files, so the next run looks again; look at that config, ${retry}.`
   // A folder, another file or a record of an entry the config does not hold: moving it away frees the name without deleting anything.
   if (standing === 'other')
     return mark === 'marked'
@@ -1484,6 +1506,29 @@ function unrestoredSentence(
   return mark === 'marked'
     ? `${lead}, so the next run puts it back; if that fails too, move that file back by hand, ${retry}.`
     : `${lead}, and ${undecided}, so it kept both files and the next run decides again whether that record goes back; ${retry}.`
+}
+
+/**
+ * Words the ends of a put-back that the old record's private file itself decided, apart from what stands at `receipt.json`; called only by {@link unrestoredSentence}, which keeps its own branches for the other answers.
+ * @param context - The run; gives the paths and the command to run again.
+ * @param retiredPath - The private name that holds the old record.
+ * @param standing - Why the old record was kept ({@link UnrestoredStanding}); undefined when the link failed otherwise.
+ * @returns
+ * - `undeleted`: the {@link retiredDropRefusal} sentence, which names that file and the publish record that stay, and that the next run looks at that file again
+ * - undefined for every other answer
+ * @example
+ * keptNameSentence(context, retiredPath, 'undeleted') // => 'Codebook could not delete …/receipt.json.<generation>.retired, its own old record of a setup whose entry is gone (…), so it kept that file and the publish record at …/pending.json, and the next run looks at that file again; …'
+ * keptNameSentence(context, retiredPath, 'other')     // => undefined
+ */
+function keptNameSentence(
+  context: Context,
+  retiredPath: string,
+  standing: UnrestoredStanding | undefined,
+): string | undefined {
+  // The delete beside a record that covers the old one failed: that file and the publish record that leads to it stay.
+  if (standing === 'undeleted')
+    return retiredDropRefusal(context, retiredPath).message
+  return undefined
 }
 
 /**
@@ -2363,7 +2408,7 @@ async function isNameStill(
 }
 
 /**
- * Looks at a name as {@link isNameStill} does, and tells a name found empty from one that shows another file; called by {@link isNameStill} and by {@link stillnessOf}, for which an empty private name means that nothing is left there to keep.
+ * Looks at a name as {@link isNameStill} does, and tells a name found empty from one that shows another file; called by {@link isNameStill}.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -2385,6 +2430,51 @@ async function nameStateOf(
     if (codeOf(error) === 'ENOENT') return undefined
     throw error
   })
+  return nameStateFrom(context, path, now, checked)
+}
+
+/**
+ * Looks at a name as {@link nameStateOf} does, synchronously, so nothing is awaited between this look and the step it guards; called by {@link stillnessOf}, whose last looks come right before a first setup's old record is deleted.
+ * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
+ * @param path - The name to look at.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns
+ * - `still`, `gone` or `changed` as {@link nameStateOf} answers
+ * - `unread` when the look failed
+ * @example
+ * nameStateNow(context, retiredPath, movedLook) // => 'changed' after a sync tool put another file at the private name
+ */
+function nameStateNow(
+  context: Context,
+  path: string,
+  checked: LeftoverLookback,
+): 'still' | 'gone' | 'changed' | 'unread' {
+  context.seam?.beforeLeftoverCheck?.(path)
+  let now: BigIntStats | undefined
+  try {
+    now = lstatSync(path, { bigint: true, throwIfNoEntry: false })
+  } catch {
+    return 'unread'
+  }
+  return nameStateFrom(context, path, now, checked)
+}
+
+/**
+ * Words what one look at a name found against what was checked; the shared end of {@link nameStateOf} and {@link nameStateNow}, which calls the seam after a look that passed.
+ * @param context - The run; its seam is called once the name still shows the checked file.
+ * @param path - The name that was looked at.
+ * @param now - What the look found; undefined when nothing stands there.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns `still` when the name shows the checked file, `gone` when nothing stands there, `changed` otherwise.
+ * @example
+ * nameStateFrom(context, retiredPath, undefined, movedLook) // => 'gone'
+ */
+function nameStateFrom(
+  context: Context,
+  path: string,
+  now: BigIntStats | undefined,
+  checked: LeftoverLookback,
+): 'still' | 'gone' | 'changed' {
   if (now === undefined) return 'gone'
   if (!showsChecked(now, checked)) return 'changed'
   context.seam?.afterLeftoverCheck?.(path)
@@ -3803,7 +3893,7 @@ async function holdsReceipt(
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
  * @param options - How this put-back runs ({@link PutBackOptions}); a setup passes none.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell or changed by the last looks after it told, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, with `undeleted` when the moved record was to be deleted beside a record that covers it and the delete failed, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
  * await putBackRetiredReceipt(context, retiredPath, undefined, { mark: 'unmarked' }) // a later run settling a record without the notLinked mark
@@ -3874,7 +3964,18 @@ async function settleTakenName(
   if (standing === 'gone') return
   // Only a record of this config's same entry makes the moved one a spare copy.
   if (standing === 'covers') {
-    await unlink(retiredPath).catch(() => undefined)
+    await unlink(retiredPath).catch((unlinkError: unknown) => {
+      // A delete that failed leaves the old record there: the publish record that leads to it stays, so the next run settles it.
+      if (codeOf(unlinkError) !== 'ENOENT')
+        throw new UnrestoredReceiptError(
+          context,
+          retiredPath,
+          failure,
+          unlinkError,
+          'undeleted',
+          mark,
+        )
+    })
     return
   }
   if (standing === 'absent') {
@@ -3918,14 +4019,14 @@ function unrestoredStandingOf(
 
 /**
  * Tells what stands at `receipt.json` when a put-back's link found that name taken, or the put-back was chosen only beside what stands there, so the moved record is dropped only beside a record that covers the same entry of the same config; called only by {@link settleTakenName}.
- * Both names are looked at again only after the comparison ({@link stillnessOf}), whose read of the config ({@link ownerOfConfigEntry}) takes time, so the unlink that follows a `covers` deletes only the file that was read.
+ * Both names, and the config when it decided the comparison, are looked at again only after the comparison ({@link stillnessOf}), whose read of the config ({@link ownerOfConfigEntry}) takes time: synchronously, the private name first and `receipt.json` last, right before the unlink that follows a `covers`, so that unlink deletes only the file that was read and only while the record that covers it still stands.
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
- * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read
+ * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names (and that config, when it decided) still show what was read
  * - `gone` when the moved record's private name is empty, by its first look or by the last: nothing is left there to keep, and nothing there is unlinked
  * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
- * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry
+ * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry, or the config that told that both own it changed by the last looks
  * - `absent` when the name is empty, or changed between the look and the check
  * - `foreign` when a record of this config stands there and the moved file, read in full, is no record (no regular file, too many bytes or bytes of another shape) or a record of another config: neither goes, and the moved one never replaces it
  * - `other` for a folder, a link or another kind of file, bytes that are no record, a record of another config, or a record of another entry that owns nothing the config holds
@@ -3941,66 +4042,78 @@ async function standingReceiptOf(
 ): Promise<StandingReceipt> {
   const records = await readStandingReceipt(context, retiredPath)
   if (typeof records === 'string') return records
-  const comparison = await compareStandingReceipt(context, records)
-  // The looks come last: a file put at either name during the comparison's config read is never what the put-back acts on.
-  const stillness = await stillnessOf(
+  const { answer, boundConfig } = await compareStandingReceipt(context, records)
+  // The looks come last and run synchronously: a file put at either name, or a config saved, during the comparison's config read is never what the put-back acts on, and only promise returns separate them from the unlink.
+  const stillness = stillnessOf(
     context,
     retiredPath,
     records.standingLook,
     records.movedLook,
+    boundConfig,
   )
-  return stillness === 'still' ? comparison : stillness
+  return stillness === 'still' ? answer : stillness
+}
+
+/** What {@link compareStandingReceipt} answers: the comparison, and the identity of the config when the config decided a `covers` ({@link ownerOfConfigEntry}), which the last looks must still find ({@link stillnessOf}). */
+type StandingComparison = {
+  answer: 'covers' | 'superseded' | 'other' | 'foreign' | 'config-unread'
+  boundConfig?: FileIdentity
 }
 
 /**
  * Compares the record that stands at `receipt.json` with the moved one; called only by {@link standingReceiptOf}, which then looks at both names again before the put-back acts on the answer.
  * @param context - The run.
  * @param records - Both records as read ({@link StandingRecords}).
- * @returns
+ * @returns The answer ({@link StandingComparison}):
  * - `other` when the record at `receipt.json` is a record of another config
  * - `foreign` when the moved file holds no record, or a record of another config
- * - `covers` when both hold the same entry hash
+ * - `covers` when both hold the same entry hash, bound to no config
  * - what {@link ownerOfConfigEntry} answers for two records of this config with different entry hashes
  * @example
- * await compareStandingReceipt(context, { standing: newerReceipt, standingLook, moved: oldReceipt, movedLook }) // => 'covers' while both hold the same entry hash
+ * await compareStandingReceipt(context, { standing: newerReceipt, standingLook, moved: oldReceipt, movedLook }) // => { answer: 'covers' } while both hold the same entry hash
  */
 async function compareStandingReceipt(
   context: Context,
   { standing, moved }: StandingRecords,
-): Promise<'covers' | 'superseded' | 'other' | 'foreign' | 'config-unread'> {
+): Promise<StandingComparison> {
   // Only what stands there decides while it is no record of this config: moving it away lets the moved file go back.
-  if (standing.targetPath !== context.path) return 'other'
+  if (standing.targetPath !== context.path) return { answer: 'other' }
   // A moved file read as bytes that are no record, or as a record of another config: that file is the one to move.
-  if (moved === 'other' || moved.targetPath !== context.path) return 'foreign'
-  if (standing.entrySha256 === moved.entrySha256) return 'covers'
+  if (moved === 'other' || moved.targetPath !== context.path)
+    return { answer: 'foreign' }
+  if (standing.entrySha256 === moved.entrySha256) return { answer: 'covers' }
   return ownerOfConfigEntry(context, standing, moved)
 }
 
 /**
  * Compares two records of this config whose entry hashes differ against the entry the config holds, so the put-back never names a record that owns that entry as the one to move; called only by {@link compareStandingReceipt}.
- * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}).
+ * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}). That case depends on the config, so its `covers` carries the identity of the config that was read, and the drop holds only while the config still is that file at the last looks ({@link stillnessOf}).
  * @param context - The run.
  * @param standing - The record of this config at `receipt.json`.
  * @param moved - The moved record of this config.
- * @returns
- * - `covers` when both own the entry the config holds: the moved one is a spare copy
+ * @returns The answer ({@link StandingComparison}):
+ * - `covers` with the config's identity when both own the entry the config holds: the moved one is a spare copy
  * - `superseded` when only the record at `receipt.json` owns it: the moved one, which owns nothing the config holds, is the one to move
  * - `other` when the record at `receipt.json` owns nothing the config holds, also when no config or no entry stands: that record is the one to move
  * - `config-unread` when the config could not be read ({@link lookAtConfig} refused): neither is named
  * @example
- * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => 'superseded' while the config holds the entry only liveReceipt owns
+ * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => { answer: 'superseded' } while the config holds the entry only liveReceipt owns
  */
 async function ownerOfConfigEntry(
   context: Context,
   standing: Receipt,
   moved: Receipt,
-): Promise<'covers' | 'superseded' | 'other' | 'config-unread'> {
+): Promise<StandingComparison> {
   const look = await lookAtConfig(context).catch(() => undefined)
-  if (look === undefined) return 'config-unread'
+  if (look === undefined) return { answer: 'config-unread' }
+  // No config stands: the record at receipt.json owns nothing it holds.
+  if (look.kind !== 'present') return { answer: 'other' }
   const current = currentEntryOf(look)
   // Only a record that owns nothing the config holds is ever named as the one to move.
-  if (!ownsEntry(current, standing)) return 'other'
-  return ownsEntry(current, moved) ? 'covers' : 'superseded'
+  if (!ownsEntry(current, standing)) return { answer: 'other' }
+  if (!ownsEntry(current, moved)) return { answer: 'superseded' }
+  // This look decided that both own the entry: the drop holds only while the config is still this file.
+  return { answer: 'covers', boundConfig: look.identity }
 }
 
 /** The two records {@link readStandingReceipt} read, each with its name's look right before its read, so {@link stillnessOf} can tell after the comparison whether both names still show those files. */
@@ -4076,42 +4189,65 @@ async function readLookedRecord(
 }
 
 /**
- * Tells whether `receipt.json` and the moved record's private name still show the files that were read, after the comparison and right before the put-back acts on it; called only by {@link standingReceiptOf}.
- * @param context - The run; its seam is called around each look ({@link isNameStill}).
+ * Tells whether the moved record's private name, then the config when it decided the comparison, and last `receipt.json` still show what was read, after the comparison and right before the put-back acts on it; called only by {@link standingReceiptOf}.
+ * The looks are synchronous, so nothing is awaited between them and the unlink that follows a `covers`, and `receipt.json`, whose record decides that drop, is looked at last. Limit: a file put at either name, or a config saved, between these looks and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param context - The run; its seam is called around each name's look ({@link nameStateNow}).
  * @param retiredPath - The private name that holds the moved record.
  * @param standingLook - `receipt.json`'s look before its read.
  * @param movedLook - The private name's look before its read.
+ * @param boundConfig - The identity of the config that decided a `covers` ({@link ownerOfConfigEntry}); undefined when the config decided nothing.
  * @returns
- * - `still` when both names show the files that were read
- * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
+ * - `still` when every name shows what was read
  * - `moved-changed` when the private name shows another file; `moved-unread` when that look failed
- * - `gone` when nothing stands at the private name any more: nothing is left there to keep, as when its first look found it empty ({@link readStandingReceipt})
+ * - `gone` when nothing stands at the private name any more, as when its first look found it empty ({@link readStandingReceipt})
+ * - `config-unread` when the config that decided is no longer the file that was read, or that look failed
+ * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
  * @example
- * await stillnessOf(context, retiredPath, standingLook, movedLook) // => 'moved-changed' after a sync tool put another file at the private name during the read
+ * stillnessOf(context, retiredPath, standingLook, movedLook) // => 'absent' after a sync tool replaced receipt.json during the look at the private name
  */
-async function stillnessOf(
+function stillnessOf(
   context: Context,
   retiredPath: string,
   standingLook: LeftoverLookback,
   movedLook: LeftoverLookback,
-): Promise<
-  'still' | 'absent' | 'unread' | 'gone' | 'moved-changed' | 'moved-unread'
-> {
-  const isStandingStill = await isNameStill(
-    context,
-    context.receiptPath,
-    standingLook,
-  ).catch(() => undefined)
-  if (isStandingStill === undefined) return 'unread'
-  if (!isStandingStill) return 'absent'
-  const movedState = await nameStateOf(context, retiredPath, movedLook).catch(
-    (): 'unread' => 'unread',
-  )
+  boundConfig?: FileIdentity,
+):
+  | 'still'
+  | 'absent'
+  | 'unread'
+  | 'gone'
+  | 'moved-changed'
+  | 'moved-unread'
+  | 'config-unread' {
+  const movedState = nameStateNow(context, retiredPath, movedLook)
   if (movedState === 'unread') return 'moved-unread'
   // The private name is empty by now: no file is left there to keep, to name or to unlink.
   if (movedState === 'gone') return 'gone'
   // Another file at the private name since the look: what the read compared is not what an unlink would delete.
-  return movedState === 'still' ? 'still' : 'moved-changed'
+  if (movedState === 'changed') return 'moved-changed'
+  // The config told that both records own its entry: that holds only while the config is still the file that was read.
+  if (boundConfig && !isConfigStill(context, boundConfig))
+    return 'config-unread'
+  // receipt.json last: the record that covers the moved one must still stand there right before the delete.
+  const standingState = nameStateNow(context, context.receiptPath, standingLook)
+  if (standingState === 'unread') return 'unread'
+  return standingState === 'still' ? 'still' : 'absent'
+}
+
+/**
+ * Tells whether the config is still the file whose look decided a drop, with a failed look as a change; called only by {@link stillnessOf}.
+ * @param context - The run.
+ * @param boundConfig - The identity of the config that decided.
+ * @returns `true` when {@link isConfigUnchanged} finds that file; `false` when it changed or the look failed.
+ * @example
+ * isConfigStill(context, look.identity) // => false after a sync tool saved the config again
+ */
+function isConfigStill(context: Context, boundConfig: FileIdentity): boolean {
+  try {
+    return isConfigUnchanged(context, boundConfig)
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -4298,7 +4434,7 @@ async function isPublishReceipted(
 }
 
 /**
- * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there or no longer held the record the drop was decided on; called by {@link dropRetiredReceipt} and {@link assertDecisionStill}, which keep that file and the publish record that names it, so the next run looks at it again.
+ * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there or no longer held the record the drop was decided on; called by {@link dropRetiredReceipt} and {@link assertDecisionStill}, which keep that file and the publish record that names it, so the next run looks at it again, and by {@link keptNameSentence} for a put-back whose delete beside a record that covers the old one failed.
  * @param context - The run; gives the publish record's path and the command to run again.
  * @param retiredPath - The private name that holds the old record.
  * @param cause - What the delete threw; undefined when the name showed another file, held another record or could not be looked at.
