@@ -18,6 +18,7 @@ import { z } from 'zod'
 import {
   DEVIN_MCP_CONFIG_LIMIT_BYTES,
   DEVIN_MCP_RECORD_LIMIT_BYTES,
+  DEVIN_RECEIPT_PUT_BACK_ATTEMPTS,
   FIRST_SETUP_HASH_PREFIX,
   PRIVATE_FILE_MODE,
 } from './constants'
@@ -1181,6 +1182,9 @@ async function linkWithoutStaleReceipt(
   if (retiredPath) await unlink(retiredPath).catch(() => undefined)
 }
 
+/** Why a put-back that found `receipt.json` taken kept the moved record ({@link standingReceiptOf}): `other` when what stands there is provably not Codebook's record of that entry, `unread` when Codebook could not tell. */
+type UnrestoredStanding = 'other' | 'unread'
+
 /**
  * Thrown by {@link putBackRetiredReceipt} when a receipt a first setup moved aside could not go back to `receipt.json`: its text names the private file and the way out, and it carries what made the put-back necessary (`failure`: the link's failure or a {@link changedRecordRefusal}), which the caller words as before and puts in front ({@link withUnrestoredNote}). The callers keep the publish record that names the private file ({@link Pending.retiresReceipt}), so the next run puts the receipt back ({@link settleRetiredReceipt}).
  */
@@ -1190,12 +1194,37 @@ class UnrestoredReceiptError extends Error {
     retiredPath: string,
     readonly failure: unknown,
     cause: unknown,
+    standing?: UnrestoredStanding,
   ) {
-    super(
-      `Codebook moved its own old record of a setup whose entry is gone from ${context.receiptPath} to ${retiredPath} and could not put it back, so the next run puts it back; if that fails too, move that file back by hand, ${context.retry}.`,
-      { cause },
-    )
+    super(unrestoredSentence(context, retiredPath, standing), { cause })
   }
+}
+
+/**
+ * Words why a receipt a first setup moved aside could not go back, with the way out that fits what stood at its name; called only by {@link UnrestoredReceiptError}.
+ * @param context - The run; gives the receipt's path and the command to run again.
+ * @param retiredPath - The private name that holds the old record.
+ * @param standing - What stood at `receipt.json` when the link found it taken ({@link standingReceiptOf}); undefined when the link failed otherwise.
+ * @returns
+ * - Without `standing`: the sentence that the next run puts the record back
+ * - `other`: the sentence that asks the learner to move what stands there to another folder
+ * - `unread`: the sentence that Codebook kept both files and looks again, which advises no removal
+ * @example
+ * unrestoredSentence(context, retiredPath, 'other') // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
+ */
+function unrestoredSentence(
+  { receiptPath, retry }: Context,
+  retiredPath: string,
+  standing: UnrestoredStanding | undefined,
+): string {
+  const lead = `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back`
+  // A folder, another file or a record of another entry: moving it away frees the name without deleting anything.
+  if (standing === 'other')
+    return `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}; move it to another folder, ${retry}, and that run puts the old record back.`
+  // Nothing is known about what stands there, so nothing is to be moved or removed.
+  if (standing === 'unread')
+    return `${lead}, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept both files, so the next run looks again; make that file readable by you if it is not, ${retry}.`
+  return `${lead}, so the next run puts it back; if that fails too, move that file back by hand, ${retry}.`
 }
 
 /**
@@ -3339,11 +3368,12 @@ async function holdsReceipt(
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces a receipt that stands at that name by then (a newer one, which is kept while the moved one goes). The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
+ * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while a record of this config with the same entry stands there (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, up to {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} times. The private name is unlinked afterwards; one that cannot be is only a second name of the receipt.
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back; that file stays, and so does the publish record that names it.
+ * @param attempt - Which link this is, from 1; only the put-back itself passes more.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `unread` when the look there failed or the name kept changing, without either for any other link failure; that file stays, and so does the publish record that names it.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
  */
@@ -3351,16 +3381,140 @@ async function putBackRetiredReceipt(
   context: Context,
   retiredPath: string,
   failure?: unknown,
+  attempt = 1,
 ): Promise<void> {
-  try {
-    await link(retiredPath, context.receiptPath)
-  } catch (cause) {
-    // A newer receipt stands, which wins, or the private name is gone already.
-    const code = codeOf(cause)
-    if (code !== 'EEXIST' && code !== 'ENOENT')
-      throw new UnrestoredReceiptError(context, retiredPath, failure, cause)
+  const cause = await link(retiredPath, context.receiptPath).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // ENOENT: the private name is gone already.
+  if (cause !== undefined && codeOf(cause) !== 'ENOENT') {
+    const standing =
+      codeOf(cause) === 'EEXIST'
+        ? await standingReceiptOf(context, retiredPath)
+        : undefined
+    // The name was empty again by the look: link again, a bounded number of times.
+    if (standing === 'absent' && attempt < DEVIN_RECEIPT_PUT_BACK_ATTEMPTS)
+      return putBackRetiredReceipt(context, retiredPath, failure, attempt + 1)
+    // Only a record of this config's same entry makes the moved one a spare copy.
+    if (standing !== 'covers')
+      throw new UnrestoredReceiptError(
+        context,
+        retiredPath,
+        failure,
+        cause,
+        unrestoredStandingOf(standing),
+      )
   }
   await unlink(retiredPath).catch(() => undefined)
+}
+
+/** What {@link standingReceiptOf} found at `receipt.json` after a put-back's link found that name taken. */
+type StandingReceipt = 'covers' | 'absent' | 'other' | 'unread'
+
+/**
+ * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link putBackRetiredReceipt}.
+ * @param standing - What the look found; undefined when the link failed with another error than EEXIST.
+ * @returns
+ * - `other` for `other`
+ * - `unread` for `unread` and for `absent` past the last attempt (the name kept changing)
+ * - undefined without a look, so the error keeps its first sentence
+ * @example
+ * unrestoredStandingOf('absent') // => 'unread'
+ */
+function unrestoredStandingOf(
+  standing: Exclude<StandingReceipt, 'covers'> | undefined,
+): UnrestoredStanding | undefined {
+  if (standing === undefined || standing === 'other') return standing
+  return 'unread'
+}
+
+/**
+ * Tells what stands at `receipt.json` when a put-back's link found that name taken, so the moved record is dropped only beside a record that covers the same entry; called only by {@link putBackRetiredReceipt}.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the moved record.
+ * @returns
+ * - `covers` when a record of this config with the moved record's entry stands there and the name still shows what was read, or the moved record is gone
+ * - `absent` when the name is empty, or changed between the look and the check
+ * - `other` for a folder, a link or another kind of file, bytes that are no record, or a record of another config or entry
+ * - `unread` when a look or read failed, at either name
+ * @example
+ * await standingReceiptOf(context, retiredPath) // => 'other' while a folder stands at receipt.json
+ */
+async function standingReceiptOf(
+  context: Context,
+  retiredPath: string,
+): Promise<StandingReceipt> {
+  const records = await readStandingReceipt(context, retiredPath)
+  if (typeof records === 'string') return records
+  const { standing, moved } = records
+  return standing.targetPath === context.path &&
+    standing.entrySha256 === moved.entrySha256
+    ? 'covers'
+    : 'other'
+}
+
+/**
+ * Reads the record that stands at `receipt.json` and the moved one, and checks the name still shows what was read; called only by {@link standingReceiptOf}, which compares the two.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the moved record.
+ * @returns Both records once every look passed; otherwise the answer the looks already give ({@link StandingReceipt}).
+ * @example
+ * await readStandingReceipt(context, retiredPath) // => { standing: newerReceipt, moved: oldReceipt }
+ */
+async function readStandingReceipt(
+  context: Context,
+  retiredPath: string,
+): Promise<StandingReceipt | { standing: Receipt; moved: Receipt }> {
+  const { receiptPath } = context
+  let before: BigIntStats | undefined
+  try {
+    before = await lstatOrAbsent(receiptPath)
+  } catch {
+    return 'unread'
+  }
+  if (!before) return 'absent'
+  if (!before.isFile()) return 'other'
+  const standing = await readRecordKind(context, receiptPath)
+  // A name that is empty again by the read counts as empty.
+  if (standing === undefined) return 'absent'
+  if (typeof standing === 'string') return standing
+  const moved = await readRecordKind(context, retiredPath)
+  // Nothing is left under the private name to keep.
+  if (moved === undefined) return 'covers'
+  if (typeof moved === 'string') return 'unread'
+  const { ino, size, mtimeNs, ctimeNs } = before
+  const isStill = await isNameStill(context, receiptPath, {
+    ino,
+    size,
+    mtimeNs,
+    ctimeNs,
+  }).catch(() => undefined)
+  if (isStill === undefined) return 'unread'
+  return isStill ? { standing, moved } : 'absent'
+}
+
+/**
+ * Reads one receipt file and tells a failed read from foreign bytes; called only by {@link readStandingReceipt}.
+ * @param context - The run.
+ * @param path - The record file.
+ * @returns
+ * - The receipt; undefined when the name is empty
+ * - `unread` when opening, looking at or reading the file failed ({@link readRecord} carries that failure's code as its cause)
+ * - `other` when the name holds no regular file, too many bytes or bytes that are no receipt
+ * @example
+ * await readRecordKind(context, receiptPath) // => 'other' for a file that holds no JSON
+ */
+async function readRecordKind(
+  context: Context,
+  path: string,
+): Promise<Receipt | undefined | 'other' | 'unread'> {
+  return readRecord(path, receiptSchema, context.retry, context.seam).catch(
+    (error: unknown) =>
+      error instanceof Error && codeOf(error.cause) !== undefined
+        ? 'unread'
+        : 'other',
+  )
 }
 
 /**
