@@ -4582,6 +4582,108 @@ test('A setup that cannot write its completed record warns that Codebook still t
   )
 })
 
+test('A first setup on a full disk that can neither write its records nor take its entry out warns that Codebook still tracks the moved-aside copy, which the next run then deletes', async (context) => {
+  // Value: protects=a first setup whose completed record, receipt and rollback journal all fail names the moved-aside copy with the warning, because the record written before the move-aside still lets the next run delete it while the config is the published file, and the next run does delete it before it takes the entry back; fails_when=the refusal advises deleting the copy at will or omits its path, the copy is gone before the next run, or the next run keeps it; no_claim=a real ENOSPC (seam.beforeRecordWrite fails every record write once seam.afterPublish ran: the completed record, the receipt, the take-back mark and the rollback's journal), and a rollback that took the entry out or found another config (the next run hands the copy over there)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  let copyPath = ''
+  let isDiskFull = false
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: () => {
+      if (isDiskFull) throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      isDiskFull = true
+    },
+  })
+  await assert.rejects(setup, (error: Error) => {
+    assert.ok(
+      error.message.includes(
+        ` Codebook also kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+      ),
+      error.message,
+    )
+    assert.match(error.message, /could not take that entry out again/)
+    return true
+  })
+  assert.equal(
+    readFileSync(copyPath, 'utf8'),
+    '{"mcpServers":{"alpha":{"command":"a"}}}\n',
+  )
+
+  // Act
+  const nextRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(nextRun.status, 'not-managed')
+  assert.equal(existsSync(copyPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
+test('A first setup that cannot write its completed record or its receipt but takes its entry out leaves the moved-aside copy to the learner, and the next runs keep it', async (context) => {
+  // Value: protects=after a rollback that took the entry out, the copy the unwritten completed record left is the learner's to delete at will, because the next run finds another config than the published one and hands that copy over instead of deleting it; fails_when=the refusal warns that a later run deletes the copy or omits its path, or a later run deletes or changes the copy; no_claim=a real ENOSPC (seam.beforeRecordWrite fails only the setup's completed record and its receipt; the take-back mark and the rollback's own records are written), and the wording of the next run's refusal beyond the copy's path
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let copyPath = ''
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      if (path === pendingPath && phaseOfRecord(record) === 'completed')
+        throw noSpaceLeft()
+      if (path === receiptPath) throw noSpaceLeft()
+    },
+    // The setup's publish comes first; the rollback's own publish calls this seam again.
+    afterPublish: (displacedPath) => {
+      if (copyPath === '') copyPath = displacedPath ?? ''
+    },
+  })
+  await assert.rejects(setup, (error: Error) => {
+    assert.ok(
+      error.message.includes(
+        ` Codebook also kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers); delete that copy when you no longer need it.`,
+      ),
+      error.message,
+    )
+    assert.match(error.message, /so it took that entry out again/)
+    return true
+  })
+
+  // Act
+  const nextRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(nextRun, (error: Error) => {
+    assert.match(error.message, /delete that copy when you no longer need it/)
+    assert.ok(error.message.includes(copyPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(copyPath, 'utf8'), originalText)
+
+  // Act
+  const handedCopyRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(handedCopyRun, (error: Error) => {
+    assert.ok(error.message.includes(copyPath), error.message)
+    return true
+  })
+  assert.equal(readFileSync(copyPath, 'utf8'), originalText)
+
+  // Act
+  const furtherRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(furtherRun.status, 'not-managed')
+  assert.equal(readFileSync(copyPath, 'utf8'), originalText)
+})
+
 test('A first setup whose receipt cannot be written leaves a config that was saved again with the same entry unchanged', async (context) => {
   // protects: a file Codebook did not publish is never edited by the rollback / fails_when: a new config with the same codebook entry but another inode loses that entry or the refusal does not say it was left unchanged / no_claim: a save with different bytes
   // Arrange

@@ -3847,17 +3847,18 @@ function rollbackOutcomeClause(outcome: RollbackResult['outcome']): string {
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
  * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy.
+ * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out or found another config at the config path, where the next run hands that copy over instead ({@link keepOriginalUnlessPublished}).
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
- * @param keptLeft - The copies the publish left; one that stays is named in the error.
+ * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
  * @returns The error to reject with: whether the entry was taken out again, and the way out.
  */
 async function takeOutUnrecordedEntry(
   context: Context,
   written: Receipt,
   cause: unknown,
-  keptLeft: KeptFile[],
+  { asLeft, asTracked }: LeftCopies,
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
@@ -3869,7 +3870,12 @@ async function takeOutUnrecordedEntry(
     // The rejection below says the entry may still stand.
   }
   const { outcome } = result
-  const keptCopies = [...keptLeft, ...result.keptLeft]
+  // The config is no longer the published file after these two outcomes, so the next run hands an untracked copy over instead of deleting it.
+  const isHandedNext = outcome === 'took-out' || outcome === 'replaced-config'
+  const keptCopies = [
+    ...(isHandedNext ? asLeft : asTracked),
+    ...result.keptLeft,
+  ]
   // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left.
   if (outcome === 'took-out' && keptCopies.length === 0)
     await dropPending(context)
@@ -3936,21 +3942,26 @@ async function publishEntry(
     installationId,
     config,
   }
+  // Decided once for both notices: without the completed record, the record written before the move-aside still lets the next run delete the copy.
+  const copies: LeftCopies = {
+    asLeft: keptLeft,
+    asTracked: isRecorded ? keptLeft : keptLeft.map(stillTracked),
+  }
   try {
     await writeRecord(context, context.receiptPath, written)
   } catch (cause) {
     // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
     if (!isFirst) throw cause
-    throw await takeOutUnrecordedEntry(context, written, cause, keptLeft)
+    throw await takeOutUnrecordedEntry(context, written, cause, copies)
   }
   // A record that names a copy that stays is kept, so the next run settles that copy.
   if (keptLeft.length === 0) await dropPending(context)
-  // Without the completed record, the record written before the move-aside still lets the next run delete the copy.
-  const cleanupFailure = cleanupFailureOf(
-    isRecorded ? keptLeft : keptLeft.map(stillTracked),
-  )
+  const cleanupFailure = cleanupFailureOf(copies.asTracked)
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
 }
+
+/** The copies a publish left, worded two ways ({@link publishEntry}): `asLeft` as the publish reported them, `asTracked` with every copy of the previous config that the record on disk still lets a later run delete marked {@link KeptFile.isLeftover}; the two differ only when the completed record could not be written. */
+type LeftCopies = { asLeft: KeptFile[]; asTracked: KeptFile[] }
 
 /**
  * Marks a kept copy of the previous config as one a record on disk still holds ({@link KeptFile.isLeftover}); used by {@link publishEntry} when the completed record could not be written, so the record written before the move-aside still names the copy and the next run deletes it while the config is the published file.
