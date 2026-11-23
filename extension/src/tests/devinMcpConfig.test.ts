@@ -10013,21 +10013,14 @@ test("A refresh whose read of a finished first setup's own record fails once kee
 })
 
 test('A refresh after a finished first setup that finds a link at receipt.json asks to move that link to another folder, never to make it readable, and the refresh after the link is moved away settles the old record', async (context) => {
-  // Value: protects=a link at receipt.json is no failed read: the refusal names receipt.json as something to move to another folder, the way out the learner can act on, keeps every record and follows no link, and once the learner moves the link away the next refresh settles the old record; fails_when=the first refresh says Codebook could not tell what stands at receipt.json or asks to make a file readable, answers without a refusal, changes a record, the link or the file it points to, or the next refresh refuses, answers anything but not-managed or leaves anything but the old record put back at receipt.json; no_claim=a real sync tool (renameSync and symlinkSync put the setup's own record elsewhere and a link to it at receipt.json), a learner deleting mcp_config.json (rmSync), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  // Value: protects=a link at receipt.json is no failed read: the refusal names receipt.json as something to move to another folder, the way out the learner can act on, keeps every record and follows no link, and, since that setup finished and its publish record lacks the mark that nothing was linked only because it was never needed, says that Codebook cannot tell from the remaining records whether the old record may go back, never that it could not note that mark, and once the learner moves the link away the next refresh settles the old record; fails_when=the first refresh says Codebook could not tell what stands at receipt.json, asks to make a file readable or says it could not note in its publish record that nothing of this setup was linked, answers without a refusal, changes a record, the link or the file it points to, or the next refresh refuses, answers anything but not-managed or leaves anything but the old record put back at receipt.json; no_claim=a real sync tool (renameSync and symlinkSync put the setup's own record elsewhere and a link to it at receipt.json), a learner deleting mcp_config.json (rmSync), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
   if (process.platform === 'win32') {
     context.skip('symlinks need privileges on Windows')
     return
   }
   // Arrange
-  const {
-    home,
-    storage,
-    configPath,
-    receiptPath,
-    pendingPath,
-    retiredName,
-    retiredPath,
-  } = await arrangeFinishedSetupWithOldRecordLeft(context)
+  const { home, storage, configPath, receiptPath, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
   // The config is gone for a moment, so nothing but the records decides.
   rmSync(configPath)
   const oldRecord = await readRecordFile(storage, retiredName)
@@ -10062,7 +10055,7 @@ test('A refresh after a finished first setup that finds a link at receipt.json a
   // Assert
   assert.equal(
     firstError instanceof Error ? firstError.message : firstError,
-    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because something that is not Codebook's record of that entry stands at ${receiptPath}, and it could not note in its publish record at ${pendingPath} that nothing of this setup was linked; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.`,
+    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because something that is not Codebook's record of that entry stands at ${receiptPath}, and it cannot tell from the remaining records whether the old record may go back; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.`,
   )
   assert.deepEqual(recordsAfterFirst, [
     'pending.json',
@@ -10848,7 +10841,7 @@ test("A first setup whose old record's name was taken by a folder and whose mark
 })
 
 test("A refresh after a stopped first setup whose publish record lacks the mark, with a folder at the old record's name, promises no put-back, and the run after the folder is moved away refuses instead of guessing", async (context) => {
-  // Value: protects=a later run words a kept old record from the publish record's real mark: without the mark that nothing was linked, the refusal asks to move what stands at receipt.json and says that the next run decides again, never that it puts the old record back, and that next run indeed refuses as undecided; fails_when=the first refusal promises the put-back or is another sentence, receipt.json appears or a record is gone, or the refresh after the folder was moved away answers anything but the undecided refusal; no_claim=a real process end (seam.afterPublish throws), why the private name's unlink failed in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the config again at another inode, mkdirSync makes the folder)
+  // Value: protects=a later run words a kept old record from the publish record's real mark: without the mark that nothing was linked, the refusal asks to move what stands at receipt.json and says that Codebook cannot tell from the remaining records whether the old record may go back and that the next run decides again, never that it puts the old record back or that it could not note that mark, which a setup that stopped after its link never tried to write, and that next run indeed refuses as undecided; fails_when=the first refusal promises the put-back, says it could not note in its publish record that nothing of this setup was linked or is another sentence, receipt.json appears or a record is gone, or the refresh after the folder was moved away answers anything but the undecided refusal; no_claim=a real process end (seam.afterPublish throws), why the private name's unlink failed in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the config again at another inode, mkdirSync makes the folder)
   // Arrange
   const {
     home,
@@ -10885,7 +10878,7 @@ test("A refresh after a stopped first setup whose publish record lacks the mark,
   // Assert
   assert.equal(
     firstError instanceof Error ? firstError.message : firstError,
-    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because something that is not Codebook's record of that entry stands at ${receiptPath}, and it could not note in its publish record at ${pendingPath} that nothing of this setup was linked; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.`,
+    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because something that is not Codebook's record of that entry stands at ${receiptPath}, and it cannot tell from the remaining records whether the old record may go back; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.`,
   )
   assert.deepEqual(recordsAfterFirst, [
     'pending.json',
@@ -10898,6 +10891,64 @@ test("A refresh after a stopped first setup whose publish record lacks the mark,
   )
   assert.equal(existsSync(receiptPath), false)
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+})
+
+test("A refresh whose put-back of a stopped first setup's old record fails says the remaining records cannot tell whether that record may go back, keeps both records, and the refresh after it puts that record back", async (context) => {
+  // Value: protects=a later run words a failed put-back from what it knows: the publish record lacks the mark that nothing was linked, so the refusal says that Codebook cannot tell from the remaining records whether the old record may go back and that the next run decides again, never that it could not note that mark, which this run never tried to write, and it keeps both records, so the refresh after the failure is gone puts the old record back; fails_when=the refusal says it could not note in its publish record that nothing of this setup was linked, promises the put-back or is another sentence, a record is gone or receipt.json appears after the refusal, or the next refresh answers anything but not-managed or leaves anything but the old record back at receipt.json; no_claim=a real process end (seam.afterPublish throws), why the private name's unlink failed in that setup (unlink stub EBUSY), why a real put-back link fails (link stub EIO whenever its target is receipt.json), a learner deleting mcp_config.json (rmSync)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    retiredName,
+    retiredPath,
+  } = await arrangeResavedAfterStoppedFirstSetup(context)
+  // The entry is gone with the config, so the old record is to go back.
+  rmSync(configPath)
+  const failingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const firstError = await failingPutBack
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const recordsAfterFirst = await recordsIn(storage)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, and it cannot tell from the remaining records whether the old record may go back, so it kept both files and the next run decides again whether that record goes back; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterFirst, ['pending.json', retiredName])
+  assert.equal(second, 'not-managed')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
 test('A removal retry after a first setup that could not write its own record still answers removed', async (context) => {

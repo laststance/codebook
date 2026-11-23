@@ -1384,6 +1384,9 @@ type UnrestoredStanding =
   | 'superseded'
   | 'config-unread'
 
+/** What the publish record tells about a first setup's link when that setup's moved record could not go back ({@link Pending.notLinked}): `marked` when it says that nothing of the setup was linked; `unwritten` when the setup itself could not write that mark ({@link UnrestoredReceiptError.withoutMark}); `unmarked` when a later run settles a record without that mark ({@link PutBackOptions.mark}), which also a setup that linked its config leaves, so the records that remain cannot tell whether the old record may go back. */
+type PublishMark = 'marked' | 'unwritten' | 'unmarked'
+
 /**
  * Thrown by {@link putBackRetiredReceipt} when a receipt a first setup moved aside could not go back to `receipt.json`, and by {@link retiredReceiptFateOf} when that receipt could not be read: its text names the private file and the way out, and it carries what made the put-back necessary (`failure`: the link's failure or a {@link changedRecordRefusal}), which the caller words as before and puts in front ({@link withUnrestoredNote}). The callers keep the publish record that names the private file ({@link Pending.retiresReceipt}), so the next run puts the receipt back ({@link settleRetiredReceipt}), or decides again when the record could not be marked {@link Pending.notLinked} ({@link UnrestoredReceiptError.withoutMark}).
  */
@@ -1394,9 +1397,9 @@ class UnrestoredReceiptError extends Error {
     readonly failure: unknown,
     cause: unknown,
     readonly standing?: UnrestoredStanding,
-    isMarked = true,
+    mark: PublishMark = 'marked',
   ) {
-    super(unrestoredSentence(context, retiredPath, standing, isMarked), {
+    super(unrestoredSentence(context, retiredPath, standing, mark), {
       cause,
     })
   }
@@ -1415,7 +1418,7 @@ class UnrestoredReceiptError extends Error {
       this.failure,
       this.cause,
       this.standing,
-      false,
+      'unwritten',
     )
   }
 }
@@ -1425,10 +1428,10 @@ class UnrestoredReceiptError extends Error {
  * @param context - The run; gives the config's, the receipt's and the publish record's paths and the command to run again.
  * @param retiredPath - The private name that holds the old record.
  * @param standing - What stood at `receipt.json` when the link found it taken ({@link standingReceiptOf}), or `moved-unread` when the old record could not be read; undefined when the link failed otherwise.
- * @param isMarked - Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}); `false` from {@link UnrestoredReceiptError.withoutMark} and from a later run that settles a record without that mark ({@link PutBackOptions.isMarked}), and then no sentence promises that a later run puts the record back, because that run cannot tell and decides again.
+ * @param mark - What the publish record tells about the setup's link ({@link PublishMark}); unless `marked`, no sentence promises that a later run puts the record back, because that run cannot tell and decides again, and the sentence says why from what this run knows: `unwritten` that the setup could not note that nothing was linked, `unmarked` that the records that remain cannot tell whether the old record may go back.
  * @returns
- * - Without `standing`: the sentence that the next run puts the record back; unmarked, that it decides again whether it goes back
- * - `other`: the sentence that asks the learner to move what stands there to another folder, after which that run puts the old record back (unmarked: decides again)
+ * - Without `standing`: the sentence that the next run puts the record back; unless marked, that it decides again whether it goes back
+ * - `other`: the sentence that asks the learner to move what stands there to another folder, after which that run puts the old record back (unless marked: decides again)
  * - `foreign`: the sentence that asks the learner to move the moved file, which is no record of this config, to another folder, and never what stands at `receipt.json`
  * - `unread`: the sentence that Codebook kept both files and looks again, which advises no removal
  * - `moved-unread`: the sentence that names the private file Codebook could not read and asks to delete neither record
@@ -1436,13 +1439,14 @@ class UnrestoredReceiptError extends Error {
  * - `superseded`: the sentence that Codebook's record of the entry the config holds stands at `receipt.json` again and asks to move the old record, never that record, to another folder
  * - `config-unread`: the sentence that Codebook could not read the config to tell whether the record at `receipt.json` belongs to its entry, so it kept both and looks again, which names no record to move
  * @example
- * unrestoredSentence(context, retiredPath, 'other', true) // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
+ * unrestoredSentence(context, retiredPath, 'other', 'marked')   // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
+ * unrestoredSentence(context, retiredPath, 'other', 'unmarked') // => '… stands at …/receipt.json, and it cannot tell from the remaining records whether the old record may go back; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.'
  */
 function unrestoredSentence(
   { path, receiptPath, pendingPath, retry }: Context,
   retiredPath: string,
   standing: UnrestoredStanding | undefined,
-  isMarked: boolean,
+  mark: PublishMark,
 ): string {
   // The moved file is no record of this config, so it is not called Codebook's old record, and the record of this config that stands stays where it is.
   if (standing === 'foreign')
@@ -1454,7 +1458,11 @@ function unrestoredSentence(
   if (standing === 'moved-unread')
     return `Codebook could not read its own old record of a setup whose entry is gone, which it had moved from ${receiptPath} to ${retiredPath}, so it kept that file and the publish record at ${pendingPath} and the next run reads it again; delete neither, make that file readable by you if it is not, ${retry}.`
   const lead = `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back`
-  const unmarked = `it could not note in its publish record at ${pendingPath} that nothing of this setup was linked`
+  // Only the setup itself knows that its mark failed; a later run sees a record without the mark, which a setup that linked its config leaves too.
+  const undecided =
+    mark === 'unwritten'
+      ? `it could not note in its publish record at ${pendingPath} that nothing of this setup was linked`
+      : 'it cannot tell from the remaining records whether the old record may go back'
   // Another file stood at the private name by the end of the read: nothing the read compared may be deleted, so both stay.
   if (standing === 'moved-changed')
     return `${lead}, because the file at ${retiredPath} changed while Codebook read it. Codebook kept both files, so the next run looks again; ${retry}.`
@@ -1463,15 +1471,15 @@ function unrestoredSentence(
     return `${lead}, because it could not read Devin Desktop's MCP config at ${path} to tell whether the record at ${receiptPath} belongs to its "${SERVER_NAME}" entry. Codebook kept both files, so the next run looks again; look at that config, ${retry}.`
   // A folder, another file or a record of an entry the config does not hold: moving it away frees the name without deleting anything.
   if (standing === 'other')
-    return isMarked
+    return mark === 'marked'
       ? `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}; move it to another folder, ${retry}, and that run puts the old record back.`
-      : `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}, and ${unmarked}; move what stands there to another folder, ${retry}, and that run decides again whether the old record goes back.`
+      : `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}, and ${undecided}; move what stands there to another folder, ${retry}, and that run decides again whether the old record goes back.`
   // Nothing is known about what stands there, so nothing is to be moved or removed.
   if (standing === 'unread')
     return `${lead}, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept both files, so the next run looks again; make that file readable by you if it is not, ${retry}.`
-  return isMarked
+  return mark === 'marked'
     ? `${lead}, so the next run puts it back; if that fails too, move that file back by hand, ${retry}.`
-    : `${lead}, and ${unmarked}, so it kept both files and the next run decides again whether that record goes back; ${retry}.`
+    : `${lead}, and ${undecided}, so it kept both files and the next run decides again whether that record goes back; ${retry}.`
 }
 
 /**
@@ -3785,10 +3793,10 @@ async function holdsReceipt(
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
  * @param options - How this put-back runs ({@link PutBackOptions}); a setup passes none.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.isMarked` is `false`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
- * await putBackRetiredReceipt(context, retiredPath, undefined, { isMarked: false }) // a later run settling a record without the notLinked mark
+ * await putBackRetiredReceipt(context, retiredPath, undefined, { mark: 'unmarked' }) // a later run settling a record without the notLinked mark
  */
 async function putBackRetiredReceipt(
   context: Context,
@@ -3817,7 +3825,7 @@ async function putBackRetiredReceipt(
     failure,
     cause,
     undefined,
-    options.isMarked ?? true,
+    options.mark,
   )
 }
 
@@ -3825,8 +3833,8 @@ async function putBackRetiredReceipt(
 type PutBackOptions = {
   /** Which link this is, from 1; only the put-back itself passes more. */
   attempt?: number
-  /** Whether the publish record says that nothing of the setup was linked ({@link Pending.notLinked}), as a setup's own put-back and a later run's put-back of a marked record do; `false` from a later run that settles a record without that mark ({@link settleRetiredReceipt}), whose refusal then promises no put-back, because the run after it decides again ({@link retiredReceiptFateOf}). Defaults to `true`. */
-  isMarked?: boolean
+  /** What the publish record tells about the setup's link ({@link PublishMark}): `marked` for a setup's own put-back and a later run's put-back of a marked record; `unmarked` from a later run that settles a record without that mark ({@link settleRetiredReceipt}), whose refusal then promises no put-back, because the run after it decides again ({@link retiredReceiptFateOf}). Defaults to `marked`. */
+  mark?: Exclude<PublishMark, 'unwritten'>
   /** Set by a later run whose decision to put the record back rested only on something standing at `receipt.json` while the config holds the entry the old record covers ({@link retiredReceiptFateOf}'s `compare`): the put-back compares with what stands there and never links the old record into that name, so an empty name is the undecided case again. */
   isBesideStanding?: boolean
 }
@@ -3850,7 +3858,7 @@ async function settleTakenName(
   cause: unknown,
   options: PutBackOptions,
 ): Promise<void> {
-  const { attempt = 1, isMarked = true, isBesideStanding = false } = options
+  const { attempt = 1, mark, isBesideStanding = false } = options
   const standing = await standingReceiptOf(context, retiredPath)
   // The private name was found empty: nothing is left there to keep, and a file put there after that look is never unlinked unchecked.
   if (standing === 'gone') return
@@ -3875,7 +3883,7 @@ async function settleTakenName(
     failure,
     cause,
     unrestoredStandingOf(standing),
-    isMarked,
+    mark,
   )
 }
 
@@ -4185,7 +4193,8 @@ async function settleRetiredReceipt(
     await dropRetiredReceipt(context, retiredPath, fate)
   else
     await putBackRetiredReceipt(context, retiredPath, undefined, {
-      isMarked: pending.notLinked === true,
+      // A marked record went back above: this one lacks the mark, which also a setup that linked its config leaves.
+      mark: 'unmarked',
       isBesideStanding: fate === 'compare',
     })
 }
