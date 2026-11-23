@@ -20,7 +20,7 @@ import {
   CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS,
   EXTENSION_VERSION,
 } from './constants'
-import { holdBridgeInput } from './utils/holdBridgeInput'
+import { holdBridgeInput, type BridgeInputHold } from './utils/holdBridgeInput'
 import {
   readBridgeDescriptor,
   type DescriptorExpectation,
@@ -128,20 +128,23 @@ function isRefusal(error: unknown): boolean {
 }
 
 /**
- * Runs a bridge's first handshake while it watches for the client ending the bridge: the end of stdin, a read error on it, SIGTERM or SIGINT; called by {@link runCursorMcpBridge} once, after its descriptor read.
+ * Runs a bridge's first handshake while it watches for the client ending the bridge: the end of stdin, a read error on it, SIGTERM or SIGINT, and, once stdin reached its startup input limit, the end of the wait at that limit; called by {@link runCursorMcpBridge} once, after its descriptor read.
  * Before this the first handshake could not be stopped: nothing read stdin before the stdio transport started, and the signal handlers came after the handshake, so a client that closed the bridge meanwhile kept it waiting (Cursor's bridge has no deadline for the handshake) and a signal ended it before it released its session (Cycle 0146 /ship pass 1).
+ * Past {@link BRIDGE_STARTUP_INPUT_LIMIT_BYTES} the bridge no longer reads stdin, so it cannot see the client close it; the wait at that limit ({@link BRIDGE_STARTUP_INPUT_FULL_WAIT_MS}, from the first time a hold of stdin reached it) stands in for that end, also while the client is still connected (Cycle 0147 task 8). The handshake's settlement decides against that wait ({@link BridgeInputHold.settleHandshake}): one that settled after the wait ended is a stop, one that settled within it keeps its outcome while its cleanup runs.
  * A stop marks the bridge closed, which cuts the handshake short; its client is closed and the session the server named is released by `connect` itself (a best-effort DELETE for the id the bridge knows). The signal handlers stay until that release settled, so a second signal meets them instead of the default action.
  * Not watched during the descriptor read before it: no session can exist yet, so a signal's default action loses nothing, and an end of input that came then is seen as soon as this starts.
- * @param connect - Makes the handshake under the bridge's stop signal; it closes the client and releases any session itself when it fails or is cut.
+ * @param connect - Makes the handshake under the bridge's stop signal; it closes the client and releases any session itself when it fails or is cut. It calls `settleHandshake` as soon as the handshake settled, before it accepts the connection and before its cleanup, and treats the handshake as cut when that answers `true`.
  * @param markClosed - Begins the bridge's stop; idempotent.
  * @param stop - The bridge's stop signal, aborted by `markClosed`.
- * @returns `'stopped'` when the stop began during the handshake, whatever the cut handshake threw: stdin is left paused and nothing is kept, so the process can end. Otherwise the connection and `handOver`, which the caller runs once its serving stop listens: it puts what was read from stdin back for the stdio transport (paused, each chunk whole and in order) and removes the signal handlers.
- * @throws What the handshake threw when it failed without a stop; stdin then holds what was read, paused, for the next reader, and no handler is left.
+ * @returns `'stopped'` when the stop began during the handshake, whatever the cut handshake threw: stdin is left paused and not reading and nothing is kept, so the process can end. Otherwise the connection and `handOver`, which the caller runs once its serving stop listens: it puts what was read from stdin back for the stdio transport (paused, each chunk whole and in order) and removes the signal handlers.
+ * @throws What the handshake threw when it failed without a stop; stdin then holds what was read, paused and not reading, for the next reader, and no handler is left.
  * @example
- * const first = await connectFirstUpstream(() => connectUpstream(budget), markClosed, shutdownStarted.signal)
+ * const first = await connectFirstUpstream((settleHandshake) => connectUpstream(budget, settleHandshake), markClosed, shutdownStarted.signal)
  */
 async function connectFirstUpstream<Connection>(
-  connect: () => Promise<Connection>,
+  connect: (
+    settleHandshake: BridgeInputHold['settleHandshake'],
+  ) => Promise<Connection>,
   markClosed: () => void,
   stop: AbortSignal,
 ): Promise<{ connection: Connection; handOver: () => void } | 'stopped'> {
@@ -153,11 +156,11 @@ async function connectFirstUpstream<Connection>(
     process.off('SIGINT', markClosed)
   }
   try {
-    const connection = await connect()
+    const connection = await connect(input.settleHandshake)
     return {
       connection,
       handOver: (): void => {
-        input.putBack()
+        input.handOver()
         stopWatching()
       },
     }
@@ -206,7 +209,7 @@ function listenForServingStop(
  * @param onRefused - Check run when the server refuses a request with HTTP 401 or 403 (a removed setup unmarks the window, a take-back rotates the token). When it resolves `false` the bridge ends as for `beforeUpstream`; when it resolves `true` or rejects, only that request fails; the request is never sent again, because only the exact 404 `Unknown MCP session` is safe to retry. Also run when a stop cut a replacement handshake short, suppressed a request or interrupted one still in flight (the ones that come while such a check runs share it), so a setup removed or replaced meanwhile still ends the bridge with its line. The Devin Desktop bridge passes the same check as `beforeUpstream`; Cursor's bridge passes none and a refusal fails the request as before.
  * @returns
  * - `'serving'` once the first connection is up and the bridge serves its client (its later stop calls `onClosed`)
- * - `'stopped'` when the client ended the bridge during its first handshake (the end of stdin, a read error on it, SIGTERM or SIGINT): the handshake was cut, a best-effort DELETE went out for the session the server had named (none when no answer named one), and `onClosed` was called once; nothing is written and the exit code is left as it was
+ * - `'stopped'` when the client ended the bridge during its first handshake (the end of stdin, a read error on it, SIGTERM or SIGINT), or its startup input stayed at {@link BRIDGE_STARTUP_INPUT_LIMIT_BYTES} for {@link BRIDGE_STARTUP_INPUT_FULL_WAIT_MS} without the first connection coming up (counted from the first time a hold of stdin reached that limit, across the Devin Desktop bridge's attempts): the handshake was cut, a best-effort DELETE went out for the session the server had named (none when no answer named one), and `onClosed` was called once; nothing is written and the exit code is left as it was
  * @throws When the descriptor is not private, is no valid descriptor (one fixed sentence, never its content), names a url that is not Codebook's loopback endpoint, differs from `expected`, the server does not finish the handshake in time or refuses the connection.
  * @example await runCursorMcpBridge('/private/current.connection.json') // => 'serving'
  */
@@ -249,7 +252,11 @@ export async function runCursorMcpBridge(
       },
       sessionId,
     })
-  const connectUpstream = async (handshakeMs = connectTimeoutMs) => {
+  // Reconnects settle no input hold: their handshake is never judged against the wait at the startup input limit.
+  const connectUpstream = async (
+    handshakeMs = connectTimeoutMs,
+    settleHandshake: BridgeInputHold['settleHandshake'] = () => false,
+  ) => {
     const client = new Client({
       name: 'codebook-cursor-bridge',
       version: EXTENSION_VERSION,
@@ -257,7 +264,11 @@ export async function runCursorMcpBridge(
     const http = openTransport()
     try {
       await connectWithin(client, http, handshakeMs, shutdownStarted.signal)
+      // A first handshake that came up only after the wait at its startup input limit ended does not win: it is closed and released like one a stop cut.
+      if (settleHandshake(handshakeMs)) shutdownStarted.signal.throwIfAborted()
     } catch (error) {
+      // Settled before the cleanup below: the wait at the startup input limit cannot turn a first handshake that failed within it into a stop while its session is released, and one that failed after that wait ended is a stop.
+      settleHandshake(handshakeMs)
       // Closed before the release: a handshake that was cut short or timed out must not send its initialized notification once its answer arrives.
       await client.close()
       await releaseHalfOpenSession(http, openTransport)
@@ -276,11 +287,11 @@ export async function runCursorMcpBridge(
     await connection.client.close()
   }
   const first = await connectFirstUpstream(
-    () => connectUpstream(firstHandshakeMs),
+    (settleHandshake) => connectUpstream(firstHandshakeMs, settleHandshake),
     markClosed,
     shutdownStarted.signal,
   )
-  // The client ended the bridge during its first handshake: that handshake was cut and the session it named released.
+  // The client ended the bridge during its first handshake (or its startup input stayed at its limit for the whole wait): that handshake was cut and the session it named released.
   if (first === 'stopped') {
     onClosed?.()
     return 'stopped'

@@ -55,6 +55,7 @@ import { createPathReadGate } from '../utils/shareReceiptRead'
 import { createHarness } from './helpers'
 import { bridgeStopMarksPreload } from './utils/bridgeStopMarksPreload'
 import { defer } from './utils/defer'
+import { handMovedInputClock } from './utils/handMovedInputClock'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
@@ -5237,6 +5238,145 @@ test(
     assert.equal(stderr.includes('Codebook is not running'), false)
     assert.equal(stderr.includes('not set up'), false)
     assert.equal(stderr.includes('could not connect'), false)
+  },
+)
+
+// Value: protects=the Devin bridge ending as a stop 5 s after its input first reached the startup input limit, counted across a retry, with its session released and its client still connected (Cycle 0147 task 8, Codex review F8.2); fails_when=each attempt restarts the wait, or the bridge waits for the end of its startup window and exits 1 with a refusal; no_claim=the real clock's timing (the child's input clock is moved by hand), the order where the attempt's own time limit comes first (the next test), signals
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  'a Devin bridge whose input reached its startup input limit 3 seconds before a busy answer ends 5 seconds after that limit, not 5 seconds after its next attempt, with exit code 0 and stdin still open',
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    let heldFirstInitialize: ServerResponse | undefined,
+      isHeldNotificationGone: (() => boolean) | undefined,
+      releases = 0
+    const inputClock = await handMovedInputClock(context)
+    const { bridge } = await launchDevinBridge(context, {
+      preloadSource: bridgeStopMarksPreload() + inputClock.preloadSource,
+      decide: async (
+        method,
+        initializesSoFar,
+        httpMethod,
+        _session,
+        isGone,
+        out,
+      ) => {
+        if (httpMethod === 'DELETE') releases += 1
+        // The first attempt's initialize waits until the test answers it 429.
+        if (method === 'initialize' && initializesSoFar === 1) {
+          heldFirstInitialize = out
+          return 'answered'
+        }
+        if (method !== 'notifications/initialized') return undefined
+        // Held through the bridge's exit: never answered.
+        isHeldNotificationGone = isGone
+        return 'answered'
+      },
+    })
+    const firstInitialize = await waitUntil(
+      () => heldFirstInitialize,
+      "the first attempt's initialize held",
+      15_000,
+      undefined,
+      5,
+    )
+    bridge.write('x'.repeat(1_048_576))
+    // The first pause of stdin is the hold's at the startup input limit: nothing pauses it before.
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    await inputClock.advance(bridge, 3_000)
+    // Act
+    firstInitialize.writeHead(429)
+    firstInitialize.end()
+    const isNotificationGone = await waitUntil(
+      () => isHeldNotificationGone,
+      "the next attempt's initialized notification held",
+      15_000,
+      undefined,
+      5,
+    )
+    await inputClock.advance(bridge, 2_000)
+    const exitCode = await within(bridge.exited, 5_000)
+    // The child's exit does not wait for the proxy to see that connection close, so that is observed on its own, within a bound.
+    const wasNotificationClosed = await waitUntil(
+      () => isNotificationGone(),
+      'the proxy seeing the held notification closed',
+      5_000,
+      undefined,
+      5,
+    ).catch(() => false)
+    // Assert
+    const stderr = bridge.readStderr()
+    assert.equal(exitCode, 0)
+    assert.equal(wasNotificationClosed, true)
+    assert.equal(releases, 1)
+    assert.equal(bridge.counts.initializes, 2)
+    assert.equal(stderr.includes('Codebook bridge: instance'), false)
+    assert.equal(stderr.includes('Codebook is not running'), false)
+    assert.equal(stderr.includes('not set up'), false)
+    assert.equal(stderr.includes('could not connect'), false)
+  },
+)
+
+// Value: protects=the Devin bridge's own answer and exit code 1 when its attempt's time limit ends before the wait at the startup input limit, also when the input clock has passed both by the time that attempt's end is handled, as on a busy event loop (Cycle 0147 task 8, Codex review D14); fails_when=the wait that ended later wins because it is judged by the moment the attempt's end was handled, so the bridge ends as a silent stop with exit code 0; no_claim=a late attempt after the startup window (none starts here: the attempt's descriptor is dropped and no other matches), the real clock's timing
+// Not run on Windows: this test is built on POSIX file modes and signals, and the private-file mode check does not apply there.
+test(
+  "a Devin bridge whose attempt's own time limit ends before the wait at its startup input limit still says Codebook is not running, with exit code 1, also when both have passed by the time that attempt ends",
+  { skip: process.platform === 'win32', timeout: 40_000 },
+  async (context) => {
+    // Arrange
+    let isInitializeHeld = false,
+      releases = 0
+    const inputClock = await handMovedInputClock(context)
+    const { bridge } = await launchDevinBridge(context, {
+      preloadSource: bridgeStopMarksPreload() + inputClock.preloadSource,
+      decide: async (method, _initializes, httpMethod) => {
+        if (httpMethod === 'DELETE') releases += 1
+        if (method !== 'initialize') return undefined
+        // Held through the bridge's exit: the attempt's own time limit, the rest of the 15 s startup window, ends it.
+        isInitializeHeld = true
+        return 'answered'
+      },
+    })
+    await waitUntil(
+      () => isInitializeHeld,
+      "the first attempt's initialize held",
+      15_000,
+      undefined,
+      5,
+    )
+    // The attempt's time limit ends at most 15 s of the input clock after its hold began at 0; the limit is reached at 12 s, so the wait ends at 17 s.
+    await inputClock.advance(bridge, 12_000)
+    bridge.write('x'.repeat(1_048_576))
+    await waitUntil(
+      () => bridge.readStderr().includes('STDIN_PAUSED\n'),
+      'the bridge stopping its read at the startup input limit',
+      10_000,
+      undefined,
+      5,
+    )
+    // Both have passed when the attempt's time limit ends, and the wait has not run.
+    await inputClock.advance(bridge, 12_000, { runsDueWaits: false })
+    // Act
+    const exitCode = await within(bridge.exited, 20_000)
+    // Assert
+    const stderr = bridge.readStderr()
+    assert.equal(exitCode, 1)
+    assert.equal(
+      stderr.includes(
+        `Codebook is not running for ${await realpath(bridge.directory)} in this Devin Desktop window. Open Codebook here, run Codebook: Set Up AI Chat, then reload the window.\n`,
+      ),
+      true,
+    )
+    assert.equal(stderr.includes('Codebook bridge: instance'), false)
+    assert.equal(bridge.counts.initializes, 1)
+    assert.equal(releases, 0)
   },
 )
 
