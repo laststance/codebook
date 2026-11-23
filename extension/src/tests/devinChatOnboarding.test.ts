@@ -4081,6 +4081,161 @@ test('a Devin removal whose saved-setup clear waits on storage refuses the Devin
   }
 })
 
+// Value: protects=Remove Devin Desktop Setup takes the window's in-memory mark off as soon as it begins, so Devin Local is refused (403) while the removal's entry step still waits on storage, before or after the config change that step makes (/ship pass 1, Codex structured P1 at extension.ts:2074); fails_when=the mark stays on until the entry removal returned, so a connected bridge keeps using the server while the removal takes its entry out of the config; no_claim=the later steps (the saved-setup clear test above) and the descriptor file while the entry step waits; the held stand-in entry removal stands for the stalled storage, the server is the real one
+test('a Devin removal whose entry removal waits on storage refuses the Devin bridge while it waits', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    holdEntryRemoval: true,
+  })
+  try {
+    await window.whenReconnected()
+    await waitUntil(
+      async () => (await window.readDescriptorField()) === true,
+      "the reconnect's marked descriptor",
+    )
+    const statusBeforeRemoval = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    // Act
+    const removal = window.commands.get(
+      'codebook.removeManagedDevinSetup',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.entryRemoval.reachedAtMs(),
+      "the removal's entry step",
+    )
+    const statusWhileEntryWaits = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    window.holds.entryRemoval.release()
+    const removalOutcome = await within(removal, 15_000)
+    // Assert
+    assert.deepEqual([statusBeforeRemoval, statusWhileEntryWaits], [200, 403])
+    assert.equal(removalOutcome, 'resolved')
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a server started by Start Agent Server while this window's removal waits on storage, whose removal then refuses before it changed the setup (an edited skill), serves the Devin bridge again once the removal ended: the window syncs its mark again from the receipts that still stand (/ship pass 1, native adversarial 1 and Codex outside voice 3); fails_when=the start's queue turn leaves the in-memory mark off for the removal and nothing restores it once the removal ends before its own descriptor step, so Devin Local is refused (403) for a setup that stands until the next restart; no_claim=a removal refused by another window's lock or by a setup's background work (the same end before the descriptor step, not run here) and a Reload Window offer for the restarted server (none while the removal runs); the held stand-in skill removal stands for the stalled storage and then throws, the server is the real one
+test('a Devin server started while a removal waits serves the Devin bridge again once that removal refused without changing the setup', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    holdSkillRemoval: true,
+    failSkillRemoval: true,
+  })
+  try {
+    await window.whenReconnected()
+    await window.commands.get('codebook.stopAgentServer')!()
+    const removal = window.commands.get(
+      'codebook.removeManagedDevinSetup',
+    )!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.skillRemoval.reachedAtMs(),
+      "the removal's skill step",
+    )
+    const startOutcome = await within(
+      window.commands.get('codebook.startAgentServer')!().then(
+        () => 'started',
+        (error: Error) => error.message,
+      ),
+      5_000,
+    )
+    const descriptorFile = await window.descriptorPath()
+    const statusWhileRemoving = await postInitialize(descriptorFile, true)
+    // Act
+    window.holds.skillRemoval.release()
+    const removalOutcome = await within(removal, 15_000)
+    // The window's new sync is queued once the removal ended; its read is bounded by the mark read's budget, which this wait outlasts.
+    const isServedAgain = await waitUntil(
+      async () => (await postInitialize(descriptorFile, true)) === 200,
+      'the Devin bridge served again after the refused removal',
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
+    // Assert
+    assert.equal(startOutcome, 'started')
+    assert.equal(statusWhileRemoving, 403)
+    assert.equal(removalOutcome, 'Injected skill removal failure')
+    assert.equal(isServedAgain, true)
+    assert.equal(await window.readDescriptorField(), true)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
+// Value: protects=a server started by Stop and Start Agent Server in the first seconds of a failed setup's take-back, before that take-back's command answered, refuses the Devin bridge and offers no Reload Window, although the earlier setup was put back first and the receipts the take-back is removing still stand (/ship pass 1, Codex outside voice 3 and Codex structured P1 at extension.ts:1380); fails_when=only a take-back whose command already answered counts as taking the mark off, so the start marks the window from those receipts and the Devin bridge is served (200) for an entry that is being taken back, or the restart offers a reload for it; no_claim=a start after the take-back's 10-second lapse (the Start Agent Server test above) and the descriptor file while the take-back is held (its descriptor step rewrites it later); the held stand-in entry removal stands for the stalled storage and deletes the receipt as the real one does, the server is the real one
+test("Stop and Start Agent Server in a failed setup take-back's first seconds start a server that refuses the Devin bridge and offers no reload", async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    realServer: true,
+    holdEntryRemoval: true,
+    removalDeletesReceipt: true,
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await window.whenReconnected()
+    // Armed after the reconnect's own skill check, so the re-run fails after its entry write and takes itself back.
+    options.onSkillCheck = async (): Promise<void> => {
+      options.onSkillCheck = undefined
+      throw new Error('Injected skill check failure')
+    }
+    let hasSetupAnswered = false
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    void setup.then(() => {
+      hasSetupAnswered = true
+    })
+    await waitUntil(
+      () => window.holds.entryRemoval.reachedAtMs(),
+      "the take-back's entry removal",
+    )
+    // Act
+    await window.commands.get('codebook.stopAgentServer')!()
+    const startOutcome = await within(
+      window.commands.get('codebook.startAgentServer')!().then(
+        () => 'started',
+        (error: Error) => error.message,
+      ),
+      5_000,
+    )
+    const statusWhileTakingBack = await postInitialize(
+      await window.descriptorPath(),
+      true,
+    )
+    const hadSetupAnsweredAtRequest = hasSetupAnswered
+    window.holds.entryRemoval.release()
+    const setupOutcome = await within(setup, 15_000)
+    // Assert
+    assert.equal(startOutcome, 'started')
+    assert.equal(hadSetupAnsweredAtRequest, false)
+    assert.equal(statusWhileTakingBack, 403)
+    assert.equal(setupOutcome, 'Injected skill check failure')
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a Devin re-setup after Stop Agent Server whose own server start read answered after the start budget ends with one Reload Window, its own: the late mark finds the window already marked by the setup and writes and offers nothing (Cycle 0146 review round, ocr-lens1 P3); fails_when=the late mark rewrites the descriptor the setup marked and offers a second Reload Window; no_claim=a late read that settles while the setup still runs (the next test); the setup's server start read reads the real records and waits at its gate until the setup answered
 test('a Devin re-setup whose server start read answers after the setup offers only its own Reload Window', async (context) => {
   // Arrange
