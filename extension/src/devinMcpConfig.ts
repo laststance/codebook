@@ -3244,10 +3244,10 @@ async function putBackRetiredReceipt(
 
 /**
  * Settles the private name of a stale receipt that a first setup moved aside and did not settle itself (it stopped between the move and the link, or right after the link, or the put-back failed); called by {@link settleAfterRecovery} before the receipt is read.
- * While the config name shows the inode the setup published, its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. Otherwise nothing of that setup stands, and the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one. A config name that cannot be looked at decides nothing: the private name stays, and the config's own read refuses next ({@link lookAtConfig}).
+ * While the config name shows the inode the setup published, its link stood: the old receipt covers nothing and must not come back beside that entry, which the take-back removes ({@link finishCutShortSetup}), so the private name is deleted. Otherwise nothing of that setup stands, and the receipt goes back ({@link putBackRetiredReceipt}), never over a newer one. A config name that cannot be looked at decides nothing: the run stops before the config is read, because a read that works a moment later could settle the publish record and leave the private name for good; the private name and the record stay, so the next run settles them again.
  * @param context - The run.
  * @param pending - The publish record as read; only one of this config that names the move ({@link Pending.retiresReceipt}) with a valid generation leads to a private name.
- * @throws The {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
+ * @throws The {@link unreadableRefusal} when the config name cannot be looked at, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
  * @example
  * await settleRetiredReceipt(context, pending) // receipt.json stands again after a setup whose link failed and whose put-back failed too
  */
@@ -3264,9 +3264,10 @@ async function settleRetiredReceipt(
   )
     return
   const retiredPath = retiredReceiptPathOf(context, generation)
-  // null: the look failed, which decides nothing.
-  const config = await lstatOrAbsent(context.path).catch(() => null)
-  if (config === null) return
+  // A failed look decides nothing: the run stops here, so the private name and the record wait for the next run.
+  const config = await lstatOrAbsent(context.path).catch((cause: unknown) => {
+    throw unreadableRefusal(context, cause)
+  })
   const { stagedIno } = pending
   // The setup's link stood: the old receipt is deleted, never put back beside that entry.
   if (config && stagedIno !== undefined && isSameFileId(stagedIno, config.ino))
