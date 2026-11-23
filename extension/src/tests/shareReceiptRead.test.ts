@@ -76,6 +76,55 @@ test('a caller that asks while the fresh read runs gets a third read started aft
   assert.equal(mostInFlight, 1)
 })
 
+// Value: protects=the fresh read queued behind a settled read takes the file over in the step that ends the settled one, so a caller that asks in between never starts a second read of the file beside it (Cycle 0146 /ship pass 1, outside voice finding 8 shareReceiptRead.ts:44); fails_when=the settled read frees the file in one callback and the queued read starts in a later one, so a caller in between starts a read of its own and two reads of one file run at once; no_claim=real file reads (the reads are deferred stand-ins), or which order a real caller's awaits produce
+test('a caller that asks while a settled read hands the file to the read queued behind it waits for that read instead of reading beside it', async () => {
+  // Arrange
+  const reads = createPathReadGate()
+  const firstRead = defer<string>(),
+    queuedRead = defer<string>(),
+    betweenRead = defer<string>()
+  let starts = 0,
+    inFlight = 0,
+    mostInFlight = 0
+  const startHeld = (held: Promise<string>) => (): Promise<string> => {
+    starts += 1
+    inFlight += 1
+    mostInFlight = Math.max(mostInFlight, inFlight)
+    return held.finally(() => {
+      inFlight -= 1
+    })
+  }
+  const first = reads.read(RECEIPT_KEY, startHeld(firstRead.promise))
+  let queued: Promise<string> | undefined
+  let between: Promise<string> | undefined
+  // The first read's caller, answered right after the gate saw that read settle, queues a job and then asks again; the job asks between the gate's steps.
+  const askedAgain = first.then(() => {
+    queueMicrotask(() => {
+      between = reads.read(RECEIPT_KEY, startHeld(betweenRead.promise))
+    })
+    queued = reads.read(RECEIPT_KEY, startHeld(queuedRead.promise))
+  })
+  // Act
+  firstRead.resolve('first')
+  await askedAgain
+  await waitUntil(
+    () => between !== undefined,
+    'the caller in between asking',
+    2_000,
+  )
+  const startsWhileQueuedRuns = starts
+  const mostInFlightWhileQueuedRuns = mostInFlight
+  queuedRead.resolve('queued')
+  betweenRead.resolve('between')
+  const answers = await within(Promise.all([first, queued, between]), 2_000)
+  // Assert
+  assert.equal(mostInFlightWhileQueuedRuns, 1)
+  assert.equal(startsWhileQueuedRuns, 2)
+  assert.deepEqual(answers, ['first', 'queued', 'between'])
+  assert.equal(starts, 3)
+  assert.equal(mostInFlight, 1)
+})
+
 // Value: protects=a read of a stalled storage that never returns holds one thread of the file pool however many callers ask (Cycle 0146 task 1d); fails_when=each caller starts a read of its own, so four callers fill libuv's four pool threads; no_claim=what the callers answer meanwhile (each bounds its own wait)
 test('a read that never returns starts once however many callers ask for it', async (context) => {
   // Arrange

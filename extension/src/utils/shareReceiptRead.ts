@@ -14,10 +14,10 @@ export interface PathReadGate {
 
 /** One key's read in flight and the fresh read queued behind it. */
 interface ReadSlot {
-  /** Settles, never rejecting, once the read in flight settled. */
-  settled: Promise<void>
-  /** The fresh read every caller that came while the read was in flight shares; it starts once {@link ReadSlot.settled} settled. */
+  /** The fresh read every caller that came while the read was in flight shares; it starts in the step that ends the read in flight. */
   next?: Promise<unknown>
+  /** Starts {@link ReadSlot.next} and gives the key to it; set together with it. */
+  startNext?: () => void
 }
 
 /**
@@ -31,17 +31,21 @@ interface ReadSlot {
  */
 export function createPathReadGate(): PathReadGate {
   const slots = new Map<string, ReadSlot>()
-  /** Starts a read under a key that has none in flight, and ends its slot when it settles. @example startRead('look:/s/devin-mcp/receipt.json', () => lstat(path)) */
+  /** Starts a read under a key that has none in flight; the step that sees it settle either starts the read queued behind it or frees the key. @example startRead('look:/s/devin-mcp/receipt.json', () => lstat(path)) */
   const startRead = <Value>(
     key: PathReadKey,
     start: () => Promise<Value>,
   ): Promise<Value> => {
     // A start that throws at once rejects its read like one that fails later.
     const current = new Promise<Value>((resolve) => resolve(start()))
-    const slot: ReadSlot = { settled: current.then(noAnswer, noAnswer) }
+    const slot: ReadSlot = {}
     slots.set(key, slot)
-    // Registered before any caller joins, so the slot is gone before the fresh read behind it starts its own.
-    void slot.settled.then(() => slots.delete(key))
+    const handOn = (): void => {
+      // The queued read takes the key over in this same step, so no caller finds the key free in between and starts a second read beside it.
+      if (slot.startNext) slot.startNext()
+      else slots.delete(key)
+    }
+    void current.then(handOn, handOn)
     return current
   }
   return {
@@ -51,16 +55,14 @@ export function createPathReadGate(): PathReadGate {
     ): Promise<Value> => {
       const slot = slots.get(key)
       if (!slot) return startRead(key, start)
-      slot.next ??= slot.settled.then(() => startRead(key, start))
+      // The executor runs at once, so the slot holds the fresh read and its start together.
+      slot.next ??= new Promise<unknown>((resolve) => {
+        slot.startNext = (): void => resolve(startRead(key, start))
+      })
       // The key's prefix names the kind of read, so the fresh read under it answers the caller's type.
       return slot.next as Promise<Value>
     },
   }
-}
-
-/** Ignores a settled read's answer or rejection, so a slot's `settled` never rejects. @example current.then(noAnswer, noAnswer) */
-function noAnswer(): void {
-  // The read's own callers handle its answer.
 }
 
 /** The gate the extension and the Devin bridge share in one process, so every receipt, descriptor and look read of one file goes through one slot. @example await defaultPathReadGate.read('receipt:/s/devin-skill/receipt.json', () => readReceiptState(path)) */
