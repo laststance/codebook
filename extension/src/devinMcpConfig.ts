@@ -3087,9 +3087,9 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read.
- * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read, is refused before the journal is retired, and both records then stay.
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay.
  * @param context - The run.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, or cannot be read: no record is written or retired then.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then.
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -3134,8 +3134,9 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
 }
 
-/** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `unmatched` (the evidence contradicts itself) and `unread` (the config that decides could not be read) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
-type JournalBelonging = 'belongs' | 'another' | 'unmatched' | 'unread'
+/** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `unmatched` (the evidence contradicts itself), `unread` (the config that decides could not be read) and `invalid` (it was read but is no valid JSON config, as while an editor saves it) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
+type JournalBelonging =
+  'belongs' | 'another' | 'unmatched' | 'unread' | 'invalid'
 
 /** What a rollback journal of an older build (no publish generation) offers {@link legacyBelonging}: the journal (its displaced file's inode and hash), the config its recovery put back, and what that recovery could not settle. */
 type LegacyJournalEvidence = {
@@ -3175,22 +3176,34 @@ async function restoredConfigBytes(
   }
 }
 
+/** What {@link configEntryHashOf} read in a config's bytes: no valid JSON config (`invalid`), or a valid one with the core hash of its `codebook` entry, undefined when it holds none. */
+type ConfigEntryHash =
+  { kind: 'invalid' } | { kind: 'valid'; hash: string | undefined }
+
 /**
  * Gives the core hash ({@link coreHashOf}) of the `codebook` entry in a config's bytes; used by {@link legacyBelonging} on the config a recovery put back.
+ * Bytes that are no valid JSON config are told apart from a config without the entry: a file an editor is still saving proves nothing, while a config that holds no entry or another one is another publish's.
  * @param bytes - The config's bytes.
- * @returns The hash; undefined for bytes that are no JSON object, an `mcpServers` that is no object, or an entry that is absent or no object.
+ * @returns
+ * - `invalid` for bytes that are no JSON, a top level that is no object, or an `mcpServers` that is no object (what {@link parseConfig} refuses as well)
+ * - `valid` with the hash; the hash is undefined for a config without `mcpServers` or without an entry, or an entry that is no object
  * @example
- * configEntryHashOf(Buffer.from('{"mcpServers":{}}')) // => undefined
+ * configEntryHashOf(Buffer.from('{"mcpServers":{}}')) // => { kind: 'valid', hash: undefined }
+ * configEntryHashOf(Buffer.from('{"mcpServ'))         // => { kind: 'invalid' }
  */
-function configEntryHashOf(bytes: Buffer): string | undefined {
+function configEntryHashOf(bytes: Buffer): ConfigEntryHash {
   let root: unknown
   try {
     root = JSON.parse(bytes.toString('utf8'))
   } catch {
-    return undefined
+    return { kind: 'invalid' }
   }
-  const servers = isJsonObject(root) ? root.mcpServers : undefined
-  return isJsonObject(servers) ? coreHashOf(servers[SERVER_NAME]) : undefined
+  if (!isJsonObject(root)) return { kind: 'invalid' }
+  const servers = root.mcpServers
+  // No servers at all is a valid config without the entry; servers that are no object are no valid config.
+  if (servers === undefined) return { kind: 'valid', hash: undefined }
+  if (!isJsonObject(servers)) return { kind: 'invalid' }
+  return { kind: 'valid', hash: coreHashOf(servers[SERVER_NAME]) }
 }
 
 /**
@@ -3204,11 +3217,13 @@ function configEntryHashOf(bytes: Buffer): string | undefined {
  * - `another` for another inode, or for the same inode with another hash when the restored config holds no entry or another one
  * - `unmatched` for the same inode with another hash when the restored config holds the setup's entry but does not start with the published bytes
  * - `unread` for the same inode with another hash when the restored config could not be read (gone, a link, no regular file, too large or a failed read): a transient failure proves no other publish, and a later read may find the published file
+ * - `invalid` for the same inode with another hash when the restored config was read but is no valid JSON config ({@link configEntryHashOf}), as while an editor saves it: half-saved bytes prove no other publish either
  * @example
  * legacyBelonging({ keptIno: 5, keptSha256: 'a' }, { ...publish, stagedIno: 6, stagedSha256: 'a' }, bytes) // => 'another'
  * legacyBelonging({ keptIno: 5, keptSha256: 'b' }, { ...publish, stagedIno: 5, stagedSha256: 'a' }, publishedBytesWithALineAppended) // => 'belongs'
  * legacyBelonging({ keptIno: 5, keptSha256: 'b' }, { ...publish, stagedIno: 5, stagedSha256: 'a' }, sameEntryAmongOtherServers) // => 'unmatched'
  * legacyBelonging({ keptIno: 5, keptSha256: 'b' }, { ...publish, stagedIno: 5, stagedSha256: 'a' }, undefined) // => 'unread'
+ * legacyBelonging({ keptIno: 5, keptSha256: 'b' }, { ...publish, stagedIno: 5, stagedSha256: 'a' }, Buffer.from('{"mcpServ')) // => 'invalid'
  */
 function legacyBelonging(
   journal: Pick<Pending, 'keptIno' | 'keptSha256'> | undefined,
@@ -3226,12 +3241,13 @@ function legacyBelonging(
     return 'belongs'
   if (String(journal.keptIno) !== String(stagedIno)) return 'another'
   if (journal.keptSha256 === stagedSha256) return 'belongs'
-  // The same inode with other bytes: only a restored config that still holds the setup's entry can be the published file, and one that could not be read decides nothing yet.
+  // The same inode with other bytes: only a restored config that still holds the setup's entry can be the published file, and one that could not be read, or is no valid config yet, decides nothing yet.
   if (restoredBytes === undefined) return 'unread'
-  const restoredEntryHash = configEntryHashOf(restoredBytes)
+  const restored = configEntryHashOf(restoredBytes)
+  if (restored.kind === 'invalid') return 'invalid'
   if (
-    restoredEntryHash === undefined ||
-    restoredEntryHash !== plainEntryHashOf(publish.entrySha256)
+    restored.hash === undefined ||
+    restored.hash !== plainEntryHashOf(publish.entrySha256)
   )
     return 'another'
   // Text appended in place keeps the published bytes at the start; a reused inode with the same entry among other settings does not.
@@ -3241,10 +3257,10 @@ function legacyBelonging(
 }
 
 /**
- * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record (`unmatched`), or cannot match yet because the config that decides could not be read (`unread`); thrown by {@link markTakeBackOwed} before any record is written or retired, so both records stay: the learner decides about the entry, or the next run reads the config again.
- * The journal's recovery already ran (a displaced file may be back at the config name), so the sentence claims only what stays: the entry or the file's bytes, both records, and a leftover that recovery could not settle, which is named here because this refusal comes before its own.
+ * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record (`unmatched`), or cannot match yet because the config that decides could not be read (`unread`) or is no valid JSON config yet (`invalid`); thrown by {@link markTakeBackOwed} before any record is written or retired, so both records stay: the learner decides about the entry, or the next run reads the config again.
+ * The journal's recovery already ran (a displaced file may be back at the config name), so the sentence claims only what stays: the entry or the file's bytes, both records, and a leftover that recovery could not settle, which is named here because this refusal comes before its own ({@link unmatchedLeftoverSentence}).
  * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
- * @param belonging - Which of the two answers {@link legacyBelonging} gave.
+ * @param belonging - Which of the three answers {@link legacyBelonging} gave.
  * @param legacy - The journal and the first leftover its recovery could not settle, if any ({@link LegacyJournalEvidence}).
  * @returns The error, not thrown yet.
  * @example
@@ -3252,22 +3268,43 @@ function legacyBelonging(
  */
 function unmatchedJournalRefusal(
   context: Context,
-  belonging: Extract<JournalBelonging, 'unmatched' | 'unread'>,
+  belonging: Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'>,
   legacy: LegacyJournalEvidence | undefined,
 ): Error {
   const { path, pendingPath, retry } = context
-  const journalContext = rollbackContextOf(context)
-  const records = `${pendingPath}, ${journalContext.pendingPath}`
+  const records = `${pendingPath}, ${rollbackContextOf(context).pendingPath}`
+  const notYet = `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match yet: the rollback's file has the inode the setup published but other bytes`
+  // A config that could not be read, or that is no valid config yet, decides nothing: the next run reads it again.
+  const sentence = {
+    unread: `${notYet}, and Codebook could not read ${path} again (it is gone, a link, no regular file, larger than ${DEVIN_MCP_CONFIG_LIMIT_BYTES} bytes or unreadable) to see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; make that file readable, or delete both records if it is gone, ${retry}.`,
+    invalid: `${notYet}, and ${path} is no valid JSON config right now (an editor may still be saving it), so Codebook cannot see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; fix that file or wait until it is saved, ${retry}.`,
+    unmatched: `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "${SERVER_NAME}" entry in ${path} is the one the setup wrote. Codebook left that entry in place and kept both records (${records}); if you did not write that entry, remove it by hand, delete both records, ${retry}.`,
+  }[belonging]
   // A leftover that stays with the kept journal is named once more, so the advice to delete both records never hides it.
-  const leftover = legacy?.reported
-    ? ` ${unsettledRefusal(journalContext, leftoverPhaseOf(legacy.journal), legacy.reported).message}`
-    : ''
-  // A config that could not be read decides nothing: the next run reads it again.
-  const sentence =
-    belonging === 'unread'
-      ? `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match yet: the rollback's file has the inode the setup published but other bytes, and Codebook could not read ${path} again (it is gone, a link, no regular file, larger than ${DEVIN_MCP_CONFIG_LIMIT_BYTES} bytes or unreadable) to see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; make that file readable, or delete both records if it is gone, ${retry}.`
-      : `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "${SERVER_NAME}" entry in ${path} is the one the setup wrote. Codebook left that entry in place and kept both records (${records}); if you did not write that entry, remove it by hand, delete both records, ${retry}.`
-  return new Error(`${sentence}${leftover}`)
+  return new Error(`${sentence}${unmatchedLeftoverSentence(context, legacy)}`)
+}
+
+/**
+ * Words the leftover that an {@link unmatchedJournalRefusal} names beside both records; called only by that refusal.
+ * The leftover's own sentence is kept when it advises no move: its text names both files ({@link namesBothFiles}), the copy was handed over, or its change had finished. A leftover of a change in progress gets its own sentence instead of the move-it-back advice ({@link leftCopyRefusal}): the config that stands may hold settings that file never had (the published inode reused for another config), so copying the file over the config would lose them.
+ * @param context - The run; its config path is named, and the rollback's journal context words the leftover's own sentence ({@link rollbackContextOf}).
+ * @param legacy - The journal and the first leftover its recovery could not settle, if any.
+ * @returns The sentence with a leading space; empty when no leftover stays.
+ * @example
+ * unmatchedLeftoverSentence(context, legacy) // => ' Codebook also kept a private file at …/mcp_config.json.<generation>.tmp that it could not settle; look at both that file and …/mcp_config.json before you use either, and never copy that file over the config.'
+ * unmatchedLeftoverSentence(context, undefined) // => ''
+ */
+function unmatchedLeftoverSentence(
+  context: Context,
+  legacy: LegacyJournalEvidence | undefined,
+): string {
+  if (!legacy?.reported) return ''
+  const { journal, reported } = legacy
+  const phase = leftoverPhaseOf(journal)
+  // These sentences advise no move: what stays is said as it is.
+  if (namesBothFiles(reported.cause) || reported.isHandedOver || phase)
+    return ` ${unsettledRefusal(rollbackContextOf(context), phase, reported).message}`
+  return ` Codebook also kept a private file at ${reported.leftover.path} that it could not settle; look at both that file and ${context.path} before you use either, and never copy that file over the config.`
 }
 
 /**
@@ -3276,7 +3313,7 @@ function unmatchedJournalRefusal(
  * @param context - The run.
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
- * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read; nothing is written then. What reading or writing the record throws.
+ * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet; nothing is written then. What reading or writing the record throws.
  * @example
  * await markTakeBackOwed(context, generation) // pending.json now holds takeBack: true
  */
@@ -3300,10 +3337,10 @@ async function markTakeBackOwed(
       : publish.generation === publishGeneration
         ? 'belongs'
         : 'another'
-  // Contradicting or unread evidence keeps both records: the learner or the next run decides.
-  if (belonging === 'unmatched' || belonging === 'unread')
-    throw unmatchedJournalRefusal(context, belonging, legacy)
   if (belonging === 'another') return
+  // Contradicting, unread or half-saved evidence keeps both records: the learner or the next run decides.
+  if (belonging !== 'belongs')
+    throw unmatchedJournalRefusal(context, belonging, legacy)
   await writeRecord(context, context.pendingPath, {
     ...publish,
     takeBack: true,

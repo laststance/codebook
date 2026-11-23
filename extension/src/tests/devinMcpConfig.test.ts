@@ -4235,6 +4235,59 @@ test('A legacy rollback journal whose restored config could not be read once kee
   })
 })
 
+test('A legacy rollback journal whose restored config is half saved keeps both records, and the next refresh still takes the failed first setup back once the config is whole again', async (context) => {
+  // Value: protects=a config that a legacy rollback journal's recovery put back and that is no valid JSON at that moment (an editor still saving it) is no evidence of another publish, so both records stay and the next run, which reads the whole config, still takes the failed first setup back instead of installing it; fails_when=the first refresh answers anything but the refusal naming both records and the half-saved config, changes either record or writes a receipt, or the second refresh answers anything but not-managed, writes a receipt or leaves the entry in the config; no_claim=a real editor's save (seam.afterStat rewrites the config in place with its first bytes only, once, at the first read of the config, and the test writes the whole bytes back before the second refresh) and a config that stays broken; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; a line break appended to the displaced file, and its new hash in keptSha256, stand for the in-place append the rollback saw
+  // Arrange
+  let wholeText = ''
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      wholeText = readFileSync(keptPath, 'utf8')
+      journal.keptSha256 = sha256(wholeText)
+    })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const journalText = readFileSync(journalPath, 'utf8')
+  let hasHalfSaved = false
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath || hasHalfSaved) return
+      hasHalfSaved = true
+      writeFileSync(configPath, wholeText.slice(0, 20))
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A record the first refresh retired reads as 'absent', so the assertion below names it.
+  const pendingAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const isReceiptAfterFirst = existsSync(receiptPath)
+  // The editor finishes its save: the same file holds the whole bytes again.
+  writeFileSync(configPath, wholeText)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasHalfSaved, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match yet: the rollback's file has the inode the setup published but other bytes, and ${configPath} is no valid JSON config right now (an editor may still be saving it), so Codebook cannot see whether it holds the "codebook" entry the setup wrote. Codebook changed nothing in that file and kept both records (${pendingPath}, ${journalPath}), so the next run looks again; fix that file or wait until it is saved, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(pendingAfterFirst, pendingText)
+  assert.equal(journalAfterFirst, journalText)
+  assert.equal(isReceiptAfterFirst, false)
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test('A legacy rollback journal whose published inode now holds the same entry among other settings is refused, and the config and both records stay as they are', async (context) => {
   // Value: protects=an inode reused for another config that holds the same codebook entry is never taken for the failed setup's published file and nothing is decided on it, while the learner is told what Codebook found and how to go on; fails_when=the refresh takes the entry out, adopts it (current, a receipt), retires or rewrites pending.json or the journal, or changes the config's bytes; no_claim=a reused inode on a real disk; seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the displaced file rewritten in place (same inode) with the same entry beside another server, and its hash in keptSha256, stand for the reused inode the rollback saw
   // Arrange
@@ -4260,8 +4313,8 @@ test('A legacy rollback journal whose published inode now holds the same entry a
   assert.equal(existsSync(receiptPath), false)
 })
 
-test('A legacy rollback journal that cannot be matched also names the private file its recovery could not settle', async (context) => {
-  // Value: protects=the refusal that keeps both records still tells the learner where a private file stays that the journal's recovery could not settle, because that refusal comes before the leftover's own and repeats every run; fails_when=the refusal omits that file's sentence, the file or either record changes, or a receipt is written; no_claim=the wording of the leftover's own sentence (it is the one that names every unsettled copy of a change in progress); seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the displaced file rewritten in place with the same entry beside another server stands for a reused inode, and a space appended to the rollback's staged file makes it a file Codebook cannot delete
+test('A legacy rollback journal that cannot be matched also names the private file its recovery could not settle, without advising to copy it over the config', async (context) => {
+  // Value: protects=the refusal that keeps both records still tells the learner where a private file stays that the journal's recovery could not settle, because that refusal comes before the leftover's own and repeats every run, and asks them to look at that file and the config without ever copying the file over the config (it came from an earlier config, so copying it would lose what the config holds now, here the beta server); fails_when=the refusal omits that file's sentence, advises moving the file over the config, the file or either record changes, or a receipt is written; no_claim=the wording of a leftover's own sentence outside this refusal (it is the one that names every unsettled copy of a change in progress); seam=seam.afterMoveAside ends the rollback and seam.afterPublish blocks the receipt; the displaced file rewritten in place with the same entry beside another server stands for a reused inode, and a space appended to the rollback's staged file makes it a file Codebook cannot delete
   // Arrange
   const reusedText = `${JSON.stringify({ mcpServers: { beta: { command: 'b' }, codebook: ENTRY } }, null, 2)}\n`
   let stagedPath = ''
@@ -4280,12 +4333,18 @@ test('A legacy rollback journal that cannot be matched also names the private fi
   const journalText = readFileSync(journalPath, 'utf8')
 
   // Act
-  const attempt = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+  const error = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  )
 
   // Assert
-  await assert.rejects(attempt, {
-    message: `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "codebook" entry in ${configPath} is the one the setup wrote. Codebook left that entry in place and kept both records (${pendingPath}, ${journalPath}); if you did not write that entry, remove it by hand, delete both records, then run Codebook: Set Up AI Chat again. Codebook found a copy of your config that Codebook kept at ${stagedPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at that copy, move it back over the config or delete it, then run Codebook: Set Up AI Chat again.`,
-  })
+  const message = error instanceof Error ? error.message : String(error)
+  assert.equal(
+    message,
+    `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "codebook" entry in ${configPath} is the one the setup wrote. Codebook left that entry in place and kept both records (${pendingPath}, ${journalPath}); if you did not write that entry, remove it by hand, delete both records, then run Codebook: Set Up AI Chat again. Codebook also kept a private file at ${stagedPath} that it could not settle; look at both that file and ${configPath} before you use either, and never copy that file over the config.`,
+  )
+  assert.doesNotMatch(message, /move it back over the config/)
   assert.equal(readFileSync(stagedPath, 'utf8'), stagedText)
   assert.equal(readFileSync(configPath, 'utf8'), reusedText)
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
