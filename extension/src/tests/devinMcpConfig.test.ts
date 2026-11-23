@@ -8656,6 +8656,77 @@ test('A first setup with another bridge path that stopped after its link, whose 
   assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
+test('A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps that record when a backup restores the config it covers before the delete, and the next refresh puts it back and answers current', async (context) => {
+  // Value: protects=the old record is deleted only while the config still holds the bytes the drop was decided on, so a backup that restores the config the old record covers while Codebook reads that record never loses the record that owns the restored entry; fails_when=the refresh deletes the old record or answers without the changed-config refusal, a record is gone after it, the restored config changes, or the next refresh answers anything but current with the old record back as the only record; no_claim=a real backup tool (seam.afterStat moves the old config back while Codebook reads the old record), a real process end (seam.afterPublish throws), why the private name's unlink failed in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
+  // Arrange
+  const { home, storage, configPath, receiptBefore, oldConfigText, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const busyRetiredName = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.retired'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    busyRetiredName.writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(generation)}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  // A sync tool saves the stopped setup's config again at another inode.
+  swapFile(configPath, readFileSync(configPath, 'utf8'))
+  let hasRestored = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== retiredPath || hasRestored) return
+      // A backup tool restores the old config while Codebook reads the old record.
+      hasRestored = true
+      moveBack()
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordsAfterRefusal = await recordsIn(storage)
+  const configAfterRefusal = readFileSync(configPath, 'utf8')
+  const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, ['pending.json', retiredName])
+  assert.equal(configAfterRefusal, oldConfigText)
+  assert.equal(next, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A first setup with another bridge path that wrote its own record but could not delete its publish record or the old record's private file leaves its record standing, and the old record never comes back", async (context) => {
   // Value: protects=a first setup that wrote its own record finished, so the next run deletes the old record's private file whatever the config shows, never asks to move that setup's own record away and never puts the old record back; fails_when=the refresh rejects or answers anything but not-managed, receipt.json holds anything but that setup's record, or any other record stays; no_claim=why the unlinks fail (the config module is loaded with an unlink that fails with EBUSY for the old record's private name and an rm that fails with EBUSY for pending.json), a learner deleting mcp_config.json again (rmSync)
   // Arrange
