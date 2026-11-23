@@ -4213,6 +4213,59 @@ for (const holdCase of FORWARD_WRITE_HOLD_CASES) {
   })
 }
 
+// Value: protects=a Devin setup whose window changed its workspace folder while its commit was written, and whose clear of the saved setup for that change then never returns, answers within the setup budget naming the saved setup step, and once storage answers ends with the folder-change warning and no saved setup (Cycle 0146 task 28); fails_when=the folder check after the commit waits for that clear for ever, so the command never answers and the setup lock stays held; no_claim=the same check after the lock's release (it runs its clear under the same budget, not held here) and a clear that fails late; the hold, armed while the commit is written, stands for a storage that stops answering at the first clear after the commit (the folder change's own clear, which the setup's clear queues behind)
+test('a Devin setup whose folder changed during its commit answers within the budget although clearing the saved setup never returns', async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {}
+  options.onSetupCommit = async (window): Promise<void> => {
+    options.onSetupCommit = undefined
+    window.changeFolder('/other/folder')
+    // Armed after the commit write passed its own hold check, so the first write held is a clear that comes after the commit.
+    options.holdSavedSetupWrite = true
+  }
+  const window = await devinWindow(context, options)
+  try {
+    // Act
+    const setupEnd = window.commands.get('codebook.setupAiChat')!().then(
+      () => ({ atMs: performance.now(), message: 'resolved' }),
+      (error: Error) => ({ atMs: performance.now(), message: error.message }),
+    )
+    const clearReachedAtMs = await waitUntil(
+      () => window.holds.savedSetupWrite.reachedAtMs(),
+      'the held clear of the saved setup after the folder change',
+    )
+    const setupOutcome = await within(setupEnd, 16_000)
+    window.holds.savedSetupWrite.release()
+    // A command that never answered shows no late warning: the wait ends at once, and the first assertion says why.
+    await waitUntil(
+      () => setupOutcome === 'still waiting' || window.notices.length > 0,
+      "the setup's late failure warning",
+    )
+    // Assert
+    assert.ok(setupOutcome !== 'still waiting', 'the setup command answered')
+    const answeredAfterMs = setupOutcome.atMs - clearReachedAtMs
+    assert.ok(
+      answeredAfterMs >= 9_000 && answeredAfterMs <= 15_000,
+      `the setup command answered ${answeredAfterMs} ms after the clear of the saved setup was reached`,
+    )
+    assert.equal(
+      setupOutcome.message,
+      "Codebook's Devin Desktop setup is still waiting on storage (saved setup) after 10 seconds; it finishes when storage answers and then shows its result. Until then Codebook: Set Up AI Chat and Codebook: Remove Devin Desktop Setup refuse in this window.",
+    )
+    assert.deepEqual(window.notices, [
+      {
+        severity: 'warning',
+        message:
+          'The workspace folder changed while Devin Desktop setup was finishing, so the setup did not complete for this folder. Run Codebook: Set Up AI Chat again.',
+        actions: [],
+      },
+    ])
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a Remove Devin Desktop Setup confirmed while a setup's skill deployment still waits, before that step's 10-second lapse, answers within about 12 seconds that Codebook is still setting up Devin Desktop, removes nothing, and the setup still ends with its own ready notice once storage answers (Cycle 0146 task 15); fails_when=the removal goes on to the setup lock once the setup's command answered early, so it waits behind that setup and ends after about 25 seconds with the sentence that another window is changing the setup, or its removal flag makes the background setup fail; no_claim=a removal whose question is still open at the lapse (the same check runs after the question; the harness answers the question at once); the held stand-in deployment stands for the stalled storage
 test("a Devin removal confirmed while a setup's step still waits refuses with the setting-up sentence once that step waited 10 seconds", async (context) => {
   // Arrange

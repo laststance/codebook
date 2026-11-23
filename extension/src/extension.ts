@@ -1327,10 +1327,12 @@ export function activate(
     )
       throw new Error(DEVIN_SETUP_SERVER_CHANGED_SENTENCE)
   }
-  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved or the setup lock was released: the folder-change handling stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). The saved value is cleared here too, because a commit that landed after the folder-change handling cleared it would leave the old folder's setup saved. @throws With a retry sentence. @example await assertDevinSetupWorkspaceStands() */
-  const assertDevinSetupWorkspaceStands = async (): Promise<void> => {
+  /** Refuses a Devin Desktop setup whose window changed its workspace folder while the final value was saved or the setup lock was released: the folder-change handling stops the server of the old folder, so a success would offer a reload that cannot connect the new folder; a server stopped in the same folder is no refusal (a reload recovers it). The saved value is cleared here too, because a commit that landed after the folder-change handling cleared it would leave the old folder's setup saved; that clear is a forward setup step under {@link runSetupStep}'s budget, so a storage that does not answer never holds the command: the clear goes on in the background (under the setup lock after the commit). Called by {@link setUpDevinChatLocked} after the commit and by {@link performDevinSetup} after the lock's release. @param onLapse - Hears the clear's lapse as a `setup` lapse naming `saved setup`. @throws With a retry sentence. @example await assertDevinSetupWorkspaceStands(onLapse) */
+  const assertDevinSetupWorkspaceStands = async (
+    onLapse: (lapse: DevinLapse) => void,
+  ): Promise<void> => {
     if (setupMatchesCurrentWorkspace()) return
-    await clearSavedDevinSetup()
+    await runSetupStep('saved setup', clearSavedDevinSetup, onLapse)
     throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
   }
   /** Re-checks, after an awaited step of a Devin Desktop setup, that its removal has not begun and its checked server still stands; called by {@link setUpDevinChatLocked} after the receipts check and after the commit write. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupStillStands(checkedServer) */
@@ -1679,7 +1681,7 @@ export function activate(
     return sentence === reason ? error : new Error(sentence)
   }
   /**
-   * Runs one forward step of a Devin Desktop setup (the skill's deployment, the server start's descriptor, the entry's write, both writes of the saved setup, the final skill check, the descriptor's mark) under {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: a step that storage does not answer is never cut, but `onLapse` names it, so the command answers while the setup goes on under the setup lock; called by {@link setUpDevinChatLocked}.
+   * Runs one forward step of a Devin Desktop setup (the skill's deployment, the server start's descriptor, the entry's write, both writes of the saved setup, the final skill check, the descriptor's mark, the saved setup's clear after a folder change) under {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}: a step that storage does not answer is never cut, but `onLapse` names it, so the command answers while the setup goes on under the setup lock; called by {@link setUpDevinChatLocked} and {@link assertDevinSetupWorkspaceStands}.
    * @param step - The step as the pending sentence names it.
    * @param run - The step's work.
    * @param onLapse - Hears the lapse as a `setup` lapse.
@@ -1842,7 +1844,7 @@ export function activate(
       )
     }
     // The commit write awaited: a folder change in that gap is no success, and nothing is rolled back for it.
-    await assertDevinSetupWorkspaceStands()
+    await assertDevinSetupWorkspaceStands(onLapse)
     return {
       cleanupFailure: entryWrite.cleanupFailure,
       disabled: entryWrite.disabled,
@@ -1930,7 +1932,7 @@ export function activate(
     const answer = await runUntilDevinLapse(async (onLapse) => {
       const outcome = await underDevinLock(() => setUpDevinChatLocked(onLapse))
       // The lock's release was awaited: a folder change in that gap is no success, and no reload is offered for a folder that closed (Cycle 0145 last-round O11).
-      await assertDevinSetupWorkspaceStands()
+      await assertDevinSetupWorkspaceStands(onLapse)
       return outcome
     })
     if ('value' in answer) {
