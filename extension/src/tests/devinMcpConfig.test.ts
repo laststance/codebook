@@ -17,6 +17,7 @@ import {
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   open,
@@ -43,7 +44,9 @@ import {
   writeManagedDevinMcpEntry,
   type DevinMcpEntry,
 } from '../devinMcpConfig'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
+import { defer } from './utils/defer'
 import { loadModule } from './utils/loadModule'
 import { removeTestFolder } from './utils/removeTestFolder'
 
@@ -2880,6 +2883,73 @@ test('A put-back by bytes whose private name cannot be deleted after its link ke
     assert.ok(error.message.includes(keptPath), error.message)
     return true
   })
+  const retained = await readRecordFile(storage, 'pending.json')
+  assert.equal(retained.phase, 'handed')
+  assert.equal(retained.bytesUnverified, true)
+  assert.equal(retained.keptName, basename(keptPath))
+  assert.equal(readFileSync(configPath, 'utf8'), PUT_BACK_BYTES)
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+})
+
+test('A recovery whose look at a put-back by bytes stalls keeps the window running until storage answers, then keeps the record handed and unverified', async (context) => {
+  // Value: protects=the look that decides whether a put-back by bytes left an unverified second name of the config waits for the file system without holding the extension host's thread, so a stalled disk never freezes the window (its timers and other commands keep running), and the record still keeps its handed, unverified mark once storage answers; fails_when=that look never reaches the file system's asynchronous call while the refresh runs (it blocked the thread instead), the refresh settles while the look is held, or the record that stays is not handed and unverified or a name is deleted; no_claim=a real stalled disk (an lstat of the displaced name held until the test releases it stands for it), and the synchronous looks right before each link and unlink, which this cycle did not add; seam=hand-written pending record of a put-back by bytes (another inode) with the config name empty, and the config module loaded with an unlink that fails for the displaced name and an lstat that holds every look at the displaced name until the test releases it
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  const release = defer<void>()
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          if (args[0] === keptPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path.endsWith('.codebook-displaced'))
+            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .finally(() => {
+      isSettled = true
+    })
+  const outcome = attempt.then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await waitUntil(
+    () => heldLooks > 0,
+    'the held look at the displaced name',
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const error = await outcome
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.ok(
+    error instanceof Error && error.message.includes(keptPath),
+    String(error),
+  )
   const retained = await readRecordFile(storage, 'pending.json')
   assert.equal(retained.phase, 'handed')
   assert.equal(retained.bytesUnverified, true)

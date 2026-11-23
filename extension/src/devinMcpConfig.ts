@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstatSync } from 'node:fs'
+import { lstatSync, type BigIntStats } from 'node:fs'
 import {
   link,
+  lstat,
   mkdir,
   open,
   rename,
@@ -716,6 +717,23 @@ async function handOver(context: Context, journal: Pending): Promise<void> {
     // Dropping this record would let a stop before the receipt leave an entry that no record owns; the copy stays untracked and is named by the caller and, once, by the next run.
     if (isFirstSetupRecord(journal) || journal.takeBack) return
     await dropPending(context)
+  }
+}
+
+/**
+ * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says or which way a step goes ({@link isUnverifiedSecondName}), never right before a link or unlink it guards.
+ * @param path - The name to look at.
+ * @returns Its status with bigint numbers; undefined when nothing stands there.
+ * @throws Any other failure of the look.
+ * @example
+ * await lstatOrAbsent('/home/me/.config/devin/mcp_config.json') // => undefined when the config is gone
+ */
+async function lstatOrAbsent(path: string): Promise<BigIntStats | undefined> {
+  try {
+    return await lstat(path, { bigint: true })
+  } catch (error) {
+    if (codeOf(error) === 'ENOENT') return undefined
+    throw error
   }
 }
 
@@ -2448,7 +2466,7 @@ async function restoreUnlessSecondName(
   leftover: Leftover,
   pending: Pending,
 ): Promise<void> {
-  if (isUnverifiedSecondName(context, leftover)) return
+  if (await isUnverifiedSecondName(context, leftover)) return
   await writeRecord(context, context.pendingPath, pending).catch(
     () => undefined,
   )
@@ -2456,23 +2474,20 @@ async function restoreUnlessSecondName(
 
 /**
  * Tells whether a displaced name is a second name of the config that no check cleared: both names show one inode, and it is not the inode the record holds, as a put-back by bytes leaves it after its link; called by {@link restoreUnlessSecondName} and {@link recordAfterRecovery}.
- * Only such a name needs the unverified mark ({@link Pending.bytesUnverified}): it keeps an older build from deleting the name on the strength of the shared inode alone.
+ * Only such a name needs the unverified mark ({@link Pending.bytesUnverified}): it keeps an older build from deleting the name on the strength of the shared inode alone. The looks are asynchronous: they only decide what the record says, never guard a link or unlink, so a stalled file system holds this run, not the extension host's thread.
  * @param context - The run; its config path is looked at.
  * @param leftover - The displaced name and the inode the record holds for it.
  * @returns `true` for a second name with another inode than the recorded one, and when a look fails (the mark deletes nothing); `false` when either name is gone, they show two files, or the inode is the recorded one.
  * @example
- * isUnverifiedSecondName(context, leftover) // => true after a put-back by bytes whose unlink of the private name failed
+ * await isUnverifiedSecondName(context, leftover) // => true after a put-back by bytes whose unlink of the private name failed
  */
-function isUnverifiedSecondName(
+async function isUnverifiedSecondName(
   context: Context,
   { path, ino: recordedIno }: Pick<Leftover, 'path' | 'ino'>,
-): boolean {
+): Promise<boolean> {
   try {
-    const displaced = lstatSync(path, { bigint: true, throwIfNoEntry: false })
-    const config = lstatSync(context.path, {
-      bigint: true,
-      throwIfNoEntry: false,
-    })
+    const displaced = await lstatOrAbsent(path)
+    const config = await lstatOrAbsent(context.path)
     return (
       displaced !== undefined &&
       displaced.ino === config?.ino &&
@@ -3106,7 +3121,12 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   await retirePending(
     rollbackContext,
     retainedRecord(
-      recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
+      await recordAfterRecovery(
+        rollbackContext,
+        pending,
+        unsettled,
+        isHandedNow,
+      ),
       tracked,
     ),
   )
@@ -3434,7 +3454,7 @@ async function inspect(context: Context): Promise<Inspection> {
   const retained =
     pending &&
     retainedRecord(
-      recordAfterRecovery(context, pending, unsettled, isHandedNow),
+      await recordAfterRecovery(context, pending, unsettled, isHandedNow),
       tracked,
     )
   const inspection = await settleAfterRecovery(
@@ -3459,22 +3479,22 @@ async function inspect(context: Context): Promise<Inspection> {
  * - The record handed and unverified ({@link Pending.bytesUnverified}) while its displaced name stays a second name of the config that no check cleared ({@link isUnverifiedSecondName}), also when this run's put-back wrote that mark: an older build then never deletes that name by the shared inode alone, and this build checks the bytes again
  * - Otherwise the record in the phase recovery reads it ({@link leftoverPhaseOf}), without the mark: a displaced file that is no second name of the config leaves an older build nothing to delete by its inode, and an older build would read an empty config name under a handed record as handed over
  * @example
- * retainedRecord(recordAfterRecovery(context, pending, unsettled, false), tracked)
+ * retainedRecord(await recordAfterRecovery(context, pending, unsettled, false), tracked)
  */
-function recordAfterRecovery(
+async function recordAfterRecovery(
   context: Context,
   pending: Pending,
   unsettled: Unsettled[],
   isHandedNow: boolean,
-): Pending {
+): Promise<Pending> {
   if (isHandedNow) return handedRecordOf(pending, unsettled)
   const phase = leftoverPhaseOf(pending)
+  // A record names at most one displaced file ({@link journalLeftovers}).
+  const kept = unsettled.find(({ leftover }) => leftover.role === 'kept')
   const isUnverified =
     phase === undefined &&
-    unsettled.some(
-      ({ leftover }) =>
-        leftover.role === 'kept' && isUnverifiedSecondName(context, leftover),
-    )
+    kept !== undefined &&
+    (await isUnverifiedSecondName(context, kept.leftover))
   return isUnverified
     ? { ...pending, phase: 'handed', bytesUnverified: true }
     : { ...pending, phase, bytesUnverified: undefined }
