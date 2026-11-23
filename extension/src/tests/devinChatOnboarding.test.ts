@@ -232,6 +232,8 @@ async function devinWindow(
     failStudyReaderDispose?: boolean
     /** Holds every late mark's continuation, once its late read settled and before it reads afresh, until `holds.lateMark` is released. */
     holdLateMark?: boolean
+    /** Makes a server that starts serve the folder the window serves at that moment (`changeFolder` changes it), in its environment and its descriptor, as the real environment does; when left out, every server serves the window's first folder. */
+    serverFollowsFolder?: boolean
   } = {},
 ) {
   const directory =
@@ -470,7 +472,7 @@ async function devinWindow(
       './environment': {
         requireWorkspace: () => currentWorkspace,
         createEnvironment: async () => ({
-          workspace: directory,
+          workspace: options.serverFollowsFolder ? currentWorkspace : directory,
           dispose(): void {},
         }),
       },
@@ -501,7 +503,9 @@ async function devinWindow(
               url: `http://127.0.0.1/${service.instanceId}/mcp`,
               token: 'test-token',
               instanceId: service.instanceId,
-              workspace: directory,
+              workspace: options.serverFollowsFolder
+                ? service.environment.workspace
+                : directory,
               apiVersion: '1.6',
             },
             close: async (): Promise<void> => {},
@@ -4679,6 +4683,36 @@ for (const holdCase of FORWARD_WRITE_HOLD_CASES) {
     }
   })
 }
+
+// Value: protects=a Devin setup whose window changed its workspace folder while the setup's skill deployment waited starts no server, writes no entry and saves no setup for the folder now open, and answers that the setup did not complete for this folder; fails_when=the setup reads the folder only when its server starts, so the server, the entry, the descriptor's mark and the commit set up the folder the learner switched to and end with a ready notice (Cycle 0146 /ship pass 1, codex-structured extension.ts:1741); why_new=only folder changes during the commit and the lock's release were tested, after the server already served the folder the command ran in; seam=serverFollowsFolder, so the server serves the folder open when it starts; no_claim=a folder change during the lock's wait (the same check runs before the server start) and after the entry write (that check takes back what the setup saved); the held stand-in deployment stands for a slow storage
+test('a Devin setup whose window changed its folder while the skill deployment waited sets up nothing for the folder now open', async (context) => {
+  // Arrange
+  const window = await devinWindow(context, {
+    holdDeploy: true,
+    serverFollowsFolder: true,
+  })
+  try {
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await window.deployReached
+    // Act
+    window.changeFolder('/other/folder')
+    window.releaseDeploy()
+    const setupOutcome = await within(setup, 9_000)
+    // Assert
+    assert.equal(
+      setupOutcome,
+      'The workspace folder changed while Devin Desktop setup was finishing, so the setup did not complete for this folder. Run Codebook: Set Up AI Chat again.',
+    )
+    assert.deepEqual(window.steps, ['resolve Node', 'deploy Devin skill'])
+    assert.equal(window.state.get('codebook.aiChatSetup'), undefined)
+    assert.deepEqual(window.notices, [])
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
 
 // Value: protects=a Devin setup whose window changed its workspace folder while its commit was written, and whose clear of the saved setup for that change then never returns, answers within the setup budget naming the saved setup step, and once storage answers ends with the folder-change warning and no saved setup (Cycle 0146 task 28); fails_when=the folder check after the commit waits for that clear for ever, so the command never answers and the setup lock stays held; no_claim=the same check after the lock's release (it runs its clear under the same budget, not held here) and a clear that fails late; the hold, armed while the commit is written, stands for a storage that stops answering at the first clear after the commit (the folder change's own clear, which the setup's clear queues behind)
 test('a Devin setup whose folder changed during its commit answers within the budget although clearing the saved setup never returns', async (context) => {

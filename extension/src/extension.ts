@@ -341,7 +341,12 @@ export function activate(
   }
   /** A run of a Devin Desktop window that takes the window's mark off: its removal, or the take-back of its failed setup ({@link devinMarkTakeOffs}). */
   type DevinMarkTakeOffRun = Exclude<DevinBackgroundWorkKind, 'setup'>
-  /** What a Devin Desktop setup's take-back puts back: what its entry write answered, the saved setup from before the run, and the folder generation ({@link devinFolderGeneration}) when the run began. */
+  /** What a Devin Desktop setup was run for: the workspace folder the command ran in and the count of folder changes ({@link devinFolderGeneration}) at that moment, so every later step can tell that the window changed its folders since ({@link assertDevinSetupFolderUnchanged}). */
+  type DevinSetupInvocation = {
+    workspace: string
+    folderGeneration: number
+  }
+  /** What a Devin Desktop setup's take-back puts back: what its entry write answered, the saved setup from before the run, and the folder generation ({@link devinFolderGeneration}) when the command ran. */
   type DevinTakeBack = {
     entryWrite: DevinEntryWrite
     previousSetup: unknown
@@ -469,6 +474,14 @@ export function activate(
     pendingFolderClears > 0
       ? undefined
       : context.workspaceState.get('codebook.aiChatSetup')
+  /** The workspace folder this window serves now, or `undefined` when it has none; read by {@link assertDevinSetupFolderUnchanged}. @example currentWorkspaceOrNone() // => '/repo' */
+  const currentWorkspaceOrNone = (): string | undefined => {
+    try {
+      return requireWorkspace()
+    } catch {
+      return undefined
+    }
+  }
   const setupMatchesCurrentWorkspace = () => {
     try {
       return (
@@ -1356,6 +1369,22 @@ export function activate(
     await runSetupStep('saved setup', clearSavedDevinSetup, onLapse)
     throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
   }
+  /**
+   * Refuses a Devin Desktop setup whose window changed its workspace folders since the command ran: a setup that went on would start, mark and save a setup for the folder now open, which the learner did not ask for; called by {@link setUpDevinChatLocked} before the server start, before the entry write, before the descriptor's mark and before the commit.
+   * @param invocation - The folder and the count of folder changes when the command ran.
+   * @throws With {@link DEVIN_SETUP_FOLDER_CHANGED_SENTENCE}; after the entry write the setup then takes back what it saved.
+   * @example assertDevinSetupFolderUnchanged({ workspace: '/repo', folderGeneration: 0 })
+   */
+  const assertDevinSetupFolderUnchanged = ({
+    workspace,
+    folderGeneration,
+  }: DevinSetupInvocation): void => {
+    if (
+      devinFolderGeneration !== folderGeneration ||
+      currentWorkspaceOrNone() !== workspace
+    )
+      throw new Error(DEVIN_SETUP_FOLDER_CHANGED_SENTENCE)
+  }
   /** Re-checks, after an awaited step of a Devin Desktop setup, that its removal has not begun and its checked server still stands; called by {@link setUpDevinChatLocked} after the receipts check and after the commit write. @param server - The instance the setup checked. @throws With a retry sentence, so the setup goes through its rollback. @example assertDevinSetupStillStands(checkedServer) */
   const assertDevinSetupStillStands = (server: Running): void => {
     assertDevinSetupAvailable()
@@ -1808,13 +1837,14 @@ export function activate(
   }
   /** The steps of one Devin Desktop setup, run under {@link underDevinLock}: skill, server, entry, saved setup, a final skill check and the descriptor mark, with a take-back when a step after the entry write fails, awaited under the lock. @param onLapse - Hears a forward or take-back step that outlasted {@link DEVIN_SETUP_ROLLBACK_BUDGET_MS}, so the command answers while the setup or its take-back goes on. @returns The sentence of a kept copy of Devin's config that could not be deleted, when the entry write names one, and `disabled` when the entry stays turned off in Devin's Customize. @example const { cleanupFailure } = await setUpDevinChatLocked(onLapse) */
   const setUpDevinChatLocked = async (
+    invocation: DevinSetupInvocation,
     onLapse: (lapse: DevinLapse) => void,
   ): Promise<{
     cleanupFailure?: string
     disabled?: true
   }> => {
-    // Read before any await: a folder change from here on means the earlier saved setup is not put back.
-    const folderGeneration = devinFolderGeneration
+    // Read when the command ran: a folder change since then means the earlier saved setup is not put back.
+    const { folderGeneration } = invocation
     // The failure's own text can carry the executable's stderr; the learner gets a fixed sentence.
     const nodeExecutable = await resolveExternalNodeExecutable(
       vscode.workspace
@@ -1834,9 +1864,12 @@ export function activate(
       onLapse,
     )
     assertDevinSetupAvailable()
+    // The deployment and the lock's wait may have outlasted a folder change: the server start would serve the folder now open.
+    assertDevinSetupFolderUnchanged(invocation)
     // The server start publishes the descriptor, a write that storage may not answer.
     await runSetupStep('descriptor', start, onLapse)
     assertDevinSetupAvailable()
+    assertDevinSetupFolderUnchanged(invocation)
     if (!running)
       throw new Error(
         `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
@@ -1895,6 +1928,8 @@ export function activate(
         throw new Error(
           devinInstallationReadRefusal(installationRead.state, mcpReceiptPath),
         )
+      // A folder change since the command ran leaves the mark to no folder the learner asked for.
+      assertDevinSetupFolderUnchanged(invocation)
       // The descriptor of a server started before this setup carries no mark yet.
       await runSetupStep(
         'descriptor',
@@ -1923,6 +1958,7 @@ export function activate(
       if (refusal) throw new Error(refusal)
       // The receipts read awaited: a removal, a Stop or a folder change in that gap ends the setup.
       assertDevinSetupStillStands(checkedServer)
+      assertDevinSetupFolderUnchanged(invocation)
       // The commit write is the last step that can fail the setup and nothing is checked after it: a change after it is a later event (a stopped server starts again when the window loads, another window's removal unmarks this one at its next sync), so there is no rollback after the commit and no half-committed value; only a changed workspace folder, which clears the saved value, is reported once the commit is saved.
       await runSetupStep(
         'saved setup',
@@ -2023,9 +2059,15 @@ export function activate(
   const performDevinSetup = async (): Promise<void> => {
     const refusal = devinWindowRefusal(process.platform, vscode.env.remoteName)
     if (refusal) throw new Error(refusal)
-    requireWorkspace()
+    // Read when the command runs, before the lock's wait: a folder change from here on sets up nothing for the folder now open.
+    const invocation: DevinSetupInvocation = {
+      workspace: requireWorkspace(),
+      folderGeneration: devinFolderGeneration,
+    }
     const answer = await runUntilDevinLapse(async (onLapse) => {
-      const outcome = await underDevinLock(() => setUpDevinChatLocked(onLapse))
+      const outcome = await underDevinLock(() =>
+        setUpDevinChatLocked(invocation, onLapse),
+      )
       // The lock's release was awaited: a folder change in that gap is no success, and no reload is offered for a folder that closed (Cycle 0145 last-round O11).
       await assertDevinSetupWorkspaceStands(onLapse)
       return outcome
