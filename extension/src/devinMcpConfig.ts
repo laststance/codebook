@@ -4316,23 +4316,29 @@ async function retireHeldJournal(
 
 /**
  * Gives the journal that a legacy rollback journal held as another publish's is rewritten to when a leftover is refused ({@link holdLegacyJournal}): what stays tracked ({@link retainedRecord}) together with the inode and hash that decided it ({@link legacyEvidenceOf}), so the next run decides on the same evidence ({@link legacyBelonging}) instead of reading a journal without them as the setup's own; called only by {@link settleRollbackJournal}.
- * A displaced copy that stays tracked keeps its own name, inode and hash, which its next look checks (a handed record names the inode its name shows now, {@link handedRecordOf}); otherwise the evidence comes without a name, so a copy dropped from tracking (the one reported once) never comes back as a leftover.
+ * A displaced copy that stays tracked under the journal's own inode keeps its name, inode and hash, which its next look checks. A copy handed over in this run under another inode (a handed record names the inode its name shows now, {@link handedRecordOf}: a file a sync tool swapped in during the hand-over, or one only its bytes proved) is left to the learner untracked instead, because one `keptIno` cannot name both that file and the inode that decided the journal. Otherwise the evidence comes without a name too, so a copy dropped from tracking (the one reported once) never comes back as a leftover.
  * @param journal - The journal as read.
  * @param retained - What stays tracked after recovery; undefined when nothing does.
  * @returns
- * - `retained` itself while it still names the displaced copy
+ * - `retained` itself while it still names the displaced copy under the journal's `keptIno`
  * - Otherwise what stays tracked, if anything, with the journal's `keptIno` and `keptSha256` and no displaced name
  * @example
  * heldJournalOf(journal, { targetPath, createdFile: false, generation, phase: 'handed', stagedName, stagedIno: 7, stagedSha256: 'c' }) // => { targetPath, createdFile: false, generation, phase: 'handed', stagedName, stagedIno: 7, stagedSha256: 'c', keptIno: 5, keptSha256: 'b' }
+ * heldJournalOf(journal, { targetPath, createdFile: false, generation, phase: 'handed', keptName, keptIno: 9, keptSha256: 'b', stagedIno: 7, stagedSha256: 'c' }) // => { targetPath, createdFile: false, generation, phase: 'handed', stagedIno: 7, stagedSha256: 'c', keptIno: 5, keptSha256: 'b' }
  * heldJournalOf(journal, undefined) // => { targetPath, createdFile: false, generation, keptIno: 5, keptSha256: 'b' }
  */
 function heldJournalOf(
   journal: Pending,
   retained: Pending | undefined,
 ): Pending {
-  // A displaced copy that stays tracked names the inode and hash its next look checks.
-  if (retained?.keptName !== undefined) return retained
-  return { ...retained, ...legacyEvidenceOf(journal) }
+  // A displaced copy that stays tracked under the inode that decided the journal names the inode and hash its next look checks.
+  if (
+    retained?.keptName !== undefined &&
+    String(retained.keptIno) === String(journal.keptIno)
+  )
+    return retained
+  // A copy handed over under another inode is no longer named, so that inode never becomes the evidence that decides the journal.
+  return { ...retained, keptName: undefined, ...legacyEvidenceOf(journal) }
 }
 
 /**
