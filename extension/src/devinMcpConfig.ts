@@ -910,9 +910,12 @@ async function inspectCopy(
   }
 }
 
+/** A kept copy, or a tracked record, that is no regular file or is larger than the config limit ({@link unsaneCopyError}); its own class, so {@link lookAtTrackedJournal} tells another file at a tracked name from a read that failed. */
+class UnsaneCopyError extends Error {}
+
 /** The error for a kept copy that is no regular file or is larger than the config limit. */
 function unsaneCopyError(): Error {
-  return new Error('The kept copy is no regular file of a sane size.')
+  return new UnsaneCopyError('The kept copy is no regular file of a sane size.')
 }
 
 /** Whether a kept copy still is the file and the bytes Codebook expected in it. */
@@ -2784,6 +2787,9 @@ class JournalConflictError extends Error {
     super(message, options)
   }
 }
+
+/** The `record-reread` and `record-gone` refusals ({@link unmatchedJournalRefusal}): the publish record a decision read changed or disappeared before the run was done with it, so the record the run read no longer leads to the private files it names; {@link mergeWithLeftover} and {@link settleRollbackJournal} name a leftover after it, and {@link takeOutUnrecordedEntry} leaves what stands at that name. */
+class RecordConflictError extends Error {}
 
 /**
  * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of {@link leftCopyRefusal}'s general advice.
@@ -5354,8 +5360,14 @@ async function takeOutUnrecordedEntry(
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
-  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. A failure to write the intent changes nothing: the run rejects as it does without it.
-  await markTakeBackOwed(context, written.generation).catch(() => undefined)
+  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. A failure to write the intent changes nothing: the run rejects as it does without it, except that a record another program put at that name meanwhile (the mark refused as a record conflict) stays for the next run.
+  const isOtherRecordStanding = await markTakeBackOwed(
+    context,
+    written.generation,
+  ).then(
+    () => false,
+    (error: unknown) => error instanceof RecordConflictError,
+  )
   try {
     result = await rollBackPublishedEntry(context, written)
   } catch {
@@ -5368,8 +5380,12 @@ async function takeOutUnrecordedEntry(
     ...(isHandedNext ? asLeft : asTracked),
     ...result.keptLeft,
   ]
-  // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left.
-  if (outcome === 'took-out' && keptCopies.length === 0)
+  // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left, and never another program's record.
+  if (
+    outcome === 'took-out' &&
+    keptCopies.length === 0 &&
+    !isOtherRecordStanding
+  )
     await dropPending(context)
   const sentence = rollbackOutcomeClause(outcome, context)
   return new Error(
@@ -5487,7 +5503,7 @@ function currentEntryOf(look: ConfigLook): unknown {
  * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one; the journal then ends only while that record's name still shows the mark ({@link markLeftCheck}), so a setup record a backup puts back without it keeps the journal. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
  * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread` or `record-gone` sentence when the publish record's name no longer shows the take-back mark this run wrote ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired, after the first leftover's refusal when one stays ({@link refusalWithConflict}): that name stays as it is and the run goes no further.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread` or `record-gone` sentence when the publish record's name no longer shows the version the mark read or the take-back mark this run wrote ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired: that name stays as it is and the run goes no further. Either comes after the first leftover's refusal when one stays and the refusal does not name it already ({@link withJournalLeftover}).
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -5522,16 +5538,19 @@ async function settleRollbackJournal(
           reported: unsettled[0],
         }
       : undefined
+  const [reported] = unsettled
   const decision = await markTakeBackOwed(
     context,
     pending.publishGeneration,
     legacy,
-  )
+  ).catch((error: unknown) => {
+    // A mark refused for a publish record that changed meanwhile names the leftover this recovery could not settle too.
+    throw withJournalLeftover(error, rollbackContext, phase, reported, legacy)
+  })
   const retained = retainedRecord(
     await recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
     tracked,
   )
-  const [reported] = unsettled
   let held: HeldJournal | undefined
   try {
     // A legacy journal decided as another publish's on one read of the config is never deleted here: the publish record must lose its ability to adopt first.
@@ -5554,13 +5573,8 @@ async function settleRollbackJournal(
         await markLeftCheck(context, decision?.markVersion, legacy),
       )
   } catch (error) {
-    // Another file at the journal's name ends the run here, named after the leftover this recovery could not settle.
-    throw error instanceof JournalConflictError && reported
-      ? refusalWithConflict(
-          unsettledRefusal(rollbackContext, phase, reported),
-          error,
-        )
-      : error
+    // Another file at the journal's name, or a publish record that changed, ends the run here, named after the leftover this recovery could not settle.
+    throw withJournalLeftover(error, rollbackContext, phase, reported, legacy)
   }
   if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
   return held
@@ -5619,7 +5633,7 @@ async function holdLegacyJournal(
  * @returns
  * - undefined when nothing stands at the name
  * - the journal as this read saw it (inode, hash, size and times) while it shows the version this run settled or last wrote
- * @throws A {@link JournalConflictError}: `changed` when the name shows another inode or other bytes, or any file while this run knows no version of it; `unread` when the name cannot be read (a link, no regular file, too large or unreadable). Nothing is written or deleted then.
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another inode or other bytes, any file while this run knows no version of it, or something that is no record at all (a link, a folder, a file too large: {@link isOtherFileCause}); `unread` when reading the name fails. Nothing is written or deleted then.
  * @example
  * await lookAtTrackedJournal(rollbackContext) // => undefined once the journal's name is empty
  */
@@ -5630,7 +5644,12 @@ async function lookAtTrackedJournal(
   try {
     now = await inspectCopy(context.pendingPath)
   } catch (cause) {
-    throw journalConflictError(context, 'unread', cause)
+    // Another program's link, folder or oversized file stands there: moving it away clears it, making it readable does not.
+    throw journalConflictError(
+      context,
+      isOtherFileCause(cause) ? 'changed' : 'unread',
+      cause,
+    )
   }
   if (!now) return undefined
   const settled = context.journalVersion?.current
@@ -5645,7 +5664,7 @@ async function lookAtTrackedJournal(
  * Limit: a file put at the name between this look and the syscall that follows is not seen.
  * @param context - The run; its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
  * @param look - The journal as {@link lookAtTrackedJournal} read it: its inode, size and times must still show.
- * @throws A {@link JournalConflictError} (`changed`) when the name is gone or shows another file, size or times.
+ * @throws A {@link JournalConflictError}: `changed` when the name is gone or shows another file, size or times; `unread` when the look itself fails (a folder that cannot be searched, an I/O error).
  * @example
  * assertTrackedJournalStill(rollbackContext, look) // throws once a backup renamed another journal over the name
  */
@@ -5653,14 +5672,39 @@ function assertTrackedJournalStill(
   context: Context,
   look: InspectedCopy,
 ): void {
-  if (!isLeftoverStill(context, context.pendingPath, look))
-    throw journalConflictError(context, 'changed')
+  let isStill: boolean
+  try {
+    isStill = isLeftoverStill(context, context.pendingPath, look)
+  } catch (cause) {
+    // A look that fails proves nothing: the name stays as it is, worded as one Codebook could not read again.
+    throw journalConflictError(context, 'unread', cause)
+  }
+  if (!isStill) throw journalConflictError(context, 'changed')
+}
+
+/** The codes of an open that refuses to follow a link or finds no regular file ({@link openWithoutFollowing}): something other than a record stands at the name. */
+const OTHER_FILE_CODES: ReadonlySet<unknown> = new Set([
+  'ELOOP',
+  'ENOTREG',
+  'EREPLACED',
+])
+
+/**
+ * Tells whether a failed read of a tracked record's name found something that is no record (a link, a folder, a file too large, or a file swapped in at the open) rather than failing to read it; called by {@link lookAtTrackedJournal}, which words the first as another file at that name and only the second as a name it could not read.
+ * @param cause - What {@link inspectCopy} threw.
+ * @returns `true` for an {@link UnsaneCopyError} or an open refused for a link, no regular file or a swapped file; `false` for any other failure (a permission, an I/O error).
+ * @example
+ * isOtherFileCause(Object.assign(new Error('too many links'), { code: 'ELOOP' })) // => true
+ * isOtherFileCause(Object.assign(new Error('permission denied'), { code: 'EACCES' })) // => false
+ */
+function isOtherFileCause(cause: unknown): boolean {
+  return cause instanceof UnsaneCopyError || OTHER_FILE_CODES.has(codeOf(cause))
 }
 
 /**
  * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
  * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
- * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty keeps the version, because this run did not empty it.
+ * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it.
  * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
  * @param assertStill - A synchronous look at another name that must still hold, called right after the last look and before the unlink ({@link removeRecord}); throwing keeps the journal.
@@ -5677,12 +5721,17 @@ async function dropTrackedJournal(
   if (!look) return
   assertTrackedJournalStill(context, look)
   assertStill?.()
-  await unlink(context.pendingPath).catch((error: unknown) => {
-    // Another program removed it first: the name is empty, as the delete wanted.
-    if (codeOf(error) !== 'ENOENT') throw error
-  })
-  // This run emptied the name itself: nothing of it stands there any more.
-  if (context.journalVersion) context.journalVersion.current = undefined
+  const isUnlinked = await unlink(context.pendingPath).then(
+    () => true,
+    (error: unknown) => {
+      // Another program removed it first: the name is empty, as the delete wanted, but this run did not empty it.
+      if (codeOf(error) !== 'ENOENT') throw error
+      return false
+    },
+  )
+  // Only this run's own unlink clears the version: nothing of it stands there any more.
+  if (isUnlinked && context.journalVersion)
+    context.journalVersion.current = undefined
 }
 
 /**
@@ -6022,7 +6071,7 @@ function legacyBelonging(
  * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
  * @param belonging - Which of the three answers {@link legacyBelonging} gave, `reread`, `record-reread` or `record-gone`.
  * @param legacy - The journal and the first leftover its recovery could not settle, if any ({@link LegacyJournalEvidence}); undefined for a journal of this build.
- * @returns The error, not thrown yet.
+ * @returns The error, not thrown yet; a {@link RecordConflictError} for `record-reread` and `record-gone`.
  * @example
  * throw unmatchedJournalRefusal(context, 'unread', legacy) // 'Codebook found a record of a setup that ended early and a record of its rollback that it cannot match yet: …'
  * throw unmatchedJournalRefusal(context, 'record-gone', held.legacy) // 'Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at …/pending.json disappeared while Codebook was settling it …'
@@ -6032,6 +6081,27 @@ function unmatchedJournalRefusal(
   belonging: UnmatchedReason,
   legacy: LegacyJournalEvidence | undefined,
 ): Error {
+  const message = unmatchedJournalSentence(context, belonging, legacy)
+  // A refusal about the publish record itself is told apart: the record that names this run's leftovers no longer stands as read.
+  return belonging === 'record-reread' || belonging === 'record-gone'
+    ? new RecordConflictError(message)
+    : new Error(message)
+}
+
+/**
+ * Words an {@link unmatchedJournalRefusal}: the reason's sentence, then the journal's leftover ({@link unmatchedLeftoverSentence}); called only by that refusal.
+ * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
+ * @param belonging - The reason ({@link UnmatchedReason}).
+ * @param legacy - The journal and the first leftover its recovery could not settle, if any; undefined for a journal of this build.
+ * @returns The whole message.
+ * @example
+ * unmatchedJournalSentence(context, 'record-gone', undefined) // => 'Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at …/pending.json disappeared while Codebook was settling it …'
+ */
+function unmatchedJournalSentence(
+  context: Context,
+  belonging: UnmatchedReason,
+  legacy: LegacyJournalEvidence | undefined,
+): string {
   const { path, pendingPath, retry } = context
   const journalPath = rollbackContextOf(context).pendingPath
   const records = `${pendingPath}, ${journalPath}`
@@ -6047,7 +6117,7 @@ function unmatchedJournalRefusal(
     unmatched: `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "${SERVER_NAME}" entry in ${path} is the one the setup wrote. Codebook left that entry in place and kept both records (${records}); if you did not write that entry, remove it by hand, delete both records, ${retry}.`,
   }[belonging]
   // A leftover that stays with the kept journal is named once more, so the advice to delete both records never hides it.
-  return new Error(`${sentence}${unmatchedLeftoverSentence(context, legacy)}`)
+  return `${sentence}${unmatchedLeftoverSentence(context, legacy)}`
 }
 
 /**
@@ -6080,20 +6150,52 @@ function journalConflictError(
 }
 
 /**
- * Joins the refusal of a leftover recovery could not settle with the conflict at the journal's name that ended the run, so the learner reads both in one message; called by {@link settleRollbackJournal}.
+ * Joins the refusal of a leftover recovery could not settle with the conflict that ended the run, at the journal's name or at the publish record's, so the learner reads both in one message; called by {@link withJournalLeftover}.
  * @param leftoverRefusal - The leftover's refusal ({@link unsettledRefusal}).
- * @param conflict - The {@link JournalConflictError} the journal's write or delete threw.
+ * @param conflict - The {@link JournalConflictError} the journal's write or delete threw, or the {@link RecordConflictError} about the publish record.
  * @returns One error: the leftover's sentence, a space, then the conflict's.
  * @example
  * refusalWithConflict(unsettledRefusal(rollbackContext, phase, reported), conflict) // => 'Codebook found a private file at … While Codebook settled its rollback record at …'
  */
 function refusalWithConflict(
   leftoverRefusal: Error,
-  conflict: JournalConflictError,
+  conflict: JournalConflictError | RecordConflictError,
 ): Error {
   return new Error(`${leftoverRefusal.message} ${conflict.message}`, {
     cause: conflict,
   })
+}
+
+/**
+ * Names the leftover a rollback journal's recovery could not settle before the conflict that ended the run, so a refusal about a name never hides that private file; called by {@link settleRollbackJournal} for the take-back mark and for the journal's hold or retirement.
+ * @param error - What the mark, the hold or the retirement threw.
+ * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); it words the leftover.
+ * @param phase - The phase recovery read the journal in ({@link leftoverPhaseOf}).
+ * @param reported - The first leftover that stays; undefined when none does.
+ * @param legacy - The journal's evidence for a journal of an older build, whose refusals about the publish record name that leftover themselves ({@link unmatchedLeftoverSentence}); undefined for a journal of this build.
+ * @returns
+ * - The leftover's refusal followed by `error` ({@link refusalWithConflict}) for a {@link JournalConflictError}, and for a {@link RecordConflictError} about a journal of this build
+ * - `error` itself otherwise, or when no leftover stays
+ * @example
+ * throw withJournalLeftover(recordReread, rollbackContext, undefined, reported, undefined) // 'Codebook found a private file at … Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup … changed …'
+ */
+function withJournalLeftover(
+  error: unknown,
+  rollbackContext: Context,
+  phase: Pending['phase'],
+  reported: Unsettled | undefined,
+  legacy: LegacyJournalEvidence | undefined,
+): unknown {
+  if (!reported) return error
+  if (
+    error instanceof JournalConflictError ||
+    (error instanceof RecordConflictError && !legacy)
+  )
+    return refusalWithConflict(
+      unsettledRefusal(rollbackContext, phase, reported),
+      error,
+    )
+  return error
 }
 
 /**
@@ -6522,7 +6624,7 @@ async function settleAfterRecovery(
 
 /**
  * Joins a refusal of the steps after recovery with the leftover recovery could not settle, so the learner reads both in one message; called by {@link inspect} when {@link settleAfterRecovery} throws.
- * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read.
+ * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read. It also applies to a refusal about the publish record itself ({@link RecordConflictError}): the record that names the leftover changed or disappeared, so no later run may find that leftover through it.
  * @param context - The run.
  * @param cause - What {@link settleAfterRecovery} threw.
  * @param phase - The phase of the pending record.
@@ -6542,8 +6644,13 @@ function mergeWithLeftover(
   isHandedNow: boolean,
 ): unknown {
   if (!reported || !(cause instanceof Error)) return cause
-  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it.
-  if (!isHandedNow && !namesBothFiles(reported.cause)) return cause
+  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it; a record that changed or disappeared under the run may never lead there again.
+  if (
+    !isHandedNow &&
+    !namesBothFiles(reported.cause) &&
+    !(cause instanceof RecordConflictError)
+  )
+    return cause
   return new Error(
     `${cause.message} ${unsettledRefusal(context, phase, reported).message}`,
     { cause },
