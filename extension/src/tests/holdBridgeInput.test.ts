@@ -532,3 +532,71 @@ test('a bridge input released after it reached its limit lets a later hold of th
   assert.equal(oversAtLaterHold, 0)
   assert.equal(overs, 0)
 })
+
+// Value: protects=a later hold of the same stream (the Devin bridge's next attempt) keeping the moment its stream reached the limit when an earlier hold that already handed its input over is handed over, released or put back again, so its wait still ends 5 s after that moment (Cycle 0147 review round, CodeRabbit holdBridgeInput.ts:193-195 and 200); fails_when=a repeated hand-over or release of an ended hold forgets the later hold's moment, so that hold's handshake settling past its wait wins (or its put-back lets the next attempt start a fresh 5 s wait); no_claim=that the bridge ends a hold twice (it ends each hold once)
+test('a held bridge input keeps its limit wait when an earlier hold of the same stream that already handed its input over is ended again', async () => {
+  // Arrange
+  const input = standInInput()
+  const time = handMovedClock()
+  let overs = 0
+  const countOver = (): void => {
+    overs += 1
+  }
+  const firstHold = holdBridgeInput(input, countOver, 4, time.clock)
+  input.push(Buffer.from('abcd'))
+  await waitUntil(
+    () => input.isPaused(),
+    'the first hold stopping at its limit',
+    2_000,
+    undefined,
+    5,
+  )
+  firstHold.settleHandshake()
+  firstHold.handOver()
+  time.advance(10_000)
+  const laterHold = holdBridgeInput(input, countOver, 4, time.clock)
+  // The later hold reads the handed-over chunk again and reaches the limit itself at 10 s, so its wait ends at 15 s.
+  await waitUntil(
+    () => input.isPaused() && input.readableLength === 0,
+    'the later hold reading the handed-over input to its limit',
+    2_000,
+    undefined,
+    5,
+  )
+  // Act
+  firstHold.handOver()
+  firstHold.release()
+  firstHold.putBack()
+  // The later hold's wait has ended and its timer has not run yet, as on a busy event loop.
+  time.readLaterBy(5_000)
+  const isOverAtSettlement = laterHold.settleHandshake()
+  // Assert
+  assert.equal(isOverAtSettlement, true)
+  assert.equal(overs, 1)
+})
+
+// Value: protects=a bridge input released below its limit (a stop during the first handshake before 1 MiB came) starting no read after its release, once its error listener is gone, so a read error then cannot crash the bridge (Cycle 0147 review round, OCR lens 4 holdBridgeInput.ts:152); fails_when=the release resumes and pauses the stream although the hold never stopped at its limit, which sets process.stdin reading for one more tick with no error listener; no_claim=process.stdin's read stop after a hold that stopped at its limit (the Cursor bridge child-process tests that end with Cursor's stdin still open)
+test('a bridge input released below its limit is not resumed after its release', async () => {
+  // Arrange
+  const input = standInInput()
+  const hold = holdBridgeInput(input, () => undefined, 4)
+  input.push(Buffer.from('ab'))
+  await waitUntil(
+    () => input.readableLength === 0,
+    'the hold reading the input',
+    2_000,
+    undefined,
+    5,
+  )
+  let resumesAfterRelease = 0
+  input.on('resume', () => {
+    resumesAfterRelease += 1
+  })
+  // Act
+  hold.release()
+  // A resume emits on the next tick, which runs before setImmediate.
+  await new Promise((resolve) => setImmediate(resolve))
+  // Assert
+  assert.equal(resumesAfterRelease, 0)
+  assert.equal(input.isPaused(), true)
+})

@@ -8,13 +8,13 @@ import {
 import { BRIDGE_INPUT_CLOCK } from './bridgeInputClock'
 import type { RunClock } from './runningTimeLimit'
 
-/** The ways a hold of a bridge's input ends; returned by {@link holdBridgeInput}. */
+/** The ways a hold of a bridge's input ends; returned by {@link holdBridgeInput}. The hold ends once: the first call of `putBack`, `handOver` or `release` ends it, and a later call of any of the three does nothing, so it never pauses the stream again or forgets the limit's moment of a later hold of the same stream (Cycle 0147 review round). */
 export interface BridgeInputHold {
-  /** For a first handshake that failed: stops reading and puts every chunk read back at the stream's front, each whole and in the order it came, leaving the stream paused and not reading: its next reader (the Devin bridge's next attempt) resumes it and gets those chunks first. The moment a hold of this stream first reached its limit stays, so that next hold waits only until {@link BRIDGE_STARTUP_INPUT_FULL_WAIT_MS} after it. Ends the wait at the limit. Idempotent. */
+  /** For a first handshake that failed: stops reading and puts every chunk read back at the stream's front, each whole and in the order it came, leaving the stream paused and not reading: its next reader (the Devin bridge's next attempt) resumes it and gets those chunks first. The moment a hold of this stream first reached its limit stays, so that next hold waits only until {@link BRIDGE_STARTUP_INPUT_FULL_WAIT_MS} after it. Ends the wait at the limit and the hold. */
   putBack: () => void
-  /** For a first connection that is up: puts the chunks back as {@link BridgeInputHold.putBack} does, for the stdio transport, and forgets the moment the stream first reached its limit. Idempotent. */
+  /** For a first connection that is up: puts the chunks back as {@link BridgeInputHold.putBack} does, for the stdio transport, and forgets the moment the stream first reached its limit. Ends the hold. */
   handOver: () => void
-  /** For a stop: stops reading and drops what was read, leaving the stream paused and not reading so the process can end, and forgets the moment the stream first reached its limit. Ends the wait at the limit. Idempotent. */
+  /** For a stop: stops reading and drops what was read, leaving the stream paused and not reading so the process can end, and forgets the moment the stream first reached its limit. Ends the wait at the limit and the hold. */
   release: () => void
   /**
    * Decides, the moment the first handshake settled (it succeeded, failed or was cut), whether the wait at the limit came first; called by {@link runCursorMcpBridge} before it accepts the connection or cleans up the failed handshake.
@@ -111,6 +111,8 @@ export function holdBridgeInput(
   let keptBytes = 0,
     isOverReported = false,
     isWaitDecided = false,
+    isStoppedAtLimit = false,
+    isHoldEnded = false,
     cancelWait: (() => void) | undefined
   // Once decided (reported, settled or ended with the hold), the wait at the limit never reports.
   const decideWait = (): void => {
@@ -134,6 +136,7 @@ export function holdBridgeInput(
     keptBytes += chunk.length
     if (keptBytes < limitBytes) return
     // Bounded: the rest waits in the stream for the next reader; its end is not seen from here on, so the wait at the limit stands in for it.
+    isStoppedAtLimit = true
     stream.pause()
     startWait(limitWaitEndOf(stream, clock))
   }
@@ -153,12 +156,18 @@ export function holdBridgeInput(
     stream.resume()
     stream.pause()
   }
-  const putBack = (): void => {
+  const putChunksBack = (): void => {
     stopListening()
     // Each unshift goes in front of the last, so the chunks go back last first and are read in the order they came, each as its own chunk.
     while (kept.length > 0 && !isInputOver(stream)) stream.unshift(kept.pop())
     kept.length = 0
     stopReading()
+  }
+  // The hold ends once: a later call on an ended hold would pause the stream that a later hold of it reads, or forget that hold's limit moment.
+  const endingOnce = (end: () => void) => (): void => {
+    if (isHoldEnded) return
+    isHoldEnded = true
+    end()
   }
   const settleHandshake = (boundMs?: number): boolean => {
     if (isWaitDecided) return isOverReported
@@ -189,17 +198,18 @@ export function holdBridgeInput(
     stream.resume()
   }
   return {
-    putBack,
-    handOver: (): void => {
-      putBack()
+    putBack: endingOnce(putChunksBack),
+    handOver: endingOnce(() => {
+      putChunksBack()
       limitWaitEnds.delete(stream)
-    },
-    release: (): void => {
+    }),
+    release: endingOnce(() => {
       stopListening()
       kept.length = 0
       limitWaitEnds.delete(stream)
-      stopReading()
-    },
+      // Only a pause inside a data event, at the limit, leaves Node reading on; below it the pause above already stopped the read, and a resume now would start one with no error listener.
+      if (isStoppedAtLimit) stopReading()
+    }),
     settleHandshake,
   }
 }
