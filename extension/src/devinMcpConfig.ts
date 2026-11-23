@@ -1302,8 +1302,8 @@ function extraNameRefusal({ path, retry }: Context, copyPath: string): Error {
 }
 
 /**
- * Writes the new config bytes to a private temporary file beside the config and reads the new file's inode from the open handle, so nothing after the rename needs to look at the file again.
- * @param temporary - The staged name ({@link journalPathOf}); its folders are created.
+ * Writes the new config bytes to a private temporary file beside the config and reads the new file's inode from the open handle, so nothing after the rename needs to look at the file again; called by {@link publishRoot}, and by {@link stageRecord} for a tracked record's bytes beside that record.
+ * @param temporary - The staged name ({@link journalPathOf}, or a record's own staged name); its folders are created.
  * @param serialized - The complete new content.
  * @param mode - The permission bits of the new file; the owner's bits only ({@link publishRoot}).
  * @returns The temporary path and the inode the config will have once the file is published.
@@ -2239,7 +2239,7 @@ function parseRecord<Schema extends z.ZodType>(
 
 /**
  * Writes one of Codebook's own records (the receipt, `pending.json` or a rollback's journal) atomically; every record write of a run goes through here, so a test sees each one at {@link DevinMcpTestSeam.beforeRecordWrite}.
- * A write at the pending path of a context that tracks its journal's version ({@link Context.journalVersion}) goes on only while that name shows the version this run settled or last wrote, or nothing ({@link writeTrackedJournal}), and then replaces that version with the one it published ({@link publishedVersionOf}).
+ * A write at the pending path of a context that tracks its journal's version ({@link Context.journalVersion}) goes on only while that name shows the version this run settled or last wrote, or nothing ({@link writeTrackedJournal}), and then replaces that version with the one of the file it wrote itself ({@link stageRecord}), never with what stands at the name afterwards.
  * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename (for a tracked journal also before the last look at its name).
  * @param path - The record file.
  * @param value - The complete record.
@@ -2261,26 +2261,26 @@ async function writeRecord(
     )
     return
   }
-  await writeTrackedJournal(context, value)
   // Only a write that went through moves the version: after a refused one the next guarded step on that name finds the conflict again.
-  tracked.current = await publishedVersionOf(path, value)
+  tracked.current = await writeTrackedJournal(context, value)
 }
 
 /**
  * Writes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote, or nothing; called only by {@link writeRecord}.
- * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed first, and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced.
+ * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed under a fresh private name first ({@link stageRecord}), and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced.
  * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
  * @param context - The run; its pending path is the journal, its seam is called right before the last look.
  * @param value - The complete journal.
+ * @returns The version this write published: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
  * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write throws. The name then stays as it was.
  * @example
- * await writeTrackedJournal(rollbackContext, retained) // pending.json.rollback holds `retained` while it held this run's version
+ * await writeTrackedJournal(rollbackContext, retained) // => { ino: 43n, sha256: 'cd…' }; pending.json.rollback holds `retained` while it held this run's version
  * await writeTrackedJournal(heldRun, retained) // throws a `gone` JournalConflictError once a sync tool moved pending.json away after the run read it
  */
 async function writeTrackedJournal(
   context: Context,
   value: unknown,
-): Promise<void> {
+): Promise<RecordVersion> {
   // No version of this run stands at the name: the write claims it, never replacing what stands there.
   if (context.journalVersion?.current === undefined)
     return claimJournal(context, value)
@@ -2292,26 +2292,36 @@ async function writeTrackedJournal(
     return claimJournal(context, value)
   }
   const path = context.pendingPath
-  await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () => {
+  const { staged, version } = await stageRecord(path, value)
+  try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
     assertTrackedJournalStill(context, look)
-  })
+    await rename(staged, path)
+  } catch (error) {
+    // Nothing was published: the staged name goes, and the name stays as it was.
+    await unlink(staged).catch(() => undefined)
+    throw error
+  }
+  return version
 }
 
 /**
  * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file; called by {@link writeTrackedJournal} when no version is known or the name was found empty.
- * The bytes are first written and flushed under a fresh private name beside the journal, which goes again whatever happens.
+ * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}), which goes again whatever happens.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
+ * @returns The version the link published: the inode of the file this call wrote and the hash of its bytes.
  * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is; what the write or the link throws otherwise.
  * @example
- * await claimJournal(rollbackContext, journal) // pending.json.rollback holds `journal`, or the call throws and the name stays as it was
+ * await claimJournal(rollbackContext, journal) // => { ino: 44n, sha256: 'ef…' }; pending.json.rollback holds `journal`, or the call throws and the name stays as it was
  */
-async function claimJournal(context: Context, value: unknown): Promise<void> {
+async function claimJournal(
+  context: Context,
+  value: unknown,
+): Promise<RecordVersion> {
   const path = context.pendingPath
-  const staged = `${path}.${randomUUID()}.tmp`
+  const { staged, version } = await stageRecord(path, value)
   try {
-    await atomicPrivateWrite(staged, value, DEVIN_MCP_RECORD_LIMIT_BYTES)
     context.seam?.beforeRecordWrite?.({ path, record: value })
     await link(staged, path).catch((error: unknown) => {
       // Something stands at the name already: it is never replaced.
@@ -2323,28 +2333,36 @@ async function claimJournal(context: Context, value: unknown): Promise<void> {
     // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened.
     await unlink(staged).catch(() => undefined)
   }
+  return version
 }
 
+/** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}). */
+type StagedRecord = { staged: string; version: RecordVersion }
+
 /**
- * Gives the version of a journal that this run itself just published; called only by {@link writeRecord} for a context that tracks its journal ({@link Context.journalVersion}), so the journal this run writes or deletes next is the one it left, never one another program put at its name.
- * The hash is of the bytes {@link atomicPrivateWrite} wrote (the value's JSON); the inode is the one the name shows right after the rename or link, looked at without holding the extension host's thread. A file another program renamed in meanwhile pairs its inode with this run's hash, a version no file shows, so nothing is written over or deleted then.
- * @param path - The journal's path.
- * @param value - The record just written.
- * @returns The inode its name shows and the hash of the bytes written; undefined when the name shows nothing or cannot be looked at, so a later write claims the name and a later delete removes nothing that stands there.
+ * Writes a tracked record's complete bytes to a fresh private name beside it and reads that file's inode from its open handle; called by {@link writeTrackedJournal} and {@link claimJournal}, so the version this run tracks after its rename or link is the file it wrote itself, never a file another program renames in at that name afterwards, or the empty name it leaves.
+ * @param path - The record's path; the staged name is `${path}.<uuid>.tmp`.
+ * @param value - The complete record, written as its JSON.
+ * @returns The staged name and the version it publishes: that file's inode and the SHA-256 of the bytes written.
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} or the file cannot be written; nothing stays at the staged name then.
  * @example
- * await publishedVersionOf(journalPath, record) // => { ino: 43n, sha256: 'cd…' }
+ * await stageRecord(journalPath, journal) // => { staged: '…/pending.json.rollback.<uuid>.tmp', version: { ino: 43n, sha256: 'cd…' } }
  */
-async function publishedVersionOf(
+async function stageRecord(
   path: string,
   value: unknown,
-): Promise<RecordVersion | undefined> {
-  const published = await lstatOrAbsent(path).catch(() => undefined)
-  return (
-    published && {
-      ino: published.ino,
-      sha256: bytesSha256(JSON.stringify(value)),
-    }
+): Promise<StagedRecord> {
+  const bytes = JSON.stringify(value)
+  if (Buffer.byteLength(bytes) > DEVIN_MCP_RECORD_LIMIT_BYTES)
+    throw new Error(
+      `Storage limit exceeded (${DEVIN_MCP_RECORD_LIMIT_BYTES} bytes); existing data was retained.`,
+    )
+  const { temporary, ino } = await stageConfigFile(
+    `${path}.${randomUUID()}.tmp`,
+    bytes,
+    PRIVATE_FILE_MODE,
   )
+  return { staged: temporary, version: { ino, sha256: bytesSha256(bytes) } }
 }
 
 /** The receipt, when it covers this run's config path. */

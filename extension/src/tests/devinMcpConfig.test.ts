@@ -6650,6 +6650,162 @@ test("A setup record a sync tool moves away during a refresh's own read of it be
   })
 })
 
+/**
+ * Loads the config module with a rename that hands each rename to `afterRename` once it resolved, also the rename inside the module's atomic write ({@link loadModule}'s same-context files), so a test can act right after a record was published and before the module looks at its name again.
+ * @param afterRename - Called with the rename's source and target right after it resolved.
+ * @returns The config module.
+ * @example
+ * const module = await loadWithAfterRename((from, to) => { if (to === pendingPath) renameSync(pendingPath, movedPath) })
+ */
+async function loadWithAfterRename(
+  afterRename: (from: string, to: string) => void,
+): Promise<typeof DevinMcpConfigModule> {
+  return loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          await rename(from, to)
+          afterRename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+    {
+      './utils/atomicPrivateWrite': resolve(
+        __dirname,
+        '../utils/atomicPrivateWrite.js',
+      ),
+      './atomicPrivateBytes': resolve(
+        __dirname,
+        '../utils/atomicPrivateBytes.js',
+      ),
+    },
+  )
+}
+
+test('A setup record a sync tool moves away right after a refresh beside a held legacy rollback journal rewrote it keeps that journal, and the refresh says that record disappeared', async (context) => {
+  // Value: protects=a run that holds a legacy journal tracks the setup record it rewrote as the file it wrote itself, so a name a sync tool empties right after that rename is never taken for one this run emptied, and the held journal stays (Cycle 0148 task 11); fails_when=the refresh says anything but the disappearance sentence, deletes or changes the journal, leaves anything at pending.json, moves another record than the rewritten one or writes a receipt; no_claim=a real sync tool (the config module is loaded with a rename that moves pending.json away once, right after the rewrite's rename resolved; seam.afterStat rewrites the config in place once, at the read that decides the journal), what the next run does with the rewritten record (it keeps only the private files that stay, so no run can take that setup's entry out by it), the private files that stay, which this refusal does not name (the record that names them is the one the sync tool moved); seam=folders at the setup record's staged and probe names stand for two private files recovery cannot settle, so the record is rewritten, not deleted
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const journalText = readFileSync(journalPath, 'utf8')
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  mkdirSync(join(dirname(configPath), String(publishRecord.stagedName)))
+  mkdirSync(join(dirname(configPath), String(publishRecord.probeName)))
+  const movedPath = join(home, 'pending-moved-away.json')
+  let hasMovedPending = false
+  const movingAfterRewrite = await loadWithAfterRename((_from, to) => {
+    if (to !== pendingPath || hasMovedPending) return
+    // A sync tool moves the rewritten record away right after its rename.
+    hasMovedPending = true
+    renameSync(pendingPath, movedPath)
+  })
+  let hasEmptied = false
+
+  // Act
+  const refreshError = await movingAfterRewrite
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+        if (path !== configPath || hasEmptied) return
+        hasEmptied = true
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasMovedPending, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again.`,
+  )
+  // A journal the refresh retired reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    journalText,
+  )
+  assert.equal(existsSync(pendingPath), false)
+  // The record the refresh rewrote: the finished change's probe stays tracked, its staged file was named once.
+  assert.deepEqual(JSON.parse(readFileSync(movedPath, 'utf8')), {
+    targetPath: configPath,
+    createdFile: false,
+    generation: publishRecord.generation,
+    phase: 'completed',
+    stagedIno: publishRecord.stagedIno,
+    probeName: publishRecord.probeName,
+  })
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A copy of a setup record a sync tool renames over the record a refresh beside a held legacy rollback journal just rewrote is not taken for that record, so that journal and the copy stay', async (context) => {
+  // Value: protects=a run that holds a legacy journal tracks the setup record it rewrote as the file it wrote itself, so another file with the same bytes a sync tool renames over that name right after the rename is never taken for this run's record, and the held journal stays (Cycle 0148 task 11); fails_when=the first refresh says anything but the changed-record sentence, deletes or changes the journal, deletes or changes the copy, or writes a receipt; no_claim=a real sync tool (the config module is loaded with a rename that, right after the rewrite's rename resolved, renames a copy of the bytes it published over pending.json once; seam.afterStat rewrites the config in place once, at the read that decides the journal), what the next run does with that copy, and the private files that stay, which this refusal does not name; seam=folders at the setup record's staged and probe names stand for two private files recovery cannot settle, so the record is rewritten, not deleted
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const journalText = readFileSync(journalPath, 'utf8')
+  const publishRecord = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  mkdirSync(join(dirname(configPath), String(publishRecord.stagedName)))
+  mkdirSync(join(dirname(configPath), String(publishRecord.probeName)))
+  const copyPath = join(home, 'pending-copy.json')
+  let copiedText = ''
+  const copyingAfterRewrite = await loadWithAfterRename((_from, to) => {
+    if (to !== pendingPath || copiedText !== '') return
+    // A sync tool renames a copy of the rewritten record's bytes over it right after its rename.
+    copiedText = readFileSync(pendingPath, 'utf8')
+    writeFileSync(copyPath, copiedText)
+    renameSync(copyPath, pendingPath)
+  })
+  let hasEmptied = false
+
+  // Act
+  const firstError = await copyingAfterRewrite
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+        if (path !== configPath || hasEmptied) return
+        hasEmptied = true
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.notEqual(copiedText, '')
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${pendingPath}, ${journalPath}), so the next run decides on them again; wait until that tool is done, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    journalText,
+  )
+  assert.equal(
+    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
+    copiedText,
+  )
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A legacy rollback journal decided on two matching reads stays until the setup's own record is settled, so a refresh that fails at that step and the original config coming back still end in a take-back", async (context) => {
   // Value: protects=the legacy journal outlives every failure until the publish record can no longer adopt; fails_when=the journal is gone after a refresh that failed before settling the record, or the next refresh adopts; no_claim=a real I/O error (an unlink stub fails once for pending.json: a run that holds a legacy journal deletes the setup record it read with a checked unlink, Cycle 0148 task 2), a real writer (seam rewrites the config in place)
   // Arrange
