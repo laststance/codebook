@@ -4092,7 +4092,7 @@ test("a server started while a window load's take-back of an owed entry waits on
   }
 })
 
-// Value: protects=a late mark (the server start's read of the setup records answered after its 5-second deadline) gives way to the take-back of an owed entry at the window load that still waits on storage, so the server keeps refusing the Devin bridge until that take-back's own descriptor step decides, which leaves the window unmarked once the failed setup's entry and its receipt are gone (Cycle 0146 /ship last round, outside-voice 1); fails_when=the late mark reads the receipts that take-back has not removed yet and turns the in-memory mark on, so the bridge is served while the failed setup's entry is being taken back; no_claim=a late mark during a setup, its take-back or a removal (their own tests); the refresh's skill check waits at its gate until the load's take-back holds the setup lock, the server start's read of the records waits at its gate after it read them, the held stand-in entry removal deletes the receipt as the real one does once released, the server and the lock are the real ones
+// Value: protects=a late mark (the server start's read of the setup records answered after its 5-second deadline) waits for the take-back of an owed entry at the window load that still waits on storage, reading nothing and turning nothing on, so the server keeps refusing the Devin bridge until that take-back's own descriptor step decides; once the take-back ended, the late mark's fresh read finds the failed setup's receipt gone and leaves the window unmarked (Cycle 0146 /ship last round, outside-voice 1; Cycle 0147 review round W2: the late mark waits for a run of this window instead of ending); fails_when=the late mark reads the receipts that take-back has not removed yet and turns the in-memory mark on, so the bridge is served while the failed setup's entry is being taken back, or it marks the window after the take-back removed the receipt; no_claim=a late mark during a setup, its take-back or a removal (their own tests); the refresh's skill check waits at its gate until the load's take-back holds the setup lock, the server start's read of the records waits at its gate after it read them, the late mark's continuation waits at its gate until the test saw it, the held stand-in entry removal deletes the receipt as the real one does once released, the server and the lock are the real ones
 test("a late mark during a window load's take-back of an owed entry leaves the server refusing the Devin bridge", async (context) => {
   // Arrange
   const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
@@ -4106,6 +4106,7 @@ test("a late mark during a window load's take-back of an owed entry leaves the s
     holdEntryRemoval: true,
     removalDeletesReceipt: true,
     holdReceiptReadAt: 1,
+    holdLateMark: true,
   })
   try {
     await waitUntil(
@@ -4121,22 +4122,42 @@ test("a late mark during a window load's take-back of an owed entry leaves the s
     // Act
     window.holds.receiptRead.release()
     await waitUntil(
-      () => window.lateMarkDecisions.length === 1,
-      "the late mark's decision",
+      () => window.holds.lateMark.reachedAtMs(),
+      "the late mark's continuation while the load's take-back waits",
+    )
+    window.holds.lateMark.release()
+    // A late mark that read the records while the take-back waits would start a second read within this bounded wait.
+    const readWhileTakeBackWaits = await waitUntil(
+      () => window.receiptReadCount() > 1,
+      'a receipts read while the take-back waits',
+      1_000,
+    ).then(
+      () => 'a read started',
+      (error: Error) => error.message,
     )
     const statusWhileTakeBackWaits = await postInitialize(
       await window.descriptorPath(),
       true,
     )
+    const decisionsWhileTakeBackWaits = [...window.lateMarkDecisions]
     window.holds.entryRemoval.release()
     await waitUntil(
       async () => !(await isSetupLockHeld(storageDirectory)),
       "the setup lock's release once the load's take-back ended",
       5_000,
     )
+    await waitUntil(
+      () => window.lateMarkDecisions.length === 1,
+      "the late mark's decision once the load's take-back ended",
+    )
     // Assert
-    assert.deepEqual(window.lateMarkDecisions, [false])
+    assert.equal(
+      readWhileTakeBackWaits,
+      'Timed out waiting for a receipts read while the take-back waits',
+    )
     assert.equal(statusWhileTakeBackWaits, 403)
+    assert.deepEqual(decisionsWhileTakeBackWaits, [])
+    assert.deepEqual(window.lateMarkDecisions, [false])
     assert.equal(await window.readDescriptorField(), undefined)
   } finally {
     await window.loaded.deactivate()
@@ -4699,7 +4720,7 @@ test("a late receipts read of a replaced Devin Desktop server leaves the new ser
   }
 })
 
-// Value: protects=a late mark whose descriptor write lands after this window's removal took the in-memory mark off leaves the mark off, so the server keeps refusing the Devin bridge while the removal still waits on storage, and the late mark offers no Reload Window (Cycle 0146 task 17); fails_when=the late mark turns the in-memory mark back on once its write lands, so the Devin bridge is served for a setup that is being removed; no_claim=the descriptor file while the removal waits (the removal's own unmark rewrites it later) and a take-back that takes the mark off; the late read, the late mark's rewrite and the removal's saved-setup clear wait at gates the test opens, the server is the real one
+// Value: protects=a late mark whose descriptor write lands after this window's removal took the in-memory mark off leaves the mark off, so the server keeps refusing the Devin bridge while the removal still waits on storage; it then waits for the removal and, once the removal cleared the setup, ends without marking and offers no Reload Window (Cycle 0146 task 17; Cycle 0147 review round W2: the late mark waits for a run of this window instead of ending); fails_when=the late mark turns the in-memory mark back on once its write lands, so the Devin bridge is served for a setup that is being removed, or it marks after the removal; no_claim=the descriptor file while the removal waits (the removal's own unmark rewrites it later) and a take-back that takes the mark off; the late read, the late mark's rewrite and the removal's saved-setup clear wait at gates the test opens, the server is the real one
 test("a late Devin mark whose descriptor write lands after this window's removal began keeps refusing the Devin bridge and offers no reload", async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -4730,19 +4751,26 @@ test("a late Devin mark whose descriptor write lands after this window's removal
       "the removal's saved-setup clear, after its entry step",
     )
     window.releaseRewrite()
+    // The late mark's write has landed once the file carries the mark; its check after the write runs before the request below is answered.
     await waitUntil(
-      () => window.lateMarkDecisions.length > 0,
-      "the late mark's decision",
+      async () => (await window.readDescriptorField()) === true,
+      "the late mark's descriptor write",
     )
     const statusWhileRemoving = await postInitialize(
       await window.descriptorPath(),
       true,
     )
+    const decisionsWhileRemoving = [...window.lateMarkDecisions]
     window.holds.savedSetupWrite.release()
     const removalOutcome = await within(removal, 15_000)
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision once the removal ended",
+    )
     // Assert
     assert.notEqual(lateRewrite, 'still waiting')
     assert.equal(statusWhileRemoving, 403)
+    assert.deepEqual(decisionsWhileRemoving, [])
     assert.deepEqual(window.lateMarkDecisions, [false])
     assert.equal(removalOutcome, 'resolved')
     assert.deepEqual(window.notices, [
@@ -5557,6 +5585,102 @@ test("a Devin window whose removal-end sync's records read also answers late dur
   }
 })
 
+// Value: protects=a sync's late mark whose own fresh read answers late while a setup of this window started meanwhile still runs waits for that setup instead of ending: once the setup failed before it wrote anything (its Node check), a fresh read finds the earlier setup standing, the window is marked, the Devin bridge is served again and Reload Window is offered once (Cycle 0147 review round, W2: CodeRabbit majors at extension.ts:1608, minors at :1597 and :1608); fails_when=the late mark ends at the turn that finds the setup running, nothing rewrites the descriptor after that setup failed, and Devin Local stays refused (403) for a setup that stands until the next server start; no_claim=a setup that succeeds (it marks the window itself), a run that never ends, the start's late mark (the same wait, the window load's take-back test); the removal-end sync's read answers its real records after 5.5 s, the late mark's fresh read waits at its gate, the setup's look for an owed take-back waits at its gate, the Node stand-in fails, the skill removal stand-in throws before any bytes are read, the server is the real one
+test("a sync's late Devin mark whose fresh read answers while a setup of this window runs waits for that setup and, once it failed before writing anything, serves the Devin bridge again and offers Reload Window once", async (context) => {
+  // Arrange
+  const options: Parameters<typeof devinWindow>[1] = {
+    savedSetup: true,
+    realServer: true,
+    confirmRemoval: true,
+    failSkillRemoval: true,
+    receiptReadAnswerDelaysMs: [undefined, 5_500],
+    holdReceiptReadAt: 3,
+  }
+  const window = await devinWindow(context, options)
+  try {
+    await window.whenReconnected()
+    const descriptorFile = await window.descriptorPath()
+    const statusBefore = await postInitialize(descriptorFile, true)
+    const removalOutcome = await within(
+      window.commands.get('codebook.removeManagedDevinSetup')!().then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      ),
+      15_000,
+    )
+    const freshReadStartedAtMs = await waitUntil(
+      () => window.holds.receiptRead.reachedAtMs(),
+      "the sync's late mark's fresh read",
+      15_000,
+    )
+    // Armed once every earlier look for an owed take-back answered: the next setup waits at its own look, then fails at its Node check, before it writes anything.
+    options.holdOwedTakeBackLookAt = window.owedTakeBackReads() + 1
+    options.nodeFailure = true
+    const setup = window.commands.get('codebook.setupAiChat')!().then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await waitUntil(
+      () => window.holds.owedTakeBackLook.reachedAtMs(),
+      "the setup's look for an owed take-back",
+    )
+    // The fresh read's own budget is a production deadline; it has to pass before the read answers, so the late mark waits for that read outside the queue.
+    await waitUntil(
+      () =>
+        performance.now() - freshReadStartedAtMs >=
+        DEVIN_MARK_READ_RETRY_BUDGET_MS + 500,
+      "the fresh read's own start budget",
+      15_000,
+    )
+    // Act
+    // The held read answers the setup standing, as it read it before it waited.
+    window.holds.receiptRead.release()
+    // A request takes I/O, so the late mark's next step after that answer has run by the time it is answered.
+    const statusWhileSetupRuns = await postInitialize(descriptorFile, true)
+    const decisionsWhileSetupRuns = [...window.lateMarkDecisions]
+    window.holds.owedTakeBackLook.release()
+    const setupOutcome = await within(setup, 10_000)
+    const isServedAgain = await waitUntil(
+      async () => (await postInitialize(descriptorFile, true)) === 200,
+      'the Devin bridge served again once the setup ended',
+      8_000,
+    ).then(
+      () => true,
+      () => false,
+    )
+    // Assert
+    assert.equal(statusBefore, 200)
+    assert.equal(removalOutcome, 'Injected skill removal failure')
+    assert.equal(statusWhileSetupRuns, 403)
+    assert.equal(
+      setupOutcome,
+      'Codebook could not use the Node.js named by codebook.nodeExecutable, so it did not set up Devin Desktop. Check that setting, then run Codebook: Set Up AI Chat again.',
+    )
+    assert.equal(isServedAgain, true)
+    assert.deepEqual(decisionsWhileSetupRuns, [])
+    assert.deepEqual(window.lateMarkDecisions, [true])
+    assert.equal(await window.readDescriptorField(), true)
+    assert.equal(await window.readDescriptorInstallation(), 'installation-test')
+    assert.deepEqual(
+      window.notices.filter(
+        (notice) =>
+          notice.message ===
+          'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+      ),
+      [
+        {
+          severity: 'information',
+          message:
+            'Codebook marked this window for Devin Desktop after storage answered late. Reload this window so Devin Local connects.',
+          actions: ['Reload Window'],
+        },
+      ],
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=a Devin re-setup after Stop Agent Server whose own server start read answered after the start budget ends with one Reload Window, its own: the late mark finds the window already marked by the setup and writes and offers nothing (Cycle 0146 review round, ocr-lens1 P3); fails_when=the late mark rewrites the descriptor the setup marked and offers a second Reload Window; no_claim=a late read that settles while the setup still runs (the next test); the setup's server start read reads the real records and waits at its gate until the setup answered
 test('a Devin re-setup whose server start read answers after the setup offers only its own Reload Window', async (context) => {
   // Arrange
@@ -5597,14 +5721,16 @@ test('a Devin re-setup whose server start read answers after the setup offers on
   }
 })
 
-// Value: protects=a late mark whose read settles while a Devin re-setup of this window still runs gives way to that setup: it writes and offers nothing, and the setup ends with one Reload Window, its own (Cycle 0146 review round, ocr-lens1 P3); fails_when=the late mark marks the descriptor in the middle of the setup and offers a second Reload Window; no_claim=a take-back of the setup (the setup succeeds here); the setup's server start read waits at its gate, which the skill check stand-in opens, and the stand-in waits for the late mark's decision before the setup goes on
+// Value: protects=a late mark whose read settles while a Devin re-setup of this window still runs leaves the mark to that setup: it waits for the setup, writes and offers nothing, finds the window marked by the setup once it ended, and the setup ends with one Reload Window, its own (Cycle 0146 review round, ocr-lens1 P3; Cycle 0147 review round W2: the late mark waits for a run of this window instead of ending); fails_when=the late mark marks the descriptor in the middle of the setup, or after it, and offers a second Reload Window; no_claim=a take-back of the setup (the setup succeeds here); the setup's server start read waits at its gate, which the skill check stand-in opens, the stand-in waits until the late mark's continuation reached its own gate and opens that one before the setup goes on
 test('a late Devin mark whose read settles while a re-setup still runs leaves the mark to the setup and offers no second reload', async (context) => {
   // Arrange
   const options: Parameters<typeof devinWindow>[1] = {
     savedSetup: true,
     holdReceiptReadAt: 2,
+    holdLateMark: true,
   }
   const window = await devinWindow(context, options)
+  let decisionsDuringSetup: unknown[] = []
   try {
     await window.whenReconnected()
     await window.commands.get('codebook.stopAgentServer')!()
@@ -5612,9 +5738,13 @@ test('a late Devin mark whose read settles while a re-setup still runs leaves th
       options.onSkillCheck = undefined
       window.holds.receiptRead.release()
       await waitUntil(
-        () => window.lateMarkDecisions.length > 0,
-        "the late mark's decision during the setup",
+        () => window.holds.lateMark.reachedAtMs(),
+        "the late mark's continuation during the setup",
       )
+      window.holds.lateMark.release()
+      // A file read takes I/O, so the late mark's first step after its gate has run by its answer.
+      await window.readDescriptorField()
+      decisionsDuringSetup = [...window.lateMarkDecisions]
     }
     // Act
     const setupOutcome = await within(
@@ -5624,8 +5754,13 @@ test('a late Devin mark whose read settles while a re-setup still runs leaves th
       ),
       20_000,
     )
+    await waitUntil(
+      () => window.lateMarkDecisions.length > 0,
+      "the late mark's decision once the setup ended",
+    )
     // Assert
     assert.equal(setupOutcome, 'resolved')
+    assert.deepEqual(decisionsDuringSetup, [])
     assert.deepEqual(window.lateMarkDecisions, [false])
     assert.deepEqual(window.notices, [
       {
