@@ -1691,6 +1691,8 @@ type Unsettled = {
   cause: unknown
   /** Set when the copy was just handed to the learner ({@link HandedCopyError}): the record turns to handed and the refusal names the copy as kept. */
   isHandedOver?: boolean
+  /** The inode the handed copy's name showed when recovery looked at it; the handed record names it ({@link handedRecordOf}), because a copy that only its bytes proved has another inode than the recorded one. */
+  handedIno?: bigint
 }
 
 /**
@@ -1941,14 +1943,35 @@ async function recoverLeftovers(
       if (look.kind === 'unreadable') throw look.cause
       await tidyLeftover(context, leftover, look.copy, pending)
     } catch (cause) {
-      unsettled.push({
-        leftover,
-        cause,
-        ...(isHandedCause(cause) && { isHandedOver: true }),
-      })
+      unsettled.push(unsettledOf(leftover, look, cause))
     }
   }
   return unsettled
+}
+
+/**
+ * Builds the {@link Unsettled} entry of a leftover whose recovery threw; called by {@link recoverLeftovers}.
+ * @param leftover - The accepted leftover.
+ * @param look - What {@link lookAtLeftover} found at its name.
+ * @param cause - What stopped its recovery.
+ * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name showed, which its handed record names ({@link handedRecordOf}).
+ * @example
+ * unsettledOf(leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath)) // => { leftover, cause, isHandedOver: true, handedIno: copy.ino }
+ * unsettledOf(leftover, { kind: 'found', copy }, new Error('busy'))                   // => { leftover, cause }
+ */
+function unsettledOf(
+  leftover: Leftover,
+  look: LeftoverLook,
+  cause: unknown,
+): Unsettled {
+  if (!isHandedCause(cause)) return { leftover, cause }
+  // Only a found copy is ever handed over ({@link tidyLeftover}); its name showed that inode.
+  return {
+    leftover,
+    cause,
+    isHandedOver: true,
+    ...(look.kind === 'found' && { handedIno: look.copy.ino }),
+  }
 }
 
 /**
@@ -2987,7 +3010,7 @@ async function settleRollbackJournal(context: Context): Promise<void> {
   await retirePending(
     rollbackContext,
     retainedRecord(
-      isHandedNow ? handedRecordOf(pending) : { ...pending, phase },
+      isHandedNow ? handedRecordOf(pending, unsettled) : { ...pending, phase },
       tracked,
     ),
   )
@@ -3301,13 +3324,13 @@ async function inspect(context: Context): Promise<Inspection> {
   // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable.
-  if (pending && isHandedNow) await persistHandover(context, pending)
+  if (pending && isHandedNow) await persistHandover(context, pending, unsettled)
   const tracked = phase ? unsettled.slice(1) : unsettled
   const [reported] = unsettled
   const retained =
     pending &&
     retainedRecord(
-      isHandedNow ? handedRecordOf(pending) : { ...pending, phase },
+      isHandedNow ? handedRecordOf(pending, unsettled) : { ...pending, phase },
       tracked,
     )
   const inspection = await settleAfterRecovery(
@@ -3323,31 +3346,43 @@ async function inspect(context: Context): Promise<Inspection> {
 
 /**
  * Gives the record a copy handed to the learner in this run leaves: the whole record as read, now handed and no longer unverified ({@link Pending.bytesUnverified}), so no later run of any build deletes the copy; used by {@link inspect} for the record it writes at once ({@link persistHandover}) and for the record that stays, and by {@link settleRollbackJournal} for a rollback's journal.
+ * The kept inode becomes the one the handed copy's name showed ({@link Unsettled.handedIno}): a copy that only its bytes proved has another inode than the recorded one, and a handed record with the recorded inode would make every later run refuse it as somebody else's file ({@link otherInodeRefusal}).
  * @param pending - The pending record as read.
- * @returns The same record with `phase: 'handed'` and without `bytesUnverified`.
+ * @param unsettled - The leftovers recovery could not settle; the handed one names its copy's inode.
+ * @returns The same record with `phase: 'handed'`, without `bytesUnverified`, and with the handed copy's inode as `keptIno`.
  * @example
- * handedRecordOf({ ...pending, bytesUnverified: true }) // => { ...pending, phase: 'handed', bytesUnverified: undefined }
+ * handedRecordOf({ ...pending, keptIno: 41, bytesUnverified: true }, [{ leftover, cause, isHandedOver: true, handedIno: 42n }]) // => { ...pending, keptIno: 42, phase: 'handed', bytesUnverified: undefined }
  */
-function handedRecordOf(pending: Pending): Pending {
-  return { ...pending, phase: 'handed', bytesUnverified: undefined }
+function handedRecordOf(pending: Pending, unsettled: Unsettled[]): Pending {
+  const handedIno = unsettled.find(
+    ({ handedIno }) => handedIno !== undefined,
+  )?.handedIno
+  return {
+    ...pending,
+    phase: 'handed',
+    bytesUnverified: undefined,
+    ...(handedIno !== undefined && { keptIno: recordedFileId(handedIno) }),
+  }
 }
 
 /**
  * Writes the handed record ({@link handedRecordOf}) right after recovery handed a copy to the learner and before the config is read; called by {@link inspect}, so a refusal of a later step (a config that is no valid JSON, another entry) still leaves the copy recorded as handed.
  * @param context - The run.
- * @param pending - The pending record as read; the whole record is kept, only its phase changes.
+ * @param pending - The pending record as read; the whole record is kept, only its phase (and the kept inode of a copy that only its bytes proved) changes.
+ * @param unsettled - The leftovers recovery could not settle; the handed one names its copy's inode.
  * @returns Nothing; best effort: a failed write leaves the record as it was, and {@link settlePending} writes the record that stays again.
  * @example
- * if (pending && isHandedNow) await persistHandover(context, pending)
+ * if (pending && isHandedNow) await persistHandover(context, pending, unsettled)
  */
 async function persistHandover(
   context: Context,
   pending: Pending,
+  unsettled: Unsettled[],
 ): Promise<void> {
   await writeRecord(
     context,
     context.pendingPath,
-    handedRecordOf(pending),
+    handedRecordOf(pending, unsettled),
   ).catch(() => undefined)
 }
 

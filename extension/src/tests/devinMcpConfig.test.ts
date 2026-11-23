@@ -2730,6 +2730,37 @@ test('A rollback journal left unverified by a put-back by bytes stays when its p
   assert.equal(readFileSync(keptPath, 'utf8'), editedBytes)
 })
 
+test('A copy handed over after a failed shared-bytes check is named once by the next run, which then answers', async (context) => {
+  // Value: protects=the handed record of a put-back that only the bytes proved names the inode of the copy it hands over, so the next run reports that copy once and the run after it answers, instead of refusing every run as if another file stood at the private name; fails_when=the second run refuses with the other-file sentence or does not name the copy, the third run refuses, or a run deletes either name; no_claim=what an older build does with the record (read from its code), and the wording of the second run's sentence; seam=hand-written pending record of a put-back by bytes (another inode), a manual link of the private file to the config name, then an in-place append that keeps valid JSON, standing for a writer between the link and the check
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
+  linkSync(keptPath, configPath)
+  appendFileSync(configPath, '\n')
+  await assert.rejects(refreshManagedDevinMcpEntry(storage, ENTRY, home))
+
+  // Act
+  const secondRun = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(secondRun, (error: Error) => {
+    assert.ok(error.message.includes(keptPath), error.message)
+    assert.ok(
+      !error.message.includes('is not the config Codebook moved aside'),
+      error.message,
+    )
+    return true
+  })
+
+  // Act
+  const thirdRun = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(thirdRun.status, 'not-managed')
+  assert.equal(readFileSync(keptPath, 'utf8'), '{"theme":"dark"}\n\n')
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+})
+
 test('Recovery never deletes a copy handed to the learner when the learner linked it back to the config', async (context) => {
   // protects: a handed copy's name survives even when it shares the config's inode / fails_when: the alias cleanup unlinks the handed name before the handed check / no_claim: the wording of the refusal
   // Arrange
