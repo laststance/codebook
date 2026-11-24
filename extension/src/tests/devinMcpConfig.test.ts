@@ -10818,7 +10818,7 @@ test("A copy of the previous config that only its bytes prove is not put back at
 })
 
 test("A copy of the previous config that a finished change left keeps that change's record when recovery cannot read the record again right before deleting the copy, the refresh says the record could not be read, and the next refresh deletes both", async (context) => {
-  // Value: protects=a read of the record that fails right before recovery deletes a copy of the previous config on its word ends the run with the could-not-read sentence, keeps the record byte for byte and the copy, and says a later run may delete that copy, instead of settling the record on a later read and telling the learner to delete the copy (README line 95; Cycle 0149 task 11); fails_when=the record is gone, changes or is written again, the copy is gone or changes, the config changes, the first refresh says anything else, or the next refresh leaves the copy, the record or a receipt; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails the record's open once with EMFILE, right after recovery's second read of the copy), a read that keeps failing, a rollback record's recovery (its own test)
+  // Value: protects=a read of the record that fails right before recovery deletes a copy of the previous config on its word ends the run with the could-not-read sentence, keeps the record byte for byte and the copy, and, because the record read back right after still names that copy, says that Codebook still tracks it and a later run deletes it, instead of settling the record on a later read and telling the learner to delete the copy (README line 95; Cycle 0149 tasks 11 and 20); fails_when=the record is gone, changes or is written again, the copy is gone or changes, the config changes, the first refresh says anything else, or the next refresh leaves the copy, the record or a receipt; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails the record's open once with EMFILE, right after recovery's second read of the copy), a read that keeps failing, a rollback record's recovery (its own test)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
@@ -10866,7 +10866,7 @@ test("A copy of the previous config that a finished change left keeps that chang
 
   // Assert
   await assert.rejects(refresh, {
-    message: `While Codebook settled its record of an earlier change at ${pendingPath}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
   })
   assert.equal(hasFailedOpen, true)
   // A file the refresh deleted reads as 'absent', so the assertions name it.
@@ -10892,8 +10892,185 @@ test("A copy of the previous config that a finished change left keeps that chang
   assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
+test("A copy of the previous config that a finished change left keeps that change's record when a sync tool writes the same record at a new inode right before recovery deletes the copy, the refresh says Codebook still tracks that copy, and the next refresh deletes it", async (context) => {
+  // Value: protects=a record conflict whose record that stands still names the copy (here the same bytes at a new inode) ends the run with the changed-record sentence and says that Codebook still tracks that copy and a later run deletes it, never that the copy is left to the learner, and the next refresh does delete it (README line 95; Cycle 0149 task 20); fails_when=the refresh leaves the copy to the learner (asks to delete it when no longer needed) or says anything else, the copy or the record is gone or changes, or the next refresh leaves the copy, the record or a receipt; no_claim=a real sync tool (seam.afterStat renames a copy of the record's bytes over pending.json once, at recovery's second read of the copy, right before its look at the record), a record that changes again after the refusal read it back
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const keptText = '{"mcpServers":{"old":{"command":"o"}}}\n'
+  await writeFile(keptPath, keptText)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(keptText),
+  })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const pendingIno = statSync(pendingPath).ino
+  const syncedPath = join(home, 'pending-from-sync.json')
+  let copyReads = 0
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      copyReads += 1
+      // The second read is the hash right before the record check and the unlink: the sync tool writes the same record at a new inode then.
+      if (copyReads !== 2) return
+      writeFileSync(syncedPath, pendingText)
+      renameSync(syncedPath, pendingPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  })
+  assert.equal(copyReads, 2)
+  assert.notEqual(statSync(pendingPath).ino, pendingIno)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+  // A file the refresh deleted reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(keptPath) ? readFileSync(keptPath, 'utf8') : 'absent',
+    keptText,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+
+  // Act
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
+test("A copy of the previous config that a finished change left keeps the record a backup restores in that change's in-progress version right before recovery deletes the copy, the setup says Codebook still tracks that copy, and the next setup deletes it and adopts the entry", async (context) => {
+  // Value: protects=a record conflict whose record that stands is the same change's in-progress version, which still names the copy, ends the run with the changed-record sentence and says that Codebook still tracks that copy and a later run deletes it, never that the copy is left to the learner, and the next setup does delete it from that record (README line 95; Cycle 0149 task 20); fails_when=the setup leaves the copy to the learner or says anything else, the copy, the config or the restored record is gone or changes, or the next setup leaves the copy or the record, answers anything but current, or writes no receipt of the entry; no_claim=a real backup tool (seam.afterStat renames the in-progress version over pending.json once, at recovery's second read of the copy, right before its look at the record), a restored record that hands the copy over (the tests above)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const { keptPath, originalBytes, publishedBytes } =
+    await arrangePublishedWithOriginal(storage, configPath)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const inProgressText = readFileSync(pendingPath, 'utf8')
+  // The same change's record as it stood once that change finished.
+  await writeRecordFile(storage, 'pending.json', {
+    ...JSON.parse(inProgressText),
+    phase: 'completed',
+  })
+  const backupPath = join(home, 'pending-from-backup.json')
+  let copyReads = 0
+
+  // Act
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      copyReads += 1
+      // The second read is the hash right before the record check and the unlink: the backup restores the in-progress version then.
+      if (copyReads !== 2) return
+      writeFileSync(backupPath, inProgressText)
+      renameSync(backupPath, pendingPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(setup, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  })
+  assert.equal(copyReads, 2)
+  assert.equal(readFileSync(pendingPath, 'utf8'), inProgressText)
+  // A file the setup deleted reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(keptPath) ? readFileSync(keptPath, 'utf8') : 'absent',
+    originalBytes,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), publishedBytes)
+
+  // Act
+  const second = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(second.status, 'current')
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), publishedBytes)
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).entrySha256,
+    sha256(ENTRY_CANONICAL),
+  )
+})
+
+test("A copy of the previous config that a change in progress moved aside keeps that change's record when recovery cannot read the record once right before deleting the copy, the setup says Codebook still tracks that copy, and the next setup deletes it and adopts the entry", async (context) => {
+  // Value: protects=a read of a change in progress's record that fails once right before recovery deletes the copy on its word ends the run with the could-not-read sentence, keeps the record byte for byte and the copy, and, because the record that stands still names that copy, says that Codebook still tracks it and a later run deletes it, never that the copy is left to the learner, and the next setup does delete it (README line 95; Cycle 0149 task 20); fails_when=the setup leaves the copy to the learner (asks to delete or move it afterwards) or says anything else, the record, the copy or the config is gone or changes, or the next setup leaves the copy or the record, answers anything but current, or writes no receipt of the entry; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails the record's open once with EMFILE, right after recovery's third read of the copy), a read that keeps failing, a finished change's record (the task 11 test above)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const { keptPath, originalBytes, publishedBytes } =
+    await arrangePublishedWithOriginal(storage, configPath)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const pendingIno = statSync(pendingPath).ino
+  let copyReads = 0
+  let isArmed = false
+  let hasFailedOpen = false
+  const failingOpen = await loadWithWrappedOpen(async (path, openReal) => {
+    // Recovery's read of the record right before it deletes the copy finds no file handle free, once.
+    if (path !== pendingPath || !isArmed || hasFailedOpen) return openReal()
+    hasFailedOpen = true
+    throw Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+  })
+
+  // Act
+  const setup = failingOpen.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      copyReads += 1
+      // Reads 1 and 2 are recovery's looks; read 3 is the hash after the published config's read, right before the record check and the unlink.
+      if (copyReads === 3) isArmed = true
+    },
+  })
+
+  // Assert
+  await assert.rejects(setup, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  })
+  assert.equal(hasFailedOpen, true)
+  // A file the setup deleted reads as 'absent', so the assertions name it.
+  assert.equal(
+    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
+    pendingText,
+  )
+  assert.equal(statSync(pendingPath).ino, pendingIno)
+  assert.equal(
+    existsSync(keptPath) ? readFileSync(keptPath, 'utf8') : 'absent',
+    originalBytes,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), publishedBytes)
+
+  // Act
+  const second = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(second.status, 'current')
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), publishedBytes)
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).entrySha256,
+    sha256(ENTRY_CANONICAL),
+  )
+})
+
 test('A put-back by bytes whose look at its own unchecked record fails once keeps that record byte for byte and the copy at its private name, links nothing, and the refresh says the record could not be read', async (context) => {
-  // Value: protects=a record check that fails after a put-back by bytes recorded itself as unchecked propagates before any recovery write, so pending.json keeps that unchecked record (its bytes and its inode), nothing is linked at the empty config name and the copy stays, and the run says the record could not be read (Cycle 0149 task 11; D5 on the bytes branch's inner catch); fails_when=the record's bytes or inode differ from the unchecked record's, a file stands at the config name, the copy is gone or changes, or the refresh says anything else; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails, once with EMFILE, the second open of pending.json while it holds the unchecked record; the first is that record's own read right after its rename), what the next run does with that record
+  // Value: protects=a record check that fails after a put-back by bytes recorded itself as unchecked propagates before any recovery write, so pending.json keeps that unchecked record (its bytes and its inode), nothing is linked at the empty config name and the copy stays, and the run says the record could not be read and, because the unchecked record read back right after still names the copy, that Codebook still tracks that copy instead of leaving it to the learner (Cycle 0149 tasks 11 and 20; D5 on the bytes branch's inner catch); fails_when=the record's bytes or inode differ from the unchecked record's, a file stands at the config name, the copy is gone or changes, or the refresh says anything else; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails, once with EMFILE, the second open of pending.json while it holds the unchecked record; the first is that record's own read right after its rename), what the next run does with that record (with the config name empty it puts the copy back, which the sentence's "deletes it" covers only as the private name going)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
@@ -10920,9 +11097,10 @@ test('A put-back by bytes whose look at its own unchecked record fails once keep
 
   // Assert
   await assert.rejects(refresh, {
-    message: `While Codebook settled its record of an earlier change at ${pendingPath}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
   })
-  assert.equal(uncheckedOpens, 2)
+  // The second open failed; the third is the refusal's read of the record that stands, which tells what that record does with the copy.
+  assert.equal(uncheckedOpens, 3)
   assert.equal(JSON.parse(uncheckedText).phase, 'handed')
   assert.equal(JSON.parse(uncheckedText).bytesUnverified, true)
   assert.equal(readFileSync(pendingPath, 'utf8'), uncheckedText)
@@ -11019,7 +11197,7 @@ test('A legacy first setup whose rollback journal a backup replaces while recove
 })
 
 test('A rollback record that recovery cannot read again right before it puts the config back stays byte for byte with the copy and the staged copy, the refresh says the rollback record could not be read, and the next refresh takes the failed first setup back', async (context) => {
-  // Value: protects=a read of a rollback record that fails right before recovery puts the config back on its word ends the run with the copy's sentence and the could-not-read sentence, and keeps that record byte for byte and every file it names, instead of rewriting that record on a later read (Cycle 0149 task 11); fails_when=the rollback record changes, is written again or is gone after the first refresh, the copy or the staged copy changes or is gone, a file stands at the config name, the setup record loses its take-back mark, a receipt appears, the first refresh says anything else, or the second refresh answers anything but not-managed or leaves the entry, a record or a private file; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails the rollback record's open once with EMFILE, right after recovery's read of the displaced copy), a read that keeps failing
+  // Value: protects=a read of a rollback record that fails right before recovery puts the config back on its word ends the run with the copy's sentence and the could-not-read sentence, and keeps that record byte for byte and every file it names, instead of rewriting that record on a later read; the copy's sentence says that Codebook still tracks that copy, because the rollback record read back right after still names it, never that the copy is left to the learner (Cycle 0149 tasks 11 and 20); fails_when=the rollback record changes, is written again or is gone after the first refresh, the copy or the staged copy changes or is gone, a file stands at the config name, the setup record loses its take-back mark, a receipt appears, the first refresh says anything else, or the second refresh answers anything but not-managed or leaves the entry, a record or a private file; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that fails the rollback record's open once with EMFILE, right after recovery's read of the displaced copy), a read that keeps failing
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -11090,7 +11268,7 @@ test('A rollback record that recovery cannot read again right before it puts the
   assert.equal(hasFailedOpen, true)
   assert.equal(
     firstError instanceof Error ? firstError.message : firstError,
-    `Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again. While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+    `Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it. While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
   )
   assert.equal(journalAfterFirst, journalText)
   assert.equal(journalInoAfterFirst, journalIno)

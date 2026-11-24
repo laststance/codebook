@@ -360,7 +360,7 @@ function keptCopyPhrase(copyPath: string): string {
 const LEFTOVER_CLAUSE =
   'but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
-/** What may happen next to a kept copy of the previous config whose record could not be read back as one of this config that names it and still lets a later run delete it ({@link unrecordedRemovalRefusal}): another program may have replaced, removed or restored that record, so the sentence promises neither the delete nor that the copy stays. */
+/** What may happen next to a kept copy of the previous config whose record could not be read back as one of this config that names it and still lets a later run delete it ({@link unrecordedRemovalRefusal}, {@link unsettledRefusal}): another program may have replaced, removed or restored that record, so the sentence promises neither the delete nor that the copy stays. */
 const UNCONFIRMED_CLAUSE =
   'but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it'
 
@@ -3784,6 +3784,8 @@ type Unsettled = {
   isReplaced?: true
   /** Set by {@link inspect} when the handed record could not be written: the refusal then says that a later run may check the copy again ({@link bothFilesRefusal}) instead of promising that both paths stay. */
   isHandoverUnrecorded?: boolean
+  /** Set for a copy of the previous config whose recovery a record conflict stopped ({@link JournalConflictError}): what the record that stands at that name, read back right after ({@link recordedCopyFateOf}), does with the copy, so the refusal leaves the copy to the learner only when that record no longer leads a later run to it ({@link unsettledRefusal}). */
+  copyFate?: RecordedCopyFate
 }
 
 /**
@@ -4199,7 +4201,7 @@ async function recoverLeftovers(
       if (look.kind === 'unreadable') throw look.cause
       await tidyLeftover(context, leftover, look.copy, pending)
     } catch (cause) {
-      unsettled.push(await unsettledOf(leftover, look, cause))
+      unsettled.push(await unsettledOf(context, leftover, look, cause))
       // A record that changed, disappeared or could not be read again ends the recovery: nothing after it is settled on that record's word.
       if (cause instanceof JournalConflictError) break
     }
@@ -4247,20 +4249,30 @@ async function lookPastCutShortDrop(
 
 /**
  * Builds the {@link Unsettled} entry of a leftover whose recovery threw; called by {@link recoverLeftovers}.
+ * @param context - The run; its pending path is the record recovery acted on, read back for a copy of the previous config whose recovery a record conflict stopped.
  * @param leftover - The accepted leftover.
  * @param look - What {@link lookAtLeftover} found at its name.
  * @param cause - What stopped its recovery.
- * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name shows now, which its handed record names ({@link handedRecordOf}): a sync tool may have swapped another file in at the name while recovery checked it, and a record naming the inode of the first look would refuse that file at every later run ({@link otherInodeRefusal}). That inode differing from the first look's marks the entry {@link Unsettled.isReplaced}, so the refusal never calls that file the previous config. When the name cannot be looked at (it is gone, for example), the first look's inode stays and nothing is marked.
+ * @returns The entry; a copy handed to the learner ({@link isHandedCause}) also carries the inode its name shows now, which its handed record names ({@link handedRecordOf}): a sync tool may have swapped another file in at the name while recovery checked it, and a record naming the inode of the first look would refuse that file at every later run ({@link otherInodeRefusal}). That inode differing from the first look's marks the entry {@link Unsettled.isReplaced}, so the refusal never calls that file the previous config. When the name cannot be looked at (it is gone, for example), the first look's inode stays and nothing is marked. A copy of the previous config whose recovery a record conflict stopped ({@link JournalConflictError}: the record changed, disappeared or could not be read again) carries what the record that stands now does with it ({@link Unsettled.copyFate}), because a record a backup or sync tool put back may still lead a later run to delete that copy.
  * @example
- * await unsettledOf(leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath)) // => { leftover, cause, isHandedOver: true, handedIno: 42n } (the name still shows the first look's inode 42n)
- * await unsettledOf(leftover, { kind: 'found', copy }, handedCopyError)                     // => { leftover, cause, isHandedOver: true, handedIno: 43n, isReplaced: true } (a sync tool swapped 43n in for 42n)
- * await unsettledOf(leftover, { kind: 'found', copy }, new Error('busy'))                   // => { leftover, cause }
+ * await unsettledOf(context, leftover, { kind: 'found', copy }, sharedBytesError(context, keptPath))         // => { leftover, cause, isHandedOver: true, handedIno: 42n } (the name still shows the first look's inode 42n)
+ * await unsettledOf(context, leftover, { kind: 'found', copy }, handedCopyError)                             // => { leftover, cause, isHandedOver: true, handedIno: 43n, isReplaced: true } (a sync tool swapped 43n in for 42n)
+ * await unsettledOf(context, keptLeftover, { kind: 'found', copy }, journalConflictError(context, 'changed')) // => { leftover, cause, copyFate: 'tracked' } (the same record stands at a new inode)
+ * await unsettledOf(context, leftover, { kind: 'found', copy }, new Error('busy'))                           // => { leftover, cause }
  */
 async function unsettledOf(
+  context: Context,
   leftover: Leftover,
   look: LeftoverLook,
   cause: unknown,
 ): Promise<Unsettled> {
+  // A record conflict stopped a copy of the previous config: the record that stands now tells whether a later run may still delete that copy.
+  if (cause instanceof JournalConflictError && leftover.role === 'kept')
+    return {
+      leftover,
+      cause,
+      copyFate: await recordedCopyFateOf(context, leftover.path),
+    }
   if (!isHandedCause(cause)) return { leftover, cause }
   // Only a found copy is ever handed over ({@link tidyLeftover}).
   const firstIno = look.kind === 'found' ? look.copy.ino : undefined
@@ -4283,11 +4295,14 @@ async function unsettledOf(
 }
 
 /**
- * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named. A copy handed over in this run whose name a sync tool swapped meanwhile ({@link Unsettled.isReplaced}) is said to be no longer that copy ({@link replacedCopySentence}), never the previous config to delete. A finished change's copy whose record recovery could not read again (an `unread` {@link JournalConflictError}) is said to be kept, with a later run possibly deleting it ({@link UNCONFIRMED_CLAUSE}): that record stays and may still let a later run delete the copy, so the learner is never told to delete it.
+ * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named. A copy handed over in this run whose name a sync tool swapped meanwhile ({@link Unsettled.isReplaced}) is said to be no longer that copy ({@link replacedCopySentence}), never the previous config to delete. A copy of the previous config whose recovery a record conflict stopped is worded as the record that stands leaves it ({@link Unsettled.copyFate}): while that record still names it, Codebook still tracks it and a later run deletes it ({@link LEFTOVER_CLAUSE}); when that record could not be read back, a later run may ({@link UNCONFIRMED_CLAUSE}); only a record that no longer leads a later run to it leaves it to the learner.
  * @param context - The run.
  * @param phase - The phase recovery read the pending record in ({@link leftoverPhaseOf}).
  * @param reported - The unsettled leftover to name.
  * @returns The refusal, not thrown yet.
+ * @example
+ * unsettledRefusal(context, 'completed', { leftover, cause: conflict, copyFate: 'tracked' })   // => 'Codebook kept a private copy … but Codebook still tracks that copy, so a later run of Codebook deletes it …'
+ * unsettledRefusal(context, 'completed', { leftover, cause: conflict, copyFate: 'untracked' }) // => 'Codebook found a private file at … delete that file when you no longer need it, …'
  */
 function unsettledRefusal(
   context: Context,
@@ -4298,6 +4313,7 @@ function unsettledRefusal(
     isHandedOver,
     isReplaced,
     isHandoverUnrecorded,
+    copyFate,
   }: Unsettled,
 ): Error {
   // The put-back check's and the changed config's own texts name both paths and the state; the move-back advice would lose a new save.
@@ -4309,10 +4325,10 @@ function unsettledRefusal(
       `${changedWhileWorking(context).message} ${replacedCopySentence(leftover.path)}`,
     )
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
-  // A finished change's copy whose record could not be read again stays tracked by that record, which a later run may still delete it on: it is never left to the learner to delete.
-  if (phase && cause instanceof JournalConflictError && cause.kind === 'unread')
+  // A record that stands and still names the copy, or one that could not be read back, may still let a later run delete that copy: it is never left to the learner.
+  if (copyFate === 'tracked' || copyFate === 'unconfirmed')
     return new Error(
-      `Codebook kept ${keptCopyPhrase(leftover.path)}, ${UNCONFIRMED_CLAUSE}.`,
+      `Codebook kept ${keptCopyPhrase(leftover.path)}, ${copyFate === 'tracked' ? LEFTOVER_CLAUSE : UNCONFIRMED_CLAUSE}.`,
       { cause },
     )
   return phase
@@ -7972,8 +7988,11 @@ async function copiesBesideRecord(
   return { asLeft: fate === 'tracked' ? keptLeft : asTracked, asTracked }
 }
 
+/** What the record that stands does with a kept copy of the previous config ({@link recordedCopyFateOf}): `tracked` while it lets a later run delete the copy, `untracked` once it no longer leads a later run there, `unconfirmed` when it could not be read back. */
+type RecordedCopyFate = 'tracked' | 'untracked' | 'unconfirmed'
+
 /**
- * Tells what the record that stands at `pending.json` does with a kept copy of the previous config, read back after Codebook's own write of it failed or was refused; called by {@link copiesBesideRecord} and {@link unrecordedRemovalRefusal}, because another program may have replaced, removed or restored that record, and only a record of this config that recovery deletes from ({@link recoverOwnLeftovers}, {@link tidyLeftover}) and that names the copy lets a later run delete it.
+ * Tells what the record that stands at `pending.json` (or, for a rollback's recovery, at its journal's name, {@link rollbackContextOf}) does with a kept copy of the previous config, read back after Codebook's own write of it failed or was refused, or after a look at it stopped recovery; called by {@link copiesBesideRecord}, {@link unrecordedRemovalRefusal} and {@link unsettledOf}, because another program may have replaced, removed or restored that record, and only a record of this config that recovery deletes from ({@link recoverOwnLeftovers}, {@link tidyLeftover}) and that names the copy lets a later run delete it.
  * @param context - The run; gives the pending record's path and the config path.
  * @param copyPath - The copy's private name.
  * @returns
@@ -7987,7 +8006,7 @@ async function copiesBesideRecord(
 async function recordedCopyFateOf(
   context: Context,
   copyPath: string,
-): Promise<'tracked' | 'untracked' | 'unconfirmed'> {
+): Promise<RecordedCopyFate> {
   const pending = await readRecord(
     context.pendingPath,
     pendingSchema,
