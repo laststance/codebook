@@ -16297,6 +16297,100 @@ test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads t
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A later setup never drops a first setup's old record beside a newer record of the same entry when a backup puts back that setup's publish record while Codebook compares the two: it keeps the old record and says that record changed", async (context) => {
+  // Value: protects=a later run's drop of the old record beside a record that covers it deletes only while the publish record it read still stands at pending.json, at a synchronous look beside the looks at both receipt names right before the unlink (Cycle 0149 task 9, D5 on devinMcpConfig.ts:5041), so a record a backup puts back during the comparison never loses the old record; fails_when=the old record's private file is gone or changed, receipt.json holds anything but the newer record, pending.json is not the record the backup put back, or the refusal is another sentence than the changed-record one; no_claim=a real backup tool (seam.afterStat renames the setup's record without its mark over pending.json once, at the comparison's read of the old record, the second read of it in that run), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), the newer record (the test writes it), and a record put there between the last look and the unlink (no Node primitive unlinks by inode)
+  // Arrange
+  const {
+    home,
+    storage,
+    receiptPath,
+    receiptBefore,
+    pendingPath,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const newerReceipt = {
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000149091',
+  }
+  writeFileSync(receiptPath, JSON.stringify(newerReceipt))
+  // The same setup's record as a backup kept it, before the mark that nothing was linked.
+  const restoredText = JSON.stringify({
+    ...(await readRecordFile(storage, 'pending.json')),
+    notLinked: undefined,
+  })
+  let retiredReads = 0
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== retiredPath) return
+      retiredReads += 1
+      // The comparison's read of the old record, after the put-back's own read before its link.
+      if (retiredReads !== 2) return
+      const backupPath = join(home, 'pending-from-backup.json')
+      writeFileSync(backupPath, restoredText)
+      renameSync(backupPath, pendingPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(retiredReads, 2)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(
+    existsSync(retiredPath) ? readFileSync(retiredPath, 'utf8') : 'absent',
+    retiredText,
+  )
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), newerReceipt)
+  assert.equal(readFileSync(pendingPath, 'utf8'), restoredText)
+})
+
+test("A later setup whose put-back link stood never deletes the old record's private name when a backup puts back that setup's publish record while Codebook reads the record that went back: it keeps both names and says that record changed", async (context) => {
+  // Value: protects=after a later run's put-back link stood, the old record's private name goes only while the publish record it read still stands at pending.json, at a synchronous look beside the looks at both receipt names right before the unlink (Cycle 0149 task 9, D5 on devinMcpConfig.ts:4960), so a record a backup puts back after the link never loses the second name that the next run settles; fails_when=the private name is gone or holds other bytes, receipt.json holds anything but the old record, pending.json is not the record the backup put back, or the refusal is another sentence than the changed-record one; no_claim=a real backup tool (seam.afterStat renames the setup's record without its mark over pending.json once, at the read of receipt.json after the put-back's link, its first read in that run), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a record put there between the last look and the unlink (no Node primitive unlinks by inode)
+  // Arrange
+  const { home, storage, receiptPath, pendingPath, retiredPath, retiredText } =
+    await arrangeFailedPutBack(context)
+  const restoredText = JSON.stringify({
+    ...(await readRecordFile(storage, 'pending.json')),
+    notLinked: undefined,
+  })
+  let hasRestored = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      // The read of receipt.json right after the put-back's link stood.
+      if (path !== receiptPath || hasRestored) return
+      hasRestored = true
+      const backupPath = join(home, 'pending-from-backup.json')
+      writeFileSync(backupPath, restoredText)
+      renameSync(backupPath, pendingPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(
+    existsSync(retiredPath) ? readFileSync(retiredPath, 'utf8') : 'absent',
+    retiredText,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), restoredText)
+})
+
 test('A setup whose look at the config fails while an old record waits to be put back refuses and keeps that record and the publish record, and the next setup puts the record back and finds that entry current', async (context) => {
   // Value: protects=a look at the config name that fails once while a first setup's old record still waits under its private name is no answer that no config stands: the run stops with the unreadable-config refusal before anything is settled, the private name and the publish record that names it stay, and the next run puts the old record back, so the old config's codebook entry stays Codebook's own; fails_when=the refusal is another sentence, the private name or the publish record is gone or another record appears after it, or the next setup answers anything but current or leaves anything but the old record; no_claim=a real I/O error (the config module is loaded with an lstat that fails with EIO once, at the first look at the config name) and why the earlier put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the link in its place)
   // Arrange
@@ -20158,6 +20252,95 @@ test('A first setup with another bridge path that stopped after its link, whose 
   assert.equal(existsSync(receiptPath), false)
   assert.deepEqual(await recordsIn(storage), [])
   assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
+test("A refresh that decided to delete a stopped first setup's old record keeps that record when a backup puts back that setup's record, marked that nothing was linked, while Codebook reads the old record before the delete, and says that record changed", async (context) => {
+  // Value: protects=a later run deletes a first setup's old record on a decision only while the publish record that decision read still stands at pending.json, at a synchronous look right before the unlink (Cycle 0149 task 9, criterion 10), so a backup that puts the same setup's record marked that nothing was linked back during the drop's read never loses the old record that marked record leads to; fails_when=the old record's private file is gone or changed, pending.json is not the marked record the backup put back, receipt.json appears, or the refusal is another sentence than the changed-record one; no_claim=a real backup tool (the test puts the setup's first record back by hand before the refresh, and seam.afterStat renames the saved marked version over pending.json once, at the drop's own read of the old record, the second read of it in that refresh), why the setup's link and put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck notes the first record and moves the config back right before the config's link, so the setup wrote both versions of its record), the config holding the setup's own entry from another source (the test writes it), and a record put there between the last look and the unlink (no Node primitive unlinks by inode)
+  // Arrange
+  const { home, storage, configPath, receiptPath, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let firstRecordText = 'no first record'
+  const failingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    failingPutBack.writeManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterCheck: () => {
+        // The setup's first record, before the mark that nothing was linked.
+        firstRecordText = readFileSync(pendingPath, 'utf8')
+        moveBack()
+      },
+    }),
+    /could not put it back/,
+  )
+  const markedRecordText = readFileSync(pendingPath, 'utf8')
+  const { generation } = JSON.parse(markedRecordText)
+  const retiredPath = join(
+    storage,
+    'devin-mcp',
+    `receipt.json.${String(generation)}.retired`,
+  )
+  const retiredText = readFileSync(retiredPath, 'utf8')
+  // A backup puts the setup's first record back, so the refresh decides on a record without the mark.
+  writeFileSync(pendingPath, firstRecordText)
+  // The config holds the setup's own entry from another source, which the old record does not cover.
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: OTHER_ENTRY } }, null, 2)}\n`,
+  )
+  let retiredReads = 0
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+    {
+      afterStat: (path) => {
+        if (path !== retiredPath) return
+        retiredReads += 1
+        // The drop's own read of the old record, after the read that decided the drop: the backup puts the marked record back.
+        if (retiredReads !== 2) return
+        const backupPath = join(home, 'pending-from-backup.json')
+        writeFileSync(backupPath, markedRecordText)
+        renameSync(backupPath, pendingPath)
+      },
+    },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.notEqual(firstRecordText, markedRecordText)
+  assert.equal(retiredReads, 2)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(
+    existsSync(retiredPath) ? readFileSync(retiredPath, 'utf8') : 'absent',
+    retiredText,
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), markedRecordText)
+  assert.equal(existsSync(receiptPath), false)
 })
 
 test('A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps that record when a backup restores the config it covers before the delete, and the next refresh puts it back and answers current', async (context) => {
