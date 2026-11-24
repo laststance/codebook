@@ -1346,6 +1346,7 @@ function extraNameRefusal({ path, retry }: Context, copyPath: string): Error {
  * @param serialized - The complete new content.
  * @param mode - The permission bits of the new file; the owner's bits only ({@link publishRoot}).
  * @returns The temporary path and the inode the config will have once the file is published.
+ * @throws What the create, write, flush or close throws; a failed write's temporary name goes only while it still shows the file this call created there ({@link dropFailedStage}).
  */
 async function stageConfigFile(
   temporary: string,
@@ -1354,20 +1355,51 @@ async function stageConfigFile(
 ): Promise<{ temporary: string; ino: bigint }> {
   await mkdir(dirname(temporary), { recursive: true })
   const handle = await open(temporary, 'wx', PRIVATE_FILE_MODE)
+  // The inode the exclusive create made, read from its handle before anything is written, so a failed write deletes only that file.
+  let createdIno: bigint | undefined
   try {
     try {
+      createdIno = (await handle.stat({ bigint: true })).ino
       // fchmod, so the umask does not narrow it; never wider than the owner's bits.
       await handle.chmod(mode)
       await handle.writeFile(serialized)
       await handle.sync()
-      return { temporary, ino: (await handle.stat({ bigint: true })).ino }
+      return { temporary, ino: createdIno }
     } finally {
       await handle.close()
     }
   } catch (error) {
-    await unlink(temporary).catch(() => undefined)
+    await dropFailedStage(temporary, createdIno, serialized)
     throw error
   }
+}
+
+/**
+ * Deletes the temporary name of a staged write that failed while it still shows the file that write created there, holding no more than a start of the bytes it was writing; called by {@link stageConfigFile} when its write, flush or close fails, so a file another program put at that name meanwhile (a sync tool's), or bytes it wrote into that file in place, stay.
+ * Limits: those of {@link unlinkStagedWhileStill}.
+ * @param temporary - The temporary name.
+ * @param createdIno - The inode of the file the exclusive create made, read from its handle; undefined when that read failed, and nothing is deleted then.
+ * @param serialized - The complete bytes the write was to hold.
+ * @returns Nothing; best effort: a name that shows another file, other bytes or nothing, or that cannot be read or deleted, stays, and no build reads it.
+ * @example
+ * await dropFailedStage('…/mcp_config.json.<generation>.tmp', 42n, serialized) // gone while it holds the file this write created and a start of its bytes
+ */
+async function dropFailedStage(
+  temporary: string,
+  createdIno: bigint | undefined,
+  serialized: string,
+): Promise<void> {
+  const now = await inspectCopy(temporary).catch(() => undefined)
+  const written = Buffer.from(serialized)
+  // Another program's file, bytes this write never wrote, nothing, or a read that failed: nothing is deleted.
+  if (
+    createdIno === undefined ||
+    now?.ino !== createdIno ||
+    now.size > BigInt(written.length) ||
+    bytesSha256(written.subarray(0, Number(now.size))) !== now.sha256
+  )
+    return
+  await unlinkStagedWhileStill(temporary, now)
 }
 
 /** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so nothing was deleted) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
@@ -2540,7 +2572,7 @@ type StagedRecord = { staged: string; version: RecordVersion }
  * @param path - The record's path; the staged name is `${path}.<uuid>.tmp`.
  * @param value - The complete record, written as its JSON.
  * @returns The staged name and the version it publishes: that file's inode and the SHA-256 of the bytes written.
- * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} or the file cannot be written; nothing stays at the staged name then.
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} or the file cannot be written; the staged name then goes while it still shows the file this call created there ({@link dropFailedStage}), and another program's file there stays.
  * @example
  * await stageRecord(journalPath, journal) // => { staged: '…/pending.json.rollback.<uuid>.tmp', version: { ino: 43n, sha256: 'cd…' } }
  */
@@ -2629,14 +2661,30 @@ async function dropStagedRecord({
   const now = await inspectCopy(staged).catch(() => undefined)
   // Another program's file or bytes at the staged name, none, or a read that failed: nothing is deleted.
   if (now?.ino !== version.ino || now.sha256 !== version.sha256) return
+  await unlinkStagedWhileStill(staged, now)
+}
+
+/**
+ * Deletes a staged name only while one synchronous look still shows the file a read of it found, after an awaited look at that name ({@link lookAheadAt}); the shared end of {@link dropStagedRecord} and {@link dropFailedStage}, once their read found the file and bytes this run wrote there.
+ * Limits: a file put there, or a write into it, between that look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
+ * @param staged - The staged name.
+ * @param read - That file as {@link inspectCopy} read it.
+ * @returns Nothing; best effort: a name that shows another file, size or times, or that cannot be looked at or deleted, stays.
+ * @example
+ * await unlinkStagedWhileStill(staged, read) // the name is gone unless a sync tool wrote into that file after the read
+ */
+async function unlinkStagedWhileStill(
+  staged: string,
+  read: InspectedCopy,
+): Promise<void> {
   // A storage that already stalls holds this step here, not at the synchronous look below.
   await lookAheadAt([staged])
-  if (!isStagedNameStill(staged, now)) return
+  if (!isStagedNameStill(staged, read)) return
   await unlink(staged).catch(() => undefined)
 }
 
 /**
- * Tells, by one synchronous look, whether a staged name still shows the file as a read of it found it (inode, size and times); called by {@link assertStagedRecordStill} right before a rename or link publishes that file, and by {@link dropStagedRecord} right before its unlink, each after an awaited look at that name.
+ * Tells, by one synchronous look, whether a staged name still shows the file as a read of it found it (inode, size and times); called by {@link assertStagedRecordStill} right before a rename or link publishes that file, and by {@link unlinkStagedWhileStill} right before its unlink, each after an awaited look at that name.
  * @param staged - The staged name.
  * @param read - That file as {@link inspectCopy} read it.
  * @returns `true` when the name shows that file; `false` when it shows another file, size or times, nothing, or the look failed.

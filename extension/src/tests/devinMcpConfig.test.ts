@@ -8713,6 +8713,196 @@ test("A file another program puts at the staged name of a take-back's first roll
   assert.equal(existsSync(receiptPath), false)
 })
 
+/**
+ * Loads the config module with an `open` whose handle, for the first staged name `isStaged` matches, runs `beforeFailedFlush` at its flush and then fails that flush with ENOSPC, as a full disk does; every other open, and every other step of that handle, is the real one.
+ * @param isStaged - Tells the staged name whose flush fails.
+ * @param beforeFailedFlush - Called with that name right before its flush fails, e.g. to swap another program's file in there.
+ * @returns The config module.
+ * @example
+ * const module = await loadWithFailingStagedFlush((path) => path.endsWith('.tmp'), (path) => swapFile(path, '{"foreign":true}\n'))
+ */
+function loadWithFailingStagedFlush(
+  isStaged: (path: string) => boolean,
+  beforeFailedFlush: (path: string) => void,
+): Promise<typeof DevinMcpConfigModule> {
+  let hasFailed = false
+  return loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open: async (...args: Parameters<typeof open>) => {
+          const handle = await open(...args)
+          const path = String(args[0])
+          // Only the first staged name that matches gets the failing flush.
+          if (hasFailed || !isStaged(path)) return handle
+          hasFailed = true
+          handle.sync = async () => {
+            beforeFailedFlush(path)
+            throw Object.assign(new Error('no space left on device'), {
+              code: 'ENOSPC',
+            })
+          }
+          return handle
+        },
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+}
+
+test("A file another program swaps in at the staged name of a take-back's first rollback record while its flush fails on a full disk is kept instead of deleted with that name, and the next refresh takes the entry out", async (context) => {
+  // Value: protects=a take-back's first rollback-record write whose flush fails deletes its staged name only while that name still shows the file it created there with no more than its own bytes, so another program's file swapped in at that name meanwhile stays with its bytes and nothing moves (Cycle 0148 task 43); fails_when=the swapped-in file is gone or changed after the first refresh, anything stands at the journal name, the config changes, the setup's record loses its take-back mark, the first refresh says anything but the not-taken-out refusal, or the second refresh leaves the entry; no_claim=a real sync tool and a real full disk (the config module is loaded with an open whose handle, for the journal's staged name, renames another file over that name at its flush and then fails the flush with ENOSPC), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const foreignText = '{"foreign":"staged"}\n'
+  let foreignStagedPath = ''
+  const failingFlush = await loadWithFailingStagedFlush(
+    (path) =>
+      basename(path).startsWith('pending.json.rollback.') &&
+      path.endsWith('.tmp'),
+    (path) => {
+      // The take-back's first journal write is flushing its bytes under a fresh name beside the journal: another program swaps a file in there.
+      foreignStagedPath = path
+      swapFile(path, foreignText)
+    },
+  )
+
+  // Act
+  const firstError = await failingFlush
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the first refresh left empty reads as 'absent', so the assertions below name it.
+  const foreignAfterFirst = existsSync(foreignStagedPath)
+    ? readFileSync(foreignStagedPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = JSON.parse(readFileSync(configPath, 'utf8'))
+  const isTakeBackMarkedAfterFirst =
+    JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack === true
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, and could not take that entry out again, so remove the "codebook" entry from that file by hand if it is still there; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(foreignAfterFirst, foreignText)
+  assert.equal(journalAfterFirst, 'absent')
+  assert.deepEqual(configAfterFirst, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(isTakeBackMarkedAfterFirst, true)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config while its flush fails on a full disk is kept instead of deleted with that name, and the config stays as it was', async (context) => {
+  // Value: protects=a setup whose staged config's flush fails deletes that staged name only while it still shows the file the setup created there with no more than its own bytes, so another program's file swapped in at that name meanwhile stays with its bytes, and nothing is published or recorded (Cycle 0148 task 43); fails_when=the swapped-in file is gone or changed, the config changes, a record stays in Codebook's storage, the setup answers anything but the full-disk error, or the next setup is not installed; no_claim=a real sync tool and a real full disk (the config module is loaded with an open whose handle, for the config's staged name, renames another file over that name at its flush and then fails the flush with ENOSPC), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+  const failingFlush = await loadWithFailingStagedFlush(
+    (path) =>
+      basename(path).startsWith('mcp_config.json.') && path.endsWith('.tmp'),
+    (path) => {
+      // The setup is flushing the new config under its staged name beside the config: another program swaps a file in there.
+      foreignStagedPath = path
+      swapFile(path, foreignText)
+    },
+  )
+
+  // Act
+  const firstError = await failingFlush
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const foreignAfterFirst = existsSync(foreignStagedPath)
+    ? readFileSync(foreignStagedPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = readFileSync(configPath, 'utf8')
+  const storageAfterFirst = (
+    await readdir(join(storage, 'devin-mcp')).catch(() => [])
+  ).sort()
+  const second = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    'no space left on device',
+  )
+  assert.equal(foreignAfterFirst, foreignText)
+  assert.equal(configAfterFirst, configText)
+  assert.deepEqual(storageAfterFirst, [])
+  assert.equal(second.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+})
+
+test('A setup whose staged config’s flush fails on a full disk leaves no staged file beside the config', async (context) => {
+  // Value: protects=a failed staged write still deletes the file it created itself, once it finds that file at its name with the bytes it wrote, so a full disk leaves nothing beside the learner's config (Cycle 0148 task 43); fails_when=anything but the config stays in its folder, the config changes, or the setup answers anything but the full-disk error; no_claim=a real full disk (the config module is loaded with an open whose handle fails the flush of the config's staged name with ENOSPC once), a write cut short partway (a start of the bytes, which the same check accepts), a file put there between the cleanup's last look and its unlink
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const failingFlush = await loadWithFailingStagedFlush(
+    (path) =>
+      basename(path).startsWith('mcp_config.json.') && path.endsWith('.tmp'),
+    () => undefined,
+  )
+
+  // Act
+  const error = await failingFlush
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    'no space left on device',
+  )
+  assert.deepEqual(readdirSync(dirname(configPath)), ['mcp_config.json'])
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
 test("A file another program swaps in at the staged name of a take-back's first rollback record right as it is linked is never taken for that record, so the take-back moves nothing and keeps both names of that file", async (context) => {
   // Value: protects=a take-back's first rollback-record write goes on only once the journal name shows the inode and bytes it wrote after the link, and its cleanup deletes the staged name only while that name shows that file, so a file swapped in after the last look before the link is neither followed by a move of the config nor deleted (Cycle 0148 ship review); fails_when=the first refresh says anything but the journal-taken refusal, the config changes, the file swapped in is gone from the journal name or the staged name or changes, the setup's record loses its take-back mark, or the second refresh leaves the entry or the journal; no_claim=a real sync tool (the config module is loaded with a link that, for the journal name, renames another journal over the staged name once right before it links), a swap of the journal name after the check that follows the link, what a later run does with the file at the staged name
   // Arrange
