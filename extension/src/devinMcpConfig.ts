@@ -988,6 +988,9 @@ type InspectedCopy = {
 /** One version of a record file: its inode and the SHA-256 of its bytes, as one read ({@link readVersionedRecord}) or one write ({@link writeRecord}) of it saw them. */
 type RecordVersion = Pick<InspectedCopy, 'ino' | 'sha256'>
 
+/** The file a staged write made ({@link stageConfigFile}, {@link stageRecord}): its {@link RecordVersion} and the size and modification time (nanoseconds) its handle showed once the bytes were flushed, which a look by status alone compares when its bytes cannot be read again ({@link writtenFileStatusAt}). */
+type StagedVersion = RecordVersion & Pick<InspectedCopy, 'size' | 'mtimeNs'>
+
 /**
  * Reads a file Codebook keeps a copy in, without following a link.
  * @param path - The copy.
@@ -1441,14 +1444,16 @@ function extraNameRefusal({ path, retry }: Context, copyPath: string): Error {
  * @param temporary - The staged name ({@link journalPathOf}, or a record's own staged name); its folders are created.
  * @param serialized - The complete new content.
  * @param mode - The permission bits of the new file; the owner's bits only ({@link publishRoot}).
- * @returns The temporary path and the inode the config will have once the file is published.
- * @throws What the create, write, flush or close throws; a failed write's temporary name goes only while it still shows the file this call created there ({@link dropFailedStage}).
+ * @returns The temporary path, the inode the config will have once the file is published, and the size and modification time the flushed write left, read from the same handle.
+ * @throws What the create, write, flush, look or close throws; a failed write's temporary name goes only while it still shows the file this call created there ({@link dropFailedStage}).
  */
 async function stageConfigFile(
   temporary: string,
   serialized: string,
   mode: number,
-): Promise<{ temporary: string; ino: bigint }> {
+): Promise<
+  { temporary: string } & Pick<StagedVersion, 'ino' | 'size' | 'mtimeNs'>
+> {
   await mkdir(dirname(temporary), { recursive: true })
   const handle = await open(temporary, 'wx', PRIVATE_FILE_MODE)
   // The inode the exclusive create made, read from its handle before anything is written, so a failed write deletes only that file.
@@ -1460,7 +1465,9 @@ async function stageConfigFile(
       await handle.chmod(mode)
       await handle.writeFile(serialized)
       await handle.sync()
-      return { temporary, ino: createdIno }
+      // The size and modification time this write left: a cleanup that cannot read the bytes again tells this file from a later write by them.
+      const { size, mtimeNs } = await handle.stat({ bigint: true })
+      return { temporary, ino: createdIno, size, mtimeNs }
     } finally {
       await handle.close()
     }
@@ -1511,7 +1518,7 @@ type Published = {
 /** Everything a replacement of an existing config works with: the staged file with the inode and bytes this run wrote there (every cleanup before the link deletes that name only while it still shows them, {@link dropStagedRecord}; the one after it, only while it is a second name of the config or holds just those bytes, {@link dropPublishedStage}), the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
 type Replacement = {
   temporary: string
-  stagedVersion: RecordVersion
+  stagedVersion: StagedVersion
   probePath: string
   displaced: KeptCopy
   identity: FileIdentity
@@ -2248,7 +2255,7 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
 async function createConfig(
   context: Context,
   temporary: string,
-  stagedVersion: RecordVersion,
+  stagedVersion: StagedVersion,
   config: ConfigNumbers,
   journal: Pending,
   staleReceipt: Receipt | undefined,
@@ -2653,9 +2660,11 @@ async function publishRoot(
     mode,
   )
   // The file this run wrote at the staged name: every cleanup of that name checks it is still that file.
-  const stagedVersion: RecordVersion = {
+  const stagedVersion: StagedVersion = {
     ino: staged.ino,
     sha256: bytesSha256(serialized),
+    size: staged.size,
+    mtimeNs: staged.mtimeNs,
   }
   const displaced = displacedCopyOf(context, look, generation)
   const journal = journalOf(
@@ -3829,17 +3838,17 @@ function droppingChangedError(context: Context): JournalConflictError {
   )
 }
 
-/** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}). */
-type StagedRecord = { staged: string; version: RecordVersion }
+/** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}); the config's staged file has the same shape ({@link publishRoot}). */
+type StagedRecord = { staged: string; version: StagedVersion }
 
 /**
  * Writes a tracked record's complete bytes to a fresh private name beside it and reads that file's inode from its open handle; called by {@link writeTrackedJournal}, {@link claimJournal} and, for the receipt, {@link writeReceipt}, so the version this run tracks after its rename or link is the file it wrote itself, never a file another program renames in at that name afterwards, or the empty name it leaves.
  * @param path - The record's path; the staged name is `${path}.<uuid>.tmp`.
  * @param value - The complete record, written as its JSON.
- * @returns The staged name and the version it publishes: that file's inode and the SHA-256 of the bytes written.
+ * @returns The staged name and the version it publishes: that file's inode, the SHA-256 of the bytes written, and the size and modification time that write left.
  * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} or the file cannot be written; the staged name then goes while it still shows the file this call created there ({@link dropFailedStage}), and another program's file there stays.
  * @example
- * await stageRecord(journalPath, journal) // => { staged: '…/pending.json.rollback.<uuid>.tmp', version: { ino: 43n, sha256: 'cd…' } }
+ * await stageRecord(journalPath, journal) // => { staged: '…/pending.json.rollback.<uuid>.tmp', version: { ino: 43n, sha256: 'cd…', size: 412n, mtimeNs: 1764000000000000000n } }
  */
 async function stageRecord(
   path: string,
@@ -3850,12 +3859,15 @@ async function stageRecord(
     throw new Error(
       `Storage limit exceeded (${DEVIN_MCP_RECORD_LIMIT_BYTES} bytes); existing data was retained.`,
     )
-  const { temporary, ino } = await stageConfigFile(
+  const { temporary, ...written } = await stageConfigFile(
     `${path}.${randomUUID()}.tmp`,
     bytes,
     PRIVATE_FILE_MODE,
   )
-  return { staged: temporary, version: { ino, sha256: bytesSha256(bytes) } }
+  return {
+    staged: temporary,
+    version: { ...written, sha256: bytesSha256(bytes) },
+  }
 }
 
 /**
@@ -3914,10 +3926,10 @@ async function assertPublishedRecord(
 
 /**
  * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} and {@link claimJournal} once their write published its bytes or failed, and by {@link writeReceipt} after its link or rename, and for the config's staged name before its link by {@link publishRoot} (its publish record refused), {@link createConfig}, {@link moveConfigAside}, {@link putDisplacedBack} and {@link linkInStaged}, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
- * The name is read through the thread pool first (inode and hash, {@link inspectCopy}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}), so an in-place write after that read is seen by its size and times.
- * Limits: a file put there, or a write into it, between the last look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
+ * The name is read through the thread pool first (inode and hash, {@link inspectCopy}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}), so an in-place write after that read is seen by its size and times. When that read fails (no file handle left, often the very failure that ended the step, or a read error), the name is looked at by its status alone, which needs no handle ({@link writtenFileStatusAt}): it goes only while it shows the inode this run created with the size and modification time this run's write left, so a staged copy of the config (the learner's servers, other servers' credentials included) is not left behind with no record naming it, and a file another program put there or wrote into stays as before.
+ * Limits: a file put there, or a write into it, between the last look and the unlink is deleted; no Node primitive unlinks by inode or content. After a failed read, a write into that file of the same size within one timestamp tick of this run's own is not seen (only the bytes would tell). A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
  * @param staged - The staged name and the version written there ({@link stageRecord}).
- * @returns Nothing; best effort: a staged name that cannot be read, holds other bytes or cannot be deleted stays, and no build reads it.
+ * @returns Nothing; best effort: a staged name that holds other bytes, shows other size or times after a failed read, cannot be looked at or cannot be deleted stays, and no build reads it.
  * @example
  * await dropStagedRecord(staged) // '…/pending.json.rollback.<uuid>.tmp' is gone while it held this run's file and bytes
  */
@@ -3925,17 +3937,48 @@ async function dropStagedRecord({
   staged,
   version,
 }: StagedRecord): Promise<void> {
-  const now = await inspectCopy(staged).catch(() => undefined)
-  // Another program's file or bytes at the staged name, none, or a read that failed: nothing is deleted.
-  if (now?.ino !== version.ino || now.sha256 !== version.sha256) return
+  const now = await inspectCopy(staged).then(
+    (copy) =>
+      copy?.ino === version.ino && copy.sha256 === version.sha256
+        ? copy
+        : undefined,
+    // A read that failed: the name's status alone may still show the file this run wrote.
+    () => writtenFileStatusAt(staged, version),
+  )
+  // Another program's file or bytes at the staged name, none, or a file this run cannot prove its own: nothing is deleted.
+  if (!now) return
   await unlinkStagedWhileStill(staged, now)
+}
+
+/**
+ * Looks at a staged name by its status alone, through the thread pool and without a file handle, once a read of its bytes failed (no file handle left, or a read error); called only by {@link dropStagedRecord}, whose synchronous last look before the unlink then compares what this look found ({@link unlinkStagedWhileStill}).
+ * @param staged - The staged name.
+ * @param version - The file this run wrote there: its inode, and the size and modification time its flushed write left ({@link stageConfigFile}).
+ * @returns The name's inode, size and times while they show that inode with that size and modification time; undefined when they show anything else or nothing, or the look fails.
+ * @example
+ * await writtenFileStatusAt('…/mcp_config.json.<generation>.tmp', stagedVersion) // => { ino: 42n, size: 412n, mtimeNs: …, ctimeNs: … } while nothing wrote into it since
+ */
+async function writtenFileStatusAt(
+  staged: string,
+  version: StagedVersion,
+): Promise<LeftoverLookback | undefined> {
+  const status = await lstat(staged, { bigint: true }).catch(() => undefined)
+  const { ino, size, mtimeNs } = version
+  // Only the change time may differ: a probe link that came and went beside it changes nothing else.
+  if (!status || !showsChecked(status, { ino, size, mtimeNs })) return undefined
+  return {
+    ino: status.ino,
+    size: status.size,
+    mtimeNs: status.mtimeNs,
+    ctimeNs: status.ctimeNs,
+  }
 }
 
 /**
  * Deletes a staged name only while one synchronous look still shows the file a read of it found, after an awaited look at that name ({@link lookAheadAt}); the shared end of {@link dropStagedRecord}, {@link dropFailedStage} and {@link dropLastPublishedName}, once their read found the file and bytes this run wrote there.
  * Limits: a file put there, or a write into it, between that look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
  * @param staged - The staged name.
- * @param read - That file as {@link inspectCopy} read it.
+ * @param read - That file as {@link inspectCopy} read it, or as a look by status found it after a read failed ({@link writtenFileStatusAt}).
  * @returns Best effort, never throwing:
  * - `true` once the name no longer shows that file: deleted now, already gone, or showing another inode, which stays untouched
  * - `false` when it may still show it: the look failed, it shows that inode with other size or times, or the unlink failed; the name stays
@@ -3944,7 +3987,7 @@ async function dropStagedRecord({
  */
 async function unlinkStagedWhileStill(
   staged: string,
-  read: InspectedCopy,
+  read: LeftoverLookback,
 ): Promise<boolean> {
   // A storage that already stalls holds this step here, not at the synchronous look below.
   await lookAheadAt([staged])

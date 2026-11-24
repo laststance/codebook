@@ -13678,6 +13678,116 @@ test('A file another program swaps in at the staged name of a setup’s new conf
   })
 })
 
+/**
+ * Loads the config module with an `openWithoutFollowing` that fails every open of the staged name of a new config (`mcp_config.json.<generation>.tmp`) with EMFILE once `isFailing` answers true, the way a process out of file handles fails it; every other open is the real one.
+ * @param isFailing - Asked at each open of such a name.
+ * @returns The config module.
+ * @example
+ * const module = await loadWithFailingStagedConfigOpen(() => isRecordRefused)
+ */
+function loadWithFailingStagedConfigOpen(
+  isFailing: () => boolean,
+): Promise<typeof DevinMcpConfigModule> {
+  return loadWithWrappedOpen(async (path, openReal) => {
+    const isStagedConfig =
+      basename(path).startsWith('mcp_config.json.') && path.endsWith('.tmp')
+    if (isStagedConfig && isFailing())
+      throw Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+    return openReal()
+  })
+}
+
+test('A setup whose publish record cannot be written deletes the staged copy of its new config also when it cannot read that copy again for lack of file handles', async (context) => {
+  // Value: protects=a refused publish-record write deletes the config's staged copy (the learner's servers with the entry, other servers' credentials included) while its name shows the inode the setup created there with the size and modification time the setup's write left, also when a read of its bytes fails for lack of file handles, so no full copy of the config stays beside it that no record names (Cycle 0149 ship review: the native adversarial note on task 15's cleanup); fails_when=the staged copy or any other file stays beside the config, the config changes, Codebook's storage keeps a record, or the setup says anything but the record failure; no_claim=a real EMFILE and a real full disk (the config module is loaded with an openWithoutFollowing that fails every open of the staged name with EMFILE once seam.beforeRecordWrite cancelled the publish record's write with ENOSPC), a same-size write into that copy within one timestamp tick of the setup's own (only its bytes would tell), the other pre-link cleanups (they share dropStagedRecord), a look by status that fails too (EIO), which keeps the copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let isRecordRefused = false
+  const failingOpen = await loadWithFailingStagedConfigOpen(
+    () => isRecordRefused,
+  )
+
+  // Act
+  const error = await failingOpen
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path !== pendingPath || isRecordRefused) return
+        // The publish record's write fails on a full disk, and no file handle is left for a read of the staged copy from then on.
+        isRecordRefused = true
+        throw Object.assign(new Error('no space left on device'), {
+          code: 'ENOSPC',
+        })
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  const storageAfter = (
+    await readdir(join(storage, 'devin-mcp')).catch(() => [])
+  ).sort()
+
+  // Assert
+  assert.equal(isRecordRefused, true)
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    'no space left on device',
+  )
+  assert.deepEqual(readdirSync(dirname(configPath)), ['mcp_config.json'])
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.deepEqual(storageAfter, [])
+})
+
+test('A staged copy of a setup’s new config that another program wrote into stays when the setup’s publish record cannot be written and the setup cannot read that copy again for lack of file handles', async (context) => {
+  // Value: protects=the cleanup of a refused publish-record write deletes the config's staged copy by its status alone only while that status shows the size and modification time the setup's own write left, so bytes another program wrote into that copy in place stay even when the copy cannot be read again (Cycle 0149 task 15's rule, kept by the ship review's fix for a read that fails); fails_when=the staged copy is gone or no longer holds what stood there after that write, the config changes, or the setup says anything but the record failure; no_claim=a real EMFILE, a real full disk and a real writer (the config module is loaded with an openWithoutFollowing that fails every open of the staged name with EMFILE once seam.beforeRecordWrite appended to the staged copy and cancelled the publish record's write with ENOSPC), a same-size write within one timestamp tick of the setup's own, what a later run does with that copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let isRecordRefused = false
+  let stagedPath = ''
+  let writtenText = ''
+  const failingOpen = await loadWithFailingStagedConfigOpen(
+    () => isRecordRefused,
+  )
+
+  // Act
+  const error = await failingOpen
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path !== pendingPath || isRecordRefused) return
+        // Another program writes into the staged copy in place, the publish record's write fails on a full disk, and no file handle is left from then on.
+        stagedPath = stagedConfigPathBeside(configPath)
+        appendFileSync(stagedPath, ' ')
+        writtenText = readFileSync(stagedPath, 'utf8')
+        isRecordRefused = true
+        throw Object.assign(new Error('no space left on device'), {
+          code: 'ENOSPC',
+        })
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const stagedAfter = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    'no space left on device',
+  )
+  assert.equal(writtenText.endsWith('}\n '), true)
+  assert.equal(stagedAfter, writtenText)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
 test('A file another program swaps in at the staged name of a setup’s new config while a config appears where the setup creates one is kept instead of deleted with that name, and the config that appeared stays', async (context) => {
   // Value: protects=a setup whose create finds a config at the name it links to deletes the config's staged name only while it still shows the file the setup wrote there with its bytes, so another program's file swapped in at that name stays (Cycle 0149 task 15, createConfig's failed link); fails_when=the swapped-in file is gone or changed, the config that appeared changes, another file stays beside the config, or the setup says anything but the changed-file refusal; no_claim=a real sync tool and a real save (seam.afterCheck creates the config and renames another file over the staged name once, right before the link), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
   // Arrange
