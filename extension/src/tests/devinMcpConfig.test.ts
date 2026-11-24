@@ -15304,7 +15304,7 @@ test("A first setup leaves a record a backup restores at receipt.json together w
 })
 
 test('On storage that cannot give a file a second name, a first setup never writes its record of the entry over a record a backup puts at receipt.json as the setup publishes it, and takes its entry back', async (context) => {
-  // Value: protects=where the storage folder's file system gives no file a second name, a first setup's record of the entry is created at receipt.json with an exclusive create, never renamed over that name, so a record a backup puts there as that record is published stays, and the setup takes its own entry back (Cycle 0149 task 12, D5's unsupported link); fails_when=the setup resolves or says anything but the took-out refusal, a link other than the three first writes is tried in the storage folder, the record the backup put there changes, or the config keeps the entry; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, for receipt.json, first puts the backup's record there), a file put there between the exclusive create's open and its write
+  // Value: protects=where the storage folder's file system gives no file a second name, a first setup's record of the entry is created at receipt.json with an exclusive create, never renamed over that name, so a record a backup puts there as that record is published stays, and the setup takes its own entry back (Cycle 0149 task 12, D5's unsupported link); fails_when=the setup resolves or says anything but the took-out refusal, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, its record of the entry, the take-back mark, the take-back's rollback record and its rewrite) is tried in the storage folder, the record the backup put there changes, or the config keeps the entry; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, for receipt.json, first puts the backup's record there), a file put there between the exclusive create's open and its write
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -15363,10 +15363,13 @@ test('On storage that cannot give a file a second name, a first setup never writ
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
   )
-  // One refused link per first write: the setup's own record, its record of the entry, then the take-back's rollback record.
+  // One refused link per record write, since every record write tries a link first (Cycle 0149 task 13): the setup's own record and its rewrite, its record of the entry, the take-back mark, then the take-back's rollback record and its rewrite.
   assert.deepEqual(refusedLinkNames, [
     'pending.json',
+    'pending.json',
     'receipt.json',
+    'pending.json',
+    'pending.json.rollback',
     'pending.json.rollback',
   ])
   assert.equal(readFileSync(receiptPath, 'utf8'), restoredReceiptText)
@@ -15376,7 +15379,7 @@ test('On storage that cannot give a file a second name, a first setup never writ
 })
 
 test('On storage that cannot give a file a second name, a first setup creates its record of the entry in place and answers installed', async (context) => {
-  // Value: protects=where the storage folder's file system gives no file a second name, a first setup still writes its record of the entry, created in place at its empty name, so Devin Desktop setup keeps working on such storage, and no staged name of that record stays (Cycle 0149 task 12, regression guard of the exclusive create); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, a link other than the two first writes is tried in the storage folder, or a staged name of the receipt stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), what a process end inside that in-place write leaves (stated residual)
+  // Value: protects=where the storage folder's file system gives no file a second name, a first setup still writes its record of the entry, created in place at its empty name, so Devin Desktop setup keeps working on such storage, and no staged name of that record stays (Cycle 0149 task 12, regression guard of the exclusive create); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, then its record of the entry) is tried in the storage folder, or a staged name of the receipt stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), what a process end inside that in-place write leaves (stated residual)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -15421,7 +15424,11 @@ test('On storage that cannot give a file a second name, a first setup creates it
     (await readRecordFile(storage, 'receipt.json')).generation,
     result.generation,
   )
-  assert.deepEqual(refusedLinkNames, ['pending.json', 'receipt.json'])
+  assert.deepEqual(refusedLinkNames, [
+    'pending.json',
+    'pending.json',
+    'receipt.json',
+  ])
   assert.deepEqual(
     readdirSync(recordsPath).filter((name) => name.startsWith('receipt.json')),
     ['receipt.json'],
