@@ -11439,6 +11439,321 @@ test('A setup whose staged config’s flush fails on a full disk leaves no stage
   assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
+/**
+ * Finds the staged name of the new config a setup wrote beside the config, by its shape (`mcp_config.json.<generation>.tmp`); called from a seam while the setup still holds that name and no other file of that shape stands beside the config.
+ * @param configPath - The config file.
+ * @returns The staged name's path.
+ * @example
+ * stagedConfigPathBeside('/h/.config/devin/mcp_config.json') // => '/h/.config/devin/mcp_config.json.<generation>.tmp'
+ */
+function stagedConfigPathBeside(configPath: string): string {
+  const [stagedName, ...others] = readdirSync(dirname(configPath)).filter(
+    (name) => name.startsWith('mcp_config.json.') && name.endsWith('.tmp'),
+  )
+  assert.ok(stagedName !== undefined && others.length === 0)
+  return join(dirname(configPath), stagedName)
+}
+
+test('A file another program swaps in at the staged name of a setup’s new config while the setup’s publish record cannot be written is kept instead of deleted with that name, and the config stays as it was', async (context) => {
+  // Value: protects=a setup whose publish record cannot be written deletes the config's staged name only while it still shows the file the setup wrote there with its bytes, so another program's file swapped in at that name stays (Cycle 0149 task 15; the step after Cycle 0148 task 43); fails_when=the swapped-in file is gone or changed, the config changes, a record or receipt stays in Codebook's storage, the setup answers anything but the record failure, or the next setup is not installed; no_claim=a real sync tool and a real full disk (seam.beforeRecordWrite renames another file over the staged name once and then cancels the publish record's write with ENOSPC), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+
+  // Act
+  const firstError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== pendingPath || foreignStagedPath !== '') return
+      // The setup staged its new config and writes the publish record that names it: another program swaps a file in at the staged name, and the record's write fails on a full disk.
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+      throw Object.assign(new Error('no space left on device'), {
+        code: 'ENOSPC',
+      })
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const foreignAfterFirst = existsSync(foreignStagedPath)
+    ? readFileSync(foreignStagedPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = readFileSync(configPath, 'utf8')
+  const storageAfterFirst = (
+    await readdir(join(storage, 'devin-mcp')).catch(() => [])
+  ).sort()
+  const second = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    'no space left on device',
+  )
+  assert.equal(foreignAfterFirst, foreignText)
+  assert.equal(configAfterFirst, configText)
+  assert.deepEqual(storageAfterFirst, [])
+  assert.equal(second.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config while a config appears where the setup creates one is kept instead of deleted with that name, and the config that appeared stays', async (context) => {
+  // Value: protects=a setup whose create finds a config at the name it links to deletes the config's staged name only while it still shows the file the setup wrote there with its bytes, so another program's file swapped in at that name stays (Cycle 0149 task 15, createConfig's failed link); fails_when=the swapped-in file is gone or changed, the config that appeared changes, another file stays beside the config, or the setup says anything but the changed-file refusal; no_claim=a real sync tool and a real save (seam.afterCheck creates the config and renames another file over the staged name once, right before the link), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const otherWriterText = '{"theme":"created meanwhile"}\n'
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+
+  // Act
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => {
+      // Right before the setup links its new config in: Devin creates the config, and another program swaps a file in at the staged name.
+      writeFileSync(configPath, otherWriterText)
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+    },
+  })
+
+  // Assert
+  await assert.rejects(setup, {
+    message: `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  })
+  // A name the setup left empty reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(foreignStagedPath)
+      ? readFileSync(foreignStagedPath, 'utf8')
+      : 'absent',
+    foreignText,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), otherWriterText)
+  assert.deepEqual(await leftoversBeside(configPath), [
+    basename(foreignStagedPath),
+  ])
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config while the config is deleted right before the setup moves it aside is kept instead of deleted with that name', async (context) => {
+  // Value: protects=a setup whose move-aside fails deletes the config's staged name only while it still shows the file the setup wrote there with its bytes, so another program's file swapped in at that name stays (Cycle 0149 task 15, moveConfigAside's failure cleanup); fails_when=the swapped-in file is gone or changed, a config or another file stands beside it, or the setup says anything but the changed-file refusal; no_claim=a real sync tool and a real delete (seam.afterCheck renames another file over the staged name once and deletes the config, right before the move-aside's rename), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+
+  // Act
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => {
+      // Right before the setup moves the config aside: another program swaps a file in at the staged name, and the learner deletes the config.
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+      rmSync(configPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(setup, {
+    message: `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  })
+  // A name the setup left empty reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(foreignStagedPath)
+      ? readFileSync(foreignStagedPath, 'utf8')
+      : 'absent',
+    foreignText,
+  )
+  assert.deepEqual(readdirSync(dirname(configPath)), [
+    basename(foreignStagedPath),
+  ])
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config while a writer changes the moved-aside config is kept instead of deleted with that name, and the changed config goes back', async (context) => {
+  // Value: protects=a setup whose comparison of the moved-aside config fails deletes the config's staged name only while it still shows the file the setup wrote there with its bytes, so another program's file swapped in at that name stays (Cycle 0149 task 15, putDisplacedBack's cleanup); fails_when=the swapped-in file is gone or changed, the written config is not back at its name, another file stays beside the config, or the setup says anything but the changed-file refusal; no_claim=a real sync tool and a real writer (seam.afterMoveAside writes into the moved file and renames another file over the staged name once), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const lateWriteText = '{"theme":"written into the old file"}\n'
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+
+  // Act
+  const setup = writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterMoveAside: (displacedPath) => {
+      // A writer that kept the old config open writes into it after the move-aside, and another program swaps a file in at the staged name.
+      writeFileSync(displacedPath, lateWriteText)
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+    },
+  })
+
+  // Assert
+  await assert.rejects(setup, {
+    message: `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  })
+  // A name the setup left empty reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(foreignStagedPath)
+      ? readFileSync(foreignStagedPath, 'utf8')
+      : 'absent',
+    foreignText,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), lateWriteText)
+  assert.deepEqual(await leftoversBeside(configPath), [
+    basename(foreignStagedPath),
+  ])
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config while a save creates the config between the comparison and the link is kept instead of deleted with that name, and the save and the moved-aside copy stay', async (context) => {
+  // Value: protects=a setup whose link of a replacement finds a config at the name deletes the config's staged name only while it still shows the file the setup wrote there with its bytes, so another program's file swapped in at that name stays (Cycle 0149 task 15, linkInStaged's failed link); fails_when=the swapped-in file is gone or changed, the save or the moved-aside copy changes or is gone, another file stays beside the config, or the setup says anything but the refusal that hands the copy over; no_claim=a real sync tool and a real save (seam.afterCompare creates the config and renames another file over the staged name once, right before the link), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const savedText = '{"theme":"saved late"}\n'
+  const foreignText = '{"foreign":"staged config"}\n'
+  let displacedPath = ''
+  let foreignStagedPath = ''
+
+  // Act
+  const error = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterMoveAside: (path) => {
+      displacedPath = path
+    },
+    afterCompare: () => {
+      // Right before the setup links its new config in: a save creates the config, and another program swaps a file in at the staged name.
+      writeFileSync(configPath, savedText)
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+    },
+  }).then(
+    () => undefined,
+    (failure: unknown) => failure,
+  )
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${displacedPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+  )
+  // A name the setup left empty reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(foreignStagedPath)
+      ? readFileSync(foreignStagedPath, 'utf8')
+      : 'absent',
+    foreignText,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), savedText)
+  assert.equal(readFileSync(displacedPath, 'utf8'), configText)
+  assert.deepEqual(
+    await leftoversBeside(configPath),
+    [basename(displacedPath), basename(foreignStagedPath)].sort(),
+  )
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config right after the setup linked the config it creates is kept instead of deleted with that name, and the setup still installs', async (context) => {
+  // Value: protects=a create's cleanup after its link deletes the config's staged name only while that name still shows the published config's inode, so another program's file swapped in there stays, and the setup is still installed without naming that file as Codebook's copy (Cycle 0149 task 15, D5: the cleanup after the link in createConfig); fails_when=the swapped-in file is gone or changed, the config is not the new entry alone, the setup is not installed or names a kept file, or a pending record stays in Codebook's storage; no_claim=a real sync tool (seam.afterPublish renames another file over the staged name once, right after the link), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      if (foreignStagedPath !== '') return
+      // The new config stands, and its staged name is a second name of it: another program swaps a file in at that name.
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+    },
+  })
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, undefined)
+  // A name the setup left empty reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(foreignStagedPath)
+      ? readFileSync(foreignStagedPath, 'utf8')
+      : 'absent',
+    foreignText,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { codebook: ENTRY },
+  })
+  assert.deepEqual(await leftoversBeside(configPath), [
+    basename(foreignStagedPath),
+  ])
+  assert.deepEqual(await readdir(join(storage, 'devin-mcp')), ['receipt.json'])
+})
+
+test('A file another program swaps in at the staged name of a setup’s new config right after the setup linked it in place of the old config is kept instead of deleted with that name, and the setup still installs', async (context) => {
+  // Value: protects=a replacement's cleanup after its link deletes the config's staged name only while that name still shows the published config's inode, so another program's file swapped in there stays, the moved-aside copy still goes, and the setup is still installed without naming that file as Codebook's copy (Cycle 0149 task 15, D5: the cleanup after the link in settlePublished); fails_when=the swapped-in file is gone or changed, the config is not the old servers with the new entry, the moved-aside copy stays, the setup is not installed or names a kept file, or a pending record stays in Codebook's storage; no_claim=a real sync tool (seam.afterPublish renames another file over the staged name once, right after the link), a swap between the cleanup's last look and its unlink (no Node primitive closes it), what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const foreignText = '{"foreign":"staged config"}\n'
+  let foreignStagedPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      if (foreignStagedPath !== '') return
+      // The new config stands, and its staged name is a second name of it: another program swaps a file in at that name.
+      foreignStagedPath = stagedConfigPathBeside(configPath)
+      swapFile(foreignStagedPath, foreignText)
+    },
+  })
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, undefined)
+  // A name the setup left empty reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(foreignStagedPath)
+      ? readFileSync(foreignStagedPath, 'utf8')
+      : 'absent',
+    foreignText,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.deepEqual(await leftoversBeside(configPath), [
+    basename(foreignStagedPath),
+  ])
+  assert.deepEqual(await readdir(join(storage, 'devin-mcp')), ['receipt.json'])
+})
+
+test('An edit written in place into a setup’s new config right after its link still lets the setup delete the staged second name of that config', async (context) => {
+  // Value: protects=the cleanup after a replacement's link deletes the staged name while it shows the published config's inode, whatever bytes Devin Desktop or the learner wrote into that file in place since, so no second name of the config stays beside it (Cycle 0149 task 15, D5: in-place edits stay allowed after the link); fails_when=the staged name stays, the edit is lost, or the setup is not installed or names a kept file; no_claim=a real Devin Desktop write (seam.afterPublish rewrites the config in place once, right after the link), an edit on the create route (createConfig's cleanup takes the same helper)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const editedText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY }, theme: 'edited in place' })}\n`
+  let hasEdited = false
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      if (hasEdited) return
+      hasEdited = true
+      // The new config stands: Devin Desktop writes into that file in place, so its staged name shows the same inode with other bytes.
+      writeFileSync(configPath, editedText)
+    },
+  })
+
+  // Assert
+  assert.equal(hasEdited, true)
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, undefined)
+  assert.equal(readFileSync(configPath, 'utf8'), editedText)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
 test("A file another program swaps in at the staged name of a take-back's first rollback record right as it is linked is never taken for that record, so the take-back moves nothing and keeps both names of that file", async (context) => {
   // Value: protects=a take-back's first rollback-record write goes on only once the journal name shows the inode and bytes it wrote after the link, and its cleanup deletes the staged name only while that name shows that file, so a file swapped in after the last look before the link is neither followed by a move of the config nor deleted (Cycle 0148 ship review); fails_when=the first refresh says anything but the journal-taken refusal, the config changes, the file swapped in is gone from the journal name or the staged name or changes, the setup's record loses its take-back mark, or the second refresh leaves the entry or the journal; no_claim=a real sync tool (the config module is loaded with a link that, for the journal name, renames another journal over the staged name once right before it links), a swap of the journal name after the check that follows the link, what a later run does with the file at the staged name
   // Arrange

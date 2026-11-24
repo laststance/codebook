@@ -1460,9 +1460,10 @@ type Published = {
   recordConflict?: JournalConflictError['kind']
 }
 
-/** Everything a replacement of an existing config works with: the staged file, the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
+/** Everything a replacement of an existing config works with: the staged file with the inode and bytes this run wrote there (every cleanup before the link deletes that name only while it still shows them, {@link dropStagedRecord}; the one after it, only while it shows that inode, {@link dropPublishedStage}), the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
 type Replacement = {
   temporary: string
+  stagedVersion: RecordVersion
   probePath: string
   displaced: KeptCopy
   identity: FileIdentity
@@ -1897,15 +1898,17 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * Creates the config from the staged file without replacing anything: a hard link never replaces a file that appeared meanwhile; called by {@link publishRoot} when there was no config.
  * @param context - The run.
  * @param temporary - The staged file.
+ * @param stagedVersion - The inode and the bytes' hash of the file this run wrote at the staged name: when nothing was linked, that name goes only while it still shows them ({@link dropStagedRecord}); once the config stands, only while it shows that inode ({@link dropPublishedStage}), so a file another program put there stays.
  * @param config - The inode the config will have.
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands, in the shape older builds refuse when the old record's private name showed another file by then ({@link LinkedRecord}).
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
- * @returns The inode, the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too), and what stood at the record's name when another program kept the completed record from being written ({@link Published.recordConflict}).
+ * @returns The inode, the staged name when it may still show the published config and could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too), and what stood at the record's name when another program kept the completed record from being written ({@link Published.recordConflict}).
  * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back.
  */
 async function createConfig(
   context: Context,
   temporary: string,
+  stagedVersion: RecordVersion,
   config: ConfigNumbers,
   journal: Pending,
   staleReceipt: Receipt | undefined,
@@ -1920,7 +1923,8 @@ async function createConfig(
       journal,
     )
   } catch (error) {
-    await unlink(temporary).catch(() => undefined)
+    // Nothing was linked: the staged name goes only while it still shows the file and bytes this run wrote there.
+    await dropStagedRecord({ staged: temporary, version: stagedVersion })
     const failure = failureOf(error)
     // A receipt that could not go back keeps the record that names its private name.
     if (failure === error) await dropPending(context)
@@ -1934,10 +1938,11 @@ async function createConfig(
   // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
   const completion = await markCompleted(context, linked.journal)
   const isRecorded = completion === 'recorded'
-  const isStagedGone = isRecorded && (await didUnlink(temporary))
+  const isStagedSettled =
+    isRecorded && (await dropPublishedStage(temporary, stagedVersion.ino))
   return {
     config,
-    keptLeft: isStagedGone ? [] : [{ path: temporary, holds: 'new' }],
+    keptLeft: isStagedSettled ? [] : [{ path: temporary, holds: 'new' }],
     isRecorded,
     isRetiredKept: linked.isRetiredKept,
     ...recordConflictOf(completion),
@@ -1948,12 +1953,12 @@ async function createConfig(
  * Moves the config aside to its private name as the first step of a replacement: whatever file stands at the config name at that instant is the file that moves, so it is the one that gets compared; called by {@link replaceConfig}.
  * The hard-link probe runs first, so the last looks (a take-back's at its records, {@link assertTakeBackRecordStill}, then the config's) come after every awaited step and only synchronous looks stand between the last await and the rename.
  * @param context - The run.
- * @param replacement - The staged file, the probe name, the private name and the identity the config had when it was read.
- * @throws A {@link refusal} when the config changed since the read or is gone; or the hard link error of a file system that cannot link; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record or own rollback record no longer stands as its run read or wrote it. The staged file and the pending record are removed then, because nothing moved.
+ * @param replacement - The staged file with the inode and bytes this run wrote there, the probe name, the private name and the identity the config had when it was read.
+ * @throws A {@link refusal} when the config changed since the read or is gone; or the hard link error of a file system that cannot link; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record or own rollback record no longer stands as its run read or wrote it. The pending record is removed then, because nothing moved, and so is the staged name while it still shows the file and bytes this run wrote there ({@link dropStagedRecord}).
  */
 async function moveConfigAside(
   context: Context,
-  { temporary, probePath, displaced, identity }: Replacement,
+  { temporary, stagedVersion, probePath, displaced, identity }: Replacement,
 ): Promise<void> {
   try {
     // The config name is empty until the link-in, so a file system that cannot link is found before anything moves; the probe's name is in the record.
@@ -1967,7 +1972,8 @@ async function moveConfigAside(
       throw codeOf(error) === 'ENOENT' ? changedWhileWorking(context) : error
     })
   } catch (error) {
-    await unlink(temporary).catch(() => undefined)
+    // Nothing moved: the staged name goes only while it still shows the file and bytes this run wrote there.
+    await dropStagedRecord({ staged: temporary, version: stagedVersion })
     await dropPending(context)
     throw error
   }
@@ -1976,16 +1982,16 @@ async function moveConfigAside(
 /**
  * Puts a displaced file back at the config name after the comparison found it is not the file that was read, and refuses; called by {@link replaceConfig}.
  * @param context - The run.
- * @param replacement - The staged file (unlinked here) and the private name.
+ * @param replacement - The staged file (deleted here while it still shows the file and bytes this run wrote there, {@link dropStagedRecord}) and the private name.
  * @param opened - The displaced file's handle and own mode; undefined when it could not be opened.
  * @throws Always: {@link changedWhileWorking} (or {@link linkedElsewhereRefusal} for a file another name reached, whose mode was never changed) after the file went back with its own permissions (a link never replaces, and the displaced name is unlinked), or a {@link leftCopyRefusal} naming the displaced file, which stays private, when a new config stands at the config name (it is kept) or the link failed.
  */
 async function putDisplacedBack(
   context: Context,
-  { temporary, displaced }: Replacement,
+  { temporary, stagedVersion, displaced }: Replacement,
   opened: DisplacedHandle | undefined,
 ): Promise<never> {
-  await unlink(temporary).catch(() => undefined)
+  await dropStagedRecord({ staged: temporary, version: stagedVersion })
   await restoreDisplaced(context, displaced.path, opened)
   throw mismatchRefusal(context, opened)
 }
@@ -2003,14 +2009,14 @@ function mismatchRefusal(
 /**
  * Links the staged file in as the config after a successful comparison; called by {@link replaceConfig}. A link never replaces: a file that a save created after the move-aside stays. A first setup's stale receipt is moved aside right before the link and put back when it fails ({@link linkWithoutStaleReceipt}).
  * @param context - The run.
- * @param replacement - The staged file, the displaced file (whose bytes equal what was read), the record and the stale receipt.
+ * @param replacement - The staged file with the inode and bytes this run wrote there, the displaced file (whose bytes equal what was read), the record and the stale receipt.
  * @param opened - The displaced copy's handle and own mode.
  * @returns The publish record the caller writes from now on and whether the old record's private name stayed after the link ({@link LinkedRecord}), so the publish record stays.
- * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
+ * @throws Whatever failed, the staged name goes first, only while it still shows the file and bytes this run wrote there ({@link dropStagedRecord}). {@link newConfigRefusal} when a config appeared: the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
  */
 async function linkInStaged(
   context: Context,
-  { temporary, displaced, journal, staleReceipt }: Replacement,
+  { temporary, stagedVersion, displaced, journal, staleReceipt }: Replacement,
   opened: DisplacedHandle | undefined,
 ): Promise<LinkedRecord> {
   try {
@@ -2021,7 +2027,8 @@ async function linkInStaged(
       journal,
     )
   } catch (error) {
-    await unlink(temporary).catch(() => undefined)
+    // Nothing was linked: the staged name goes only while it still shows the file and bytes this run wrote there.
+    await dropStagedRecord({ staged: temporary, version: stagedVersion })
     const failure = failureOf(error)
     if (codeOf(failure) === 'EEXIST') {
       // A save created the config after the move-aside: it is kept, and the displaced copy is handed to the learner, never deleted by a later run. A receipt that could not go back keeps its mark that nothing was linked.
@@ -2051,15 +2058,15 @@ async function linkInStaged(
 }
 
 /**
- * Cleans up after the config was published: the record turns to completed, the displaced copy is deleted unless a writer changed it since the comparison, and the staged name is unlinked; called by {@link replaceConfig}.
+ * Cleans up after the config was published: the record turns to completed, the displaced copy is deleted unless a writer changed it since the comparison, and the staged name is unlinked while it still shows the published config's inode ({@link dropPublishedStage}); called by {@link replaceConfig}.
  * @param context - The run.
- * @param replacement - The staged file, the displaced copy and the record.
+ * @param replacement - The staged file with the inode this run wrote there, the displaced copy and the record.
  * @param held - The displaced copy as it was compared.
- * @returns The files that stay, each with what it holds (empty when everything was deleted), whether the completed record was written (`false` means nothing was deleted, and a caller that must not report success without that record, {@link takeEntryOut}, refuses), and what stood at that record's name when another program kept it from being written ({@link Published.recordConflict}).
+ * @returns The files that stay, each with what it holds (empty when everything was deleted; another program's file at the staged name stays untouched and is not named), whether the completed record was written (`false` means nothing was deleted, and a caller that must not report success without that record, {@link takeEntryOut}, refuses), and what stood at that record's name when another program kept it from being written ({@link Published.recordConflict}).
  */
 async function settlePublished(
   context: Context,
-  { temporary, displaced, journal }: Replacement,
+  { temporary, stagedVersion, displaced, journal }: Replacement,
   held: HeldCopy,
 ): Promise<Pick<Published, 'keptLeft' | 'isRecorded' | 'recordConflict'>> {
   const { outcome, copy, recordConflict } = await discardDisplaced(
@@ -2068,15 +2075,45 @@ async function settlePublished(
     displaced.path,
     held,
   )
-  const isStagedGone = await didUnlink(temporary)
+  const isStagedSettled = await dropPublishedStage(temporary, stagedVersion.ino)
   return {
     keptLeft: [
-      ...(isStagedGone ? [] : [{ path: temporary, holds: 'new' as const }]),
+      ...(isStagedSettled ? [] : [{ path: temporary, holds: 'new' as const }]),
       ...(outcome === 'deleted' ? [] : [copy]),
     ],
     isRecorded: outcome !== 'unrecorded',
     ...(recordConflict && { recordConflict }),
   }
+}
+
+/**
+ * Deletes the staged name of the config this run published while one synchronous look, after an awaited look at that name ({@link lookAheadAt}), still shows the published file's inode; called by {@link createConfig} and {@link settlePublished} once the config stands.
+ * From the link on that name is a second name of the config, whose bytes Devin Desktop or the learner may already have changed in place, so the inode alone tells it from a file another program put there (a sync tool's), which stays untouched; before the link the bytes are checked too ({@link dropStagedRecord}).
+ * Limits: a file put there between the synchronous look and the unlink is deleted (no Node primitive unlinks by inode); a stall that starts between the two looks holds the extension host's thread.
+ * @param temporary - The staged name.
+ * @param publishedIno - The inode of the published config, read from the staged file's handle ({@link stageConfigFile}).
+ * @returns
+ * - `true` when no name of the published file stays there: deleted now, already gone, or showing another program's file, which stays untouched and is no copy of Codebook's to name
+ * - `false` when the name may still show the published file (the look or the unlink failed): the caller names it, and the pending record stays
+ * @example
+ * await dropPublishedStage('…/mcp_config.json.<generation>.tmp', 42n) // => true once that second name of the config is gone
+ */
+async function dropPublishedStage(
+  temporary: string,
+  publishedIno: bigint,
+): Promise<boolean> {
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([temporary])
+  let now: BigIntStats | undefined
+  try {
+    now = lstatSync(temporary, { bigint: true, throwIfNoEntry: false })
+  } catch {
+    // A look that failed proves nothing: the name stays and is named.
+    return false
+  }
+  // Nothing there, or another program's file: nothing of the published config is left at that name, and that file stays untouched.
+  if (now?.ino !== publishedIno) return true
+  return didUnlink(temporary)
 }
 
 /**
@@ -2183,6 +2220,7 @@ function journalOf(
  * Publishes the config. The new bytes are staged first and their inode read from the open handle; the pending record then names the staged file, its inode, the probe name and the private name for the displaced file before anything is moved; the record stays from the first move on, because only the next run can tell how far a crash got.
  * A create links the staged file in ({@link createConfig}). A replacement moves the config aside, compares it and links the new file in ({@link replaceConfig}), so no file is replaced without being compared. The new file keeps the owner's permission bits only (`mode & 0o600`), so a rewrite never widens access.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
+ * Every cleanup of the staged name in this run deletes it only while it still shows the file this run wrote there: before the link its inode and bytes ({@link dropStagedRecord}), after the link its inode, whatever was written into the published config in place since ({@link dropPublishedStage}); a file another program put there stays untouched.
  * Other limits: a writer that still holds the old file open may write into the displaced file after the comparison, which is then kept and reported, never deleted; a crash leaves the staged, probe and displaced names, which the next run settles only when each is a name Codebook made with the inode it recorded ({@link recoverLeftovers}).
  * @param context - The run.
  * @param root - The complete new top-level object.
@@ -2213,6 +2251,11 @@ async function publishRoot(
     serialized,
     mode,
   )
+  // The file this run wrote at the staged name: every cleanup of that name checks it is still that file.
+  const stagedVersion: RecordVersion = {
+    ino: staged.ino,
+    sha256: bytesSha256(serialized),
+  }
   const displaced = displacedCopyOf(context, look, generation)
   const journal = journalOf(
     context,
@@ -2225,8 +2268,8 @@ async function publishRoot(
   try {
     await writeRecord(context, context.pendingPath, journal satisfies Pending)
   } catch (error) {
-    // Nothing moved yet.
-    await unlink(staged.temporary).catch(() => undefined)
+    // Nothing moved yet: the staged name goes only while it still shows the file and bytes this run wrote there.
+    await dropStagedRecord({ staged: staged.temporary, version: stagedVersion })
     throw error
   }
   const config = { ino: recordedFileId(staged.ino) }
@@ -2235,6 +2278,7 @@ async function publishRoot(
         context,
         {
           temporary: staged.temporary,
+          stagedVersion,
           probePath: journalPathOf(context.path, generation, 'probe'),
           displaced,
           identity: look.identity,
@@ -2243,7 +2287,14 @@ async function publishRoot(
         },
         config,
       )
-    : createConfig(context, staged.temporary, config, journal, staleReceipt)
+    : createConfig(
+        context,
+        staged.temporary,
+        stagedVersion,
+        config,
+        journal,
+        staleReceipt,
+      )
 }
 
 /**
@@ -3156,7 +3207,7 @@ async function assertPublishedRecord(
 }
 
 /**
- * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} and {@link claimJournal} once their write published its bytes or failed, and by {@link writeReceipt} after its link or rename, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
+ * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} and {@link claimJournal} once their write published its bytes or failed, and by {@link writeReceipt} after its link or rename, and for the config's staged name before its link by {@link publishRoot} (its publish record refused), {@link createConfig}, {@link moveConfigAside}, {@link putDisplacedBack} and {@link linkInStaged}, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
  * The name is read through the thread pool first (inode and hash, {@link inspectCopy}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}), so an in-place write after that read is seen by its size and times.
  * Limits: a file put there, or a write into it, between the last look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
  * @param staged - The staged name and the version written there ({@link stageRecord}).
