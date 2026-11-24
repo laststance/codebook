@@ -8759,6 +8759,95 @@ test('A setup record a stopped run left at its dropping name, beside another set
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A rollback record a sync tool moves away and puts back while a refresh retires it, on a run that adopts nothing, stops that refresh with the record intact, and the next refresh settles it', async (context) => {
+  // Value: protects=a run that found its settled rollback record's name empty as it went to delete it goes on as after a delete only while that name is still empty at a last synchronous look after its awaited looks, so a rollback record a sync tool puts back during that await stops the run and stays byte for byte, and the next run settles it (Cycle 0149 task 2, the release-head CLI pass's note on the empty name); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, the restored record changes or is gone, the config or the receipt changes, or the second refresh answers anything but current or leaves the rollback record; no_claim=a real sync tool (seam.afterStat moves the rollback record away once, at its read, whose open file still reads it, and the config module is loaded with an lstat that moves it back once, at the next awaited look at pending.json or the rollback record's name), a restore between that last look and the run's next step, what an adopting run does (the two adoption tests of task 2)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const configText = readFileSync(configPath, 'utf8')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  // A rollback record of an earlier setup whose own record is gone names no private file, so its settlement changes nothing beside it.
+  const journalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001496',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000001497',
+  })}\n`
+  writeFileSync(journalPath, journalText)
+  const movedPath = join(home, 'journal-moved-away.json')
+  let hasMovedJournal = false
+  let hasPutJournalBack = false
+  const syncing = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // The first awaited look at a record's name after the move: the sync tool puts the rollback record back.
+          if (
+            hasMovedJournal &&
+            !hasPutJournalBack &&
+            (args[0] === pendingPath || args[0] === journalPath)
+          ) {
+            hasPutJournalBack = true
+            renameSync(movedPath, journalPath)
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const firstOutcome = await syncing
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        if (path !== journalPath || hasMovedJournal) return
+        hasMovedJournal = true
+        // A sync tool moves the rollback record away right after the refresh opened it; the open file still reads it.
+        renameSync(journalPath, movedPath)
+      },
+    })
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  // A rollback record the first refresh deleted reads as 'absent', so the assertion below names it.
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = readFileSync(configPath, 'utf8')
+  const receiptAfterFirst = readFileSync(receiptPath, 'utf8')
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMovedJournal, true)
+  assert.equal(hasPutJournalBack, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(journalAfterFirst, journalText)
+  assert.equal(configAfterFirst, configText)
+  assert.equal(receiptAfterFirst, receiptText)
+  assert.equal(existsSync(movedPath), false)
+  assert.equal(second.status, 'current')
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
+  assert.equal(existsSync(pendingPath), false)
+})
+
 test("Another rollback journal a backup restores at the journal name after a refresh retired the settled one is never overwritten by the take-back's own journal", async (context) => {
   // Value: protects=a take-back's first journal write never replaces a file, so the take-back stops before the config changes and says so, and the next run settles that journal before it takes the entry out (Cycle 0148 task 3); fails_when=the first refresh resolves or words it otherwise, the restored journal, the config or that journal's staged copy changes, the setup's record loses its take-back mark, a staged config or temporary file stays, a receipt appears, or the second refresh leaves the entry, the restored journal, its staged copy or the setup's record; no_claim=a real backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the take-back's first journal write, after the settled journal was retired), a restore over the take-back's own journal after its claim
   // Arrange
@@ -9121,6 +9210,152 @@ test("A setup's record marked for take-back that a backup restores while a refre
   })
   assert.equal(existsSync(receiptPath), false)
   assert.equal(existsSync(pendingPath), false)
+})
+
+test("A rollback record a backup restores while a refresh adopts an older build's interrupted setup stops that adoption before its receipt, and the next refresh takes the failed setup back", async (context) => {
+  // Value: protects=a refresh publishes the receipt that adopts an interrupted setup only while the rollback record's name still shows what that run's settlement left there, so a rollback record of the same setup that a backup restores before the receipt is published stops the adoption, and the next refresh takes that setup back (Cycle 0149 task 2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, a receipt is written, either record changes or is gone, or the second refresh answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (seam.beforeRecordWrite renames the rollback record in once, at the adoption's receipt write, before that write's last look), a restore after the retirement's last look or after the run, the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001492',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  // The rollback record of that same setup names no private file, so its settlement changes nothing beside the config.
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001493',
+    publishGeneration: olderRecord.generation,
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasRestoredJournal = false
+
+  // Act
+  const firstOutcome = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== receiptPath || hasRestoredJournal) return
+      hasRestoredJournal = true
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const isReceiptWrittenByFirst = existsSync(receiptPath)
+  // A record the first refresh deleted reads as 'absent', so the assertions below name it.
+  const recordAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(isReceiptWrittenByFirst, false)
+  assert.equal(recordAfterFirst, olderRecordText)
+  assert.equal(journalAfterFirst, restoredJournalText)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A rollback record a backup restores right after a refresh published the receipt that adopts an older build's interrupted setup takes that receipt back out, so the next refresh takes the failed setup back", async (context) => {
+  // Value: protects=a refresh ends the record it adopted only while the rollback record's name still shows what that run's settlement left there, and when a rollback record came back after the adoption's receipt was published it keeps that record and takes the receipt back out, so the next refresh takes the failed setup back instead of finding it receipted (Cycle 0149 task 2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, the receipt stays, either record changes or is gone, or the second refresh answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (the config module is loaded with a rename that renames the rollback record in once, right after the receipt's rename resolved), a restore after the retirement's last look, a process end between the receipt's rename and its withdrawal (that receipt then stays), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001494',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  // The rollback record of that same setup names no private file, so its settlement changes nothing beside the config.
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001495',
+    publishGeneration: olderRecord.generation,
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasRestoredJournal = false
+  const restoring = await loadWithAfterRename((_from, to) => {
+    if (to !== receiptPath || hasRestoredJournal) return
+    hasRestoredJournal = true
+    // A backup restores the rollback record right after the adoption's receipt was published, before the adopted record ends.
+    writeFileSync(backupPath, restoredJournalText)
+    renameSync(backupPath, journalPath)
+  })
+
+  // Act
+  const firstOutcome = await restoring
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  const isReceiptLeftByFirst = existsSync(receiptPath)
+  // A record the first refresh deleted reads as 'absent', so the assertions below name it.
+  const recordAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(isReceiptLeftByFirst, false)
+  assert.equal(recordAfterFirst, olderRecordText)
+  assert.equal(journalAfterFirst, restoredJournalText)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
 })
 
 test('A setup leaves a record a backup restores at pending.json after the setup wrote its receipt, instead of deleting it with its own record, and still reports the entry installed', async (context) => {

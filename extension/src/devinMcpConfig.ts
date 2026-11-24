@@ -4810,8 +4810,9 @@ async function undoForeignLink(
  * @param retained - What stays of the record after recovery ({@link retainedRecord}); undefined when nothing stays.
  * @param emptiedRetiredPath - The old record's private name that this run's put-back found empty ({@link settleRetiredReceipt}); the record ends only while that name is still empty ({@link retirePending}). Undefined otherwise.
  * @param assertHeldStill - Beside a held legacy journal, the synchronous look that must still find that journal as the run held it right after that name's look and before the record's rename or unlink ({@link HeldJournal.lookStill}); undefined otherwise.
+ * @param otherJournalVersion - The version of another config's rollback journal that settlement left at that name ({@link SettledJournal.otherVersion}); undefined when it left that name empty or holds the journal. An adoption rests on that name still showing what settlement left there ({@link journalLeftCheck}).
  * @returns The receipt that now stands.
- * @throws A {@link refusal} when the entry is neither the pending one nor the receipted one; what {@link retirePending} throws, such as the {@link HeldJournalConflictError} of a held journal's look (the record then stays as it is).
+ * @throws A {@link refusal} when the entry is neither the pending one nor the receipted one; what {@link retirePending} throws, such as the {@link HeldJournalConflictError} of a held journal's look (the record then stays as it is); what {@link adoptPending} throws, such as the {@link JournalBackConflictError} of a rollback record that appeared at its name.
  * @example
  * const receipt = await settlePending(context, current, await readReceipt(context), pending, look, undefined)
  */
@@ -4824,13 +4825,12 @@ async function settlePending(
   retained: Pending | undefined,
   emptiedRetiredPath?: string,
   assertHeldStill?: StillLook,
+  otherJournalVersion?: RecordVersion,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
   // Only synchronous steps follow before the record ends, so the private name's look through the thread pool here still comes right before its last look.
-  const assertEndStill = bothLooks(
-    await retiredNameCheck(context, emptiedRetiredPath),
-    assertHeldStill,
-  )
+  const assertRetiredStill = await retiredNameCheck(context, emptiedRetiredPath)
+  const assertEndStill = bothLooks(assertRetiredStill, assertHeldStill)
   // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
   if (isTakeBackOwed(pending, receipt)) {
     await retirePending(context, retained, assertEndStill)
@@ -4859,6 +4859,11 @@ async function settlePending(
       pending.entrySha256,
       look.identity,
       retained,
+      // The receipt is published, and the record ends, only while every other name the adoption rests on still shows what this run left there: the old record's private name, and the held journal or else the rollback journal's name as settlement left it.
+      bothLooks(
+        assertRetiredStill,
+        await journalLeftCheck(context, otherJournalVersion, assertHeldStill),
+      ),
     )
   if (isPendingStale(context, pending, current, receipt)) {
     // The rename never happened (or this was a removal): the pending record is stale; the leftovers that stay remain tracked.
@@ -4898,14 +4903,18 @@ function isPendingStale(
 
 /**
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
- * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say) never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
+ * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), and while the rollback journal's name still shows what settlement left there (`assertLeft`), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say), or a rollback record of that setup it puts back, never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
+ * The record then ends only while that look still holds too. When a rollback record stands at its name by then (it came back after the receipt's rename), the record stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles that rollback record first and takes the setup back.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
  * @param identity - The identity of the config that stands.
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
+ * @param assertLeft - The synchronous look at the other names the adoption rests on (the old record's private name, the rollback journal's name: {@link retiredNameCheck}, {@link journalLeftCheck}), run right before the receipt's rename after the publish record's own look, and right before the record's rename or unlink; undefined when nothing else must hold.
  * @returns The receipt that was written.
- * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record; no receipt is written then. What the receipt's write and {@link retirePending} throw otherwise.
+ * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when a rollback record's conflict stops the record's end. What the receipt's write and {@link retirePending} throw otherwise.
+ * @example
+ * await adoptPending(run, pending, pending.entrySha256, look.identity, undefined, await journalLeftCheck(run, undefined)) // => the adopted receipt; it rejects, leaving no receipt and both records, once a backup put the rollback record of that setup back
  */
 async function adoptPending(
   context: Context,
@@ -4913,6 +4922,7 @@ async function adoptPending(
   entrySha256: string,
   identity: FileIdentity,
   retained: Pending | undefined,
+  assertLeft?: StillLook,
 ): Promise<Receipt> {
   const adopted: Receipt = {
     schemaVersion: 1,
@@ -4934,15 +4944,114 @@ async function adoptPending(
     context,
     context.receiptPath,
     adopted,
-    await adoptedRecordCheck(context),
+    bothLooks(await adoptedRecordCheck(context), assertLeft),
   )
-  await retirePending(context, retained)
+  await retirePending(context, retained, assertLeft).catch(
+    async (error: unknown) => {
+      // A rollback record back at its name after the receipt's rename: that receipt would make the next run skip the take-back that record proves, so it goes back out while it still holds what this call wrote.
+      if (
+        error instanceof JournalBackConflictError ||
+        error instanceof HeldJournalConflictError
+      )
+        await withdrawAdoptedReceipt(context, adopted)
+      throw error
+    },
+  )
   return adopted
 }
 
 /**
- * Gives the synchronous look that must still find the publish record an adoption rests on at `pending.json`, as this run read or last wrote it ({@link Context.journalVersion}), right before the rename that publishes the adoption's receipt, once a read through the thread pool found it there; called only by {@link adoptPending}, whose receipt write awaits a look at that name once more before its bytes are staged ({@link writeRecord}).
- * Limit: a record put there after that synchronous look, also after the receipt's rename, is seen only by the record's retirement right after ({@link retirePending}), which keeps that record and refuses while the receipt stands; no Node primitive renames only while another name shows a given inode.
+ * Takes the receipt an adoption just published back out once a rollback record stands at its name again beside the record that adoption could not end, only while `receipt.json` still shows the bytes that adoption wrote, so the next run, which settles that rollback record first, takes the failed setup back instead of finding its receipt ({@link finishCutShortSetup}); called only by {@link adoptPending}.
+ * The bytes are read through the thread pool, then the inode, size and times of that read are looked at once more synchronously right before the unlink ({@link isLeftoverStill}).
+ * Limit: a file another program puts at `receipt.json` between that last look and the unlink is deleted (no Node primitive unlinks by inode), and a byte-identical copy of that receipt passes as it; a receipt that another program replaced, or that cannot be looked at or deleted, stays, and the next run then keeps the entry as receipted, as does a run that ends before this step.
+ * @param context - The run; gives the receipt's path, and its seam is called around the last look ({@link isLeftoverStill}).
+ * @param adopted - The receipt the adoption wrote.
+ * @returns Resolves once the receipt is gone, or once it stays because `receipt.json` shows other bytes or nothing, or the look or the delete failed: the adoption's own refusal is what the run says.
+ * @example
+ * await withdrawAdoptedReceipt(run, adopted) // receipt.json is gone while it held the adopted receipt
+ */
+async function withdrawAdoptedReceipt(
+  context: Context,
+  adopted: Receipt,
+): Promise<void> {
+  try {
+    const published = await inspectCopy(context.receiptPath)
+    // Only the bytes this adoption wrote go ({@link writeRecord} writes them as `JSON.stringify` gives them), and only while the name still shows that file.
+    if (
+      published?.sha256 !== bytesSha256(JSON.stringify(adopted)) ||
+      !isLeftoverStill(context, context.receiptPath, published)
+    )
+      return
+    await unlink(context.receiptPath)
+  } catch {
+    // A receipt that cannot be looked at or deleted stays as it is.
+  }
+}
+
+/** A {@link JournalConflictError} at the rollback journal's name met by the look an adoption rests on ({@link journalLeftCheck}): a rollback record stands there where settlement left none, another file stands there than the one it left, or that name could not be read again; {@link adoptPending} takes back the receipt it published when this ends its record's retirement, as it does for a held journal's ({@link HeldJournalConflictError}). */
+class JournalBackConflictError extends JournalConflictError {}
+
+/**
+ * Looks at the rollback journal's name through the thread pool and gives the synchronous look that must still find there what {@link settleRollbackJournal} left (nothing, or another config's journal it read), right before an adoption publishes its receipt and right before the record it adopted ends; called by {@link settlePending} for the adoption ({@link adoptPending}), so a rollback record of that setup that a backup restores meanwhile stops the adoption and the next run settles that record first.
+ * A run that holds a legacy journal gets that journal's own look instead ({@link HeldJournal.lookStill}).
+ * Limit: a rollback record put at that name after the last synchronous look before the record's rename or unlink, or after the run, is decided without that record, like one restored after the run.
+ * @param context - The run; the journal's name is beside its pending path ({@link rollbackContextOf}).
+ * @param otherVersion - The version of another config's journal settlement read and left there ({@link SettledJournal.otherVersion}); undefined when it left that name empty.
+ * @param assertHeldStill - Beside a held legacy journal, the look it gave ({@link HeldJournal.lookStill}); undefined otherwise.
+ * @returns
+ * - `assertHeldStill` itself when it is given
+ * - otherwise the look at the journal's name, which throws as below right before the rename or unlink ({@link assertNameLeft})
+ * @throws A {@link JournalBackConflictError} with the rollback record's sentence ({@link journalConflictError}): `changed` when the name shows a file where settlement left none, or another file or other bytes than the journal it left; `unread` when it cannot be read; nothing is written then.
+ * @example
+ * await writeRecord(run, run.receiptPath, adopted, bothLooks(await adoptedRecordCheck(run), await journalLeftCheck(run, undefined))) // throws, writing no receipt, once a backup put a rollback record back at pending.json.rollback
+ */
+async function journalLeftCheck(
+  context: Context,
+  otherVersion: RecordVersion | undefined,
+  assertHeldStill?: StillLook,
+): Promise<StillLook> {
+  if (assertHeldStill) return assertHeldStill
+  // The name is tracked as settlement left it: empty, or the other config's journal as read.
+  const journalRun: Context = {
+    ...rollbackContextOf(context),
+    journalVersion: { current: otherVersion },
+  }
+  const left = await lookAtTrackedJournal(journalRun).catch(
+    (error: unknown) => {
+      throw asJournalBackConflict(error)
+    },
+  )
+  return {
+    names: [journalRun.pendingPath],
+    assert: (): void => {
+      try {
+        assertNameLeft(journalRun, left)
+      } catch (error) {
+        throw asJournalBackConflict(error)
+      }
+    },
+  }
+}
+
+/**
+ * Words a conflict met at the rollback journal's name by the look an adoption rests on as a {@link JournalBackConflictError}, keeping its sentence and kind; called by {@link journalLeftCheck} and the look it gives.
+ * @param error - What the look threw.
+ * @returns
+ * - a {@link JournalBackConflictError} with the same message and kind, the conflict as its cause, for a {@link JournalConflictError}
+ * - `error` itself otherwise
+ * @example
+ * throw asJournalBackConflict(journalConflictError(journalRun, 'changed')) // 'While Codebook settled its rollback record at …/pending.json.rollback (a rollback that ended early), another program changed, removed or replaced it …'
+ */
+function asJournalBackConflict(error: unknown): unknown {
+  if (!(error instanceof JournalConflictError)) return error
+  return new JournalBackConflictError(error.message, error.kind, {
+    cause: error,
+  })
+}
+
+/**
+ * Gives the synchronous look that must still find the publish record an adoption rests on at `pending.json`, as this run read or last wrote it ({@link Context.journalVersion}), right before the rename that publishes the adoption's receipt, once a read through the thread pool found it there; called only by {@link adoptPending}, which joins it with the look at the rollback journal's name ({@link journalLeftCheck}) and whose receipt write awaits a look at those names once more before its bytes are staged ({@link writeRecord}).
+ * Limit: a record put there after that synchronous look, also after the receipt's rename, is seen only by the record's retirement right after ({@link retirePending}), which keeps that record and refuses while the receipt stands (a rollback record put back at its name then also takes that receipt back out, {@link withdrawAdoptedReceipt}); no Node primitive renames only while another name shows a given inode.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @returns The look at the publish record's name ({@link StillLook}).
  * @throws A {@link JournalConflictError}: `changed` when the name shows another file or other bytes, `unread` when it cannot be read again, `gone` when it is empty while this run knows a version of it; the look it gives throws the same right before the rename ({@link assertNameLeft}). Nothing is written then.
@@ -6799,22 +6908,26 @@ function currentEntryOf(look: ConfigLook): unknown {
  * A recovery that a look at the journal itself stopped (the journal changed, disappeared or could not be read again, {@link recoveryConflictOf}) settles no copy after that one; the journal as recovery read it still decides the take-back mark below, because it alone may prove that an older build's unmarked setup record owes its take-back, and then the run ends, naming the copy first and the journal's conflict after it, with no journal rewritten, held or deleted.
  * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one; the journal then ends only while that record's name still shows the mark ({@link markLeftCheck}), so a setup record a backup puts back without it keeps the journal; a journal that marks nothing (another setup's record, or none at that name) ends only while that name still shows the record the decision read, or nothing, so the setup record a backup restores there meanwhile is decided together with the journal instead of being adopted without it. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
- * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
+ * @returns What it left at the journal's name ({@link SettledJournal}):
+ * - `held`: the held journal of an older build that this read decided as another publish's
+ * - `otherVersion`: the version of another config's journal it read and left as it is
+ * - neither when it found the name empty or retired the journal here (a journal reduced to what stays always ends the run with its leftover's refusal)
  * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread`, `record-gone` or `record-unread` sentence when the publish record's name no longer shows the version the mark read, the take-back mark this run wrote or found, or what the decision read when nothing was marked, or cannot be read again then ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as recovery acts on a copy on its word (after the take-back mark), or as the journal is held or retired: that name stays as it is and the run goes no further. Either comes after the first leftover's refusal when one stays and the refusal does not name it already ({@link withJournalLeftover}).
  * @example
- * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
+ * await settleRollbackJournal(context) // => { held: undefined }; the original config is back at its path when a rollback was cut short, and its journal is gone
  */
 async function settleRollbackJournal(
   context: Context,
-): Promise<HeldJournal | undefined> {
+): Promise<SettledJournal> {
   const read = await readVersionedRecord(
     rollbackContextOf(context).pendingPath,
     pendingSchema,
     context.retry,
     context.seam,
   )
-  // No rollback was cut short, or the journal belongs to another config, which this run does not settle.
-  if (read?.record.targetPath !== context.path) return undefined
+  // No rollback was cut short, or the journal belongs to another config, which this run does not settle: an adoption later rests on that name still showing what was read here.
+  if (read?.record.targetPath !== context.path)
+    return { otherVersion: read?.version }
   const { record: pending, version } = read
   // The journal this run settles is the version it read; only a journal this run writes from here on replaces it ({@link writeRecord}).
   const rollbackContext: Context = {
@@ -6884,7 +6997,14 @@ async function settleRollbackJournal(
     throw withJournalLeftover(error, rollbackContext, phase, reported, legacy)
   }
   if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
-  return held
+  return { held }
+}
+
+/** What {@link settleRollbackJournal} left at the rollback journal's name, which the rest of {@link inspect} rests on: the legacy journal it held ({@link HeldJournal}), or the version of another config's journal it read and left there; neither when it found that name empty or retired the journal itself. An adoption publishes its receipt and ends its record only while that name still shows this ({@link journalLeftCheck}, {@link HeldJournal.lookStill}). */
+type SettledJournal = {
+  held?: HeldJournal
+  /** The version of another config's journal settlement read and left at that name; undefined when it found the name empty, retired the journal or holds it. */
+  otherVersion?: RecordVersion
 }
 
 /** A rollback journal of an older build that {@link settleRollbackJournal} decided as another publish's on one read of the restored config and of the publish record, and kept: {@link inspect} goes on only with that version of the publish record ({@link heldPublishContext}), {@link settleAfterRecovery} checks that its own look shows those config bytes ({@link assertHeldJournalStill}) and retires the journal once the publish record can no longer adopt and its name shows what the run left there, also at a look right before the journal's unlink ({@link retireHeldJournal}). */
@@ -7081,13 +7201,13 @@ function isOtherFileCause(cause: unknown): boolean {
 /**
  * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
  * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
- * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}). Any other name the first look finds empty still gets `assertStill`, after an awaited look at its names: the caller goes on as after a delete, so a setup record a backup puts back without its take-back mark while it moves the journal away is seen before {@link inspect} reads it.
+ * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}). Any other name the first look finds empty gets a last synchronous look that it is still empty ({@link assertNameLeft}), and then `assertStill`, after an awaited look at its own name and at `assertStill`'s names: the caller goes on as after a delete, so a journal a sync tool puts back at that name during those awaited looks stays and ends the run, and a setup record a backup puts back without its take-back mark while it moves the journal away is seen before {@link inspect} reads it.
  * The journal is never unlinked at its own name: after the last looks it moves to its dropping name and is deleted there only once it proves to be this run's version and `assertStill` still holds ({@link deleteThroughDroppingName}), so a journal a backup renames over it after the last look goes back to its name instead of being deleted, and a stop in that moment leaves it at the dropping name, where the next run puts it back first ({@link settleDroppedRecord}).
  * The journal's own synchronous look comes right after its awaited one ({@link lookAtTrackedJournal}), and `assertStill`'s right after an awaited look at its names, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds the extension host's thread.
  * Limits: those of {@link deleteThroughDroppingName}.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
  * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and again right before the delete, or right after the first look when that look finds the name empty ({@link removeRecord}); throwing keeps the journal.
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then; a file that moved goes back first), or (`gone`) when a publish record's name is found empty while this run knows a version of it; the refusals naming the dropping name ({@link bothRecordNamesError}, {@link recordNotBackError}); what `assertStill` throws, also for a name found empty; what the delete throws other than for a name that is gone, once the journal went back.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then; a file that moved goes back first), also (`changed`) when a name found empty shows a file at the last look, or (`gone`) when a publish record's name is found empty while this run knows a version of it; the refusals naming the dropping name ({@link bothRecordNamesError}, {@link recordNotBackError}); what `assertStill` throws, also for a name found empty; what the delete throws other than for a name that is gone, once the journal went back.
  * @example
  * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
  * await dropTrackedJournal(heldRun) // throws a `gone` JournalConflictError once a sync tool moved pending.json away right before the unlink
@@ -7101,11 +7221,13 @@ async function dropTrackedJournal(
   // Nothing stands at the name: nothing is deleted, and a publish record that disappeared ends the run.
   if (!look) {
     if (isEmptiedByAnother(context)) throw journalConflictError(context, 'gone')
-    // The caller goes on as after a delete, so the names it rests on must still hold: a setup record a backup put back without its mark while it moved this journal away is never adopted.
-    if (assertStill) {
-      await lookAheadAt(assertStill.names)
-      assertStill.assert()
-    }
+    // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, then `assertStill`'s names.
+    if (assertStill)
+      await lookAheadAt([context.pendingPath, ...assertStill.names])
+    // The caller goes on as after a delete, so the name must still be empty at this last look, on every route: a journal a sync tool put back during the awaited looks stays and ends the run.
+    assertNameLeft(context, undefined)
+    // So must the names it rests on: a setup record a backup put back without its mark while it moved this journal away is never adopted.
+    assertStill?.assert()
     return
   }
   // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, `assertStill`'s names, the dropping name.
@@ -7373,7 +7495,7 @@ function assertPublishStillLeft(
 }
 
 /**
- * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal, and by the look {@link adoptedRecordCheck} gives right before an adoption's receipt is published.
+ * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal, by the looks {@link adoptedRecordCheck} and {@link journalLeftCheck} give right before an adoption's receipt is published and its record ends, and by {@link dropTrackedJournal} for a name its first look found empty.
  * @param context - The run; its pending path is the name, its seam is called around the look ({@link isLeftoverStill}).
  * @param left - What the earlier look found: a file (its inode, size and times must still show), or undefined for a name that must still be empty.
  * @throws A {@link JournalConflictError}: `changed` when the name no longer shows that file or shows a file where it was empty, `unread` when the look itself fails.
@@ -8026,8 +8148,8 @@ type Inspection = {
  * const { look, current, receipt } = await inspect(context)
  */
 async function inspect(context: Context): Promise<Inspection> {
-  // A rollback cut short comes first: its original may be the only copy of the learner's other servers. A legacy journal decided as another publish's is held until the publish record is settled.
-  const held = await settleRollbackJournal(context)
+  // A rollback cut short comes first: its original may be the only copy of the learner's other servers. A legacy journal decided as another publish's is held until the publish record is settled; an adoption rests on what settlement left at the journal's name.
+  const { held, otherVersion } = await settleRollbackJournal(context)
   const read = await readPublishRecord(context, held)
   // A held journal was decided on one read of the publish record: the run goes on only with that version, and every later write or delete of it checks its name; so does every other run that read a record.
   const run = trackedPublishContext(
@@ -8075,6 +8197,7 @@ async function inspect(context: Context): Promise<Inspection> {
     retained,
     held,
     isStagedLinked,
+    otherVersion,
   ).catch((cause: unknown) => {
     throw mergeWithLeftover(run, cause, phase, reported, isHandedNow)
   })
@@ -8197,16 +8320,17 @@ function recordRefusalOf(
 
 /**
  * Reads the config and the receipt once recovery settled the leftovers, finishes the take-back of a cut-short first setup and settles the pending record; called by {@link inspect}, which merges a refusal from here with a leftover that stays ({@link mergeWithLeftover}).
- * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the config is read after that settlement, so a config that a backup restored while the old receipt went back is the one this run decides on, with the receipt that stands by then. When that settlement found the old record's private name empty, the publish record that leads there ends only while that name is still empty right before ({@link retirePending}). A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it; the publish record is ended or rewritten only while the journal's name still shows the journal this run held, at a look right before that record's unlink or rename ({@link HeldJournal.lookStill}), so a journal a backup restores there meanwhile keeps the record it rests on; and the journal is retired once the publish record is settled and that record's name shows what this run left there, also right before the journal's unlink ({@link retireHeldJournal}), so a refusal or failure before then leaves both records for the next run.
+ * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the config is read after that settlement, so a config that a backup restored while the old receipt went back is the one this run decides on, with the receipt that stands by then. When that settlement found the old record's private name empty, the publish record that leads there ends only while that name is still empty right before ({@link retirePending}). A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it; the publish record is ended or rewritten only while the journal's name still shows the journal this run held, at a look right before that record's unlink or rename ({@link HeldJournal.lookStill}), so a journal a backup restores there meanwhile keeps the record it rests on (a run that holds no journal adopts that record only while the journal's name still shows what settlement left there, {@link journalLeftCheck}); and the journal is retired once the publish record is settled and that record's name shows what this run left there, also right before the journal's unlink ({@link retireHeldJournal}), so a refusal or failure before then leaves both records for the next run.
  * @param context - The run; it tracks its publish record while a journal is held ({@link heldPublishContext}).
  * @param pending - The pending record as it was read; undefined when there is none.
  * @param retained - What stays of that record after recovery ({@link retainedRecord}); undefined when nothing stays.
  * @param held - The legacy rollback journal {@link settleRollbackJournal} held; undefined when none is held.
  * @param isStagedLinked - What {@link isStagedNameLinked} found before recovery; it proves a first setup's link to {@link settleRetiredReceipt}.
+ * @param otherJournalVersion - The version of another config's rollback journal that {@link settleRollbackJournal} read and left at that name ({@link SettledJournal.otherVersion}); undefined when it left that name empty or holds the journal. An adoption without a held journal rests on that name still showing it ({@link settlePending}).
  * @returns The {@link Inspection}.
  * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, the held journal's look ({@link HeldJournal.lookStill}), {@link settlePending} and {@link retireHeldJournal} throw; a conflict at a held run's publish record is worded as that record's ({@link publishRecordConflict}), one at the held journal's name as that journal's.
  * @example
- * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held, false)
+ * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held, false, undefined)
  */
 async function settleAfterRecovery(
   context: Context,
@@ -8214,6 +8338,7 @@ async function settleAfterRecovery(
   retained: Pending | undefined,
   held: HeldJournal | undefined,
   isStagedLinked: boolean,
+  otherJournalVersion: RecordVersion | undefined,
 ): Promise<Inspection> {
   const asPublishRefusal = (error: unknown): never => {
     throw recordRefusalOf(context, held, error)
@@ -8253,6 +8378,7 @@ async function settleAfterRecovery(
     retained,
     emptiedRetiredPath,
     assertHeldStill,
+    otherJournalVersion,
   ).catch(asPublishRefusal)
   // The publish record can no longer adopt: a held legacy journal goes now, while that record's name shows what this run left there.
   await retireHeldJournal(context, held)
