@@ -4390,12 +4390,14 @@ function isPendingStale(
 
 /**
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
- * @param context - The run.
+ * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say) never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
+ * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
  * @param identity - The identity of the config that stands.
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @returns The receipt that was written.
+ * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record; no receipt is written then. What the receipt's write and {@link retirePending} throw otherwise.
  */
 async function adoptPending(
   context: Context,
@@ -4420,9 +4422,34 @@ async function adoptPending(
       pending.installationId ?? installationIdOf(await readReceipt(context)),
     config: { ino: recordedFileId(identity.ino) },
   }
-  await writeRecord(context, context.receiptPath, adopted)
+  await writeRecord(
+    context,
+    context.receiptPath,
+    adopted,
+    await adoptedRecordCheck(context),
+  )
   await retirePending(context, retained)
   return adopted
+}
+
+/**
+ * Gives the synchronous look that must still find the publish record an adoption rests on at `pending.json`, as this run read or last wrote it ({@link Context.journalVersion}), right before the rename that publishes the adoption's receipt, once a read through the thread pool found it there; called only by {@link adoptPending}, whose receipt write awaits a look at that name once more before its bytes are staged ({@link writeRecord}).
+ * Limit: a record put there after that synchronous look, also after the receipt's rename, is seen only by the record's retirement right after ({@link retirePending}), which keeps that record and refuses while the receipt stands; no Node primitive renames only while another name shows a given inode.
+ * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
+ * @returns The look at the publish record's name ({@link StillLook}).
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another file or other bytes, `unread` when it cannot be read again, `gone` when it is empty while this run knows a version of it; the look it gives throws the same right before the rename ({@link assertNameLeft}). Nothing is written then.
+ * @example
+ * await writeRecord(context, context.receiptPath, adopted, await adoptedRecordCheck(context)) // throws, writing no receipt, once a backup put another record at pending.json
+ */
+async function adoptedRecordCheck(context: Context): Promise<StillLook> {
+  const left = await lookAtTrackedJournal(context)
+  // An empty name while a version is known: another program moved the record away after this run read it.
+  if (!left && isEmptiedByAnother(context))
+    throw journalConflictError(context, 'gone')
+  return {
+    names: [context.pendingPath],
+    assert: (): void => assertNameLeft(context, left),
+  }
 }
 
 /**
@@ -6343,7 +6370,7 @@ function bothLooks(
 }
 
 /**
- * Looks at a tracked rollback journal's name ({@link Context.journalVersion}) before this run writes or deletes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, which look once more synchronously right before their rename or unlink ({@link assertTrackedJournalStill}), by {@link assertPublishedRecord} right after a rename or link with the version it wrote, and by {@link publishLeftCheck} for a tracked publish record.
+ * Looks at a tracked rollback journal's name ({@link Context.journalVersion}) before this run writes or deletes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, which look once more synchronously right before their rename or unlink ({@link assertTrackedJournalStill}), by {@link assertPublishedRecord} right after a rename or link with the version it wrote, and by {@link publishLeftCheck} and {@link adoptedRecordCheck} for a tracked publish record.
  * @param context - The run; its pending path is the journal.
  * @param expected - The version the name must show; the one this run settled or last wrote unless given.
  * @returns
@@ -6468,7 +6495,7 @@ async function dropTrackedJournal(
 }
 
 /**
- * Tells whether an empty tracked name is a publish record another program moved away, not one this run deleted itself; called by {@link dropTrackedJournal} when its look or its unlink finds the name empty.
+ * Tells whether an empty tracked name is a publish record another program moved away, not one this run deleted itself; called by {@link dropTrackedJournal} when its look or its unlink finds the name empty, and by {@link adoptedRecordCheck} when its look does.
  * @param context - The run; its tracker says whether the record is a publish record a decision read (`refusesEmptyName`) and whether this run still knows a version of it.
  * @returns `true` for such a record while a version is known; `false` for a rollback journal, and once this run deleted the record itself.
  * @example
@@ -6674,7 +6701,7 @@ function assertPublishStillLeft(
 }
 
 /**
- * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal.
+ * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal, and by the look {@link adoptedRecordCheck} gives right before an adoption's receipt is published.
  * @param context - The run; its pending path is the name, its seam is called around the look ({@link isLeftoverStill}).
  * @param left - What the earlier look found: a file (its inode, size and times must still show), or undefined for a name that must still be empty.
  * @throws A {@link JournalConflictError}: `changed` when the name no longer shows that file or shows a file where it was empty, `unread` when the look itself fails.

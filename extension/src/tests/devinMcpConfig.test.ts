@@ -8362,6 +8362,62 @@ test('A setup record a sync tool moves away while a refresh takes back a cut-sho
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A setup's record marked for take-back that a backup restores while a refresh adopts that setup's older record gets no installed receipt, so the next refresh takes the setup back instead of keeping it", async (context) => {
+  // Value: protects=a refresh publishes the receipt that adopts an interrupted setup only while pending.json still shows the record that allowed that adoption, so a record of the same setup marked for take-back that a backup or sync tool restores before that receipt is published never gains it, and the next refresh takes the setup back (Cycle 0148 task 35); fails_when=the first refresh resolves or says anything but the changed-record sentence of pending.json, a receipt is written, the restored record changes, or the next refresh keeps the entry, loses the other server, leaves a receipt or the record, or answers anything but not-managed; no_claim=a real backup tool (seam.beforeRecordWrite renames the marked record over pending.json once, at the adoption's receipt write, before that write's last look), a restore after that last look (also after the receipt's rename, which the record's retirement then refuses while the receipt stands), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000435',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  await writeFile(pendingPath, JSON.stringify(olderRecord))
+  const markedRecordText = JSON.stringify({ ...olderRecord, takeBack: true })
+  const backupPath = join(home, 'pending-from-backup.json')
+  let hasRestoredMarked = false
+
+  // Act
+  const firstOutcome = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== receiptPath || hasRestoredMarked) return
+      hasRestoredMarked = true
+      writeFileSync(backupPath, markedRecordText)
+      renameSync(backupPath, pendingPath)
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const isReceiptWrittenByFirst = existsSync(receiptPath)
+  const recordAfterFirst = readFileSync(pendingPath, 'utf8')
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(hasRestoredMarked, true)
+  assert.equal(isReceiptWrittenByFirst, false)
+  assert.equal(recordAfterFirst, markedRecordText)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+})
+
 test("A copy of the previous config that a finished change left is not deleted when a backup puts back that change's record handing the copy to you while recovery reads it, and the refresh says the record changed", async (context) => {
   // Value: protects=recovery deletes a copy of the previous config on a finished change's word only while the record it read still stands at its name right before the unlink, so a record of that change a backup or sync tool put back as handing the copy to the learner keeps the copy (Cycle 0148 ship review); fails_when=the copy is gone or changes, the restored record is gone or changes, the config changes, or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (seam.afterStat renames the handed record over pending.json once, at recovery's second read of the copy, the one right before its unlink), a swap after the last look before the unlink, what the next run says about the handed copy
   // Arrange
