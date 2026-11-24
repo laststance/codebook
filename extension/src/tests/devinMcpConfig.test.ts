@@ -9615,7 +9615,7 @@ test("A rollback record a backup restores while a refresh adopts an older build'
 })
 
 test("A rollback record a backup restores right after a refresh published the receipt that adopts an older build's interrupted setup takes that receipt back out, so the next refresh takes the failed setup back", async (context) => {
-  // Value: protects=a refresh ends the record it adopted only while the rollback record's name still shows what that run's settlement left there, and when a rollback record came back after the adoption's receipt was published it keeps that record and takes the receipt back out, so the next refresh takes the failed setup back instead of finding it receipted (Cycle 0149 task 2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, the receipt stays, either record changes or is gone, or the second refresh answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (the config module is loaded with a rename that renames the rollback record in once, right after the receipt's rename resolved), a restore after the retirement's last look, a process end between the receipt's rename and its withdrawal (that receipt then stays), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Value: protects=a refresh ends the record it adopted only while the rollback record's name still shows what that run's settlement left there, and when a rollback record came back after the adoption's receipt was published it keeps that record and takes the receipt back out, so the next refresh takes the failed setup back instead of finding it receipted (Cycle 0149 task 2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, the receipt stays, either record changes or is gone, or the second refresh answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (the config module is loaded with a link that, once, right after the adoption's link claimed the empty receipt.json resolved, renames the rollback record in), a restore after the retirement's last look, a process end between the receipt's link and its withdrawal (that receipt then stays), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(
@@ -12574,7 +12574,7 @@ test("A first setup whose receipt cannot be written still takes its entry out wh
 })
 
 test("A first setup's take-back that stops inside its first rollback-record write where Codebook's storage folder cannot give a file a second name leaves no empty rollback record, so the next refresh takes the entry out instead of refusing every run", async (context) => {
-  // Value: protects=on storage without hard links a take-back's first rollback record appears at its name only complete (a rename of its flushed staged file at a name a synchronous look found empty), so a stop inside that write never leaves a record every run refuses (Cycle 0149 task 5); fails_when=anything stands at pending.json.rollback after the setup, the next refresh refuses or answers anything but not-managed, or the entry, a record, a receipt or a pending.json.rollback name stays; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, an open that ends the run right after an exclusive create of the rollback record's own name, and a rename that ends it right before publishing at that name), a file another program puts at that name between the last look and the rename (stated residual on such storage), the setup's own pending.json (same step)
+  // Value: protects=on storage without hard links a take-back's first rollback record appears at its name only complete (a rename of its flushed staged file at a name a synchronous look found empty), so a stop inside that write never leaves a record every run refuses (Cycle 0149 task 5); fails_when=the run never stopped at the rename that publishes that record, the entry is gone before the next refresh, anything stands at pending.json.rollback after the setup, the next refresh refuses or answers anything but not-managed, or the entry, a record, a receipt or a pending.json.rollback name stays; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, an open that ends the run right after an exclusive create of the rollback record's own name, and a rename that ends it right before publishing at that name), a file another program puts at that name between the last look and the rename (stated residual on such storage), the setup's own pending.json (same step)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -12582,6 +12582,7 @@ test("A first setup's take-back that stops inside its first rollback-record writ
   const receiptPath = join(recordsPath, 'receipt.json')
   const pendingPath = join(recordsPath, 'pending.json')
   const journalPath = `${pendingPath}.rollback`
+  let hasStoppedAtRename = false
   const endingInsideFirstWrite = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
@@ -12607,7 +12608,10 @@ test("A first setup's take-back that stops inside its first rollback-record writ
         },
         rename: async (from: string, to: string) => {
           // The process ends right before the rollback record's bytes are published at its name.
-          if (to === journalPath) throw new Error('process ended')
+          if (to === journalPath) {
+            hasStoppedAtRename = true
+            throw new Error('process ended')
+          }
           return rename(from, to)
         },
         rm,
@@ -12625,12 +12629,18 @@ test("A first setup's take-back that stops inside its first rollback-record writ
   const journalAfterSetup = existsSync(journalPath)
     ? `${statSync(journalPath).size} bytes`
     : 'absent'
+  const configAfterSetup = JSON.parse(readFileSync(configPath, 'utf8'))
   rmSync(receiptPath, { recursive: true })
 
   // Act
   const refresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
+  assert.equal(hasStoppedAtRename, true)
+  // The take-back stopped before it took the entry out: the next refresh does.
+  assert.deepEqual(configAfterSetup, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
   assert.equal(journalAfterSetup, 'absent')
   assert.equal(refresh.status, 'not-managed')
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
@@ -14870,7 +14880,7 @@ test('A receipt of an older build whose entry the learner edited still gets an i
 })
 
 test('A displaced original that could not be read in the first recovery is handed over, not deleted, when an editor saves a new config before the second recovery', async (context) => {
-  // Value: protects=the only copy of the learner's other servers survives a recovery that could not read it, followed by an editor save; fails_when=the retained record loses the staged inode and the second recovery deletes the original because its hash still matches; no_claim=the wording of the refusal; seam=seam.afterStat throws on the first read of the displaced original
+  // Value: protects=the only copy of the learner's other servers survives a recovery that could not read it, followed by an editor save, and the second recovery hands it over; fails_when=the retained record loses the staged inode, the second recovery deletes the original because its hash still matches, its refusal does not name the original, or the record it leaves is not the handed one with that staged inode; no_claim=the wording of the refusal; seam=seam.afterStat throws on the first read of the displaced original
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   // A publish keeps the learner's other servers, so the original's alpha is in the published config too.
@@ -14906,6 +14916,7 @@ test('A displaced original that could not be read in the first recovery is hande
     },
   }).catch(() => undefined)
   assert.deepEqual(await leftoversBeside(configPath), [basename(keptPath)])
+  const recordAfterFirstRecovery = await readRecordFile(storage, 'pending.json')
   // An editor saves a new config after the first recovery.
   swapFile(configPath, '{"mcpServers":{"beta":{"command":"b"}}}\n')
 
@@ -14918,6 +14929,11 @@ test('A displaced original that could not be read in the first recovery is hande
     return true
   })
   assert.equal(readFileSync(keptPath, 'utf8'), originalBytes)
+  assert.equal(recordAfterFirstRecovery.stagedIno, configIno)
+  // The second recovery handed the original over: the record it leaves says so and still holds the staged inode.
+  const recordAfterHandOver = await readRecordFile(storage, 'pending.json')
+  assert.equal(recordAfterHandOver.phase, 'handed')
+  assert.equal(recordAfterHandOver.stagedIno, configIno)
 })
 
 test('A config rewritten in place after a crashed publish keeps the displaced original and names it', async (context) => {
@@ -15920,6 +15936,59 @@ test('On storage that cannot give a file a second name, a first setup creates it
     ['receipt.json'],
   )
 })
+
+// The other two codes of a refused link that mean the storage gives no file a second name: EPERM (Linux vfat) and ENOSYS (no such call); macOS exFAT's ENOTSUP has the test above.
+for (const noLinkCode of ['EPERM', 'ENOSYS'] as const) {
+  test(`On storage whose file system answers every link with ${noLinkCode}, a first setup still writes its records without links and answers installed`, async (context) => {
+    // Value: protects=each code of a refused link that means the storage folder gives no file a second name starts the record writes' route without links, so Devin Desktop setup keeps working on such storage and leaves only its record of the entry in the records folder (Cycle 0149 tasks 5, 12 and 13; OCR L1 P3 on test :15458); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, no link in the storage folder was refused, or anything but receipt.json stays in the records folder; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with that code), which record writes try a link (the ENOTSUP test above pins them), a file already standing at a record's name on such storage, a process end inside those writes
+    // Arrange
+    const { home, storage, configPath } = await arrange(context)
+    await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+    const recordsPath = join(storage, 'devin-mcp')
+    let refusedLinks = 0
+    const withoutStorageLinks = await loadModule<typeof DevinMcpConfigModule>(
+      resolve(__dirname, '../devinMcpConfig.js'),
+      {
+        'node:fs/promises': {
+          link: async (from: string, to: string) => {
+            // The storage folder's file system gives no file a second name; the config's folder does.
+            if (dirname(to) === recordsPath) {
+              refusedLinks += 1
+              throw Object.assign(
+                new Error(`${noLinkCode}: link refused, link '${from}'`),
+                { code: noLinkCode },
+              )
+            }
+            return link(from, to)
+          },
+          lstat,
+          mkdir,
+          open,
+          rename,
+          rm,
+          unlink,
+        },
+      },
+      { Error, TextDecoder },
+    )
+
+    // Act
+    const result = await withoutStorageLinks.writeManagedDevinMcpEntry(
+      storage,
+      ENTRY,
+      home,
+    )
+
+    // Assert
+    assert.equal(result.status, 'installed')
+    assert.equal(
+      (await readRecordFile(storage, 'receipt.json')).generation,
+      result.generation,
+    )
+    assert.notEqual(refusedLinks, 0)
+    assert.deepEqual(readdirSync(recordsPath), ['receipt.json'])
+  })
+}
 
 test('An update never writes its record of the entry over a record a backup restored at receipt.json after the update read it, says so, and the next setup records the updated entry', async (context) => {
   // Value: protects=an update replaces receipt.json only while that name still shows the record the update read there, so a record a backup put back at another inode stays, the update says so, and the next setup records the updated entry from the update's own record (Cycle 0149 task 12, D5's existing-receipt writers); fails_when=the update resolves or says anything but the changed-record sentence of receipt.json, receipt.json changes, the config loses the updated entry, or the next setup answers anything but current with a receipt of the update's generation; no_claim=a real backup tool (seam.beforeRecordWrite puts a copy of the record the update read back at receipt.json, at another inode, once, right before the update writes its own), a file put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode)
