@@ -66,7 +66,7 @@ export type DevinMcpTestSeam = {
   beforeLeftoverCheck?: (path: string) => void
   /** Called right after that second look passed and before the link, unlink or rename it guards, so a test can swap the file in the gap the second look cannot close. */
   afterLeftoverCheck?: (path: string) => void
-  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them; a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
+  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them, or for a claim of a rollback journal's empty name before the link publishes them ({@link claimJournal}); a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
   beforeRecordWrite?: (write: { path: string; record: unknown }) => void
 }
 
@@ -115,8 +115,8 @@ const pendingSchema = z.object({
   publishGeneration: z.string().optional(),
   /** Set by a first setup (no receipt owned an entry that stood, {@link isFirstSetup}) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
   firstSetup: z.boolean().optional(),
-  /** Set by a first setup whose stale receipt stood ({@link isFirstSetup}), before anything is published: right before its link that receipt moves to its private name ({@link retiredReceiptPathOf}), and it goes back to `receipt.json` when the link fails, never over a newer receipt ({@link putBackRetiredReceipt}). A run that finds the private name settles it the same way ({@link settleRetiredReceipt}). Absent for every other publish; an older build drops it. */
-  retiresReceipt: z.boolean().optional(),
+  /** Set by a first setup whose stale receipt stood ({@link isFirstSetup}), before anything is published: right before its link that receipt moves to its private name ({@link retiredReceiptPathOf}), and it goes back to `receipt.json` when the link fails, never over a newer receipt ({@link putBackRetiredReceipt}). A run that finds the private name settles it the same way ({@link settleRetiredReceipt}). `foreign` in place of `true` once a run kept a file at that name that Codebook did not verify as its record of this config: no such record, or a file that replaced the record it read there ({@link foreignKeptRecordOf}); this build reads it as `true`, while 0.2.142.0 and 0.2.143.0, which put back whatever stands at that name, refuse the whole record as unreadable before they look there, and builds before them drop the field. Absent for every other publish; an older build drops it. */
+  retiresReceipt: z.union([z.boolean(), z.literal('foreign')]).optional(),
   /** Set by a first setup whose link failed or never ran while its old receipt could not go back ({@link linkWithoutStaleReceipt}): nothing of that publish was linked, so a later run puts that receipt back whatever inode the config shows and takes nothing back ({@link settleRetiredReceipt}, {@link finishCutShortSetup}). Written after the failed put-back, best effort: a record without it is undecided when the config holds that receipt's entry ({@link retiredReceiptFateOf}). An older build drops it. */
   notLinked: z.literal(true).optional(),
   /** Set, with `phase: 'handed'`, right before the link of a put-back that only the displaced file's bytes prove ({@link putBackDisplaced}): a run that stops before the check leaves a record that older builds read as handed and never delete from, while this build reads it as in progress ({@link leftoverPhaseOf}) and checks the shared bytes before it deletes the private name ({@link assertSharedPutBackBytes}). It stays while that name is a second name of the config that no check cleared ({@link recordAfterRecovery}); gone once the check passed and the name is gone, when the put-back failed before such a second name stood ({@link restoreUnlessSecondName}), or when the copy was handed over ({@link handedRecordOf}); an older build drops it. */
@@ -170,8 +170,14 @@ type Context = {
   retry: string
   /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
   rollbackOf?: string
-  /** Set only on the context {@link settleRollbackJournal} settles a journal with: the version of the journal that run read, replaced by each version it writes at its pending path ({@link writeRecord}), so the journal it may retire or rewrite is the one it settled ({@link retireHeldJournal}, {@link retirePending}). */
-  journalVersion?: { current: RecordVersion | undefined }
+  /** Set only on a take-back's context ({@link rollbackContextOf} with a generation) whose run tracks the `pending.json` it read ({@link trackedPublishContext}), or the version a first setup last wrote there when its take-back mark could not be written ({@link markBeforeTakeBack}): that run, so the take-back moves the config aside or away only while that record, which proves the entry is the failed setup's, still stands as the run read or last wrote it ({@link assertTakeBackRecordStill}). */
+  takeBackRecordRun?: Context
+  /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal, and for the rest of {@link inspect} on every run that read a `pending.json`, which tracks that record the same way: a run that holds a legacy journal the version that journal's decision read ({@link heldPublishContext}), any other the version its own read saw ({@link trackedPublishContext}): the version of the record that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}) and cleared once it deleted that record itself ({@link dropTrackedJournal}). After {@link inspect}, the setup's publish, the removal and the removal retry track their own `pending.json` the same way, from the version inspect left there ({@link ownRecordContext}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}), and so does a write at a rollback journal's name found empty; a publish record's name found empty is refused instead (`refusesEmptyName`). */
+  journalVersion?: {
+    current: RecordVersion | undefined
+    /** Set when the tracked record is the publish record a decision read ({@link heldPublishContext}, {@link markTakeBackOwed}) or `pending.json` as a run read it ({@link trackedPublishContext}): while a version is known, an empty name means that record disappeared after the read, so a write there throws a `gone` {@link JournalConflictError} instead of writing the record back ({@link writeTrackedJournal}). A rollback journal's tracker leaves it unset: that journal is this run's own record of what it still tracks, so a write claims its empty name again. */
+    refusesEmptyName?: true
+  }
 }
 
 /** A copy of the config that Codebook keeps for a moment, and what it must hold. */
@@ -646,15 +652,31 @@ function assertConfigUnchanged(
   context: Context,
   expected: FileIdentity | undefined,
 ): void {
+  if (!isConfigUnchanged(context, expected)) throw changedWhileWorking(context)
+}
+
+/**
+ * Tells, by one synchronous look, whether the config name still shows the file that was read: the same inode, size and modification and change times in nanoseconds; called by {@link assertConfigUnchanged} and by {@link stillnessOf}, for a drop of a first setup's old record that the config decided ({@link ownerOfConfigEntry}).
+ * @param context - The run.
+ * @param expected - The identity read earlier; undefined when the file was absent.
+ * @returns `true` when the name shows that file (for an absent file: still nothing); `false` otherwise.
+ * @throws What the look throws other than for a missing name.
+ * @example
+ * isConfigUnchanged(context, look.identity) // => false after a sync tool saved the config again
+ */
+function isConfigUnchanged(
+  context: Context,
+  expected: FileIdentity | undefined,
+): boolean {
   const now = lstatSync(context.path, { bigint: true, throwIfNoEntry: false })
-  const didChange = expected
-    ? !now ||
-      now.ino !== expected.ino ||
-      now.size !== expected.size ||
-      now.mtimeNs !== expected.mtimeNs ||
-      now.ctimeNs !== expected.ctimeNs
-    : Boolean(now)
-  if (didChange) throw changedWhileWorking(context)
+  if (!expected) return !now
+  return (
+    now !== undefined &&
+    now.ino === expected.ino &&
+    now.size === expected.size &&
+    now.mtimeNs === expected.mtimeNs &&
+    now.ctimeNs === expected.ctimeNs
+  )
 }
 
 /** What a private file beside the config is for: the config moved aside, the staged new config, or the probe link of the hard-link check. */
@@ -738,9 +760,57 @@ function linkedElsewhereRefusal({ path, retry }: Context): Error {
   )
 }
 
-/** Removes the pending record; a failure leaves a record that the next run finds stale. */
+/** Removes the pending record; a failure leaves a record that the next run finds stale. A tracked journal ({@link Context.journalVersion}) goes only while its name shows the version this run settled or wrote ({@link removeRecord}). */
 function dropPending(context: Context): Promise<void> {
-  return rm(context.pendingPath, { force: true }).catch(() => undefined)
+  return removeRecord(context).catch(() => undefined)
+}
+
+/**
+ * Removes the record of a removal or take-back that took the entry out, as the last step before it reports success; called by {@link takeEntryOut}, {@link settleMovedAside} and {@link finishRemoval}.
+ * Any failure leaves a record the next run finds stale, as {@link dropPending} does, except another file at a take-back's rollback record's name, or a name that cannot be read again ({@link JournalConflictError}): what stands there stays, and the run must not go on as if the take-back were settled, so the conflict is thrown as a {@link TakenOutConflictError}, which says that the entry is out already and keeps the conflict's kind ({@link rollBackPublishedEntry}). A removal's own record ({@link ownRecordContext}) that another program replaced stays for the next run as such a stale record does, and the removal, whose entry is out, reports success.
+ * @param context - The run; its pending path is the record.
+ * @throws A {@link TakenOutConflictError}, with the conflict's kind, when a take-back's tracked record's name shows another file or cannot be read again; nothing is deleted then.
+ * @example
+ * await dropFinishedRecord(rollbackContext) // pending.json.rollback is gone, or the call throws once a backup put another journal there
+ */
+async function dropFinishedRecord(context: Context): Promise<void> {
+  await removeRecord(context).catch((error: unknown) => {
+    // Another file at a take-back's record's name: the entry is out, and the run goes no further.
+    if (
+      error instanceof JournalConflictError &&
+      context.rollbackOf !== undefined
+    )
+      throw new TakenOutConflictError(error)
+  })
+}
+
+/** A synchronous look at other names that must still hold right before a record's rename, link or unlink ({@link writeRecord}, {@link removeRecord}), with the names it looks at, so the step first awaits a look at each of them ({@link lookAheadAt}): a storage that already stalls holds that step in the thread pool, where the step's budget answers, instead of the extension host's thread. */
+type StillLook = {
+  /** The names `assert` looks at, in its order. */
+  readonly names: readonly string[]
+  /** Throws when a name no longer shows what an earlier look found; nothing is awaited between it and the rename, link or unlink. */
+  readonly assert: () => void
+}
+
+/**
+ * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending}, {@link retirePending} and {@link handOver}.
+ * Limit: a stall of storage that starts between the awaited look at `assertStill`'s names and its synchronous look holds the extension host's thread.
+ * @param context - The run; its pending path is deleted.
+ * @param assertStill - A synchronous look at other names that must still hold, called right before the delete (for a tracked journal after its last look), after an awaited look at its names; throwing keeps the record. Undefined when nothing else must hold ({@link retirePending}).
+ * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (nothing is deleted then); what `assertStill` throws; what the delete throws other than for a name that is gone.
+ * @example
+ * await removeRecord(context) // pending.json is gone
+ */
+async function removeRecord(
+  context: Context,
+  assertStill?: StillLook,
+): Promise<void> {
+  if (context.journalVersion) return dropTrackedJournal(context, assertStill)
+  if (assertStill) {
+    await lookAheadAt(assertStill.names)
+    assertStill.assert()
+  }
+  await rm(context.pendingPath, { force: true })
 }
 
 /**
@@ -769,8 +839,8 @@ async function markCompleted(
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
  * @returns
- * - `true` when no record lets a later run delete the copy: the handed record was written, or, when that write failed (a full disk), the record was dropped, so the copy is no longer tracked and stays for good
- * - `false` when the record stays as it is on disk: a first setup's record or one marked for take-back whose handed write failed (it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte), or another record that could not be dropped either; a caller whose record on disk is completed keeps the copy out of a later run's reach ({@link keepFromRecovery})
+ * - `true` when no record lets a later run delete the copy: the handed record was written, or, when that write failed (a full disk), the record was dropped, so the copy is no longer tracked and stays for good; a tracked rollback journal ({@link Context.journalVersion}) is dropped only while its name still shows the version this run settled or wrote ({@link removeRecord})
+ * - `false` when the record stays as it is on disk: a first setup's record or one marked for take-back whose handed write failed (it holds the intent that the entry is taken back unless its receipt gets written ({@link isTakeBackOwed}), and a failed write leaves the previous record byte for byte), a tracked rollback journal whose name shows another file or cannot be read again ({@link JournalConflictError}: nothing is written or dropped there), or another record that could not be dropped either; a caller whose record on disk is completed keeps the copy out of a later run's reach ({@link keepFromRecovery})
  * @example
  * await handOver(context, journal) // => true; pending.json now says handed
  */
@@ -781,10 +851,12 @@ async function handOver(context: Context, journal: Pending): Promise<boolean> {
       phase: 'handed',
     } satisfies Pending)
     return true
-  } catch {
+  } catch (error) {
+    // Another file at a tracked journal's name is not this run's: nothing was written there, and nothing is dropped.
+    if (error instanceof JournalConflictError) return false
     // Dropping this record would let a stop before the receipt leave an entry that no record owns: it stays, and the caller says what becomes of the copy.
     if (isFirstSetupRecord(journal) || journal.takeBack) return false
-    return rm(context.pendingPath, { force: true }).then(
+    return removeRecord(context).then(
       () => true,
       () => false,
     )
@@ -792,7 +864,7 @@ async function handOver(context: Context, journal: Pending): Promise<boolean> {
 }
 
 /**
- * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards.
+ * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards; {@link dropStagedRecord} looks at a staged name only this run made.
  * @param path - The name to look at.
  * @returns Its status with bigint numbers; undefined when nothing stands there.
  * @throws Any other failure of the look.
@@ -871,9 +943,12 @@ async function inspectCopy(
   }
 }
 
+/** A kept copy, or a tracked record, that is no regular file or is larger than the config limit ({@link unsaneCopyError}); its own class, so {@link lookAtTrackedJournal} tells another file at a tracked name from a read that failed. */
+class UnsaneCopyError extends Error {}
+
 /** The error for a kept copy that is no regular file or is larger than the config limit. */
 function unsaneCopyError(): Error {
-  return new Error('The kept copy is no regular file of a sane size.')
+  return new UnsaneCopyError('The kept copy is no regular file of a sane size.')
 }
 
 /** Whether a kept copy still is the file and the bytes Codebook expected in it. */
@@ -987,6 +1062,7 @@ const KEPT_COPY_SUFFIX = 'codebook-kept'
 
 /**
  * Deletes the displaced copy after the config was published or removed, unless a writer changed it since the comparison; called by {@link settlePublished} and by the removal.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) or moved out of recovery's reach ({@link keepFromRecovery}); any other copy that stays, also an unchanged one whose last look or delete failed, is reported as one a later run deletes ({@link KeptFile.isLeftover}). When the completed record cannot be written nothing is deleted.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
@@ -1004,7 +1080,10 @@ async function discardDisplaced(
   if (!(await markCompleted(context, journal)))
     return { outcome: 'unrecorded', copy }
   // A copy a writer changed since the comparison, or a name that shows another file now, is handed to the learner.
-  const look = (await didCopyChange(held))
+  const isChanged = await didCopyChange(held)
+  // A storage that already stalls holds this step here, not at the synchronous look at that name below.
+  await lookAheadAt([displacedPath])
+  const look = isChanged
     ? 'changed'
     : lookAtComparedName(context, displacedPath, held)
   if (look === 'changed') {
@@ -1267,11 +1346,12 @@ function extraNameRefusal({ path, retry }: Context, copyPath: string): Error {
 }
 
 /**
- * Writes the new config bytes to a private temporary file beside the config and reads the new file's inode from the open handle, so nothing after the rename needs to look at the file again.
- * @param temporary - The staged name ({@link journalPathOf}); its folders are created.
+ * Writes the new config bytes to a private temporary file beside the config and reads the new file's inode from the open handle, so nothing after the rename needs to look at the file again; called by {@link publishRoot}, and by {@link stageRecord} for a tracked record's bytes beside that record.
+ * @param temporary - The staged name ({@link journalPathOf}, or a record's own staged name); its folders are created.
  * @param serialized - The complete new content.
  * @param mode - The permission bits of the new file; the owner's bits only ({@link publishRoot}).
  * @returns The temporary path and the inode the config will have once the file is published.
+ * @throws What the create, write, flush or close throws; a failed write's temporary name goes only while it still shows the file this call created there ({@link dropFailedStage}).
  */
 async function stageConfigFile(
   temporary: string,
@@ -1280,27 +1360,59 @@ async function stageConfigFile(
 ): Promise<{ temporary: string; ino: bigint }> {
   await mkdir(dirname(temporary), { recursive: true })
   const handle = await open(temporary, 'wx', PRIVATE_FILE_MODE)
+  // The inode the exclusive create made, read from its handle before anything is written, so a failed write deletes only that file.
+  let createdIno: bigint | undefined
   try {
     try {
+      createdIno = (await handle.stat({ bigint: true })).ino
       // fchmod, so the umask does not narrow it; never wider than the owner's bits.
       await handle.chmod(mode)
       await handle.writeFile(serialized)
       await handle.sync()
-      return { temporary, ino: (await handle.stat({ bigint: true })).ino }
+      return { temporary, ino: createdIno }
     } finally {
       await handle.close()
     }
   } catch (error) {
-    await unlink(temporary).catch(() => undefined)
+    await dropFailedStage(temporary, createdIno, serialized)
     throw error
   }
 }
 
-/** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise) and whether the record says completed (`false`: the completed record could not be written, so nothing was deleted). */
+/**
+ * Deletes the temporary name of a staged write that failed while it still shows the file that write created there, holding no more than a start of the bytes it was writing; called by {@link stageConfigFile} when its write, flush or close fails, so a file another program put at that name meanwhile (a sync tool's), or bytes it wrote into that file in place, stay.
+ * Limits: those of {@link unlinkStagedWhileStill}.
+ * @param temporary - The temporary name.
+ * @param createdIno - The inode of the file the exclusive create made, read from its handle; undefined when that read failed, and nothing is deleted then.
+ * @param serialized - The complete bytes the write was to hold.
+ * @returns Nothing; best effort: a name that shows another file, other bytes or nothing, or that cannot be read or deleted, stays, and no build reads it.
+ * @example
+ * await dropFailedStage('…/mcp_config.json.<generation>.tmp', 42n, serialized) // gone while it holds the file this write created and a start of its bytes
+ */
+async function dropFailedStage(
+  temporary: string,
+  createdIno: bigint | undefined,
+  serialized: string,
+): Promise<void> {
+  const now = await inspectCopy(temporary).catch(() => undefined)
+  const written = Buffer.from(serialized)
+  // Another program's file, bytes this write never wrote, nothing, or a read that failed: nothing is deleted.
+  if (
+    createdIno === undefined ||
+    now?.ino !== createdIno ||
+    now.size > BigInt(written.length) ||
+    bytesSha256(written.subarray(0, Number(now.size))) !== now.sha256
+  )
+    return
+  await unlinkStagedWhileStill(temporary, now)
+}
+
+/** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so nothing was deleted) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
 type Published = {
   config: ConfigNumbers
   keptLeft: KeptFile[]
   isRecorded: boolean
+  isRetiredKept: boolean
 }
 
 /** Everything a replacement of an existing config works with: the staged file, the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
@@ -1315,30 +1427,37 @@ type Replacement = {
 
 /**
  * Links the staged file in at the config name, the step that exposes a publish; called by {@link createConfig} and {@link linkInStaged}.
- * A first setup's stale receipt ({@link isFirstSetup}) moves to its private name right before the link ({@link retireStaleReceipt}), so it goes only once this setup's own publish record, which names that move, is written, and no reader takes the new entry for that receipt's. When the link fails nothing of this setup stands, so that receipt goes back ({@link putBackRetiredReceipt}): a config that came back meanwhile is still owned by it, and an unrecorded removal's retry still answers `removed`. That put-back needs no free space and never replaces a newer receipt. Once the link stands the private name is deleted; one that cannot be deleted then is dropped by the next run while the publish record stays ({@link settleRetiredReceipt}), and otherwise stays in Codebook's records folder, where nothing reads it.
+ * A first setup's stale receipt ({@link isFirstSetup}) moves to its private name right before the link ({@link retireStaleReceipt}), so it goes only once this setup's own publish record, which names that move, is written, and no reader takes the new entry for that receipt's. When the link fails nothing of this setup stands, so that receipt goes back ({@link putBackRetiredReceipt}): a config that came back meanwhile is still owned by it, and an unrecorded removal's retry still answers `removed`. That put-back needs no free space, never replaces a newer receipt and puts back only a record of this config that it read at the private name; a private name it finds empty, or holding another program's file, keeps the publish record, which is then marked, so the next run looks there again. Once the link stands the private name is deleted only while it still shows the record this setup moved there and verified ({@link dropMovedAfterLink}); a name that shows another file then, or cannot be looked at or deleted, stays, and so does the publish record, so the next run settles that name with its own checks ({@link settleRetiredReceipt}); for another file there, which Codebook never read, the caller writes that record from then on in the shape older builds refuse ({@link foreignKeptRecordOf}), so a take-back after a failed receipt write never leaves a record that leads them to put that file at `receipt.json`.
  * @param context - The run.
  * @param temporary - The staged file.
  * @param staleReceipt - The receipt of an entry that is gone, which a first setup retires; undefined for an update, a removal, a rollback and a first setup without a receipt.
  * @param journal - The publish record as written; its generation names the receipt's private name ({@link retiredReceiptPathOf}).
+ * @returns The publish record the caller writes from now on and whether the old record's private name stayed after the link ({@link LinkedRecord}).
  * @throws A {@link staleReceiptRefusal} when that receipt cannot be moved aside, a {@link changedRecordRefusal} when another receipt stood at its name by then (nothing was linked); what the link throws, once the receipt is back. An {@link UnrestoredReceiptError} carrying that failure when the receipt could not go back; the publish record is then marked {@link Pending.notLinked}, best effort, so the next run puts the receipt back whatever inode the config shows. When that mark cannot be written, the error promises no put-back: the next run cannot tell that nothing was linked and decides again ({@link retiredReceiptFateOf}).
  * @example
- * await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal) // the config stands and receipt.json is gone
+ * await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal) // => { journal, isRetiredKept: false }: the config stands and receipt.json is gone
  */
 async function linkWithoutStaleReceipt(
   context: Context,
   temporary: string,
   staleReceipt: Receipt | undefined,
   journal: Pending,
-): Promise<void> {
+): Promise<LinkedRecord> {
   try {
-    await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal)
+    return await linkRetiringStaleReceipt(
+      context,
+      temporary,
+      staleReceipt,
+      journal,
+    )
   } catch (error) {
     if (!(error instanceof UnrestoredReceiptError)) throw error
     // Nothing of this setup was linked and the old record waits under its private name: the record says so, so the next run puts it back whatever inode the config shows.
-    const isMarked = await writeRecord(context, context.pendingPath, {
-      ...journal,
-      notLinked: true,
-    } satisfies Pending).then(
+    const isMarked = await writeRecord(
+      context,
+      context.pendingPath,
+      notLinkedRecordOf(journal, error),
+    ).then(
       () => true,
       () => false,
     )
@@ -1348,22 +1467,50 @@ async function linkWithoutStaleReceipt(
 }
 
 /**
+ * Gives the publish record a first setup writes once its old record could not go back: marked {@link Pending.notLinked}, and, while the file kept at the private name is one Codebook did not verify as its record of this config ({@link UnrestoredReceiptError.isForeignKept}), in the shape older builds refuse ({@link foreignKeptRecordOf}); called by {@link linkWithoutStaleReceipt} and {@link linkInStaged}.
+ * @param journal - The publish record as the setup wrote it.
+ * @param error - Why the old record could not go back.
+ * @returns The record to write.
+ * @example
+ * notLinkedRecordOf(journal, linkFailed) // => { ...journal, notLinked: true }
+ */
+function notLinkedRecordOf(
+  journal: Pending,
+  error: UnrestoredReceiptError,
+): Pending {
+  const marked: Pending = { ...journal, notLinked: true }
+  return error.isForeignKept ? foreignKeptRecordOf(marked) : marked
+}
+
+/**
+ * Gives a publish record that leads to an old record's private name that holds a file Codebook did not verify as its record of this config (no such record, or a file that replaced the record Codebook read there: {@link UnrestoredReceiptError.isForeignKept}, {@link dropMovedAfterLink}), in the shape this build reads as before and that 0.2.142.0 and 0.2.143.0 refuse as unreadable before they look at that name: those builds put back whatever stands there, so they would put that file at `receipt.json` and delete its private name ({@link Pending.retiresReceipt}); called by {@link notLinkedRecordOf}, {@link linkRetiringStaleReceipt} and {@link markForeignKept}.
+ * @param record - The publish record.
+ * @returns The same record with `retiresReceipt: 'foreign'`.
+ * @example
+ * foreignKeptRecordOf({ ...journal, retiresReceipt: true }) // => { ...journal, retiresReceipt: 'foreign' }
+ */
+function foreignKeptRecordOf(record: Pending): Pending {
+  return { ...record, retiresReceipt: 'foreign' }
+}
+
+/**
  * Moves the stale receipt aside, links the staged file in and settles that receipt's private name; the steps of {@link linkWithoutStaleReceipt}, which marks the record when the receipt could not go back.
  * @param context - The run.
  * @param temporary - The staged file.
  * @param staleReceipt - The receipt a first setup retires; undefined otherwise.
  * @param journal - The publish record as written.
+ * @returns What {@link linkWithoutStaleReceipt} returns.
  * @throws What {@link linkWithoutStaleReceipt} throws.
  * @example
- * await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal) // the config stands and receipt.json is gone
+ * await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal) // => { journal, isRetiredKept: false }: the config stands and receipt.json is gone
  */
 async function linkRetiringStaleReceipt(
   context: Context,
   temporary: string,
   staleReceipt: Receipt | undefined,
   journal: Pending,
-): Promise<void> {
-  const retiredPath =
+): Promise<LinkedRecord> {
+  const moved =
     staleReceipt && journal.generation
       ? await retireStaleReceipt(context, staleReceipt, journal.generation)
       : undefined
@@ -1371,14 +1518,57 @@ async function linkRetiringStaleReceipt(
     await link(temporary, context.path)
   } catch (error) {
     // Nothing of this setup stands at the config name: the old receipt stands again, or the failure says where it is.
-    if (retiredPath) await putBackRetiredReceipt(context, retiredPath, error)
+    if (moved) await putBackRetiredReceipt(context, moved.retiredPath, error)
     throw error
   }
-  // The link stands: the old receipt covers nothing.
-  if (retiredPath) await unlink(retiredPath).catch(() => undefined)
+  // The link stands: the old receipt covers nothing, and its private name goes only while it still shows that receipt.
+  const retiredEnd = moved ? await dropMovedAfterLink(context, moved) : 'gone'
+  return {
+    // Another file at that name, which Codebook never read: from the next write on, older builds refuse the record that leads there.
+    journal: retiredEnd === 'replaced' ? foreignKeptRecordOf(journal) : journal,
+    isRetiredKept: retiredEnd !== 'gone',
+  }
 }
 
-/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it. */
+/** What a first setup's link left at its old record's private name ({@link dropMovedAfterLink}): `gone` once nothing of the old record is left there, `kept` when that name stays while it may still show the record the setup moved there and verified (the look or the delete failed), `replaced` when it stays because it showed another file, which Codebook never read. */
+type RetiredNameEnd = 'gone' | 'kept' | 'replaced'
+
+/** What a first setup's link leaves for its publish record ({@link linkWithoutStaleReceipt}): the record the caller writes from then on (the one written before the link, or its shape older builds refuse once the old record's private name showed another file, {@link foreignKeptRecordOf}), and whether that name stayed ({@link Published.isRetiredKept}), so the caller keeps that record. */
+type LinkedRecord = { journal: Pending; isRetiredKept: boolean }
+
+/**
+ * Deletes a first setup's old record from its private name once that setup's config stands, only while a synchronous look right before the delete still shows the file the setup moved there and verified ({@link retireStaleReceipt}), so a file another program put there while the config was linked in is never deleted unread; called only by {@link linkRetiringStaleReceipt}.
+ * A look through the thread pool comes first ({@link lookAheadAt}), so a storage that already stalls stalls there, where the setup's budget answers. Limits: a file put there between the synchronous look and the delete is not seen (no Node primitive unlinks by inode), and a stall that starts between the two looks still holds the extension host's thread.
+ * @param context - The run; its seam is called around the synchronous look ({@link nameStateNow}).
+ * @param moved - The private name and the look at it before the setup's read of the record it moved there ({@link RetiredMove}).
+ * @returns
+ * - `gone` once that name is gone: deleted now, or already empty, so nothing of the old record is left to settle
+ * - `replaced` when it stays because it shows another file, which is never read: the caller keeps the publish record in the shape older builds refuse ({@link foreignKeptRecordOf}), so the next run settles that name ({@link settleRetiredReceipt})
+ * - `kept` when it stays because the look or the delete failed: the caller keeps the publish record, so the next run settles that name
+ * @example
+ * await dropMovedAfterLink(context, moved) // => 'replaced' after a sync tool put another file at the private name during the config's link
+ */
+async function dropMovedAfterLink(
+  context: Context,
+  { retiredPath, look }: RetiredMove,
+): Promise<RetiredNameEnd> {
+  await lookAheadAt([retiredPath])
+  const state = nameStateNow(context, retiredPath, look)
+  // Nothing stands there any more: nothing of the old record is left to delete.
+  if (state === 'gone') return 'gone'
+  // Another file there: it is never deleted unread, and the publish record that leads the next run there keeps older builds from putting it back.
+  if (state === 'changed') return 'replaced'
+  // A look that failed: the name stays, and the publish record leads the next run there.
+  if (state !== 'still') return 'kept'
+  return unlink(retiredPath).then(
+    (): RetiredNameEnd => 'gone',
+    // A name already gone is what the delete was for; another failure keeps the name and the record that leads there.
+    (cause: unknown): RetiredNameEnd =>
+      codeOf(cause) === 'ENOENT' ? 'gone' : 'kept',
+  )
+}
+
+/** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it or changed after the read that told; `undeleted` when the moved record was to be deleted beside a record that covers it and the delete failed, or when its private name after a put-back's link that stood could not go, because the looks no longer showed the linked record at `receipt.json` and at that name as a second name of it or the delete failed ({@link dropLinkedPrivateName}); `linked-unverified` when after such a link `receipt.json` shows another file than the record that was read, which nothing proves the link's own ({@link refuseUnverifiedLink}), or the file it put there no longer holds that record ({@link dropLinkedPrivateName}); `moved-gone` when the setup that moved the record found its private name empty as it went to put it back ({@link endOnEmptyName}), `moved-gone-beside` when it found that name empty as it settled the record beside something that stands at `receipt.json` ({@link settleTakenName}); `moved-foreign` when the file at the private name is no record of this config while nothing stands at `receipt.json` ({@link settleForeignMoved}), `moved-foreign-other` when something that is not Codebook's record of that entry stands there instead, and `moved-foreign-unread` when Codebook could not tell what stands there. */
 type UnrestoredStanding =
   | 'other'
   | 'foreign'
@@ -1387,6 +1577,13 @@ type UnrestoredStanding =
   | 'moved-changed'
   | 'superseded'
   | 'config-unread'
+  | 'undeleted'
+  | 'linked-unverified'
+  | 'moved-gone'
+  | 'moved-gone-beside'
+  | 'moved-foreign'
+  | 'moved-foreign-other'
+  | 'moved-foreign-unread'
 
 /** What the publish record tells about a first setup's link when that setup's moved record could not go back ({@link Pending.notLinked}): `marked` when it says that nothing of the setup was linked; `unwritten` when the setup itself could not write that mark ({@link UnrestoredReceiptError.withoutMark}); `unmarked` when a later run settles a record without that mark ({@link PutBackOptions.mark}), which also a setup that linked its config leaves, so the records that remain cannot tell whether the old record may go back. */
 type PublishMark = 'marked' | 'unwritten' | 'unmarked'
@@ -1425,6 +1622,18 @@ class UnrestoredReceiptError extends Error {
       'unwritten',
     )
   }
+
+  /** Whether the file this error keeps at the private name is one Codebook did not verify as its record of this config: no record of this config, beside a record of this config at `receipt.json` (`foreign`, {@link compareStandingReceipt}) or beside anything else there ({@link settleForeignMoved}), or a file that replaced the record Codebook read there (`moved-changed` and `linked-unverified`), so the publish record that leads there is written in the shape older builds refuse ({@link foreignKeptRecordOf}). */
+  get isForeignKept(): boolean {
+    return (
+      this.standing === 'foreign' ||
+      this.standing === 'moved-foreign' ||
+      this.standing === 'moved-foreign-other' ||
+      this.standing === 'moved-foreign-unread' ||
+      this.standing === 'moved-changed' ||
+      this.standing === 'linked-unverified'
+    )
+  }
 }
 
 /**
@@ -1436,25 +1645,37 @@ class UnrestoredReceiptError extends Error {
  * @returns
  * - Without `standing`: the sentence that the next run puts the record back; unless marked, that it decides again whether it goes back
  * - `other`: the sentence that asks the learner to move what stands there to another folder, after which that run puts the old record back (unless marked: decides again)
- * - `foreign`: the sentence that asks the learner to move the moved file, which is no record of this config, to another folder, and never what stands at `receipt.json`
- * - `unread`: the sentence that Codebook kept both files and looks again, which advises no removal
+ * - `unread`: the sentence that Codebook kept the old record and its publish record, changed nothing at `receipt.json` and looks again, which advises no removal
  * - `moved-unread`: the sentence that names the private file Codebook could not read and asks to delete neither record
  * - `moved-changed`: the sentence that the file at the private name changed while Codebook read it, so it kept both and looks again, which advises no removal
  * - `superseded`: the sentence that Codebook's record of the entry the config holds stands at `receipt.json` again and asks to move the old record, never that record, to another folder
- * - `config-unread`: the sentence that Codebook could not read the config to tell whether the record at `receipt.json` belongs to its entry, so it kept both and looks again, which names no record to move
+ * - `config-unread`: the sentence that Codebook could not read the config to tell whether the record at `receipt.json` belongs to its entry, or that config changed after that read, so it kept both and looks again, which names no record to move
+ * - `undeleted`, `linked-unverified`, `moved-gone`, `moved-gone-beside`, and the answers for a file at the private name that is no record of this config (`foreign`, `moved-foreign`, `moved-foreign-other`, `moved-foreign-unread`): what {@link keptNameSentence} words
  * @example
  * unrestoredSentence(context, retiredPath, 'other', 'marked')   // => 'Codebook moved its own old record … because something that is not Codebook's record of that entry stands at …/receipt.json; move it to another folder, then run Codebook: Set Up AI Chat again, and that run puts the old record back.'
  * unrestoredSentence(context, retiredPath, 'other', 'unmarked') // => '… stands at …/receipt.json, and it cannot tell from the remaining records whether the old record may go back; move what stands there to another folder, then run Codebook: Set Up AI Chat again, and that run decides again whether the old record goes back.'
  */
 function unrestoredSentence(
-  { path, receiptPath, pendingPath, retry }: Context,
+  context: Context,
   retiredPath: string,
   standing: UnrestoredStanding | undefined,
   mark: PublishMark,
 ): string {
-  // The moved file is no record of this config, so it is not called Codebook's old record, and the record of this config that stands stays where it is.
-  if (standing === 'foreign')
-    return `Codebook moved a file that is no record of Devin Desktop's MCP config at ${path} from ${receiptPath} to ${retiredPath} and kept it there, because its record of that config stands at ${receiptPath} again; move that file to another folder, ${retry}.`
+  const { path, receiptPath, pendingPath, retry } = context
+  // Only the setup itself knows that its mark failed; a later run sees a record without the mark, which a setup that linked its config leaves too.
+  const undecided =
+    mark === 'unwritten'
+      ? `it could not note in its publish record at ${pendingPath} that nothing of this setup was linked`
+      : 'it cannot tell from the remaining records whether the old record may go back'
+  // The old record's private file itself decided the end: its own sentence names that file.
+  const keptName = keptNameSentence(
+    context,
+    retiredPath,
+    standing,
+    mark,
+    undecided,
+  )
+  if (keptName !== undefined) return keptName
   // The record that stands owns the entry the config holds and the moved one owns nothing there: only the moved one is to be moved.
   if (standing === 'superseded')
     return `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and kept it there, because its record of the "${SERVER_NAME}" entry that Devin Desktop's MCP config at ${path} holds stands at ${receiptPath} again; move that old record to another folder, ${retry}.`
@@ -1462,28 +1683,141 @@ function unrestoredSentence(
   if (standing === 'moved-unread')
     return `Codebook could not read its own old record of a setup whose entry is gone, which it had moved from ${receiptPath} to ${retiredPath}, so it kept that file and the publish record at ${pendingPath} and the next run reads it again; delete neither, make that file readable by you if it is not, ${retry}.`
   const lead = `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back`
-  // Only the setup itself knows that its mark failed; a later run sees a record without the mark, which a setup that linked its config leaves too.
-  const undecided =
-    mark === 'unwritten'
-      ? `it could not note in its publish record at ${pendingPath} that nothing of this setup was linked`
-      : 'it cannot tell from the remaining records whether the old record may go back'
   // Another file stood at the private name by the end of the read: nothing the read compared may be deleted, so both stay.
   if (standing === 'moved-changed')
     return `${lead}, because the file at ${retiredPath} changed while Codebook read it. Codebook kept both files, so the next run looks again; ${retry}.`
-  // Without the config nothing tells which record owns its entry, so neither is to be moved.
+  // Without the config, or with a config that changed after the read that told, nothing tells which record owns its entry, so neither is to be moved.
   if (standing === 'config-unread')
-    return `${lead}, because it could not read Devin Desktop's MCP config at ${path} to tell whether the record at ${receiptPath} belongs to its "${SERVER_NAME}" entry. Codebook kept both files, so the next run looks again; look at that config, ${retry}.`
+    return `${lead}, because it could not read Devin Desktop's MCP config at ${path} to tell whether the record at ${receiptPath} belongs to its "${SERVER_NAME}" entry, or that config changed after Codebook read it to tell. Codebook kept both files, so the next run looks again; look at that config, ${retry}.`
   // A folder, another file or a record of an entry the config does not hold: moving it away frees the name without deleting anything.
   if (standing === 'other')
     return mark === 'marked'
       ? `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}; move it to another folder, ${retry}, and that run puts the old record back.`
       : `${lead}, because something that is not Codebook's record of that entry stands at ${receiptPath}, and ${undecided}; move what stands there to another folder, ${retry}, and that run decides again whether the old record goes back.`
-  // Nothing is known about what stands there, so nothing is to be moved or removed.
+  // Nothing is known about what stands there, so nothing is to be moved or removed; the sentence names the files Codebook kept, since receipt.json may hold nothing by then.
   if (standing === 'unread')
-    return `${lead}, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept both files, so the next run looks again; make that file readable by you if it is not, ${retry}.`
+    return `${lead}, because it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing). Codebook kept that old record and its publish record at ${pendingPath} and changed nothing at ${receiptPath}, so the next run looks again; make what stands at ${receiptPath} readable by you if it is not, ${retry}.`
   return mark === 'marked'
     ? `${lead}, so the next run puts it back; if that fails too, move that file back by hand, ${retry}.`
     : `${lead}, and ${undecided}, so it kept both files and the next run decides again whether that record goes back; ${retry}.`
+}
+
+/**
+ * Words the ends of a put-back that the old record's private file itself decided, apart from what stands at `receipt.json`; called only by {@link unrestoredSentence}, which keeps its own branches for the other answers.
+ * @param context - The run; gives the paths and the command to run again.
+ * @param retiredPath - The private name that holds the old record.
+ * @param standing - Why the old record was kept ({@link UnrestoredStanding}); undefined when the link failed otherwise.
+ * @param mark - What the publish record tells about the setup's link ({@link PublishMark}).
+ * @param undecided - The clause that says why the remaining records cannot tell whether the old record may go back, for a `mark` other than `marked`.
+ * @returns
+ * - `undeleted`: the {@link retiredDropRefusal} sentence, which names that file and the publish record that stay, and that the next run looks at that file again
+ * - `linked-unverified`: the sentence that a put-back put another file at `receipt.json` than the record Codebook had read at the private name and could not take that back, so what stands at `receipt.json` is unverified; it names both files and the publish record, which stay, and says that the next run looks at both names again
+ * - `moved-gone`, `moved-gone-beside`: what {@link goneNameSentence} words
+ * - `foreign`, `moved-foreign`, `moved-foreign-other`, `moved-foreign-unread`: what {@link foreignMovedSentence} words
+ * - undefined for every other answer
+ * @example
+ * keptNameSentence(context, retiredPath, 'undeleted', 'marked', undecided)  // => 'Codebook could not delete …/receipt.json.<generation>.retired, its own old record of a setup whose entry is gone (…), so it kept that file and the publish record at …/pending.json, and the next run looks at that file again; …'
+ * keptNameSentence(context, retiredPath, 'moved-gone', 'marked', undecided) // => 'Codebook moved its own old record … and nothing stood at … when it went to put that record back (another program moved or deleted it), so it kept its publish record at …/pending.json, …'
+ * keptNameSentence(context, retiredPath, 'other', 'marked', undecided)      // => undefined
+ */
+function keptNameSentence(
+  context: Context,
+  retiredPath: string,
+  standing: UnrestoredStanding | undefined,
+  mark: PublishMark,
+  undecided: string,
+): string | undefined {
+  const { path, receiptPath, pendingPath, retry } = context
+  // The delete beside a record that covers the old one failed: that file and the publish record that leads to it stay.
+  if (standing === 'undeleted')
+    return retiredDropRefusal(context, retiredPath).message
+  // The put-back's link put a file Codebook never read at receipt.json and could not take it back: both names stay, and receipt.json is called unverified.
+  if (standing === 'linked-unverified')
+    return `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${path} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; ${retry}.`
+  // A file at the private name that is no record of this config is never called Codebook's old record, and no put-back is promised for it.
+  const foreign = foreignMovedSentence(context, retiredPath, standing)
+  if (foreign !== undefined) return foreign
+  // An empty name proves nothing in the setup that moved the record there: the publish record stays, and the next run looks there again.
+  if (standing === 'moved-gone' || standing === 'moved-gone-beside')
+    return goneNameSentence(
+      context,
+      retiredPath,
+      standing === 'moved-gone-beside',
+      mark,
+      undecided,
+    )
+  return undefined
+}
+
+/**
+ * Words a setup's put-back that found the old record's private name empty ({@link endOnEmptyName}); called only by {@link keptNameSentence}.
+ * @param context - The run; gives the paths and the command to run again.
+ * @param retiredPath - The private name that was found empty.
+ * @param isBesideStanding - Whether the setup found that name empty as it settled the record beside something at `receipt.json` (`moved-gone-beside`): the next run then compares a record that stands at the private name by then with what stands there, so the sentence promises a put-back only while nothing stands at `receipt.json`.
+ * @param mark - What the publish record tells about the setup's link ({@link PublishMark}).
+ * @param undecided - The clause that says why the remaining records cannot tell whether the old record may go back, for a `mark` other than `marked`.
+ * @returns
+ * - marked: the sentence that nothing stood at the private name, so the setup kept its publish record and the next run looks there again and puts back a record of this config that stands there by then, beside something at `receipt.json` only after comparing the two and only while nothing stands there
+ * - otherwise: the sentence that the next run decides again whether such a record goes back
+ * @example
+ * goneNameSentence(context, retiredPath, true, 'marked', undecided) // => '… when it went to settle that record beside what stands at …/receipt.json (another program moved or deleted it), so it kept its publish record at …/pending.json, and the next run looks at … again and compares …'
+ */
+function goneNameSentence(
+  { path, receiptPath, pendingPath, retry }: Context,
+  retiredPath: string,
+  isBesideStanding: boolean,
+  mark: PublishMark,
+  undecided: string,
+): string {
+  const step = isBesideStanding
+    ? `settle that record beside what stands at ${receiptPath}`
+    : 'put that record back'
+  const gone = `Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to ${step} (another program moved or deleted it)`
+  if (mark !== 'marked')
+    return `${gone}, and ${undecided}, so the next run decides again whether a record that stands at ${retiredPath} by then goes back; ${retry}.`
+  // Beside something at receipt.json the next run compares the two: a record of the same entry there wins, and the private one goes back only to an empty name.
+  const next = isBesideStanding
+    ? `compares a record of Devin Desktop's MCP config at ${path} that stands there by then with what stands at ${receiptPath}, and puts that record back only while nothing stands there`
+    : `puts back a record of Devin Desktop's MCP config at ${path} that stands there by then`
+  return `${gone}, so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and ${next}; ${retry}.`
+}
+
+/**
+ * Words a put-back that found a file at the old record's private name that is no record of this config, by what stands at `receipt.json`; called only by {@link keptNameSentence}.
+ * That file is never called Codebook's old record and no put-back is promised for it: the setup that moved the record there may have moved a record another program replaced since, or a file another program had put at `receipt.json`, so the sentence says only that another program may have put it there. Unless Codebook's record of this config stands at `receipt.json`, the sentence also says what the run after the move does: with no record of Codebook's there, that run takes a `codebook` entry the config holds for one of the learner's own, because no record proves it Codebook's.
+ * @param context - The run; gives the paths and the command to run again.
+ * @param retiredPath - The private name that holds that file.
+ * @param standing - Why the file was kept ({@link UnrestoredStanding}); undefined when the link failed otherwise.
+ * @returns
+ * - `foreign`: the sentence that Codebook's record of this config stands at `receipt.json` again, so only that file is to be moved to another folder
+ * - `moved-foreign`: the sentence that asks to move that file to another folder
+ * - `moved-foreign-other`: the sentence that something that is not Codebook's record of that entry stands at `receipt.json`, so that file and what stands there are to be moved to another folder
+ * - `moved-foreign-unread`: the sentence that Codebook could not tell what stands at `receipt.json`, so that file is to be moved and what stands there made readable
+ * - undefined for every other answer
+ * @example
+ * foreignMovedSentence(context, retiredPath, 'moved-foreign') // => 'Codebook did not put back the file at …, where it had moved what stood at …/receipt.json for a setup, because that file is no record of Devin Desktop's MCP config at … (another program may have put it there); it kept that file and its publish record at …/pending.json, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at …/receipt.json by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.'
+ * foreignMovedSentence(context, retiredPath, 'other')         // => undefined
+ */
+function foreignMovedSentence(
+  context: Context,
+  retiredPath: string,
+  standing: UnrestoredStanding | undefined,
+): string | undefined {
+  const { path, receiptPath, pendingPath, retry } = context
+  const lead = `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because that file is no record of Devin Desktop's MCP config at ${path} (another program may have put it there)`
+  const kept = `it kept that file and its publish record at ${pendingPath}`
+  // Codebook's record of this config stands at receipt.json: only that file is to be moved, and that record stays where it is.
+  if (standing === 'foreign')
+    return `${lead}, and its record of that config stands at ${receiptPath} again; ${kept}, so move that file to another folder, ${retry}.`
+  // No record proves the entry Codebook's once that file is moved: the run after the move says so instead of finding it current.
+  const unowned = ` Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "${SERVER_NAME}" entry that the config holds for one of your own and leaves it as it is.`
+  if (standing === 'moved-foreign')
+    return `${lead}; ${kept}, so move that file to another folder, ${retry}.${unowned}`
+  if (standing === 'moved-foreign-other')
+    return `${lead}, and something that is not Codebook's record of its "${SERVER_NAME}" entry stands at ${receiptPath}; ${kept}, so move that file and what stands at ${receiptPath} to another folder, ${retry}.${unowned}`
+  if (standing === 'moved-foreign-unread')
+    return `${lead}, and it could not tell what stands at ${receiptPath} (it could not look at that name, or what stood there kept changing); ${kept}, so move that file to another folder, make what stands at ${receiptPath} readable by you if it is not, ${retry}.${unowned}`
+  return undefined
 }
 
 /**
@@ -1519,9 +1853,9 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * @param context - The run.
  * @param temporary - The staged file.
  * @param config - The inode the config will have.
- * @param journal - The record as it was written before the link-in; turns to completed once the config stands.
+ * @param journal - The record as it was written before the link-in; turns to completed once the config stands, in the shape older builds refuse when the old record's private name showed another file by then ({@link LinkedRecord}).
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
- * @returns The inode, and the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config).
+ * @returns The inode, the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), and whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too).
  * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back.
  */
 async function createConfig(
@@ -1531,9 +1865,15 @@ async function createConfig(
   journal: Pending,
   staleReceipt: Receipt | undefined,
 ): Promise<Published> {
+  let linked: LinkedRecord
   try {
     context.seam?.afterCheck?.()
-    await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal)
+    linked = await linkWithoutStaleReceipt(
+      context,
+      temporary,
+      staleReceipt,
+      journal,
+    )
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
     const failure = failureOf(error)
@@ -1546,32 +1886,36 @@ async function createConfig(
     )
   }
   context.seam?.afterPublish?.(undefined)
-  // The config stands: the record says so, and the staged name is only another name of it.
-  const didRecord = await markCompleted(context, journal)
+  // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
+  const didRecord = await markCompleted(context, linked.journal)
   const isStagedGone = didRecord && (await didUnlink(temporary))
   return {
     config,
     keptLeft: isStagedGone ? [] : [{ path: temporary, holds: 'new' }],
     isRecorded: didRecord,
+    isRetiredKept: linked.isRetiredKept,
   }
 }
 
 /**
  * Moves the config aside to its private name as the first step of a replacement: whatever file stands at the config name at that instant is the file that moves, so it is the one that gets compared; called by {@link replaceConfig}.
+ * The hard-link probe runs first, so the last looks (a take-back's at its records, {@link assertTakeBackRecordStill}, then the config's) come after every awaited step and only synchronous looks stand between the last await and the rename.
  * @param context - The run.
  * @param replacement - The staged file, the probe name, the private name and the identity the config had when it was read.
- * @throws A {@link refusal} when the config changed since the read or is gone; or the hard link error of a file system that cannot link. The staged file and the pending record are removed then, because nothing moved.
+ * @throws A {@link refusal} when the config changed since the read or is gone; or the hard link error of a file system that cannot link; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record or own rollback record no longer stands as its run read or wrote it. The staged file and the pending record are removed then, because nothing moved.
  */
 async function moveConfigAside(
   context: Context,
   { temporary, probePath, displaced, identity }: Replacement,
 ): Promise<void> {
   try {
-    assertConfigUnchanged(context, identity)
-    context.seam?.afterCheck?.()
     // The config name is empty until the link-in, so a file system that cannot link is found before anything moves; the probe's name is in the record.
     await link(temporary, probePath)
     await unlink(probePath)
+    // The last looks come after the probe's awaited link and unlink, so a record or config moved or replaced meanwhile is seen before the config moves.
+    await assertTakeBackRecordStill(context)
+    assertConfigUnchanged(context, identity)
+    context.seam?.afterCheck?.()
     await rename(context.path, displaced.path).catch((error: unknown) => {
       throw codeOf(error) === 'ENOENT' ? changedWhileWorking(context) : error
     })
@@ -1614,16 +1958,21 @@ function mismatchRefusal(
  * @param context - The run.
  * @param replacement - The staged file, the displaced file (whose bytes equal what was read), the record and the stale receipt.
  * @param opened - The displaced copy's handle and own mode.
+ * @returns The publish record the caller writes from now on and whether the old record's private name stayed after the link ({@link LinkedRecord}), so the publish record stays.
  * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
  */
 async function linkInStaged(
   context: Context,
   { temporary, displaced, journal, staleReceipt }: Replacement,
   opened: DisplacedHandle | undefined,
-): Promise<void> {
+): Promise<LinkedRecord> {
   try {
-    await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal)
-    return
+    return await linkWithoutStaleReceipt(
+      context,
+      temporary,
+      staleReceipt,
+      journal,
+    )
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
     const failure = failureOf(error)
@@ -1631,7 +1980,9 @@ async function linkInStaged(
       // A save created the config after the move-aside: it is kept, and the displaced copy is handed to the learner, never deleted by a later run. A receipt that could not go back keeps its mark that nothing was linked.
       const isHanded = await handOver(
         context,
-        failure === error ? journal : { ...journal, notLinked: true },
+        error instanceof UnrestoredReceiptError
+          ? notLinkedRecordOf(journal, error)
+          : journal,
       )
       // An unrecorded handover leaves the record that puts the copy back once the config name is empty: the refusal says so.
       throw withUnrestoredNote(
@@ -1709,10 +2060,18 @@ async function replaceConfig(
     if (!held || !isExpectedCopy(held, displaced))
       return await putDisplacedBack(context, replacement, opened)
     context.seam?.afterCompare?.()
-    await linkInStaged(context, replacement, opened)
+    const linked = await linkInStaged(context, replacement, opened)
     context.seam?.afterPublish?.(displaced.path)
-    // From here the config is published; cleanup failures are reported and leave the pending record.
-    return { config, ...(await settlePublished(context, replacement, held)) }
+    // From here the config is published; cleanup failures are reported and leave the pending record, written in the shape the link left it.
+    return {
+      config,
+      isRetiredKept: linked.isRetiredKept,
+      ...(await settlePublished(
+        context,
+        { ...replacement, journal: linked.journal },
+        held,
+      )),
+    }
   } finally {
     await opened?.handle.close()
   }
@@ -1861,7 +2220,7 @@ function assertWithinSizeLimit(context: Context, serialized: string): void {
  * @param context - The run.
  * @param look - What was read; must be present.
  * @returns The private copy that stays when it could not be deleted or changed since the comparison.
- * @throws A {@link refusal} when the file changed or the copy cannot go back; nothing is deleted.
+ * @throws A {@link refusal} when the file changed or the copy cannot go back; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record or own rollback record no longer stands as its run read or wrote it; nothing is deleted.
  */
 async function deleteConfig(
   context: Context,
@@ -1886,6 +2245,7 @@ async function deleteConfig(
   }
   await writeRecord(context, context.pendingPath, journal)
   try {
+    await assertTakeBackRecordStill(context)
     assertConfigUnchanged(context, look.identity)
     context.seam?.afterCheck?.()
     await rename(context.path, moved.path)
@@ -1902,7 +2262,7 @@ async function deleteConfig(
  * @param moved - The private name and the bytes and inode the file must have.
  * @param journal - The record as it was written before the rename.
  * @returns The copy that stays when it could not be deleted.
- * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot go back.
+ * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot go back; what {@link finishRemoval} throws, and a {@link TakenOutConflictError} when the renamed file is gone and a take-back's tracked record could not be deleted ({@link dropFinishedRecord}).
  */
 async function settleMovedAside(
   context: Context,
@@ -1919,7 +2279,7 @@ async function settleMovedAside(
     context.seam?.afterMoveAside?.(moved.path)
     // The renamed file is gone: nothing is left to settle.
     if (!opened) {
-      await dropPending(context)
+      await dropFinishedRecord(context)
       return { keptLeft: [] }
     }
     return await settleHeldRemoval(context, { moved, journal }, opened)
@@ -1970,7 +2330,7 @@ async function settleHeldRemoval(
  * @param context - The run.
  * @param discarded - What became of the old file and where it stays ({@link Discarded}); `unrecorded` never reaches here.
  * @returns The copy that stays, if any.
- * @throws A {@link savedAgainRefusal} when a file stands at the config name; the receipt and that file stay as they are.
+ * @throws A {@link savedAgainRefusal} when a file stands at the config name; the receipt and that file stay as they are. A {@link TakenOutConflictError} when the old file was deleted and a take-back's tracked record could not be deleted because its name shows another file ({@link dropFinishedRecord}).
  */
 async function finishRemoval(
   context: Context,
@@ -1982,7 +2342,7 @@ async function finishRemoval(
     throw savedAgainRefusal(context)
   }
   if (!isDeleted) return { keptLeft: [copy] }
-  await dropPending(context)
+  await dropFinishedRecord(context)
   return { keptLeft: [] }
 }
 
@@ -2007,7 +2367,7 @@ async function readRecord<Schema extends z.ZodType>(
 }
 
 /**
- * Reads one of Codebook's own records like {@link readRecord}, together with the version it read: the inode and the bytes' hash from the same open handle ({@link readRecordFile}); called by {@link readRecord}, and by {@link settleRollbackJournal}, which retires a held journal only as the version it settled.
+ * Reads one of Codebook's own records like {@link readRecord}, together with the version it read: the inode and the bytes' hash from the same open handle ({@link readRecordFile}); called by {@link readRecord}, by {@link settleRollbackJournal}, which retires a held journal only as the version it settled, and for the publish record by {@link markTakeBackOwed} and {@link inspect}, which mark, adopt or end only the version a decision read ({@link heldPublishContext}).
  * @param path - The record file.
  * @param schema - The shape it must have.
  * @param retry - The command a refusal asks the learner to run again.
@@ -2115,11 +2475,12 @@ function parseRecord<Schema extends z.ZodType>(
 
 /**
  * Writes one of Codebook's own records (the receipt, `pending.json` or a rollback's journal) atomically; every record write of a run goes through here, so a test sees each one at {@link DevinMcpTestSeam.beforeRecordWrite}.
- * A write at the pending path of a context that tracks its journal's version ({@link Context.journalVersion}) replaces that version with the one it published ({@link publishedVersionOf}).
- * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename.
+ * A write at the pending path of a context that tracks its journal's version ({@link Context.journalVersion}) goes on only while that name shows the version this run settled or last wrote, or nothing ({@link writeTrackedJournal}), and then replaces that version with the one of the file it wrote itself ({@link stageRecord}), never with what stands at the name afterwards.
+ * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename (for a tracked journal also before the last look at its name).
  * @param path - The record file.
  * @param value - The complete record.
- * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam throws; the previous record then stays byte for byte, and so does a tracked version.
+ * @param assertStill - A synchronous look at other names that must still hold, called after the seam (and a tracked journal's last look) right before the rename or link, so nothing that the caller's earlier look found can change while the bytes are flushed; throwing cancels the write. A tracked journal's write awaits a look at its names right before its last looks ({@link writeTrackedJournal}); any other write awaits it before it stages its bytes, since its synchronous looks run inside {@link atomicPrivateWrite} (limit: a stall that starts while those bytes are flushed holds the extension host's thread at that look). Undefined when nothing else must hold ({@link retirePending}).
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam or `assertStill` throws; a {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again. The previous record then stays byte for byte, and so does a tracked version.
  * @example
  * await writeRecord(context, context.pendingPath, { ...journal, phase: 'completed' })
  */
@@ -2127,35 +2488,290 @@ async function writeRecord(
   context: Context,
   path: string,
   value: unknown,
+  assertStill?: StillLook,
 ): Promise<void> {
-  await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () =>
-    context.seam?.beforeRecordWrite?.({ path, record: value }),
-  )
-  // Only the journal a settlement tracks learns the version this write published.
-  if (context.journalVersion && path === context.pendingPath)
-    context.journalVersion.current = await publishedVersionOf(path, value)
+  const tracked =
+    path === context.pendingPath ? context.journalVersion : undefined
+  // Every record but a tracked journal is replaced whatever stands at its name.
+  if (!tracked) {
+    if (assertStill) await lookAheadAt(assertStill.names)
+    await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () => {
+      context.seam?.beforeRecordWrite?.({ path, record: value })
+      assertStill?.assert()
+    })
+    return
+  }
+  // Only a write that went through moves the version: after a refused one the next guarded step on that name finds the conflict again.
+  tracked.current = await writeTrackedJournal(context, value, assertStill)
 }
 
 /**
- * Gives the version of a journal that this run itself just published; called only by {@link writeRecord} for a context that tracks its journal ({@link Context.journalVersion}), so the held journal {@link settleRollbackJournal} may retire is the one this run left, never one another program put at its name.
- * The hash is of the bytes {@link atomicPrivateWrite} wrote (the value's JSON); the inode is the one the name shows right after the rename, looked at without holding the extension host's thread. A file another program renamed in meanwhile pairs its inode with this run's hash, a version no file shows, so nothing is deleted then.
- * @param path - The journal's path.
- * @param value - The record just written.
- * @returns The inode its name shows and the hash of the bytes written; undefined when the name shows nothing or cannot be looked at, so no later retirement deletes anything.
+ * Writes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote, or nothing; called only by {@link writeRecord}.
+ * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed under a fresh private name first ({@link stageRecord}), and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced; the staged name is looked at last, so only the file this call wrote is renamed ({@link lookAtStagedRecord}), and after the rename the name must show that file ({@link assertPublishedRecord}).
+ * Each synchronous look comes right after an awaited look at the same name, so a storage that already stalls holds this step in the thread pool, where the step's budget answers, instead of the extension host's thread; a stall that starts between the two looks still holds that thread.
+ * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode. Moving the record aside first and linking the new one in would leave no record at the only name any build reads until that link, so a process that ends there would lose the rollback the record tracks.
+ * @param context - The run; its pending path is the journal, its seam is called right before the last look.
+ * @param value - The complete journal.
+ * @param assertStill - What else must still hold, looked at right after the last look, after an awaited look at its names together with the record's own ({@link writeRecord}).
+ * @returns The version this write published: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, before or right after the rename, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write, the look at the staged name ({@link leftoverReplacedError}) or `assertStill` throws. The name then stays as it was, unless another program changed it after the rename.
  * @example
- * await publishedVersionOf(journalPath, record) // => { ino: 43n, sha256: 'cd…' }
+ * await writeTrackedJournal(rollbackContext, retained) // => { ino: 43n, sha256: 'cd…' }; pending.json.rollback holds `retained` while it held this run's version
+ * await writeTrackedJournal(heldRun, retained) // throws a `gone` JournalConflictError once a sync tool moved pending.json away after the run read it
  */
-async function publishedVersionOf(
+async function writeTrackedJournal(
+  context: Context,
+  value: unknown,
+  assertStill?: StillLook,
+): Promise<RecordVersion> {
+  // No version of this run stands at the name: the write claims it, never replacing what stands there.
+  if (context.journalVersion?.current === undefined)
+    return claimJournal(context, value, assertStill)
+  const look = await lookAtTrackedJournal(context)
+  // The name went empty since this run's version: a publish record a decision read is gone and stays gone, a journal of this run's rollback is claimed again.
+  if (!look) {
+    if (context.journalVersion.refusesEmptyName)
+      throw journalConflictError(context, 'gone')
+    return claimJournal(context, value, assertStill)
+  }
+  const path = context.pendingPath
+  const staged = await stageRecord(path, value)
+  try {
+    context.seam?.beforeRecordWrite?.({ path, record: value })
+    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the record's name, `assertStill`'s names, the staged name.
+    await lookAheadAt([path, ...(assertStill?.names ?? [])])
+    const source = await lookAtStagedRecord(staged)
+    assertTrackedJournalStill(context, look)
+    assertStill?.assert()
+    assertStagedRecordStill(staged, source)
+    await rename(staged.staged, path)
+  } catch (error) {
+    // Nothing was published: the staged name goes while it shows the file this call wrote, and the name stays as it was.
+    await dropStagedRecord(staged)
+    throw error
+  }
+  await assertPublishedRecord(context, staged.version)
+  return staged.version
+}
+
+/**
+ * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file, or, where the storage's file system gives no file a second name, with an exclusive create, which never replaces one either ({@link createJournalInPlace}); called by {@link writeTrackedJournal} when no version is known or the name was found empty.
+ * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}). That look after the link reads the journal through its open handle, and the cleanup awaits the file system after it, so the journal is read again after the cleanup and its name looked at once more, synchronously, as the last step ({@link assertTrackedJournalStill}): the version goes back to the caller, whose next step may move the config to the private name that journal names ({@link deleteConfig}, {@link publishRoot}), only while the name still shows that file.
+ * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A file put at the journal's name, or a move of the journal, after the last look is not seen here; a take-back looks at that name once more right before it moves the config ({@link assertTakeBackRecordStill}). A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run; its pending path is the journal, its seam is called right before the link.
+ * @param value - The complete journal.
+ * @param assertStill - What else must still hold, looked at right after the seam and before the link, after an awaited look at its names ({@link writeRecord}).
+ * @returns The version the link or the create published: the inode of the file at the journal's name and the hash of its bytes.
+ * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link or at the last look, and (`gone`) when it shows nothing then; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the create in place throws otherwise.
+ * @example
+ * await claimJournal(rollbackContext, journal) // => { ino: 44n, sha256: 'ef…' }; pending.json.rollback holds `journal`, or the call throws and the name stays as it was
+ * await claimJournal(rollbackContext, journal) // throws a `changed` JournalConflictError once a sync tool renamed another journal over pending.json.rollback while the staged name was deleted
+ */
+async function claimJournal(
+  context: Context,
+  value: unknown,
+  assertStill?: StillLook,
+): Promise<RecordVersion> {
+  const path = context.pendingPath
+  const staged = await stageRecord(path, value)
+  let version: RecordVersion
+  try {
+    context.seam?.beforeRecordWrite?.({ path, record: value })
+    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order.
+    await lookAheadAt(assertStill?.names ?? [])
+    const source = await lookAtStagedRecord(staged)
+    assertStill?.assert()
+    assertStagedRecordStill(staged, source)
+    version = await link(staged.staged, path).then(
+      () => staged.version,
+      (error: unknown) =>
+        createJournalInPlace(context, value, staged.version.sha256, error),
+    )
+    await assertPublishedRecord(context, version)
+  } finally {
+    // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened, while it shows the file this call wrote.
+    await dropStagedRecord(staged)
+  }
+  // The look after the link read the journal through its open handle, and the cleanup awaited the file system since: the name is read again and looked at once more, synchronously, so a journal another program moved away or replaced meanwhile never lets the caller move the config. The read comes after the cleanup's unlink, which changes the file's change time. A storage that already stalls holds this step at the awaited looks, not at the synchronous one.
+  const published = await assertPublishedRecord(context, version)
+  await lookAheadAt([path])
+  assertTrackedJournalStill(context, published)
+  return version
+}
+
+/**
+ * Creates a tracked rollback journal at its empty name in place, where the storage's file system gives no file a second name; called by {@link claimJournal} when its link fails for another reason than a file at that name, as {@link placeStorageLock} does for the storage lock.
+ * An exclusive create never replaces a file either, and the bytes are flushed before the call returns, so the look after it checks that file's inode and bytes as after a link ({@link assertPublishedRecord}).
+ * Limit: for the time of one write the journal stands with only part of its bytes, so a process that ends then leaves a record every build refuses to read, naming it, until it is removed; a write that fails deletes that name ({@link stageConfigFile}).
+ * @param context - The run; its pending path is the journal.
+ * @param value - The complete journal, as {@link stageRecord} wrote it at the staged name.
+ * @param sha256 - The hash of those bytes ({@link stageRecord}).
+ * @param linkError - Why the link failed.
+ * @returns The version the create published: the inode of the file it created and the hash of its bytes.
+ * @throws A {@link JournalConflictError} (`changed`) when something stands at the journal's name, which stays as it is; what the create or its write throws otherwise.
+ * @example
+ * await createJournalInPlace(rollbackContext, journal, staged.version.sha256, linkError) // => { ino: 45n, sha256: 'ef…' } once a link in an exFAT storage folder answered ENOTSUP
+ */
+async function createJournalInPlace(
+  context: Context,
+  value: unknown,
+  sha256: string,
+  linkError: unknown,
+): Promise<RecordVersion> {
+  // Something stands at the name already: it is never replaced.
+  if (codeOf(linkError) === 'EEXIST')
+    throw journalConflictError(context, 'changed', linkError)
+  const { ino } = await stageConfigFile(
+    context.pendingPath,
+    JSON.stringify(value),
+    PRIVATE_FILE_MODE,
+  ).catch((error: unknown) => {
+    // A file put at the name since the link failed is never replaced either.
+    throw codeOf(error) === 'EEXIST'
+      ? journalConflictError(context, 'changed', error)
+      : error
+  })
+  return { ino, sha256 }
+}
+
+/** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}). */
+type StagedRecord = { staged: string; version: RecordVersion }
+
+/**
+ * Writes a tracked record's complete bytes to a fresh private name beside it and reads that file's inode from its open handle; called by {@link writeTrackedJournal} and {@link claimJournal}, so the version this run tracks after its rename or link is the file it wrote itself, never a file another program renames in at that name afterwards, or the empty name it leaves.
+ * @param path - The record's path; the staged name is `${path}.<uuid>.tmp`.
+ * @param value - The complete record, written as its JSON.
+ * @returns The staged name and the version it publishes: that file's inode and the SHA-256 of the bytes written.
+ * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} or the file cannot be written; the staged name then goes while it still shows the file this call created there ({@link dropFailedStage}), and another program's file there stays.
+ * @example
+ * await stageRecord(journalPath, journal) // => { staged: '…/pending.json.rollback.<uuid>.tmp', version: { ino: 43n, sha256: 'cd…' } }
+ */
+async function stageRecord(
   path: string,
   value: unknown,
-): Promise<RecordVersion | undefined> {
-  const published = await lstatOrAbsent(path).catch(() => undefined)
-  return (
-    published && {
-      ino: published.ino,
-      sha256: bytesSha256(JSON.stringify(value)),
-    }
+): Promise<StagedRecord> {
+  const bytes = JSON.stringify(value)
+  if (Buffer.byteLength(bytes) > DEVIN_MCP_RECORD_LIMIT_BYTES)
+    throw new Error(
+      `Storage limit exceeded (${DEVIN_MCP_RECORD_LIMIT_BYTES} bytes); existing data was retained.`,
+    )
+  const { temporary, ino } = await stageConfigFile(
+    `${path}.${randomUUID()}.tmp`,
+    bytes,
+    PRIVATE_FILE_MODE,
   )
+  return { staged: temporary, version: { ino, sha256: bytesSha256(bytes) } }
+}
+
+/**
+ * Reads a tracked record's staged name again right before the rename or link that publishes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link claimJournal}, which then look at that name synchronously ({@link assertStagedRecordStill}), because another program may put a file at that name after the bytes were flushed.
+ * @param staged - The staged name and the version this run wrote there ({@link stageRecord}).
+ * @returns That file as this read saw it: inode, hash, size and times.
+ * @throws A {@link leftoverReplacedError} naming the staged name when it is gone, shows another inode or other bytes, or cannot be read; nothing is published then, and the file there stays.
+ * @example
+ * await lookAtStagedRecord(staged) // throws once a sync tool swapped another file in at '…/pending.json.rollback.<uuid>.tmp'
+ */
+async function lookAtStagedRecord({
+  staged,
+  version,
+}: StagedRecord): Promise<InspectedCopy> {
+  const source = await inspectCopy(staged).catch(() => undefined)
+  if (source?.ino !== version.ino || source.sha256 !== version.sha256)
+    throw leftoverReplacedError(staged)
+  return source
+}
+
+/**
+ * Looks synchronously, once more, at a tracked record's staged name right before the rename or link that publishes it; called by {@link writeTrackedJournal} and {@link claimJournal} right after their other last looks, with what {@link lookAtStagedRecord} read.
+ * Limit: a file put at the staged name between this look and the rename or link is published; the check after it ({@link assertPublishedRecord}) refuses before anything that rests on the record moves.
+ * @param staged - The staged name ({@link stageRecord}).
+ * @param source - That file as {@link lookAtStagedRecord} read it: its inode, size and times must still show.
+ * @throws A {@link leftoverReplacedError} naming the staged name when it is gone, shows another file, size or times, or cannot be looked at; nothing is published then.
+ * @example
+ * assertStagedRecordStill(staged, source) // throws once a sync tool swapped another file in at the staged name after its read
+ */
+function assertStagedRecordStill(
+  { staged }: StagedRecord,
+  source: InspectedCopy,
+): void {
+  // A look that fails proves nothing: nothing is published.
+  if (!isStagedNameStill(staged, source)) throw leftoverReplacedError(staged)
+}
+
+/**
+ * Checks right after a tracked record's rename or link that its name shows the file this run wrote, inode and bytes; called by {@link writeTrackedJournal} and {@link claimJournal} before they hand that version back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
+ * @param context - The run; its pending path is the record.
+ * @param version - The version this run wrote ({@link stageRecord}).
+ * @returns The record as this read saw it through its open handle (inode, hash, size and times), which {@link claimJournal}'s last synchronous look at the name compares with after its cleanup.
+ * @throws A {@link JournalConflictError}: `gone` when the name is empty (another program moved the record away right after it was published), `changed` when it shows another file or other bytes, `unread` when it cannot be read; the run's tracked version does not move then ({@link writeRecord}).
+ * @example
+ * await assertPublishedRecord(rollbackContext, staged.version) // throws once a sync tool's file was linked in place of the staged record
+ */
+async function assertPublishedRecord(
+  context: Context,
+  version: RecordVersion,
+): Promise<InspectedCopy> {
+  const published = await lookAtTrackedJournal(context, version)
+  // An empty name right after this run published there: another program moved that record away.
+  if (!published) throw journalConflictError(context, 'gone')
+  return published
+}
+
+/**
+ * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} after a write that published nothing and by {@link claimJournal} after its link, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
+ * The name is read through the thread pool first (inode and hash, {@link inspectCopy}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}), so an in-place write after that read is seen by its size and times.
+ * Limits: a file put there, or a write into it, between the last look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
+ * @param staged - The staged name and the version written there ({@link stageRecord}).
+ * @returns Nothing; best effort: a staged name that cannot be read, holds other bytes or cannot be deleted stays, and no build reads it.
+ * @example
+ * await dropStagedRecord(staged) // '…/pending.json.rollback.<uuid>.tmp' is gone while it held this run's file and bytes
+ */
+async function dropStagedRecord({
+  staged,
+  version,
+}: StagedRecord): Promise<void> {
+  const now = await inspectCopy(staged).catch(() => undefined)
+  // Another program's file or bytes at the staged name, none, or a read that failed: nothing is deleted.
+  if (now?.ino !== version.ino || now.sha256 !== version.sha256) return
+  await unlinkStagedWhileStill(staged, now)
+}
+
+/**
+ * Deletes a staged name only while one synchronous look still shows the file a read of it found, after an awaited look at that name ({@link lookAheadAt}); the shared end of {@link dropStagedRecord} and {@link dropFailedStage}, once their read found the file and bytes this run wrote there.
+ * Limits: a file put there, or a write into it, between that look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
+ * @param staged - The staged name.
+ * @param read - That file as {@link inspectCopy} read it.
+ * @returns Nothing; best effort: a name that shows another file, size or times, or that cannot be looked at or deleted, stays.
+ * @example
+ * await unlinkStagedWhileStill(staged, read) // the name is gone unless a sync tool wrote into that file after the read
+ */
+async function unlinkStagedWhileStill(
+  staged: string,
+  read: InspectedCopy,
+): Promise<void> {
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([staged])
+  if (!isStagedNameStill(staged, read)) return
+  await unlink(staged).catch(() => undefined)
+}
+
+/**
+ * Tells, by one synchronous look, whether a staged name still shows the file as a read of it found it (inode, size and times); called by {@link assertStagedRecordStill} right before a rename or link publishes that file, and by {@link unlinkStagedWhileStill} right before its unlink, each after an awaited look at that name.
+ * @param staged - The staged name.
+ * @param read - That file as {@link inspectCopy} read it.
+ * @returns `true` when the name shows that file; `false` when it shows another file, size or times, nothing, or the look failed.
+ * @example
+ * isStagedNameStill(stagedPath, read) // => false once a sync tool wrote into the staged file after the read
+ */
+function isStagedNameStill(staged: string, read: InspectedCopy): boolean {
+  try {
+    return showsChecked(
+      lstatSync(staged, { bigint: true, throwIfNoEntry: false }),
+      read,
+    )
+  } catch {
+    return false
+  }
 }
 
 /** The receipt, when it covers this run's config path. */
@@ -2324,7 +2940,7 @@ type LeftoverLookback = {
 
 /**
  * Tells whether a leftover's name still shows the file that was checked; called right before each link and unlink of a leftover ({@link tidyLeftover}, {@link putBackDisplaced}, {@link discardDisplaced}) and before the move that keeps a copy out of recovery's reach ({@link lookBeforeMove}), because a sync tool may swap another file in between the first look and the call.
- * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode.
+ * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode. Every caller awaits a look at the same name right before ({@link lookAheadAt}, or a read of that name as {@link keepFromRecovery} makes), so a storage that already stalls holds that step in the thread pool; a stall that starts between the two looks still holds the extension host's thread.
  * @param context - The run; its seam is called around the look.
  * @param path - The leftover's name.
  * @param checked - The inode that was checked and, when the call deletes bytes, the size (and times) that were read; a put-back passes no size, because it accepts a recorded file whatever its bytes.
@@ -2363,7 +2979,7 @@ async function isNameStill(
 }
 
 /**
- * Looks at a name as {@link isNameStill} does, and tells a name found empty from one that shows another file; called by {@link isNameStill} and by {@link stillnessOf}, for which an empty private name means that nothing is left there to keep.
+ * Looks at a name as {@link isNameStill} does, and tells a name found empty from one that shows another file; called by {@link isNameStill} and by {@link readMovedForPutBack}, whose look right before a put-back's link tells an empty private name from another file there.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -2385,6 +3001,64 @@ async function nameStateOf(
     if (codeOf(error) === 'ENOENT') return undefined
     throw error
   })
+  return nameStateFrom(context, path, now, checked)
+}
+
+/**
+ * Looks at a name as {@link nameStateOf} does, synchronously, so nothing is awaited between this look and the step it guards; called by {@link stillnessOf}, {@link dropLinkedPrivateName} and {@link dropMovedAfterLink}, whose last looks come right before a first setup's old record or its private name is deleted.
+ * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
+ * @param path - The name to look at.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns
+ * - `still`, `gone` or `changed` as {@link nameStateOf} answers
+ * - `unread` when the look failed
+ * @example
+ * nameStateNow(context, retiredPath, movedLook) // => 'changed' after a sync tool put another file at the private name
+ */
+function nameStateNow(
+  context: Context,
+  path: string,
+  checked: LeftoverLookback,
+): 'still' | 'gone' | 'changed' | 'unread' {
+  context.seam?.beforeLeftoverCheck?.(path)
+  let now: BigIntStats | undefined
+  try {
+    now = lstatSync(path, { bigint: true, throwIfNoEntry: false })
+  } catch {
+    return 'unread'
+  }
+  return nameStateFrom(context, path, now, checked)
+}
+
+/**
+ * Looks at names one after another through the thread pool and drops the answers, right before the synchronous last looks at those names decide a delete or the end of a record ({@link nameStateNow}, {@link isConfigUnchanged}, {@link isNameEmptyNow}), so a storage that already stalls stalls here, where the step's 10-second budget still answers, instead of on the extension host's thread; called by {@link standingReceiptOf}, {@link dropLinkedPrivateName}, {@link dropMovedAfterLink}, {@link retiredNameCheck} and {@link writeTrackedJournal} (before its last look at a tracked record, {@link assertTrackedJournalStill}).
+ * The synchronous looks still decide: only they leave nothing awaited between them and the step they guard. Limit: a stall that starts between these looks and the synchronous ones still holds the thread.
+ * @param paths - The names, in the order of the synchronous looks that follow.
+ * @returns Resolves once every look answered, whatever it answered.
+ * @example
+ * await lookAheadAt([retiredPath, context.receiptPath]) // then stillnessOf(context, retiredPath, standingLook, movedLook)
+ */
+async function lookAheadAt(paths: readonly string[]): Promise<void> {
+  // One name at a time, in the order of the synchronous looks that follow.
+  for (const path of paths) await lstat(path).catch(() => undefined)
+}
+
+/**
+ * Words what one look at a name found against what was checked; the shared end of {@link nameStateOf} and {@link nameStateNow}, which calls the seam after a look that passed.
+ * @param context - The run; its seam is called once the name still shows the checked file.
+ * @param path - The name that was looked at.
+ * @param now - What the look found; undefined when nothing stands there.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns `still` when the name shows the checked file, `gone` when nothing stands there, `changed` otherwise.
+ * @example
+ * nameStateFrom(context, retiredPath, undefined, movedLook) // => 'gone'
+ */
+function nameStateFrom(
+  context: Context,
+  path: string,
+  now: BigIntStats | undefined,
+  checked: LeftoverLookback,
+): 'still' | 'gone' | 'changed' {
   if (now === undefined) return 'gone'
   if (!showsChecked(now, checked)) return 'changed'
   context.seam?.afterLeftoverCheck?.(path)
@@ -2475,6 +3149,7 @@ function configChangedError(
 
 /**
  * Throws unless the config name still shows the published staged file (inode and bytes); called by {@link tidyLeftover} after the last read of a displaced original and before it is unlinked.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The bytes are read again because an editor can rewrite the published file in place and keep its inode.
  * Limit: the read is async, so {@link tidyLeftover} hashes the displaced copy again after it and checks only synchronously from there; a change between that last hash and the unlink syscalls is not seen (no Node primitive unlinks by inode or content).
  * @param context - The run.
@@ -2492,6 +3167,8 @@ async function assertConfigStillPublished(
   ino: bigint,
   leftoverPath: string,
 ): Promise<InspectedCopy> {
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([context.path])
   assertConfigStill(context, ino, leftoverPath)
   const config = await inspectCopy(context.path, context.seam)
   if (!config || config.ino !== ino || config.sha256 !== pending.stagedSha256)
@@ -2508,6 +3185,30 @@ function unprovenLinkError(context: Context, leftoverPath: string): Error {
 
 /** Thrown by {@link tidyLeftover} after it handed a displaced copy to the learner ({@link handOver}) because another config stands at the config name. */
 class HandedCopyError extends Error {}
+
+/** Thrown by a write or delete of a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), or cannot be read again (`unread`), and by a write of a tracked publish record whose name was found empty (`gone`, {@link writeTrackedJournal}); nothing was written or deleted at that name ({@link journalConflictError}), and {@link settleRollbackJournal} ends the run with it, or {@link publishRecordConflict} words it as the publish record's. */
+class JournalConflictError extends Error {
+  constructor(
+    message: string,
+    readonly kind: 'changed' | 'unread' | 'gone',
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+  }
+}
+
+/** Thrown by {@link dropFinishedRecord} when a removal or take-back that took the entry out finds another file at its tracked rollback record's name as it deletes that record, or cannot read that name again: the entry is out already, what stands there stays ({@link JournalConflictError}, its cause, whose `kind` it keeps), and {@link rollBackPublishedEntry} answers `took-out-record-unread` for a name it could not read and `took-out-record-taken` otherwise, so the run goes no further. */
+class TakenOutConflictError extends Error {
+  readonly kind: JournalConflictError['kind']
+
+  constructor(conflict: JournalConflictError) {
+    super(conflict.message, { cause: conflict })
+    this.kind = conflict.kind
+  }
+}
+
+/** The `record-reread` and `record-gone` refusals ({@link unmatchedJournalRefusal}): the publish record a decision read changed or disappeared before the run was done with it, so the record the run read no longer leads to the private files it names; {@link mergeWithLeftover} and {@link settleRollbackJournal} name a leftover after it, and {@link takeOutUnrecordedEntry} stops before its take-back changes the config and leaves what stands at that name ({@link markBeforeTakeBack}). */
+class RecordConflictError extends Error {}
 
 /**
  * Thrown by {@link assertLinkedBytes} when the put-back check failed; its own text names both paths and the state, so {@link unsettledRefusal} shows it as it is instead of {@link leftCopyRefusal}'s general advice.
@@ -2769,23 +3470,75 @@ function retainedRecord(
   }
 }
 
-/** Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay. A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link showsSettledJournal}); another journal a backup restored there stays for the next run. */
+/**
+ * Ends the pending record of a settled run: it is deleted, or rewritten with only the leftovers that stay; called by {@link settleRollbackJournal} for a rollback's journal, and for `pending.json` by {@link settlePending}, {@link adoptPending} and {@link finishCutShortSetup}.
+ * A settled rollback journal ({@link Context.journalVersion}) is ended only while its name still shows the version this run settled ({@link writeRecord}, {@link removeRecord}); another journal a backup restored there stays for the next run, and the call rejects. A publish record whose old record's private name this run's put-back found empty ({@link settleRetiredReceipt}) is the only pointer to that name, so it ends only while one synchronous look right before the rename or unlink still finds that name empty ({@link retiredNameCheck}), after the bytes of what stays were flushed and after a tracked record's own last look.
+ * So is the publish record of a run that holds a legacy journal ({@link heldPublishContext}): it is ended only as the version that journal's decision read, what stays of it is never written back at a name found empty (a sync tool moved it away), and a rejection there is worded as that record's ({@link publishRecordConflict}).
+ * @param context - The run; its pending path is the record.
+ * @param retained - What stays of the record; undefined when nothing does.
+ * @param assertStill - A synchronous look at other names that must still hold right before the rename or unlink ({@link retiredNameCheck}), after an awaited look at its names ({@link StillLook}); undefined when nothing else must hold.
+ * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (the name stays as it is); what `assertStill` throws, such as the {@link retiredBackRefusal} (the record stays byte for byte and the run goes no further); what the write or delete throws.
+ * @example
+ * await retirePending(rollbackContext, undefined) // pending.json.rollback is gone while it held the version this run settled
+ * await retirePending(context, retained, await retiredNameCheck(context, emptiedRetiredPath)) // throws, keeping pending.json, once a backup put the old record back at that name
+ */
 async function retirePending(
   context: Context,
   retained: Pending | undefined,
+  assertStill?: StillLook,
 ): Promise<void> {
-  // Another journal at a settled journal's name is not this run's to delete or overwrite.
-  if (
-    context.journalVersion &&
-    !(await showsSettledJournal(context, context.journalVersion.current))
-  )
-    return
-  if (retained) await writeRecord(context, context.pendingPath, retained)
-  else await rm(context.pendingPath, { force: true })
+  if (retained)
+    await writeRecord(context, context.pendingPath, retained, assertStill)
+  else await removeRecord(context, assertStill)
+}
+
+/**
+ * Gives the synchronous look that must still find the old record's private name empty right before a publish record that leads there ends ({@link retirePending}), once one look at that name through the thread pool answered ({@link lookAheadAt}), so a storage that already stalls stalls there, where the step's budget answers; the record's rename or unlink looks at that name through the thread pool once more right before its synchronous looks ({@link StillLook}); called by {@link settlePending} and {@link finishCutShortSetup} with what {@link settleRetiredReceipt} found, right before they call {@link retirePending}.
+ * Limit: a stall that starts between that look and the synchronous one still holds the extension host's thread.
+ * @param context - The run; gives the refusal's publish record path and the command to run again.
+ * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
+ * @returns
+ * - undefined when no private name was found empty
+ * - a look at that name that throws the {@link retiredBackRefusal} when a file stands there again or the look fails, otherwise
+ * @example
+ * await retiredNameCheck(context, undefined) // => undefined
+ * (await retiredNameCheck(context, retiredPath))?.assert() // throws once a backup put the old record back at retiredPath
+ */
+async function retiredNameCheck(
+  context: Context,
+  emptiedRetiredPath: string | undefined,
+): Promise<StillLook | undefined> {
+  if (emptiedRetiredPath === undefined) return undefined
+  // A storage that already stalls stalls in the thread pool first, where the step's budget answers.
+  await lookAheadAt([emptiedRetiredPath])
+  return {
+    names: [emptiedRetiredPath],
+    assert: (): void => {
+      // A file back at the private name found empty (or a look that failed): the record that leads there stays.
+      if (!isNameEmptyNow(emptiedRetiredPath))
+        throw retiredBackRefusal(context, emptiedRetiredPath)
+    },
+  }
+}
+
+/**
+ * Tells, by one synchronous look, whether nothing stands at a name; called by the look {@link retiredNameCheck} gives, after its look at that name through the thread pool ({@link lookAheadAt}), right before a publish record whose old record's private name this run found empty ends.
+ * @param path - The name to look at.
+ * @returns `true` when nothing stands there; `false` when anything stands there or the look failed.
+ * @example
+ * isNameEmptyNow('/storage/devin-mcp/receipt.json.<generation>.retired') // => false after a backup put the old record back there
+ */
+function isNameEmptyNow(path: string): boolean {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false }) === undefined
+  } catch {
+    return false
+  }
 }
 
 /**
  * Puts back or deletes one leftover; called by {@link recoverLeftovers}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * @param context - The run.
  * @param leftover - The accepted leftover.
  * Right before each link and unlink the name is looked at again ({@link isLeftoverStill}); a file swapped in since the first look is neither linked nor deleted. A displaced original of an unfinished change whose config name holds another file (not the published staged one) is handed to the learner ({@link handOver}) and never deleted.
@@ -2803,12 +3556,15 @@ async function tidyLeftover(
   const phase = leftoverPhaseOf(pending)
   // The probe is a link to the staged file; its inode was checked.
   if (role === 'probe') {
+    // A storage that already stalls holds this step here, not at the synchronous look below.
+    await lookAheadAt([path])
     assertLeftoverStill(context, path, { ino: copy.ino })
     return unlink(path)
   }
   // A copy handed to the learner is never touched, not even when the learner linked it back to the config (checked before the same-inode branch).
   if (role === 'kept' && phase === 'handed')
     throw new Error('The copy was handed to the learner.')
+  await lookAheadAt([context.path])
   const config = lstatSync(context.path, {
     bigint: true,
     throwIfNoEntry: false,
@@ -2834,17 +3590,43 @@ async function tidyLeftover(
     ))
   )
     return
+  return deleteRecordedLeftover(context, leftover, copy, pending, publishedIno)
+}
+
+/**
+ * Deletes a leftover that holds exactly the bytes its record names, once its name, a fresh hash of it and, for a displaced original of a change that published, the published config still show what recovery checked; called by {@link tidyLeftover}.
+ * Same-size overwrites keep inode and size, so the file is hashed again right before; a copy of the previous config goes only on the word of the record as recovery read it ({@link recordStillCheck}). Each synchronous look comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
+ * Limits: a swap or a write between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode or content); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run.
+ * @param leftover - The accepted leftover; its hash is the one its record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @param pending - The pending record of the interrupted run; its staged hash names the published bytes.
+ * @param publishedIno - The published config's inode for a displaced original of a change that published ({@link keepOriginalUnlessPublished}); undefined otherwise.
+ * @throws When the leftover's bytes are not the ones its record names, a name no longer shows what was checked, the bytes changed, the config is no longer the published file, the record changed, or the unlink fails; the leftover stays then.
+ * @example
+ * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
+ */
+async function deleteRecordedLeftover(
+  context: Context,
+  leftover: Leftover,
+  copy: InspectedCopy,
+  pending: Pending,
+  publishedIno: bigint | undefined,
+): Promise<void> {
+  const { role, path, sha256: expectedSha256 } = leftover
   if (copy.sha256 !== expectedSha256)
     throw new Error('The leftover file differs from what Codebook expected.')
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([path])
   assertLeftoverStill(context, path, { ino: copy.ino, size: copy.size })
-  // Same-size overwrites keep inode and size: hash the file again right before deleting it.
   let lastLook = await inspectCopy(path, context.seam)
   // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
   if (!lastLook) return
   assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
+  let publishedLook: InspectedCopy | undefined
   if (publishedIno !== undefined) {
-    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it, and that read is the last async step.
-    const publishedLook = await assertConfigStillPublished(
+    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it.
+    publishedLook = await assertConfigStillPublished(
       context,
       pending,
       publishedIno,
@@ -2853,12 +3635,43 @@ async function tidyLeftover(
     lastLook = await inspectCopy(path, context.seam)
     if (!lastLook) return
     assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
-    // Only synchronous looks follow: the config name first, the displaced name last. The config must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode.
-    assertConfigUnchangedSince(context, publishedLook, path)
   }
+  // A copy of the previous config goes only on the word of the record as recovery read it: a record a sync tool put back meanwhile may hand that copy to the learner.
+  const recordStill =
+    role === 'kept' ? await recordStillCheck(context) : undefined
+  // The awaited looks come in the order of the synchronous ones below.
+  await lookAheadAt([
+    ...(publishedLook ? [context.path] : []),
+    ...(recordStill?.names ?? []),
+    path,
+  ])
+  // Only synchronous looks follow: the config name first (it must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode), the record, the displaced name last.
+  if (publishedLook) assertConfigUnchangedSince(context, publishedLook, path)
+  recordStill?.assert()
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
   assertLeftoverStill(context, path, lastLook)
   await unlink(path)
+}
+
+/**
+ * Looks at the record recovery acts on (`pending.json` or a rollback journal, {@link Context.journalVersion}) right before recovery deletes a copy of the previous config on that record's word, or puts it back by its inode, and gives the synchronous look that must still find it right before the unlink or link; called by {@link deleteRecordedLeftover}, {@link dropSecondName} and {@link putBackDisplaced}, because a backup or sync tool may put back a record of the same change that hands that copy to the learner (`handed`) after recovery read it as finished or in progress, and by {@link assertPutBackRecordStill} right before a later run links a first setup's old record into `receipt.json` on the word of the publish record it read.
+ * @param context - The run; its pending path is the record it tracks.
+ * @returns The synchronous look at the record's name ({@link assertTrackedJournalStill}), whose name the caller looks at through the thread pool right before ({@link StillLook}); undefined when the run tracks no version of its record.
+ * @throws A {@link JournalConflictError}: `changed` when the record's name shows another file or other bytes than the version recovery read or last wrote, `gone` when it shows nothing, `unread` when it cannot be read; the copy stays then, and the run goes no further once it settles that record.
+ * @example
+ * const recordStill = await recordStillCheck(run) // throws once a sync tool put a handed record back at pending.json
+ */
+async function recordStillCheck(
+  context: Context,
+): Promise<StillLook | undefined> {
+  if (context.journalVersion?.current === undefined) return undefined
+  const look = await lookAtTrackedJournal(context)
+  // The record went away after recovery read it: nothing shows that the copy may go.
+  if (!look) throw journalConflictError(context, 'gone')
+  return {
+    names: [context.pendingPath],
+    assert: (): void => assertTrackedJournalStill(context, look),
+  }
 }
 
 /**
@@ -2876,13 +3689,14 @@ function leftoverPhaseOf(pending: Pending): Pending['phase'] {
 
 /**
  * Drops a staged or displaced name that is only another name of the config (the same inode): a put-back whose unlink failed, a published staged file, or a put-back that only the bytes proved and that stopped after its link, whose shared bytes are checked first; called by {@link tidyLeftover}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The displaced name of a change in progress first has a dropping name beside it dropped when that is a third name of the same file ({@link dropDroppingSecondName}), as a return of a cut-short drop leaves it when it stops right after its link: otherwise that name would stay a second name of the config that no record holds.
- * The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass.
+ * The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass. A displaced name goes only on the word of the record as recovery read it, which is looked at between the two ({@link recordStillCheck}).
  * @param context - The run.
  * @param leftover - The accepted leftover.
  * @param copy - What {@link lookAtLeftover} found at its name.
  * @param phase - The phase recovery reads the record in ({@link leftoverPhaseOf}).
- * @throws When either name changed since it was looked at, the shared bytes cannot be verified ({@link assertSharedPutBackBytes}) or the unlink fails; both names stay then. What {@link dropDroppingSecondName} throws.
+ * @throws When either name changed since it was looked at, the shared bytes cannot be verified ({@link assertSharedPutBackBytes}) or the unlink fails; both names stay then. What {@link dropDroppingSecondName} throws; for a displaced name, a {@link JournalConflictError} when the record changed, disappeared or cannot be read ({@link recordStillCheck}), and both names stay then.
  * @example
  * if (config?.ino === copy.ino) return dropSecondName(context, leftover, copy, phase)
  */
@@ -2899,7 +3713,13 @@ async function dropSecondName(
   // Only the bytes ever proved this file: the config may hold bytes nobody checked, so the private name goes only once they are verified.
   if (isSharedBytesPutBack(role, phase, expectedIno, copy))
     return assertSharedPutBackBytes(context, path, copy, expectedSha256)
+  // A copy of the previous config goes only on the word of the record as recovery read it: a record a sync tool put back meanwhile may hand that copy to the learner, even as a second name of the config.
+  const recordStill =
+    role === 'kept' ? await recordStillCheck(context) : undefined
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([context.path, ...(recordStill?.names ?? []), path])
   assertConfigStill(context, copy.ino, path)
+  recordStill?.assert()
   assertLeftoverStill(context, path, { ino: copy.ino })
   return unlink(path)
 }
@@ -3264,8 +4084,9 @@ async function keepOriginalUnlessPublished(
 
 /**
  * Puts the displaced config of an interrupted move-aside back at the config name, even if it is not the bytes that were read; called by {@link tidyLeftover}.
- * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted.
- * Limit: a swap between the look before the link and the link is not seen.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
+ * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted. A put-back by inode links only while the record still shows the version recovery read, looked at right before the name's last look ({@link recordStillCheck}); a put-back by bytes checks it with its own record write.
+ * Limits: a swap between the look before the link and the link is not seen; a record a sync tool puts back after the link is not seen before the displaced name goes, and the file then stands at the config name.
  * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}).
  * @param context - The run.
  * @param leftover - The displaced name and the hash the record holds for it.
@@ -3274,7 +4095,7 @@ async function keepOriginalUnlessPublished(
  * @param proof - What shows the displaced file is the recorded one: `inode` (the recorded inode) or `bytes` (another inode whose bytes equal the recorded hash); undefined when neither, and such a file is never published. When only the bytes prove it, the file is hashed again right before the link, its name is looked at synchronously with the size and times of that hash, and the file at the config name is hashed once more after the link: an in-place write in between is refused and nothing stays published from it.
  * @param copy - What {@link lookAtLeftover} found; its inode is the one that may be linked.
  * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
- * @throws When the unverified record cannot be written, the link or unlink fails, the name no longer shows the checked file, or the link produced another file.
+ * @throws When the unverified record cannot be written, the link or unlink fails, the name no longer shows the checked file, or the link produced another file; a {@link JournalConflictError} when the record changed before a put-back by inode linked anything ({@link recordStillCheck}).
  */
 async function putBackDisplaced(
   context: Context,
@@ -3304,8 +4125,15 @@ async function putBackDisplaced(
       bytesUnverified: true,
     } satisfies Pending)
   try {
+    // A copy goes back by its inode only on the word of the record as recovery read it: a record a sync tool put back meanwhile may hand that copy to the learner. A put-back by bytes checked the record with its own write right before.
+    const recordStill =
+      proof === 'inode' ? await recordStillCheck(context) : undefined
+    // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+    await lookAheadAt([...(recordStill?.names ?? []), path])
+    recordStill?.assert()
     assertLeftoverStill(context, path, lastLook)
     await link(path, context.path)
+    await lookAheadAt([context.path])
     const linked = lstatSync(context.path, {
       bigint: true,
       throwIfNoEntry: false,
@@ -3436,6 +4264,7 @@ async function rehashBeforeLink(
 
 /**
  * Checks the file that a put-back just linked to the config name: its inode and bytes must still be the checked ones before the private name is retired; called by {@link putBackDisplaced}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * A file that changed in the gap between the last look and the link stays at the private name only: the config name is unlinked again, while it still shows that inode.
  * Limit: a write after this read is not seen here; the caller's last looks compare the size and times this read returns ({@link dropPutBackName}).
  * @param context - The run.
@@ -3459,6 +4288,8 @@ async function assertLinkedBytes(
   )
   if (published?.ino === ino && published.sha256 === expectedSha256)
     return published
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([path, context.path])
   // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so. The displaced name is looked at first and the config name last, synchronously right before the unlink: only the syscall gap after that last look remains.
   if (
     !isLeftoverStill(context, path, { ino }) ||
@@ -3502,6 +4333,7 @@ function isUnrecordedRemoval(context: Context, pending: Pending): boolean {
 
 /**
  * Settles a put-back whose link produced another file than the checked one; called by {@link putBackDisplaced}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The config name is looked at again right before it is unlinked ({@link isLeftoverStill}); one that shows another inode now is somebody else's, so both names stay. Limit: a swap between that look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run.
  * @param leftoverPath - The displaced name that was linked.
@@ -3513,6 +4345,8 @@ async function undoForeignLink(
   leftoverPath: string,
   configIno: bigint | undefined,
 ): Promise<never> {
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([leftoverPath, context.path])
   const leftover = lstatSync(leftoverPath, {
     bigint: true,
     throwIfNoEntry: false,
@@ -3537,8 +4371,10 @@ async function undoForeignLink(
  * @param pending - The pending record read before; undefined when there is none.
  * @param look - What the config looked like.
  * @param retained - What stays of the record after recovery ({@link retainedRecord}); undefined when nothing stays.
+ * @param emptiedRetiredPath - The old record's private name that this run's put-back found empty ({@link settleRetiredReceipt}); the record ends only while that name is still empty ({@link retirePending}). Undefined otherwise.
+ * @param assertHeldStill - Beside a held legacy journal, the synchronous look that must still find that journal as the run held it right after that name's look and before the record's rename or unlink ({@link HeldJournal.lookStill}); undefined otherwise.
  * @returns The receipt that now stands.
- * @throws A {@link refusal} when the entry is neither the pending one nor the receipted one.
+ * @throws A {@link refusal} when the entry is neither the pending one nor the receipted one; what {@link retirePending} throws, such as the {@link HeldJournalConflictError} of a held journal's look (the record then stays as it is).
  * @example
  * const receipt = await settlePending(context, current, await readReceipt(context), pending, look, undefined)
  */
@@ -3549,11 +4385,18 @@ async function settlePending(
   pending: Pending | undefined,
   look: ConfigLook,
   retained: Pending | undefined,
+  emptiedRetiredPath?: string,
+  assertHeldStill?: StillLook,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
+  // Only synchronous steps follow before the record ends, so the private name's look through the thread pool here still comes right before its last look.
+  const assertEndStill = bothLooks(
+    await retiredNameCheck(context, emptiedRetiredPath),
+    assertHeldStill,
+  )
   // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
   if (isTakeBackOwed(pending, receipt)) {
-    await retirePending(context, retained)
+    await retirePending(context, retained, assertEndStill)
     return receipt
   }
   // The record of a removal that took the entry out (a receipt stands, the entry is gone) is what a removal retry reads to answer `removed`: another window's inspection leaves it in place, and the retry or a new setup's own record replaces it.
@@ -3582,7 +4425,7 @@ async function settlePending(
     )
   if (isPendingStale(context, pending, current, receipt)) {
     // The rename never happened (or this was a removal): the pending record is stale; the leftovers that stay remain tracked.
-    await retirePending(context, retained)
+    await retirePending(context, retained, assertEndStill)
     return receipt
   }
   throw refusal(
@@ -3618,12 +4461,14 @@ function isPendingStale(
 
 /**
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
- * @param context - The run.
+ * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say) never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
+ * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
  * @param identity - The identity of the config that stands.
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @returns The receipt that was written.
+ * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record; no receipt is written then. What the receipt's write and {@link retirePending} throw otherwise.
  */
 async function adoptPending(
   context: Context,
@@ -3648,9 +4493,34 @@ async function adoptPending(
       pending.installationId ?? installationIdOf(await readReceipt(context)),
     config: { ino: recordedFileId(identity.ino) },
   }
-  await writeRecord(context, context.receiptPath, adopted)
+  await writeRecord(
+    context,
+    context.receiptPath,
+    adopted,
+    await adoptedRecordCheck(context),
+  )
   await retirePending(context, retained)
   return adopted
+}
+
+/**
+ * Gives the synchronous look that must still find the publish record an adoption rests on at `pending.json`, as this run read or last wrote it ({@link Context.journalVersion}), right before the rename that publishes the adoption's receipt, once a read through the thread pool found it there; called only by {@link adoptPending}, whose receipt write awaits a look at that name once more before its bytes are staged ({@link writeRecord}).
+ * Limit: a record put there after that synchronous look, also after the receipt's rename, is seen only by the record's retirement right after ({@link retirePending}), which keeps that record and refuses while the receipt stands; no Node primitive renames only while another name shows a given inode.
+ * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
+ * @returns The look at the publish record's name ({@link StillLook}).
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another file or other bytes, `unread` when it cannot be read again, `gone` when it is empty while this run knows a version of it; the look it gives throws the same right before the rename ({@link assertNameLeft}). Nothing is written then.
+ * @example
+ * await writeRecord(context, context.receiptPath, adopted, await adoptedRecordCheck(context)) // throws, writing no receipt, once a backup put another record at pending.json
+ */
+async function adoptedRecordCheck(context: Context): Promise<StillLook> {
+  const left = await lookAtTrackedJournal(context)
+  // An empty name while a version is known: another program moved the record away after this run read it.
+  if (!left && isEmptiedByAnother(context))
+    throw journalConflictError(context, 'gone')
+  return {
+    names: [context.pendingPath],
+    assert: (): void => assertNameLeft(context, left),
+  }
 }
 
 /**
@@ -3742,16 +4612,16 @@ function retiredReceiptPathOf(context: Context, generation: string): string {
  * @param context - The run.
  * @param staleReceipt - The receipt this run read.
  * @param generation - The generation of the publish; names the private path.
- * @returns The private path that holds the receipt now; undefined when nothing stood at the receipt's name any more, so nothing is to put back.
+ * @returns The private path that holds the receipt now, with the look at that name before the read that found the receipt there ({@link RetiredMove}), so the delete after the link acts only on that file ({@link dropMovedAfterLink}); undefined when nothing stood at the receipt's name any more, so nothing is to put back.
  * @throws A {@link staleReceiptRefusal} when the name holds no regular file or the move fails, and a {@link changedRecordRefusal} once another receipt that moved went back; nothing is linked then. An {@link UnrestoredReceiptError} carrying that refusal, worded without the put-back, when the other receipt could not go back.
  * @example
- * await retireStaleReceipt(context, receipt, generation) // => '/storage/devin-mcp/receipt.json.<generation>.retired'
+ * await retireStaleReceipt(context, receipt, generation) // => { retiredPath: '/storage/devin-mcp/receipt.json.<generation>.retired', look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } }
  */
 async function retireStaleReceipt(
   context: Context,
   staleReceipt: Receipt,
   generation: string,
-): Promise<string | undefined> {
+): Promise<RetiredMove | undefined> {
   const retiredPath = retiredReceiptPathOf(context, generation)
   try {
     const status = await lstatOrAbsent(context.receiptPath)
@@ -3763,7 +4633,8 @@ async function retireStaleReceipt(
     if (codeOf(cause) === 'ENOENT') return undefined
     throw staleReceiptRefusal(context, cause)
   }
-  if (await holdsReceipt(context, retiredPath, staleReceipt)) return retiredPath
+  const look = await heldReceiptLook(context, retiredPath, staleReceipt)
+  if (look) return { retiredPath, look }
   // Another receipt was saved at that name since the read: it goes back, and nothing is published. A put-back that fails carries the refusal that claims no put-back, and its own sentence says where the receipt is.
   await putBackRetiredReceipt(
     context,
@@ -3773,60 +4644,80 @@ async function retireStaleReceipt(
   throw changedRecordRefusal(context, true)
 }
 
+/** A first setup's old record at its private name as {@link retireStaleReceipt} verified it there: that name and its look right before the read that found the receipt this run read ({@link LeftoverLookback}). */
+type RetiredMove = { retiredPath: string; look: LeftoverLookback }
+
 /**
- * Tells whether a record file holds the given receipt, read without following a link; called by {@link retireStaleReceipt} on the file it just moved aside.
+ * Tells whether a record file holds the given receipt, read without following a link right after a look at its name; called by {@link retireStaleReceipt} on the file it just moved aside.
  * @param context - The run.
  * @param path - The record file.
  * @param expected - The receipt it must hold.
- * @returns `true` when the file parses to the same receipt (compared in canonical form); `false` when it holds another one or cannot be read as a receipt.
+ * @returns The look at the name before the read ({@link readLookedRecord}) when the file parses to the same receipt (compared in canonical form); undefined when it holds another one, cannot be read as a receipt or the name is empty.
  * @example
- * await holdsReceipt(context, retiredPath, receipt) // => true right after the move of the receipt that was read
+ * await heldReceiptLook(context, retiredPath, receipt) // => { ino: 42n, size: 310n, mtimeNs, ctimeNs } right after the move of the receipt that was read
  */
-async function holdsReceipt(
+async function heldReceiptLook(
   context: Context,
   path: string,
   expected: Receipt,
-): Promise<boolean> {
-  const moved = await readRecord(
-    path,
-    receiptSchema,
-    context.retry,
-    context.seam,
-  ).catch(() => undefined)
-  return moved !== undefined && canonicalJson(moved) === canonicalJson(expected)
+): Promise<LeftoverLookback | undefined> {
+  const moved = await readLookedRecord(context, path)
+  // Nothing there, a failed read, or bytes that are no receipt: not the receipt this run read.
+  if (typeof moved !== 'object' || moved.read === 'other') return undefined
+  return canonicalJson(moved.read) === canonicalJson(expected)
+    ? moved.look
+    : undefined
 }
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces what stands at that name by then. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). The private name is unlinked afterwards; one that cannot be is only a second name of the receipt. A private name that the link or a look found empty is never unlinked: nothing is left there to keep, and a file put there after that look is not the record.
+ * A hard link: it needs no free space and never replaces what stands at that name by then. Only a regular file that parses as a record of this config, read at the private name, which a look right before the link still shows, is linked ({@link readMovedForPutBack}), and at a later run only while the publish record that run read still stands at `pending.json` at a look after that one ({@link assertPutBackRecordStill}); a file there that is no record of this config is never linked and is named as the one to move. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). After a link that stood, the private name is unlinked only while a read at `receipt.json` still finds the record that was read and looks still show the file of that read at `receipt.json` and at the private name as a second name of it ({@link dropLinkedPrivateName}); otherwise that file and the publish record stay, also beside another file at `receipt.json`, which the link may have put there (the private name was replaced right before it) or another program after it, so neither name goes ({@link refuseUnverifiedLink}). A private name that the link or a look found empty is never unlinked, and it never ends the publish record that leads there by itself ({@link endOnEmptyName}): in the setup that moved the record there, Codebook put a verified file there moments earlier, so the setup keeps that record and says so; a later run ends that record only while a look right before that end still finds the name empty ({@link retirePending}).
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
  * @param options - How this put-back runs ({@link PutBackOptions}); a setup passes none.
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay.
+ * @returns
+ * - `settled` once the receipt stands at `receipt.json` again, or was dropped beside a record that covers it
+ * - `empty` at a later run whose link or look found the private name empty: the caller ends the publish record that leads there only after one more look ({@link settleRetiredReceipt})
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell or changed by the last looks after it told, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, with `undeleted` when the moved record was to be deleted beside a record that covers it, or its private name after a link that stood, and that name showed another file or was that record's only name, `receipt.json` no longer showed that record, or the delete failed, with `linked-unverified` when `receipt.json` shows another file than the record that was read after the link, which nothing proves the link's own ({@link refuseUnverifiedLink}), or the file the link put there no longer holds that record, with `moved-gone` when a setup's own put-back (one with a `failure`) found the private name empty, or `moved-gone-beside` when it found that name empty beside something at `receipt.json`, by a look or by the delete beside a record that covers it, with `moved-foreign` when the file at the private name is no record of this config and nothing stands at `receipt.json`, with `moved-foreign-other` or `moved-foreign-unread` when something that is not Codebook's record of that entry stands there instead or Codebook could not tell what stands there, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay. A {@link JournalConflictError} at a later run whose publish record changed, disappeared or could not be read right before the link ({@link assertPutBackRecordStill}); nothing is linked, and both receipt names stay as they are.
  * @example
- * await putBackRetiredReceipt(context, retiredPath, linkError) // receipt.json stands again
- * await putBackRetiredReceipt(context, retiredPath, undefined, { mark: 'unmarked' }) // a later run settling a record without the notLinked mark
+ * await putBackRetiredReceipt(context, retiredPath, linkError) // => 'settled' once receipt.json stands again
+ * await putBackRetiredReceipt(context, retiredPath, undefined, { mark: 'unmarked' }) // => 'empty' when a later run finds the private name empty
  */
 async function putBackRetiredReceipt(
   context: Context,
   retiredPath: string,
   failure?: unknown,
   options: PutBackOptions = {},
-): Promise<void> {
+): Promise<PutBackEnd> {
   // Chosen only because something stood at receipt.json: compare with what stands there, and never link into that name, which may be empty by now.
   if (options.isBesideStanding)
     return settleTakenName(context, retiredPath, failure, undefined, options)
+  // Only a record of this config that the private name still shows right before the link goes to receipt.json.
+  const linked = await readMovedForPutBack(
+    context,
+    retiredPath,
+    failure,
+    options,
+  )
+  if (typeof linked === 'string') return linked
+  // A later run links only on the word of the publish record as it read it: a record a backup or sync tool put there since keeps both receipt names as they are.
+  await assertPutBackRecordStill(context, failure)
   const cause = await link(retiredPath, context.receiptPath).then(
     () => undefined,
     (error: unknown) => error,
   )
-  if (cause === undefined) {
-    await unlink(retiredPath).catch(() => undefined)
-    return
-  }
+  if (cause === undefined)
+    return dropLinkedPrivateName(
+      context,
+      retiredPath,
+      failure,
+      linked,
+      options.mark,
+    )
   // ENOENT: the private name is gone already, and nothing is unlinked there, so a file put at that name after the link is never deleted unchecked.
-  if (codeOf(cause) === 'ENOENT') return
+  if (codeOf(cause) === 'ENOENT')
+    return endOnEmptyName(context, retiredPath, failure, cause, options.mark)
   if (codeOf(cause) === 'EEXIST')
     return settleTakenName(context, retiredPath, failure, cause, options)
   throw new UnrestoredReceiptError(
@@ -3837,6 +4728,276 @@ async function putBackRetiredReceipt(
     undefined,
     options.mark,
   )
+}
+
+/**
+ * Looks at the publish record a later run read ({@link Context.journalVersion}) right before that run's put-back links a first setup's old record into `receipt.json`, so the old record goes back only on the word of that record as the run read it; called only by {@link putBackRetiredReceipt}, because a backup or sync tool may put another record of that setup at `pending.json` (one without the {@link Pending.notLinked} mark, say) after the run read it.
+ * The record is read through the thread pool, then its name is looked at synchronously, so nothing is awaited between that last look and the link ({@link recordStillCheck}). Limit: a record put there between that look and the link is not seen.
+ * @param context - The run; its pending path is the publish record it tracks.
+ * @param failure - What made the setup's put-back necessary; undefined at a later run. A setup's own put-back follows the record that setup wrote moments earlier, so nothing is looked at for it here.
+ * @throws A {@link JournalConflictError} when the record changed, disappeared or cannot be read ({@link recordStillCheck}); nothing is linked then, both receipt names stay as they are, and the run goes no further.
+ * @example
+ * await assertPutBackRecordStill(context, undefined) // throws once a backup put that setup's record back without its mark
+ */
+async function assertPutBackRecordStill(
+  context: Context,
+  failure: unknown,
+): Promise<void> {
+  // The setup's own put-back follows the record it wrote moments earlier.
+  if (failure !== undefined) return
+  const recordStill = await recordStillCheck(context)
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt(recordStill?.names ?? [])
+  recordStill?.assert()
+}
+
+/** How a put-back that did not throw ended ({@link putBackRetiredReceipt}): `settled` once the old record stands at `receipt.json` again or went beside a record that covers it, `empty` when a later run found its private name empty, which the caller looks at once more before it ends the publish record that leads there ({@link retirePending}). */
+type PutBackEnd = 'settled' | 'empty'
+
+/**
+ * Ends a put-back that found the old record's private name empty, by its link, by a look or by the delete beside a record that covers it; called by {@link putBackRetiredReceipt}, {@link readMovedForPutBack} and {@link settleTakenName}.
+ * An empty name never ends the publish record that leads there by itself: in the setup that moved the record there (one with a `failure`), Codebook put a verified file there moments earlier, so its absence means another program acts on that folder now, and the setup keeps that record; a later run answers `empty`, and its caller ends that record only while a look right before that end still finds the name empty ({@link retirePending}). Nothing is unlinked at that name either way.
+ * @param context - The run.
+ * @param retiredPath - The private name that was found empty.
+ * @param failure - What made the setup's put-back necessary; undefined at a later run.
+ * @param cause - What the link, the look or the delete answered.
+ * @param mark - What the publish record tells about the setup's link ({@link PutBackOptions.mark}).
+ * @param isBesideStanding - Set by {@link settleTakenName}, whose put-back found something at `receipt.json`: the next run compares a record that stands at the private name by then with what stands there, and the sentence says so (`moved-gone-beside`).
+ * @returns `empty` at a later run.
+ * @throws An {@link UnrestoredReceiptError} with `moved-gone` (or `moved-gone-beside`) carrying `failure` in the setup, whose callers keep the publish record and mark it {@link Pending.notLinked}.
+ * @example
+ * endOnEmptyName(context, retiredPath, undefined, enoent, 'marked')       // => 'empty'
+ * endOnEmptyName(context, retiredPath, linkError, enoent, 'marked')       // throws: '… and nothing stood at … when it went to put that record back …'
+ * endOnEmptyName(context, retiredPath, linkError, enoent, 'marked', true) // throws: '… when it went to settle that record beside what stands at …/receipt.json …'
+ */
+function endOnEmptyName(
+  context: Context,
+  retiredPath: string,
+  failure: unknown,
+  cause: unknown,
+  mark: PutBackOptions['mark'],
+  isBesideStanding = false,
+): 'empty' {
+  // The setup put a verified file there moments earlier: the record that leads there stays, and the next run settles it.
+  if (failure !== undefined)
+    throw new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      cause,
+      isBesideStanding ? 'moved-gone-beside' : 'moved-gone',
+      mark,
+    )
+  return 'empty'
+}
+
+/**
+ * Identifies what stands at the old record's private name right before a put-back links it into `receipt.json`, so only a regular file that parses as a record of this config, which a look right before the link still shows, goes back; called only by {@link putBackRetiredReceipt}.
+ * Limit: a swap at the private name between that last look and the link (a later run looks at its publish record in between, {@link assertPutBackRecordStill}) is not seen; no Node primitive links by inode, and the look after the link ({@link dropLinkedPrivateName}) then keeps the private name.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the old record.
+ * @param failure - What made the setup's put-back necessary; undefined at a later run.
+ * @param options - How the put-back runs ({@link PutBackOptions}).
+ * @returns
+ * - The record of this config that was read there and the look at the private name right before that read ({@link MovedRecord}), once the name still shows it: the caller links it
+ * - What {@link endOnEmptyName} answers when the name is empty, at the first look or at the last
+ * - What {@link settleForeignMoved} answers for a file that is no record of this config
+ * @throws An {@link UnrestoredReceiptError} with `moved-unread` when the look or the read failed, with `moved-changed` when the name showed another file at the last look, and what {@link endOnEmptyName} and {@link settleForeignMoved} throw.
+ * @example
+ * await readMovedForPutBack(context, retiredPath, linkError, {}) // => { read: oldReceipt, look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } } for the old record
+ */
+async function readMovedForPutBack(
+  context: Context,
+  retiredPath: string,
+  failure: unknown,
+  options: PutBackOptions,
+): Promise<MovedRecord | PutBackEnd> {
+  const { mark } = options
+  const moved = await readLookedRecord(context, retiredPath)
+  // Nothing stands there: as when the link finds the name empty.
+  if (moved === undefined)
+    return endOnEmptyName(context, retiredPath, failure, undefined, mark)
+  const unrestored = (standing: UnrestoredStanding): UnrestoredReceiptError =>
+    new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      undefined,
+      standing,
+      mark,
+    )
+  if (moved === 'unread') throw unrestored('moved-unread')
+  // A file that is no record of this config never goes to receipt.json.
+  if (moved.read === 'other' || moved.read.targetPath !== context.path)
+    return settleForeignMoved(context, retiredPath, failure, options)
+  // The record that was read must still stand there right before the link.
+  const state = await nameStateOf(context, retiredPath, moved.look).catch(
+    (): 'unread' => 'unread',
+  )
+  if (state === 'gone')
+    return endOnEmptyName(context, retiredPath, failure, undefined, mark)
+  if (state === 'changed') throw unrestored('moved-changed')
+  if (state === 'unread') throw unrestored('moved-unread')
+  return { read: moved.read, look: moved.look }
+}
+
+/**
+ * Settles a put-back whose private name holds a file that is no record of this config, without linking it; called only by {@link readMovedForPutBack}.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds that file.
+ * @param failure - What made the setup's put-back necessary; undefined at a later run.
+ * @param options - How the put-back runs ({@link PutBackOptions}).
+ * @returns What {@link settleTakenName} answers while something stands at `receipt.json`: its comparison names that file (`foreign`), or what stands there together with that file (`moved-foreign-other`), never that file as Codebook's old record.
+ * @throws An {@link UnrestoredReceiptError} with `moved-foreign` while nothing stands at `receipt.json`, with `moved-foreign-unread` when that look failed, and what {@link settleTakenName} throws; that file and the publish record stay.
+ * @example
+ * await settleForeignMoved(context, retiredPath, undefined, {}) // throws '… because that file is no record of Devin Desktop's MCP config at … (another program may have put it there); …'
+ */
+async function settleForeignMoved(
+  context: Context,
+  retiredPath: string,
+  failure: unknown,
+  options: PutBackOptions,
+): Promise<PutBackEnd> {
+  const standing = await lstatOrAbsent(context.receiptPath).catch(
+    (cause: unknown) => {
+      throw new UnrestoredReceiptError(
+        context,
+        retiredPath,
+        failure,
+        cause,
+        'moved-foreign-unread',
+        options.mark,
+      )
+    },
+  )
+  // Nothing stands at receipt.json: only that file is to be moved, and it never goes there.
+  if (standing === undefined)
+    throw new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      undefined,
+      'moved-foreign',
+      options.mark,
+    )
+  // The comparison words its answers for that file, never as Codebook's old record.
+  return settleTakenName(
+    context,
+    retiredPath,
+    failure,
+    undefined,
+    options,
+    true,
+  )
+}
+
+/**
+ * Ends a put-back whose link stood: the private name goes only while `receipt.json`, read again after the link, still holds the record that was read at the private name before the link, and synchronous looks still show the file of that second read, first at `receipt.json` and last at the private name as a second name of that file, so a file put at the private name right after the link is never deleted unread, the old record never loses its last name when another program replaced or deleted `receipt.json` after the link, and bytes another program wrote into that file since the read before the link never stay at `receipt.json` while the private name, the only sign of them, goes; called only by {@link putBackRetiredReceipt}.
+ * The link changed the file's change time, so the look right before that second read gives the change time the synchronous looks compare: a write or a change of times through either name after that read moves it, also a write that keeps the size and puts the modification time back. Those looks come right after one look at each name through the thread pool ({@link lookAheadAt}), so a storage that already stalls stalls there, where the setup's budget answers. Limits: a file put at either name between the synchronous looks and the unlink is not seen; no Node primitive unlinks by inode. A stall that starts between the two looks at a name still holds the extension host's thread.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds a second name of the record now at `receipt.json`.
+ * @param failure - What made the setup's put-back necessary; undefined at a later run.
+ * @param linked - The record of this config that was read at the private name before the link, and the look before that read ({@link MovedRecord}); that look's change time is left out, because the link changed it.
+ * @param mark - What the publish record tells about the setup's link ({@link PutBackOptions.mark}).
+ * @returns `settled` once the private name is gone, or was gone already while `receipt.json` showed the linked record.
+ * @throws An {@link UnrestoredReceiptError} with `undeleted`, worded by the {@link retiredDropRefusal}, when `receipt.json` is empty or cannot be looked at or read again, the private name shows another file or is that record's only name, a look failed or the delete failed; with `linked-unverified` when `receipt.json` still shows the file that was linked but no longer holds the record that was read, so neither name goes; what {@link refuseUnverifiedLink} throws when `receipt.json` shows another file than the linked record. That file and the publish record stay.
+ * @example
+ * await dropLinkedPrivateName(context, retiredPath, linkError, moved, 'marked') // => 'settled'
+ */
+async function dropLinkedPrivateName(
+  context: Context,
+  retiredPath: string,
+  failure: unknown,
+  { read, look: { ino, size, mtimeNs } }: MovedRecord,
+  mark: PutBackOptions['mark'],
+): Promise<'settled'> {
+  const undeleted = (cause: unknown): UnrestoredReceiptError =>
+    new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      cause,
+      'undeleted',
+      mark,
+    )
+  const linkedFile = { ino, size, mtimeNs }
+  // Only while receipt.json still holds the record that was read, in the file that was linked, does the look before this read, change time included, stand for the bytes that went back.
+  const reread = await readLookedRecord(context, context.receiptPath)
+  const verifiedLook =
+    typeof reread === 'object' &&
+    reread.look.ino === ino &&
+    canonicalJson(reread.read) === canonicalJson(read)
+      ? reread.look
+      : undefined
+  const linkedLook = verifiedLook ?? linkedFile
+  // A storage that already stalls stalls in the thread pool first, where the setup's budget answers.
+  await lookAheadAt([context.receiptPath, retiredPath])
+  const standing = nameStateNow(context, context.receiptPath, linkedLook)
+  // Another file at receipt.json: the link itself may have put an unverified file there, or another program put one there after it, so neither name goes.
+  if (standing === 'changed')
+    return refuseUnverifiedLink(context, retiredPath, failure, linkedLook, mark)
+  // The put-back stands only while receipt.json still shows the record that was linked: an empty name there, or a read there that failed, leaves the private name as the way to that record.
+  if (standing !== 'still' || reread === 'unread') throw undeleted(undefined)
+  // receipt.json still shows the file that was linked, but its bytes are no longer the record that was read: a write kept its size and modification time, so neither name goes.
+  if (verifiedLook === undefined)
+    throw new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      undefined,
+      'linked-unverified',
+      mark,
+    )
+  // Last, right before the unlink: the private name goes only as a second name of that record, never as its only name.
+  const state = nameStateNow(context, retiredPath, {
+    ...verifiedLook,
+    isShared: true,
+  })
+  // Another program removed that name already: nothing is left there to delete.
+  if (state === 'gone') return 'settled'
+  // Another file there, or a look that failed: that file and the publish record stay.
+  if (state !== 'still') throw undeleted(undefined)
+  await unlink(retiredPath).catch((cause: unknown) => {
+    // A name already gone is what the delete was for.
+    if (codeOf(cause) !== 'ENOENT') throw undeleted(cause)
+  })
+  return 'settled'
+}
+
+/**
+ * Ends a put-back whose link stood while `receipt.json` shows another file than the record that was read at the private name, without deleting either name, because nothing proves that file the link's own; called only by {@link dropLinkedPrivateName}, right after its looks.
+ * While the private name still shows the record that was read, the link put that record at `receipt.json` and another program replaced `receipt.json` after it: the private name is that record's last name. Otherwise one file at both names other than the one that was read may be what the link put at `receipt.json` (no Node primitive links by inode, so another program may have replaced the file at the private name between the last look and the link), or what a backup put at both names after the link, and the file that was read, changed in place since (its bytes or only its times), is what the link put there: no look tells these apart, so both names stay, and `receipt.json`, the only name the bridge reads, never goes on a file another program put there. The look comes right after {@link dropLinkedPrivateName}'s look through the thread pool and only chooses the refusal.
+ * @param context - The run; its seam is called around the look ({@link nameStateNow}).
+ * @param retiredPath - The private name of the old record.
+ * @param failure - What made the setup's put-back necessary; undefined at a later run.
+ * @param linkedFile - The record that was read at the private name before the link: its inode, size and modification time, and the change time of the look before {@link dropLinkedPrivateName}'s read after the link when that read found that record in that file at `receipt.json`.
+ * @param mark - What the publish record tells about the setup's link ({@link PutBackOptions.mark}).
+ * @returns Never: the put-back did not put that record back.
+ * @throws An {@link UnrestoredReceiptError}, which keeps both names and the publish record: with `undeleted` while the private name still shows the record that was read; with `linked-unverified` otherwise, so the file at `receipt.json` is unverified.
+ * @example
+ * refuseUnverifiedLink(context, retiredPath, linkError, linkedFile, 'marked') // throws '… so what stands at …/receipt.json is unverified; …' once a backup put one file at both names
+ */
+function refuseUnverifiedLink(
+  context: Context,
+  retiredPath: string,
+  failure: unknown,
+  linkedFile: LeftoverLookback,
+  mark: PutBackOptions['mark'],
+): never {
+  const unrestored = (standing: UnrestoredStanding): UnrestoredReceiptError =>
+    new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      undefined,
+      standing,
+      mark,
+    )
+  // The record that was read still stands at its private name: receipt.json was replaced after the link, and that name is the record's last one.
+  if (nameStateNow(context, retiredPath, linkedFile) === 'still')
+    throw unrestored('undeleted')
+  // Nothing proves that the link put what stands at receipt.json there: a backup may have put one file at both names after it, so receipt.json, the name the bridge reads, stays beside the private name.
+  throw unrestored('linked-unverified')
 }
 
 /** How {@link putBackRetiredReceipt} runs; every field is optional. */
@@ -3856,10 +5017,11 @@ type PutBackOptions = {
  * @param failure - What made the put-back necessary; undefined at a later run.
  * @param cause - The link's EEXIST; undefined when no link was made (`options.isBesideStanding`).
  * @param options - How the put-back runs ({@link PutBackOptions}).
- * @returns Resolves once the moved record was dropped beside a record that covers it, its private name was found empty (nothing is unlinked there), or it was put back by a later link.
+ * @param isMovedForeign - Set by {@link settleForeignMoved}, whose look found the file at the private name to be no record of this config: what stands at `receipt.json` is then worded beside that file (`moved-foreign-other`, `moved-foreign-unread`), never as keeping Codebook's old record.
+ * @returns What {@link putBackRetiredReceipt} returns: `settled` once the moved record was dropped beside a record that covers it or put back by a later link, `empty` when a later run found its private name empty, by its first look, by the last or by the delete beside a record that covers it (nothing is unlinked there).
  * @throws What {@link putBackRetiredReceipt} throws.
  * @example
- * await settleTakenName(context, retiredPath, linkError, eexist, {}) // the moved record goes beside a newer record of the same entry
+ * await settleTakenName(context, retiredPath, linkError, eexist, {}) // => 'settled' once the moved record went beside a newer record of the same entry
  */
 async function settleTakenName(
   context: Context,
@@ -3867,15 +5029,39 @@ async function settleTakenName(
   failure: unknown,
   cause: unknown,
   options: PutBackOptions,
-): Promise<void> {
+  isMovedForeign = false,
+): Promise<PutBackEnd> {
   const { attempt = 1, mark, isBesideStanding = false } = options
   const standing = await standingReceiptOf(context, retiredPath)
-  // The private name was found empty: nothing is left there to keep, and a file put there after that look is never unlinked unchecked.
-  if (standing === 'gone') return
+  // The private name was found empty before any comparison could prove what owns the entry: that never ends the record that leads there by itself, and nothing is unlinked there.
+  if (standing === 'gone')
+    return endOnEmptyName(context, retiredPath, failure, cause, mark, true)
   // Only a record of this config's same entry makes the moved one a spare copy.
   if (standing === 'covers') {
-    await unlink(retiredPath).catch(() => undefined)
-    return
+    const unlinkError = await unlink(retiredPath).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    if (unlinkError === undefined) return 'settled'
+    // A name found empty by the delete is as empty as one a look found: another program may put the record back right after, so the record that leads there stays.
+    if (codeOf(unlinkError) === 'ENOENT')
+      return endOnEmptyName(
+        context,
+        retiredPath,
+        failure,
+        unlinkError,
+        mark,
+        true,
+      )
+    // A delete that failed leaves the old record there: the publish record that leads to it stays, so the next run settles it.
+    throw new UnrestoredReceiptError(
+      context,
+      retiredPath,
+      failure,
+      unlinkError,
+      'undeleted',
+      mark,
+    )
   }
   if (standing === 'absent') {
     // Chosen only beside what stood there: an empty name is the undecided case, and nothing is linked into it.
@@ -3892,7 +5078,7 @@ async function settleTakenName(
     retiredPath,
     failure,
     cause,
-    unrestoredStandingOf(standing),
+    unrestoredStandingOf(standing, isMovedForeign),
     mark,
   )
 }
@@ -3903,29 +5089,36 @@ type StandingReceipt = 'covers' | 'gone' | 'absent' | UnrestoredStanding
 /**
  * Words a look that kept the moved record for its {@link UnrestoredReceiptError}; called only by {@link settleTakenName}.
  * @param standing - What the look found.
+ * @param isMovedForeign - Whether the put-back found the file at the private name to be no record of this config ({@link settleForeignMoved}).
  * @returns
  * - `unread` for `absent` past the last attempt (the name kept changing)
+ * - `moved-foreign-other` for `other` and `moved-foreign-unread` for `unread` (or `absent` past the last attempt) when `isMovedForeign` is set, so that file is never called Codebook's old record
  * - every other answer as it is
  * @example
- * unrestoredStandingOf('absent') // => 'unread'
+ * unrestoredStandingOf('absent', false) // => 'unread'
+ * unrestoredStandingOf('other', true)   // => 'moved-foreign-other'
  */
 function unrestoredStandingOf(
   standing: Exclude<StandingReceipt, 'covers' | 'gone'>,
+  isMovedForeign: boolean,
 ): UnrestoredStanding {
-  if (standing === 'absent') return 'unread'
-  return standing
+  const kept = standing === 'absent' ? 'unread' : standing
+  // A file at the private name that is no record of this config is worded beside what stands at receipt.json.
+  if (isMovedForeign && kept === 'other') return 'moved-foreign-other'
+  if (isMovedForeign && kept === 'unread') return 'moved-foreign-unread'
+  return kept
 }
 
 /**
  * Tells what stands at `receipt.json` when a put-back's link found that name taken, or the put-back was chosen only beside what stands there, so the moved record is dropped only beside a record that covers the same entry of the same config; called only by {@link settleTakenName}.
- * Both names are looked at again only after the comparison ({@link stillnessOf}), whose read of the config ({@link ownerOfConfigEntry}) takes time, so the unlink that follows a `covers` deletes only the file that was read.
+ * Both names, and the config when it decided the comparison, are looked at again only after the comparison ({@link stillnessOf}), whose read of the config ({@link ownerOfConfigEntry}) takes time: synchronously, the private name first and `receipt.json` last, right before the unlink that follows a `covers`, so that unlink deletes only the file that was read and only while the record that covers it still stands.
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns
- * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names still show what was read
+ * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names (and that config, when it decided) still show what was read
  * - `gone` when the moved record's private name is empty, by its first look or by the last: nothing is left there to keep, and nothing there is unlinked
  * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
- * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry
+ * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry, or the config that told which owns it changed by the last looks
  * - `absent` when the name is empty, or changed between the look and the check
  * - `foreign` when a record of this config stands there and the moved file, read in full, is no record (no regular file, too many bytes or bytes of another shape) or a record of another config: neither goes, and the moved one never replaces it
  * - `other` for a folder, a link or another kind of file, bytes that are no record, a record of another config, or a record of another entry that owns nothing the config holds
@@ -3941,66 +5134,88 @@ async function standingReceiptOf(
 ): Promise<StandingReceipt> {
   const records = await readStandingReceipt(context, retiredPath)
   if (typeof records === 'string') return records
-  const comparison = await compareStandingReceipt(context, records)
-  // The looks come last: a file put at either name during the comparison's config read is never what the put-back acts on.
-  const stillness = await stillnessOf(
+  const { answer, boundConfig } = await compareStandingReceipt(context, records)
+  // A storage that already stalls stalls in the thread pool first, where the setup's budget answers.
+  await lookAheadAt(
+    boundConfig
+      ? [retiredPath, context.path, context.receiptPath]
+      : [retiredPath, context.receiptPath],
+  )
+  // The looks come last and run synchronously: a file put at either name, or a config saved, during the comparison's config read is never what the put-back acts on, and only promise returns separate them from the unlink.
+  const stillness = stillnessOf(
     context,
     retiredPath,
     records.standingLook,
     records.movedLook,
+    boundConfig,
   )
-  return stillness === 'still' ? comparison : stillness
+  return stillness === 'still' ? answer : stillness
 }
+
+/** What {@link compareStandingReceipt} answers: the comparison, and, when the config decided it ({@link ownerOfConfigEntry}), the identity of the config that was read (`absent` when none stood), which the last looks must still find ({@link stillnessOf}). */
+type StandingComparison = {
+  answer: 'covers' | 'superseded' | 'other' | 'foreign' | 'config-unread'
+  boundConfig?: BoundConfig
+}
+
+/** The config a comparison's answer rests on ({@link ownerOfConfigEntry}): the identity of the file that was read, or `absent` when no config stood. */
+type BoundConfig = FileIdentity | 'absent'
 
 /**
  * Compares the record that stands at `receipt.json` with the moved one; called only by {@link standingReceiptOf}, which then looks at both names again before the put-back acts on the answer.
  * @param context - The run.
  * @param records - Both records as read ({@link StandingRecords}).
- * @returns
+ * @returns The answer ({@link StandingComparison}):
  * - `other` when the record at `receipt.json` is a record of another config
  * - `foreign` when the moved file holds no record, or a record of another config
- * - `covers` when both hold the same entry hash
+ * - `covers` when both hold the same entry hash, bound to no config
  * - what {@link ownerOfConfigEntry} answers for two records of this config with different entry hashes
  * @example
- * await compareStandingReceipt(context, { standing: newerReceipt, standingLook, moved: oldReceipt, movedLook }) // => 'covers' while both hold the same entry hash
+ * await compareStandingReceipt(context, { standing: newerReceipt, standingLook, moved: oldReceipt, movedLook }) // => { answer: 'covers' } while both hold the same entry hash
  */
 async function compareStandingReceipt(
   context: Context,
   { standing, moved }: StandingRecords,
-): Promise<'covers' | 'superseded' | 'other' | 'foreign' | 'config-unread'> {
+): Promise<StandingComparison> {
   // Only what stands there decides while it is no record of this config: moving it away lets the moved file go back.
-  if (standing.targetPath !== context.path) return 'other'
+  if (standing.targetPath !== context.path) return { answer: 'other' }
   // A moved file read as bytes that are no record, or as a record of another config: that file is the one to move.
-  if (moved === 'other' || moved.targetPath !== context.path) return 'foreign'
-  if (standing.entrySha256 === moved.entrySha256) return 'covers'
+  if (moved === 'other' || moved.targetPath !== context.path)
+    return { answer: 'foreign' }
+  if (standing.entrySha256 === moved.entrySha256) return { answer: 'covers' }
   return ownerOfConfigEntry(context, standing, moved)
 }
 
 /**
  * Compares two records of this config whose entry hashes differ against the entry the config holds, so the put-back never names a record that owns that entry as the one to move; called only by {@link compareStandingReceipt}.
- * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}).
+ * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}). Every answer this read decides depends on the config, so it carries the config that was read: a `covers` drops the moved record, and a `superseded` or `other` names a record to move, each only while the config is still that file, or still absent, at the last looks ({@link stillnessOf}); otherwise the answer is `config-unread`, which names no record to move.
  * @param context - The run.
  * @param standing - The record of this config at `receipt.json`.
  * @param moved - The moved record of this config.
- * @returns
+ * @returns The answer ({@link StandingComparison}), each but `config-unread` with the config that was read ({@link BoundConfig}):
  * - `covers` when both own the entry the config holds: the moved one is a spare copy
  * - `superseded` when only the record at `receipt.json` owns it: the moved one, which owns nothing the config holds, is the one to move
  * - `other` when the record at `receipt.json` owns nothing the config holds, also when no config or no entry stands: that record is the one to move
  * - `config-unread` when the config could not be read ({@link lookAtConfig} refused): neither is named
  * @example
- * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => 'superseded' while the config holds the entry only liveReceipt owns
+ * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => { answer: 'superseded', boundConfig: look.identity } while the config holds the entry only liveReceipt owns
  */
 async function ownerOfConfigEntry(
   context: Context,
   standing: Receipt,
   moved: Receipt,
-): Promise<'covers' | 'superseded' | 'other' | 'config-unread'> {
+): Promise<StandingComparison> {
   const look = await lookAtConfig(context).catch(() => undefined)
-  if (look === undefined) return 'config-unread'
+  if (look === undefined) return { answer: 'config-unread' }
+  // No config stands: the record at receipt.json owns nothing it holds, while no config appears by the last looks.
+  if (look.kind !== 'present') return { answer: 'other', boundConfig: 'absent' }
   const current = currentEntryOf(look)
-  // Only a record that owns nothing the config holds is ever named as the one to move.
-  if (!ownsEntry(current, standing)) return 'other'
-  return ownsEntry(current, moved) ? 'covers' : 'superseded'
+  const boundConfig = look.identity
+  // Only a record that owns nothing the config holds is ever named as the one to move, and only while the config is still this file.
+  if (!ownsEntry(current, standing)) return { answer: 'other', boundConfig }
+  if (!ownsEntry(current, moved)) return { answer: 'superseded', boundConfig }
+  // This look decided that both own the entry: the drop holds only while the config is still this file.
+  return { answer: 'covers', boundConfig }
 }
 
 /** The two records {@link readStandingReceipt} read, each with its name's look right before its read, so {@link stillnessOf} can tell after the comparison whether both names still show those files. */
@@ -4044,8 +5259,11 @@ async function readStandingReceipt(
 /** A record file as {@link readLookedRecord} read it: the receipt, or `other` for a file that holds none, and its name's inode, size and times at the look right before the read. */
 type LookedRecord = { read: Receipt | 'other'; look: LeftoverLookback }
 
+/** The old record of this config as {@link readMovedForPutBack} read it at its private name right before a put-back's link, which {@link dropLinkedPrivateName} reads again at `receipt.json` after the link. */
+type MovedRecord = LookedRecord & { read: Receipt }
+
 /**
- * Looks at a record's name, then reads the file, so a later look ({@link stillnessOf}) tells whether the name still shows the file that was read; called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name.
+ * Looks at a record's name, then reads the file, so a later look ({@link stillnessOf}) tells whether the name still shows the file that was read; called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name, and by {@link readMovedForPutBack} for that private name right before a put-back's link, by {@link dropLinkedPrivateName} for `receipt.json` right after that link, and by {@link heldReceiptLook} for that private name right after a first setup moved its old record there.
  * @param context - The run.
  * @param path - The record file.
  * @returns
@@ -4076,42 +5294,69 @@ async function readLookedRecord(
 }
 
 /**
- * Tells whether `receipt.json` and the moved record's private name still show the files that were read, after the comparison and right before the put-back acts on it; called only by {@link standingReceiptOf}.
- * @param context - The run; its seam is called around each look ({@link isNameStill}).
+ * Tells whether the moved record's private name, then the config when it decided the comparison, and last `receipt.json` still show what was read, after the comparison and right before the put-back acts on it; called only by {@link standingReceiptOf}.
+ * The looks are synchronous, so nothing is awaited between them and the unlink that follows a `covers`, and `receipt.json`, whose record decides that drop, is looked at last; its caller looks at the same names through the thread pool right before ({@link lookAheadAt}), so a storage that already stalls stalls there, where the setup's budget answers. Limits: a file put at either name, or a config saved, between these looks and the unlink is not seen; no Node primitive unlinks by inode. A stall that starts between the caller's looks and these still holds the extension host's thread.
+ * @param context - The run; its seam is called around each name's look ({@link nameStateNow}).
  * @param retiredPath - The private name that holds the moved record.
  * @param standingLook - `receipt.json`'s look before its read.
  * @param movedLook - The private name's look before its read.
+ * @param boundConfig - The config that decided the answer ({@link ownerOfConfigEntry}): a `covers` drop, or a `superseded` or `other` advice to move a record; undefined when the config decided nothing.
  * @returns
- * - `still` when both names show the files that were read
- * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
+ * - `still` when every name shows what was read
  * - `moved-changed` when the private name shows another file; `moved-unread` when that look failed
- * - `gone` when nothing stands at the private name any more: nothing is left there to keep, as when its first look found it empty ({@link readStandingReceipt})
+ * - `gone` when nothing stands at the private name any more, as when its first look found it empty ({@link readStandingReceipt})
+ * - `config-unread` when the config that decided is no longer the file that was read, or that look failed
+ * - `absent` when `receipt.json` changed, so the put-back links again; `unread` when that look failed
  * @example
- * await stillnessOf(context, retiredPath, standingLook, movedLook) // => 'moved-changed' after a sync tool put another file at the private name during the read
+ * stillnessOf(context, retiredPath, standingLook, movedLook) // => 'absent' after a sync tool replaced receipt.json during the look at the private name
  */
-async function stillnessOf(
+function stillnessOf(
   context: Context,
   retiredPath: string,
   standingLook: LeftoverLookback,
   movedLook: LeftoverLookback,
-): Promise<
-  'still' | 'absent' | 'unread' | 'gone' | 'moved-changed' | 'moved-unread'
-> {
-  const isStandingStill = await isNameStill(
-    context,
-    context.receiptPath,
-    standingLook,
-  ).catch(() => undefined)
-  if (isStandingStill === undefined) return 'unread'
-  if (!isStandingStill) return 'absent'
-  const movedState = await nameStateOf(context, retiredPath, movedLook).catch(
-    (): 'unread' => 'unread',
-  )
+  boundConfig?: BoundConfig,
+):
+  | 'still'
+  | 'absent'
+  | 'unread'
+  | 'gone'
+  | 'moved-changed'
+  | 'moved-unread'
+  | 'config-unread' {
+  const movedState = nameStateNow(context, retiredPath, movedLook)
   if (movedState === 'unread') return 'moved-unread'
   // The private name is empty by now: no file is left there to keep, to name or to unlink.
   if (movedState === 'gone') return 'gone'
   // Another file at the private name since the look: what the read compared is not what an unlink would delete.
-  return movedState === 'still' ? 'still' : 'moved-changed'
+  if (movedState === 'changed') return 'moved-changed'
+  // The config decided the answer: it holds only while the config is still the file that was read, or still absent.
+  if (boundConfig && !isConfigStill(context, boundConfig))
+    return 'config-unread'
+  // receipt.json last: the record that covers the moved one must still stand there right before the delete.
+  const standingState = nameStateNow(context, context.receiptPath, standingLook)
+  if (standingState === 'unread') return 'unread'
+  return standingState === 'still' ? 'still' : 'absent'
+}
+
+/**
+ * Tells whether the config is still the file whose look decided a drop or a move advice, or still absent, with a failed look as a change; called only by {@link stillnessOf}.
+ * @param context - The run.
+ * @param boundConfig - The config that decided ({@link BoundConfig}).
+ * @returns `true` when {@link isConfigUnchanged} finds that file, or still no file for `absent`; `false` when it changed or the look failed.
+ * @example
+ * isConfigStill(context, look.identity) // => false after a sync tool saved the config again
+ * isConfigStill(context, 'absent')      // => false once a config stands
+ */
+function isConfigStill(context: Context, boundConfig: BoundConfig): boolean {
+  try {
+    return isConfigUnchanged(
+      context,
+      boundConfig === 'absent' ? undefined : boundConfig,
+    )
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -4135,7 +5380,7 @@ async function readRecordKind(
 }
 
 /**
- * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} or {@link readRetiredRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} or {@link readRetiredRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt}, {@link retiredReceiptFateOf} and {@link readPublishRecord}, which keep every record after a failed read and advise deleting none.
  * @param error - What {@link readRecord} or {@link readRetiredRecord} threw.
  * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link (whose open without following it fails with `ELOOP`), no regular file, too many bytes or bytes that are no record.
  * @example
@@ -4156,16 +5401,17 @@ function isFailedRead(error: unknown): boolean {
  * @param context - The run.
  * @param pending - The publish record as read; only one of this config that names the move ({@link Pending.retiresReceipt}) with a valid generation leads to a private name.
  * @param isStagedLinked - Whether the setup's staged name and the config name showed its staged inode before recovery dropped that staged name ({@link isStagedNameLinked}).
- * @returns Resolves once the private name is settled; the caller reads the config afterwards, so a config restored while the old receipt went back is the one its run goes on with.
- * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link isPublishReceipted}, {@link lookAtConfig}, {@link retiredReceiptFateOf} and {@link dropRetiredReceipt} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, and the {@link UnrestoredReceiptError} when the receipt could not go back; the record stays as it was read.
+ * @returns Resolves once the private name is settled; the caller reads the config afterwards, so a config restored while the old receipt went back is the one its run goes on with. With the private name when a put-back found it empty (`empty`, {@link putBackRetiredReceipt}): the caller ends the publish record only while a look right before that end still finds that name empty ({@link retirePending}); undefined otherwise, also after a drop ({@link dropRetiredReceipt}), whose decision is to delete that record.
+ * @throws The {@link unreadableRefusal} when the config name cannot be looked at, what {@link isPublishReceipted}, {@link lookAtConfig}, {@link retiredReceiptFateOf} and {@link dropRetiredReceipt} throw, the {@link undecidedReceiptRefusal} when the config holds the entry the old receipt covers, the {@link UnrestoredReceiptError} when the receipt could not go back, and a {@link JournalConflictError} when the publish record changed, disappeared or could not be read right before a put-back's link ({@link assertPutBackRecordStill}), so nothing was linked; the record stays as it was read, except that a put-back that keeps a file at the private name that Codebook did not verify as its record of this config first rewrites it in the shape older builds refuse ({@link putBackLater}).
  * @example
- * await settleRetiredReceipt(context, pending, false) // receipt.json stands again after a setup whose link failed and whose put-back failed too
+ * await settleRetiredReceipt(context, pending, false) // => undefined once receipt.json stands again after a setup whose link failed and whose put-back failed too
+ * await settleRetiredReceipt(context, pending, false) // => '…/receipt.json.<generation>.retired' when another program had emptied that name
  */
 async function settleRetiredReceipt(
   context: Context,
   pending: Pending | undefined,
   isStagedLinked: boolean,
-): Promise<void> {
+): Promise<string | undefined> {
   const generation = pending?.generation
   if (
     !pending?.retiresReceipt ||
@@ -4186,27 +5432,99 @@ async function settleRetiredReceipt(
   })
   // Nothing of that publish was linked: the old receipt goes back whatever inode the config shows.
   if (pending.notLinked) {
-    await putBackRetiredReceipt(context, retiredPath)
-    return
+    const end = await putBackLater(context, retiredPath)
+    // An empty private name ends the publish record only after one more look right before that end.
+    return end === 'empty' ? retiredPath : undefined
   }
   // The setup's link stood: the old receipt is deleted, never put back beside that entry.
   if (isProvenLink(pending, config, isStagedLinked)) {
     await dropRetiredReceipt(context, retiredPath)
-    return
+    return undefined
   }
   // One look decides the put-back; the run goes on with the config as it stands afterwards.
   const look = await lookAtConfig(context)
   const fate = await retiredReceiptFateOf(context, pending, retiredPath, look)
   if (fate === 'undecided') throw undecidedReceiptRefusal(context, retiredPath)
   // The config holds that setup's publish, which the old receipt does not own: it goes, as when the link stood.
-  if (typeof fate === 'object')
+  if (typeof fate === 'object') {
     await dropRetiredReceipt(context, retiredPath, fate)
-  else
-    await putBackRetiredReceipt(context, retiredPath, undefined, {
-      // A marked record went back above: this one lacks the mark, which also a setup that linked its config leaves.
-      mark: 'unmarked',
-      isBesideStanding: fate === 'compare',
-    })
+    return undefined
+  }
+  const end = await putBackLater(context, retiredPath, {
+    // A marked record went back above: this one lacks the mark, which also a setup that linked its config leaves.
+    mark: 'unmarked',
+    isBesideStanding: fate === 'compare',
+  })
+  return end === 'empty' ? retiredPath : undefined
+}
+
+/**
+ * Runs a later run's put-back of a first setup's old record ({@link putBackRetiredReceipt}); when that put-back keeps a file at the private name that Codebook did not verify as its record of this config ({@link UnrestoredReceiptError.isForeignKept}), the publish record that leads there is rewritten in the shape older builds refuse first ({@link markForeignKept}), so a window of 0.2.142.0 or 0.2.143.0 never puts that file at `receipt.json`; called only by {@link settleRetiredReceipt}.
+ * @param context - The run.
+ * @param retiredPath - The private name that holds the old record.
+ * @param options - How the put-back runs ({@link PutBackOptions}).
+ * @returns What {@link putBackRetiredReceipt} returns.
+ * @throws What {@link putBackRetiredReceipt} throws, once that rewrite was tried.
+ * @example
+ * await putBackLater(context, retiredPath) // throws '… because that file is no record of Devin Desktop's MCP config at … (another program may have put it there); …' and pending.json carries retiresReceipt 'foreign'
+ */
+async function putBackLater(
+  context: Context,
+  retiredPath: string,
+  options?: PutBackOptions,
+): Promise<PutBackEnd> {
+  try {
+    return await putBackRetiredReceipt(context, retiredPath, undefined, options)
+  } catch (error) {
+    // A file of another program stays at the private name: older builds must never reach it through this record.
+    if (error instanceof UnrestoredReceiptError && error.isForeignKept)
+      await markForeignKept(context, retiredPath)
+    throw error
+  }
+}
+
+/**
+ * Rewrites the publish record that leads to an old record's private name in the shape older builds refuse ({@link foreignKeptRecordOf}), as it stands now, since recovery may have rewritten it in this run (a handover); best effort, because the run refuses anyway; called only by {@link putBackLater}.
+ * The rewrite replaces only the version of the record this call read ({@link readVersionedRecord}), through the tracked-record guard ({@link Context.journalVersion}; a held run's own tracking when it holds a legacy journal): the bytes are staged first, and the synchronous last look right before the rename refuses when the name no longer shows that version, so a record a backup or sync tool put there meanwhile stays as that program left it; an emptied name is never claimed (`refusesEmptyName`). Such a record may still lead 0.2.142.0 and 0.2.143.0 to that file (retiresReceipt `true`): it is another program's, so it is never written over unread, and the next run of this build, which reads it, rewrites it here; until then, as after any later restore of such a record, an older window may put that file back. Limit: a record put there between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * @param context - The run; its pending path is the record.
+ * @param retiredPath - The private name that keeps a file Codebook did not verify as its record of this config.
+ * @returns Resolves once the record was rewritten, or when it was left as it was: it already has that shape, leads to another private name, could not be read or written, or another record or an empty name stood there by the write.
+ * @example
+ * await markForeignKept(context, retiredPath) // pending.json now carries retiresReceipt 'foreign'
+ */
+async function markForeignKept(
+  context: Context,
+  retiredPath: string,
+): Promise<void> {
+  const read = await readVersionedRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  ).catch(() => undefined)
+  if (read === undefined) return
+  const { record, version } = read
+  // Only the record that leads to that private name, and only while older builds would still put back from it.
+  const leadsThere =
+    record.retiresReceipt === true &&
+    record.targetPath === context.path &&
+    record.generation !== undefined &&
+    retiredReceiptPathOf(context, record.generation) === retiredPath
+  if (!leadsThere) return
+  // Only the version this call read is replaced: a held run keeps its own tracking, any other run tracks this read.
+  const rewriting: Context = {
+    ...context,
+    journalVersion: context.journalVersion ?? {
+      current: version,
+      refusesEmptyName: true,
+    },
+  }
+  // Another record or an empty name by then: it stays as the other program left it, and the run refuses anyway.
+  await writeRecord(
+    rewriting,
+    context.pendingPath,
+    foreignKeptRecordOf(record),
+  ).catch(() => undefined)
 }
 
 /**
@@ -4298,7 +5616,7 @@ async function isPublishReceipted(
 }
 
 /**
- * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there or no longer held the record the drop was decided on; called by {@link dropRetiredReceipt} and {@link assertDecisionStill}, which keep that file and the publish record that names it, so the next run looks at it again.
+ * Builds the refusal for a first setup's old record that Codebook was to delete and did not: the delete failed, or the private name no longer showed the file Codebook read there or no longer held the record the drop was decided on; called by {@link dropRetiredReceipt} and {@link assertDecisionStill}, which keep that file and the publish record that names it, so the next run looks at it again, and by {@link keptNameSentence} for a put-back whose delete beside a record that covers the old one failed.
  * @param context - The run; gives the publish record's path and the command to run again.
  * @param retiredPath - The private name that holds the old record.
  * @param cause - What the delete threw; undefined when the name showed another file, held another record or could not be looked at.
@@ -4314,6 +5632,23 @@ function retiredDropRefusal(
   return new Error(
     `Codebook could not delete ${retiredPath}, its own old record of a setup whose entry is gone (the delete failed, or Codebook could not tell that this file is still the record it read), so it kept that file and the publish record at ${pendingPath}, and the next run looks at that file again; make the folder that holds them writable by you if it is not, ${retry}.`,
     cause === undefined ? undefined : { cause },
+  )
+}
+
+/**
+ * Builds the refusal for a later run that found a first setup's old record's private name empty ({@link endOnEmptyName}) and, at its look right before it ended the publish record that leads there, found a file there again or could not look; called only by the look {@link retiredNameCheck} gives {@link retirePending}, which then keeps that publish record byte for byte, and the run goes no further.
+ * @param context - The run; gives the publish record's path and the command to run again.
+ * @param retiredPath - The private name that was found empty.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw retiredBackRefusal(context, retiredPath) // 'Codebook found nothing at …/receipt.json.<generation>.retired, where it had moved its own old record of a setup whose entry is gone, but right before it ended its publish record at …/pending.json a file stood there again (…), so it kept that publish record and went no further; …'
+ */
+function retiredBackRefusal(
+  { pendingPath, retry }: Context,
+  retiredPath: string,
+): Error {
+  return new Error(
+    `Codebook found nothing at ${retiredPath}, where it had moved its own old record of a setup whose entry is gone, but right before it ended its publish record at ${pendingPath} a file stood there again (a backup or sync tool may have put that record back) or it could not look at that name, so it kept that publish record and went no further; ${retry}, and that run looks at ${retiredPath} again.`,
   )
 }
 
@@ -4589,10 +5924,19 @@ function disabledFlagOf(entry: unknown): { disabled?: true } {
 /** What a write reports about the entry it published. */
 type PublishedEntry = { generation: string; cleanupFailure?: string }
 
-/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing) or `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out); `keptLeft` holds the copies the rollback itself left. */
+/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing), `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out) `journal-taken` (something already stood at the name of the rollback's own journal, which its first write never replaces, or another file or nothing stood there at the last look right before the config would move, so nothing moved and the config was left unchanged), `took-out-record-taken` (the entry is gone, but another file stood at the rollback journal's name as the rollback was about to delete its journal, so that file stays and the run goes no further, {@link dropFinishedRecord}) or `took-out-record-unread` (the entry is gone, but that name could not be read again then, so what stands there stays and the run goes no further); `keptLeft` holds the copies the rollback itself left. */
 type RollbackResult = {
   outcome:
-    'took-out' | 'replaced-config' | 'not-ours' | 'unreadable' | 'not-taken-out'
+    | 'took-out'
+    | 'replaced-config'
+    | 'not-ours'
+    | 'unreadable'
+    | 'not-taken-out'
+    | 'journal-taken'
+    | 'took-out-record-taken'
+    | 'took-out-record-unread'
+    /** Set only by {@link takeOutUnrecordedEntry}: the setup's record changed, moved away or could not be read again before the take-back changed the config. */
+    | 'record-changed'
   keptLeft: KeptFile[]
   /** Set with `took-out`: whether the whole file went or only the entry. */
   removal?: 'file-removed' | 'removed'
@@ -4603,8 +5947,8 @@ type RollbackResult = {
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
- * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`.
- * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`.
+ * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name, or another file or nothing there at the take-back's last look before the config moves ({@link assertTakeBackRecordStill}), is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and a name that could not be read again then is `took-out-record-unread`; what stands there stays.
+ * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`, except the {@link RecordConflictError} of a take-back whose publish record no longer stands as its run read or wrote it ({@link assertTakeBackRecordStill}), which {@link finishCutShortSetup} rethrows and {@link takeOutUnrecordedEntry} answers as `record-changed`, because nothing moved.
  */
 async function rollBackPublishedEntry(
   context: Context,
@@ -4626,18 +5970,39 @@ async function rollBackPublishedEntry(
   // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
   if (!isSameFileId(written.config.ino, look.identity.ino))
     return { outcome: 'replaced-config', keptLeft: [] }
-  const { keptLeft, status } = await takeEntryOut(
-    rollbackContextOf(context, written.generation),
-    { look, receipt: written },
-  )
-  return { outcome: 'took-out', keptLeft, removal: status }
+  try {
+    const { keptLeft, status } = await takeEntryOut(
+      rollbackContextOf(context, written.generation),
+      { look, receipt: written },
+    )
+    return { outcome: 'took-out', keptLeft, removal: status }
+  } catch (error) {
+    // The entry is out, but another file stood where the take-back's journal was to be deleted, or that name could not be read again: what stands there stays, and the run goes no further.
+    if (error instanceof TakenOutConflictError)
+      return {
+        outcome:
+          error.kind === 'unread'
+            ? 'took-out-record-unread'
+            : 'took-out-record-taken',
+        keptLeft: [],
+      }
+    // Only the journal's first write, a claim, and the last look at that journal right before the config moves let this escape otherwise (every later journal write of the take-back swallows its failure), so nothing moved.
+    if (error instanceof JournalConflictError)
+      return { outcome: 'journal-taken', keptLeft: [] }
+    throw error
+  }
 }
+
+/** The end of a rollback journal's name beside `pending.json` ({@link rollbackContextOf}); {@link journalConflictError} words a conflict at a name with it as a rollback record's. */
+const ROLLBACK_JOURNAL_SUFFIX = '.rollback'
 
 /**
  * The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads.
  * @param context - The run.
- * @param publishGeneration - The generation of the publish being rolled back; every journal of the rollback records it. Omit it to only read or settle a journal.
+ * @param publishGeneration - The generation of the publish being rolled back; every journal of the rollback records it. Omit it to only read or settle a journal. With it, the context tracks its journal from its first write ({@link Context.journalVersion}), which claims the name and never replaces what stands there ({@link claimJournal}).
  * @returns The rollback's context.
+ * @example
+ * rollbackContextOf(context, generation).pendingPath // => '…/devin-mcp/pending.json.rollback'
  */
 function rollbackContextOf(
   context: Context,
@@ -4645,8 +6010,67 @@ function rollbackContextOf(
 ): Context {
   return {
     ...context,
-    pendingPath: `${context.pendingPath}.rollback`,
-    ...(publishGeneration !== undefined && { rollbackOf: publishGeneration }),
+    pendingPath: `${context.pendingPath}${ROLLBACK_JOURNAL_SUFFIX}`,
+    // A caller's tracked version is of its own pending path ({@link heldPublishContext}), never of this journal; a take-back's own tracker below replaces it.
+    journalVersion: undefined,
+    ...(publishGeneration !== undefined && {
+      rollbackOf: publishGeneration,
+      journalVersion: { current: undefined },
+      // A run that read its publish record takes the entry back only while that record still stands as read.
+      ...(context.journalVersion?.refusesEmptyName && {
+        takeBackRecordRun: context,
+      }),
+    }),
+  }
+}
+
+/**
+ * Stops a take-back right before its first change to the config unless the records it rests on still stand: the publish record its run read at `pending.json` as that run read or last wrote it ({@link Context.takeBackRecordRun}), which proves the entry is the failed setup's, and the take-back's own rollback record as its claim linked it ({@link claimJournal}), which names the private name the config moves to; so a record a backup or sync tool moved away, replaced or made unreadable after that read or that claim never has the entry or the config Codebook created moved on its word; called by {@link deleteConfig} and {@link moveConfigAside} after every awaited step of theirs and right before their last look at the config.
+ * Both names are read through the thread pool first, the publish record's, then the take-back's own ({@link lookAtTrackedJournal}), so a storage that already stalls stalls there; the synchronous looks follow in that order ({@link assertTrackedJournalStill}), and the config's own last look after them, with nothing awaited between them.
+ * Limit: a record moved or replaced after its synchronous look, while the config is renamed or moved aside, is seen only when the run ends that record ({@link retirePending}, {@link dropFinishedRecord}), after the config changed; no Node primitive renames one name only while another shows a given inode.
+ * @param context - The run that is about to move the config; only a take-back's context ({@link rollbackContextOf} with a generation) looks at anything, at the publish record only when its run tracks one.
+ * @throws A {@link RecordConflictError} with the publish record's own sentence ({@link journalConflictError}) when its name shows nothing (`gone`), another file or other bytes (`changed`), or cannot be read again (`unread`); a {@link JournalConflictError} for the take-back's own record in the same three cases, which {@link rollBackPublishedEntry} answers as it answers its claim's (`journal-taken`); nothing moved then.
+ * @example
+ * await assertTakeBackRecordStill(rollbackContext) // throws a RecordConflictError once a sync tool moved pending.json away after the run read it
+ * await assertTakeBackRecordStill(rollbackContext) // throws a JournalConflictError once a sync tool renamed another file over pending.json.rollback after the claim
+ */
+async function assertTakeBackRecordStill(context: Context): Promise<void> {
+  // Only a take-back's context tracks its own rollback record, from its claim on.
+  if (context.rollbackOf === undefined) return
+  const assertRecordStill = await takeBackRecordLook(context.takeBackRecordRun)
+  const ownRecord = await lookAtTrackedJournal(context)
+  // An empty name: the record that names the private name the config moves to disappeared after the claim.
+  if (!ownRecord) throw journalConflictError(context, 'gone')
+  assertRecordStill?.()
+  assertTrackedJournalStill(context, ownRecord)
+}
+
+/**
+ * Reads the publish record a take-back rests on through the thread pool and gives back its synchronous last look; called by {@link assertTakeBackRecordStill}, which runs that look only after its awaited look at the take-back's own record, so nothing awaited stands between the synchronous looks and the move of the config.
+ * @param run - The run that tracks the `pending.json` it read ({@link Context.takeBackRecordRun}); undefined when it tracks none.
+ * @returns
+ * - undefined without a run
+ * - otherwise the synchronous look at that name ({@link assertTrackedJournalStill}), which throws as below
+ * @throws A {@link RecordConflictError} with that record's own sentence ({@link journalConflictError}) when its name shows nothing (`gone`), another file or other bytes (`changed`), or cannot be read again (`unread`), from the read or from the look it gives back; nothing moved then.
+ * @example
+ * const assertRecordStill = await takeBackRecordLook(rollbackContext.takeBackRecordRun)
+ * assertRecordStill?.() // throws once a sync tool moved pending.json away after that read
+ */
+async function takeBackRecordLook(
+  run: Context | undefined,
+): Promise<StillLook['assert'] | undefined> {
+  if (!run) return undefined
+  const recordLook = await lookAtTrackedJournal(run).catch((error: unknown) => {
+    throw asRecordConflict(error)
+  })
+  // An empty name: the record the take-back rests on disappeared after the run read it.
+  if (!recordLook) throw asRecordConflict(journalConflictError(run, 'gone'))
+  return (): void => {
+    try {
+      assertTrackedJournalStill(run, recordLook)
+    } catch (error) {
+      throw asRecordConflict(error)
+    }
   }
 }
 
@@ -4686,28 +6110,40 @@ function alsoKeptSentence({ path, isLeftover, isReplaced }: KeptFile): string {
  * Words how a failed first setup's rollback ended as one clause; used by {@link takeOutUnrecordedEntry} and {@link finishCutShortSetup}.
  * A by-hand removal is asked for only when the entry was confirmed as Codebook's own and could not be taken out.
  * @param outcome - The {@link RollbackResult} outcome.
+ * @param context - The run; its config path and the rollback journal's path beside its record ({@link rollbackContextOf}) are named for `journal-taken`.
  * @returns A clause that follows a comma and states what Codebook did with the file and what the learner should check.
  * @example
- * rollbackOutcomeClause('took-out') // => 'so it took that entry out again and changed nothing else'
+ * rollbackOutcomeClause('took-out', context) // => 'so it took that entry out again and changed nothing else'
  */
-function rollbackOutcomeClause(outcome: RollbackResult['outcome']): string {
+function rollbackOutcomeClause(
+  outcome: RollbackResult['outcome'],
+  context: Context,
+): string {
+  const { path } = context
+  const journal = rollbackContextOf(context).pendingPath
   return {
     'took-out': 'so it took that entry out again and changed nothing else',
     'replaced-config': `but the file at that path was saved again since, so it left that file unchanged; check that the "${SERVER_NAME}" entry in it is what you want`,
     'not-ours': `and that file is gone or its "${SERVER_NAME}" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it`,
     unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
     'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
+    'journal-taken': `but something already stands at ${journal}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${path} unchanged; the next run reads ${journal} before it takes the entry out (if what stands there is not Codebook's for ${path}, move it to another folder first)`,
+    'took-out-record-taken': `so it took that entry out again and changed nothing else, but then found another file at ${journal}, where it keeps the record of that take-back (a backup or sync tool may have put an older file there), so it left that file as it is and went no further; the next run reads ${journal} first (if what stands there is not Codebook's for ${path}, move it to another folder first)`,
+    'took-out-record-unread': `so it took that entry out again and changed nothing else, but then could not read ${journal} again, where it keeps the record of that take-back, to check that it still holds that record, so it left that name as it is and went no further; make that file readable by you if it is not, and the next run reads ${journal} first`,
+    'record-changed': `and then found its record of this setup at ${context.pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${path} unchanged and that name as it is and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it, and the next run reads ${context.pendingPath} first`,
   }[outcome]
 }
 
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
- * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy.
- * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out, which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
+ * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy, and for good while the old record's private name stayed after the link (`isRetiredKept`), because it is the only way to that name; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link PublishDecision.markVersion}), so another generation's record a backup or sync tool put there before the mark, or a record it put over the mark, stays for the next run, and so does the setup's own record when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
+ * The take-back rests on the setup's record as this run wrote it ({@link markBeforeTakeBack}): when another program changed, moved away or made unreadable that record while the mark was written, or, after a mark that could not be written, before the take-back's last look right before the config moves ({@link assertTakeBackRecordStill}), the config stays as it is, and so does what stands at that name (`record-changed`). Limit: a record another program put there before the mark read it (the mark writes over it only when it is this setup's), or one it puts over the mark this call wrote, is not looked at again before the config moves; it stays for the next run, as said above.
+ * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out (also one that then found another file at its own record's name, `took-out-record-taken`, or could not read that name again, `took-out-record-unread`), which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
+ * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link markTakeBackOwed}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
  * @returns The error to reject with: whether the entry was taken out again, and the way out.
  */
 async function takeOutUnrecordedEntry(
@@ -4715,42 +6151,111 @@ async function takeOutUnrecordedEntry(
   written: Receipt,
   cause: unknown,
   { asLeft, asTracked }: LeftCopies,
+  isRetiredKept: boolean,
 ): Promise<Error> {
   const { path, retry } = context
-  let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
-  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. A failure to write the intent changes nothing: the run rejects as it does without it.
-  await markTakeBackOwed(context, written.generation).catch(() => undefined)
-  try {
-    result = await rollBackPublishedEntry(context, written)
-  } catch {
-    // The rejection below says the entry may still stand.
+  const recordChanged: RollbackResult = {
+    outcome: 'record-changed',
+    keptLeft: [],
   }
+  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry.
+  const { run, markVersion } = await markBeforeTakeBack(
+    context,
+    written.generation,
+  )
+  let result = recordChanged
+  // No run: the setup's record changed, moved away or could not be read again as the mark was written, so the config is never changed on this run's word alone.
+  if (run)
+    result = await rollBackPublishedEntry(run, written).catch(
+      (error: unknown): RollbackResult =>
+        // The setup's record no longer stood right before the config would move, so nothing moved; any other failure leaves the rejection below saying the entry may still stand.
+        error instanceof RecordConflictError
+          ? recordChanged
+          : { outcome: 'not-taken-out', keptLeft: [] },
+    )
   const { outcome } = result
-  // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it; another file found at the config path may still give way to the published one before then.
-  const isHandedNext = outcome === 'took-out'
+  // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it, also when it then found another file at its own record's name or could not read that name again; another file found at the config path may still give way to the published one before then.
+  const isHandedNext =
+    outcome === 'took-out' ||
+    outcome === 'took-out-record-taken' ||
+    outcome === 'took-out-record-unread'
   const keptCopies = [
     ...(isHandedNext ? asLeft : asTracked),
     ...result.keptLeft,
   ]
-  // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left.
-  if (outcome === 'took-out' && keptCopies.length === 0)
-    await dropPending(context)
-  const sentence = rollbackOutcomeClause(outcome)
+  // Nothing stays that the setup's record must prove: after a complete rollback with no copy left and no old record's private name it leads to, only the mark this call wrote goes, while that name still shows it ({@link dropTrackedJournal}); a record another program put there meanwhile stays.
+  if (
+    outcome === 'took-out' &&
+    keptCopies.length === 0 &&
+    !isRetiredKept &&
+    markVersion !== undefined
+  )
+    await dropPending({
+      ...context,
+      journalVersion: { current: markVersion, refusesEmptyName: true },
+    })
+  const sentence = rollbackOutcomeClause(outcome, context)
   return new Error(
     `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}; make room for that record, ${retry}.${keptCopiesSentence(keptCopies)}`,
     { cause },
   )
 }
 
+/** How a failed first setup's take-back goes on after its mark ({@link markBeforeTakeBack}): the run its rollback takes the entry out with, none when the take-back stops before it changes the config, and the version of the mark this call wrote, the only record {@link takeOutUnrecordedEntry} may delete after a complete rollback. */
+type MarkedTakeBack = { run?: Context; markVersion?: RecordVersion }
+
+/**
+ * Writes a failed first setup's take-back mark ({@link markTakeBackOwed}) and decides what its take-back rests on; called by {@link takeOutUnrecordedEntry} before its rollback, so the entry is never taken out on the run's word alone once the setup record that proves it is this setup's changed, moved away or could not be read again.
+ * @param context - The run; it tracks the version of `pending.json` it last wrote ({@link ownRecordContext}).
+ * @param publishGeneration - The generation of the setup being taken back.
+ * @returns
+ * - the run and the version of the mark once this call wrote it; the run alone when the record needed no mark (another generation's, or none at that name) or carried it already (a backup's, since this setup's record was just written without the mark), so that record stays for the next run
+ * - no run when the mark found the record changed, moved away or unreadable as it wrote it ({@link RecordConflictError}, {@link JournalConflictError}): the take-back stops before it changes the config
+ * - otherwise, after a read or write that failed (for example on a full disk), the run tracking the version it last wrote there, refusing an empty name, so the take-back moves the config only while that record still stands ({@link Context.takeBackRecordRun}, {@link assertTakeBackRecordStill})
+ * @example
+ * await markBeforeTakeBack(context, generation) // => { run: context, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
+ * await markBeforeTakeBack(context, generation) // => {} once a backup renamed another record over pending.json while the mark was written
+ */
+async function markBeforeTakeBack(
+  context: Context,
+  publishGeneration: string,
+): Promise<MarkedTakeBack> {
+  try {
+    const decision = await markTakeBackOwed(context, publishGeneration)
+    // Only a mark this call wrote may go after the take-back; a mark found already is another program's.
+    return {
+      run: context,
+      markVersion: decision?.isMarkFound ? undefined : decision?.markVersion,
+    }
+  } catch (error) {
+    // The record changed, moved away or could not be read again under the mark's write: nothing is taken out on its word.
+    if (
+      error instanceof RecordConflictError ||
+      error instanceof JournalConflictError
+    )
+      return {}
+    // The mark could not be written: the take-back still runs, but moves the config only while the record this run last wrote still stands.
+    return {
+      run: {
+        ...context,
+        journalVersion: {
+          current: context.journalVersion?.current,
+          refusesEmptyName: true,
+        },
+      },
+    }
+  }
+}
+
 /**
  * Publishes the config with Codebook's entry: the pending record is written by {@link publishRoot} before the rename, the receipt after it.
  * A first setup ({@link isFirstSetup}) records its entry hash with the {@link FIRST_SETUP_HASH_PREFIX} and `firstSetup`, so no Codebook version adopts its entry before its receipt exists and this one takes it back ({@link isTakeBackOwed}); the receipt holds the plain hash.
  * An existing `codebook` entry keeps the keys Devin manages itself (`disabled`, which Customize sets when the server is toggled off, and `disabledTools`); any other added key makes the entry an edit that is never replaced.
- * @param context - The run; its entry must be set.
+ * @param context - The run; its entry must be set, and it tracks its own record from the version {@link inspect} left there ({@link ownRecordContext}), so a record another program puts at `pending.json` meanwhile is neither written over nor deleted, up to the limit of the last look before a rename or unlink ({@link writeTrackedJournal}, {@link dropTrackedJournal}).
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
  * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted; an empty generation when the run has no entry.
- * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects.
+ * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -4770,7 +6275,7 @@ async function publishEntry(
   const installationId = installationIdOf(isFirst ? undefined : receipt)
   const root = rootWithEntry(look, entry)
   await context.seam?.afterRead?.()
-  const { config, keptLeft, isRecorded } = await publishRoot(
+  const { config, keptLeft, isRecorded, isRetiredKept } = await publishRoot(
     context,
     root,
     look,
@@ -4808,10 +6313,16 @@ async function publishEntry(
   } catch (cause) {
     // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
     if (!isFirst) throw cause
-    throw await takeOutUnrecordedEntry(context, written, cause, copies)
+    throw await takeOutUnrecordedEntry(
+      context,
+      written,
+      cause,
+      copies,
+      isRetiredKept,
+    )
   }
-  // A record that names a copy that stays is kept, so the next run settles that copy.
-  if (keptLeft.length === 0) await dropPending(context)
+  // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it.
+  if (keptLeft.length === 0 && !isRetiredKept) await dropPending(context)
   const cleanupFailure = cleanupFailureOf(copies.asTracked)
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
 }
@@ -4848,10 +6359,10 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read, only while its name still shows the version this run settled ({@link retirePending}).
- * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
+ * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one; the journal then ends only while that record's name still shows the mark ({@link markLeftCheck}), so a setup record a backup puts back without it keeps the journal; a journal that marks nothing (another setup's record, or none at that name) ends only while that name still shows the record the decision read, or nothing, so the setup record a backup restores there meanwhile is decided together with the journal instead of being adopted without it. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
  * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then.
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread`, `record-gone` or `record-unread` sentence when the publish record's name no longer shows the version the mark read, the take-back mark this run wrote or found, or what the decision read when nothing was marked, or cannot be read again then ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired: that name stays as it is and the run goes no further. Either comes after the first leftover's refusal when one stays and the refusal does not name it already ({@link withJournalLeftover}).
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -4886,54 +6397,78 @@ async function settleRollbackJournal(
           reported: unsettled[0],
         }
       : undefined
-  const belonging = await markTakeBackOwed(
+  const [reported] = unsettled
+  const decision = await markTakeBackOwed(
     context,
     pending.publishGeneration,
     legacy,
-  )
+  ).catch((error: unknown) => {
+    // A mark refused for a publish record that changed meanwhile names the leftover this recovery could not settle too.
+    throw withJournalLeftover(error, rollbackContext, phase, reported, legacy)
+  })
   const retained = retainedRecord(
     await recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
     tracked,
   )
-  const [reported] = unsettled
-  // A legacy journal decided as another publish's on one read of the config is never deleted here: the publish record must lose its ability to adopt first.
-  const held =
-    belonging === 'another-config' && legacy?.restoredBytes
-      ? await holdLegacyJournal(
-          rollbackContext,
-          heldJournalOf(pending, retained),
-          legacy,
-          legacy.restoredBytes,
-          reported !== undefined,
-        )
-      : undefined
-  if (!held) await retirePending(rollbackContext, retained)
+  let held: HeldJournal | undefined
+  try {
+    // A legacy journal decided as another publish's on one read of the config is never deleted here: the publish record must lose its ability to adopt first.
+    held =
+      decision?.belonging === 'another-config' && legacy?.restoredBytes
+        ? await holdLegacyJournal(
+            rollbackContext,
+            heldJournalOf(pending, retained),
+            legacy,
+            legacy.restoredBytes,
+            reported !== undefined,
+            decision.publishVersion,
+          )
+        : undefined
+    // A journal ends only while the publish record's name still shows what the decision left there (the mark, the record it read, or nothing), at a look right before the journal's rename or unlink.
+    if (!held)
+      await retirePending(
+        rollbackContext,
+        retained,
+        await markLeftCheck(context, decision, legacy),
+      )
+  } catch (error) {
+    // Another file at the journal's name, or a publish record that changed, ends the run here, named after the leftover this recovery could not settle.
+    throw withJournalLeftover(error, rollbackContext, phase, reported, legacy)
+  }
   if (reported) throw unsettledRefusal(rollbackContext, phase, reported)
   return held
 }
 
-/** A rollback journal of an older build that {@link settleRollbackJournal} decided as another publish's on one read of the restored config and kept: {@link settleAfterRecovery} checks that its own look shows those bytes ({@link assertHeldJournalStill}) and retires the journal once the publish record can no longer adopt. */
+/** A rollback journal of an older build that {@link settleRollbackJournal} decided as another publish's on one read of the restored config and of the publish record, and kept: {@link inspect} goes on only with that version of the publish record ({@link heldPublishContext}), {@link settleAfterRecovery} checks that its own look shows those config bytes ({@link assertHeldJournalStill}) and retires the journal once the publish record can no longer adopt and its name shows what the run left there, also at a look right before the journal's unlink ({@link retireHeldJournal}). */
 type HeldJournal = {
   /** SHA-256 of the restored config's bytes that decided the journal. */
   restoredSha256: string
+  /** The version of the publish record that decided the journal ({@link markTakeBackOwed}); a run adopts or ends only that version. */
+  publishVersion: RecordVersion
   /** The journal's evidence, which the refusal of a changed config names. */
   legacy: LegacyJournalEvidence
-  /** Deletes the journal, only while its name still shows the version this run held ({@link retireHeldJournal}). */
-  retire: () => Promise<void>
+  /** Deletes the journal, only while its name still shows the version this run settled or last wrote ({@link dropTrackedJournal}) and the given synchronous look at the publish record's name, made right after that name's last look and before the unlink, passes ({@link publishLeftCheck}); rejects with a {@link JournalConflictError} or what that look throws, and leaves the journal as it is otherwise. */
+  retire: (assertPublishStill: StillLook) => Promise<void>
+  /** Looks at the journal's name without holding the extension host's thread ({@link lookAtTrackedJournal}) and gives the synchronous look that must still find what it found there right before the publish record this journal rests on is deleted or rewritten ({@link settlePending}), so a journal a backup restores at that name meanwhile keeps the record it may need to take its setup back ({@link assertHeldJournalLeft}); the record's delete or rewrite looks at the journal's name through the thread pool once more right before ({@link StillLook}); rejects with a {@link JournalConflictError} when the name shows another file or cannot be read, and with a `gone` one when it is empty (another program moved the journal away, which may bring it back), before the publish record changes. */
+  lookStill: () => Promise<StillLook>
 }
+
+/** A {@link JournalConflictError} at a held legacy journal's own name, met by the look right before the publish record that journal rests on ends ({@link assertHeldJournalLeft}); {@link publishRecordConflict} leaves it as the journal's own refusal instead of wording it as that record's. */
+class HeldJournalConflictError extends JournalConflictError {}
 
 /**
  * Keeps a legacy rollback journal that one read decided as another publish's, so the publish record cannot adopt on a later read once the journal is gone; called only by {@link settleRollbackJournal}.
- * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it. The retirement deletes only the version this run settled ({@link Context.journalVersion}): the one its recovery read, or the last one this run wrote itself, never what its name shows by now, so a journal a backup restores at its name after that read stays for the next run.
+ * When a leftover is refused in this run, the journal is rewritten to what stays with the evidence that decided it ({@link heldJournalOf}), so the next run still decides on its inode and hash; otherwise it stays as recovery left it. That rewrite and the retirement act only on the version this run settled ({@link Context.journalVersion}): the one its recovery read, or the last one this run wrote itself, never what its name shows by now, so a journal a backup restores at its name after that read stays for the next run ({@link writeRecord}, {@link dropTrackedJournal}).
  * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, and it tracks the journal's version.
  * @param kept - The journal to write when a leftover is refused.
  * @param legacy - The journal's evidence.
  * @param restoredBytes - The restored config's bytes that decided it.
  * @param isRefused - Whether a leftover of the journal is refused in this run.
+ * @param publishVersion - The version of the publish record that decided it ({@link markTakeBackOwed}).
  * @returns The held journal ({@link HeldJournal}).
- * @throws What writing the journal throws; the journal on disk then stays byte for byte.
+ * @throws What writing the journal throws, a {@link JournalConflictError} when its name no longer shows the version this run settled; the journal on disk then stays byte for byte.
  * @example
- * const held = await holdLegacyJournal(rollbackContext, legacyEvidenceOf(journal), legacy, restoredBytes, true)
+ * const held = await holdLegacyJournal(rollbackContext, legacyEvidenceOf(journal), legacy, restoredBytes, true, decision.publishVersion)
  */
 async function holdLegacyJournal(
   rollbackContext: Context,
@@ -4941,58 +6476,223 @@ async function holdLegacyJournal(
   legacy: LegacyJournalEvidence,
   restoredBytes: Buffer,
   isRefused: boolean,
+  publishVersion: RecordVersion,
 ): Promise<HeldJournal> {
   // A refused leftover ends this run: the journal keeps what the next run needs to decide again.
   if (isRefused)
     await writeRecord(rollbackContext, rollbackContext.pendingPath, kept)
-  // The version recovery read, or the one this run last wrote: a journal another program put at the name since is never it.
-  const version = rollbackContext.journalVersion?.current
   return {
     restoredSha256: bytesSha256(restoredBytes),
+    publishVersion,
     legacy,
-    retire: (): Promise<void> => retireHeldJournal(rollbackContext, version),
+    // Nothing writes through this context between the hold and the retirement: the version it tracks is the one this run settled or last wrote.
+    retire: (assertPublishStill): Promise<void> =>
+      dropTrackedJournal(rollbackContext, assertPublishStill),
+    lookStill: async (): Promise<StillLook> => {
+      const look = await lookAtTrackedJournal(rollbackContext)
+      // Another program moved the held journal away: the publish record it rests on stays for the run that finds the journal back.
+      if (!look) throw journalConflictError(rollbackContext, 'gone')
+      return {
+        names: [rollbackContext.pendingPath],
+        assert: (): void => assertHeldJournalLeft(rollbackContext, look),
+      }
+    },
   }
 }
 
 /**
- * Deletes a held legacy rollback journal ({@link HeldJournal}) only while its name still shows the version {@link holdLegacyJournal} held, the one this run settled: the same inode and bytes, looked at synchronously once more right before the unlink; called by {@link settleAfterRecovery} through the held journal's `retire`, once the publish record can no longer adopt.
- * A backup or sync tool may restore another journal at that name after recovery read the journal, also before the hold; that journal may hold a rollback this run never settled, so it stays and the next run decides on it.
- * Limit: a restore between the last look and the unlink is not seen; no Node primitive unlinks by inode.
- * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param held - The version of the journal this run settled ({@link Context.journalVersion}); undefined when its name showed nothing right after this run's last write, and nothing is deleted.
- * @throws What the unlink throws other than for a name that is gone.
+ * Looks once more, synchronously, at a held legacy journal's name right before the publish record it rests on is deleted or rewritten; the look {@link HeldJournal.lookStill} gives, which {@link settleAfterRecovery} passes to {@link settlePending}.
+ * Limit: a journal put at that name between this look and the record's unlink or rename, or after it, is decided without that record, like one restored after the run; a storage stall that starts between the asynchronous look and this one holds the extension host's thread until it ends.
+ * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
+ * @param look - What the asynchronous look found there: the journal this run held (a name found empty there already ended the run, {@link HeldJournal.lookStill}).
+ * @throws A {@link HeldJournalConflictError} when the name no longer shows that journal, is empty or cannot be looked at ({@link assertTrackedJournalStill}); the publish record then stays as it is.
  * @example
- * await retireHeldJournal(rollbackContext, version) // pending.json.rollback is gone when it still holds the version that was held
+ * assertHeldJournalLeft(rollbackContext, look) // throws once a backup renamed another journal over pending.json.rollback
  */
-async function retireHeldJournal(
+function assertHeldJournalLeft(
   rollbackContext: Context,
-  held: RecordVersion | undefined,
-): Promise<void> {
-  if (await showsSettledJournal(rollbackContext, held))
-    await rm(rollbackContext.pendingPath, { force: true })
+  look: InspectedCopy,
+): void {
+  try {
+    assertTrackedJournalStill(rollbackContext, look)
+  } catch (error) {
+    // A conflict here is the journal's own, never the publish record's.
+    if (!(error instanceof JournalConflictError)) throw error
+    throw new HeldJournalConflictError(error.message, error.kind, {
+      cause: error,
+    })
+  }
 }
 
 /**
- * Tells whether a rollback journal's name still shows the version this run settled ({@link Context.journalVersion}): the same inode and bytes, looked at synchronously once more at the end; called right before the journal is deleted or rewritten, by {@link retireHeldJournal} and {@link retirePending}, so a journal a backup or sync tool restored at that name since stays for the next run.
- * Limit: a restore between the last look and the unlink or rename that follows is not seen.
- * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param settled - The version of the journal this run settled; undefined when its name showed nothing right after this run's last write.
- * @returns `true` while the name shows that version; `false` when it is gone, unreadable or shows another version, or no version is known.
+ * Joins two synchronous looks that must both still hold right before a record's rename or unlink ({@link retirePending}); called by {@link settlePending}, which ends the publish record only while the old receipt's private name it found empty is still empty ({@link retiredNameCheck}) and, beside a held legacy journal, while that journal's name still shows what the run held ({@link HeldJournal.lookStill}).
+ * @param first - The look that runs first; undefined when there is none.
+ * @param second - The look that runs right after it, closest to the rename or unlink; undefined when there is none.
+ * @returns
+ * - undefined when neither look is given
+ * - the one look given
+ * - one look that runs both in that order otherwise, with the names of both in that order, which the rename or unlink looks at through the thread pool first ({@link StillLook})
  * @example
- * await showsSettledJournal(rollbackContext, version) // => false once a backup restored another journal at pending.json.rollback
+ * bothLooks(undefined, undefined) // => undefined
+ * bothLooks(await retiredNameCheck(context, retiredPath), assertHeldStill)?.assert() // throws when either name changed
  */
-async function showsSettledJournal(
-  rollbackContext: Context,
-  settled: RecordVersion | undefined,
-): Promise<boolean> {
-  if (!settled) return false
-  const journalPath = rollbackContext.pendingPath
-  const now = await inspectCopy(journalPath).catch(() => undefined)
-  // Gone, unreadable or another version: whatever stands at the name now stays for the next run.
-  if (!now || now.ino !== settled.ino || now.sha256 !== settled.sha256)
-    return false
-  // The hash came from the open handle; the unlink or rename acts on the name, which must still show that same file.
-  return isLeftoverStill(rollbackContext, journalPath, now)
+function bothLooks(
+  first: StillLook | undefined,
+  second: StillLook | undefined,
+): StillLook | undefined {
+  if (!first || !second) return first ?? second
+  return {
+    names: [...first.names, ...second.names],
+    assert: (): void => {
+      first.assert()
+      second.assert()
+    },
+  }
+}
+
+/**
+ * Looks at a tracked rollback journal's name ({@link Context.journalVersion}) before this run writes or deletes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, which look once more synchronously right before their rename or unlink ({@link assertTrackedJournalStill}), by {@link assertPublishedRecord} right after a rename or link with the version it wrote, and by {@link publishLeftCheck} and {@link adoptedRecordCheck} for a tracked publish record.
+ * @param context - The run; its pending path is the journal.
+ * @param expected - The version the name must show; the one this run settled or last wrote unless given.
+ * @returns
+ * - undefined when nothing stands at the name
+ * - the journal as this read saw it (inode, hash, size and times) while it shows the expected version
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another inode or other bytes, any file while no version is expected, or something that is no record at all (a link, a folder, a file too large: {@link isOtherFileCause}); `unread` when reading the name fails. Nothing is written or deleted then.
+ * @example
+ * await lookAtTrackedJournal(rollbackContext) // => undefined once the journal's name is empty
+ */
+async function lookAtTrackedJournal(
+  context: Context,
+  expected = context.journalVersion?.current,
+): Promise<InspectedCopy | undefined> {
+  let now: InspectedCopy | undefined
+  try {
+    now = await inspectCopy(context.pendingPath)
+  } catch (cause) {
+    // Another program's link, folder or oversized file stands there: moving it away clears it, making it readable does not.
+    throw journalConflictError(
+      context,
+      isOtherFileCause(cause) ? 'changed' : 'unread',
+      cause,
+    )
+  }
+  if (!now) return undefined
+  // Only this run's own version is written over or deleted; whatever else stands at the name stays for the next run.
+  if (now.ino !== expected?.ino || now.sha256 !== expected.sha256)
+    throw journalConflictError(context, 'changed')
+  return now
+}
+
+/**
+ * Looks synchronously, once more, at a tracked rollback journal's name right before the rename or unlink that writes or deletes it; called by {@link writeTrackedJournal} inside its publish step, by {@link dropTrackedJournal}, and by {@link claimJournal} as its last step, right before it hands the version it linked back.
+ * Limit: a file put at the name between this look and the syscall that follows is not seen.
+ * @param context - The run; its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
+ * @param look - The journal as {@link lookAtTrackedJournal} read it: its inode, size and times must still show.
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another file, size or times; `gone` when it shows nothing, so a publish record that disappeared at this last look is never said to stand still ({@link publishRecordConflict}); `unread` when the look itself fails (a folder that cannot be searched, an I/O error).
+ * @example
+ * assertTrackedJournalStill(rollbackContext, look) // throws once a backup renamed another journal over the name
+ */
+function assertTrackedJournalStill(
+  context: Context,
+  look: InspectedCopy,
+): void {
+  let isStill: boolean
+  try {
+    isStill = isLeftoverStill(context, context.pendingPath, look)
+  } catch (cause) {
+    // A look that fails proves nothing: the name stays as it is, worded as one Codebook could not read again.
+    throw journalConflictError(context, 'unread', cause)
+  }
+  if (isStill) return
+  // An empty name is a disappearance, told apart from another file there.
+  throw journalConflictError(
+    context,
+    isNameEmptyNow(context.pendingPath) ? 'gone' : 'changed',
+  )
+}
+
+/** The codes of an open that refuses to follow a link or finds no regular file ({@link openWithoutFollowing}): something other than a record stands at the name. */
+const OTHER_FILE_CODES: ReadonlySet<unknown> = new Set([
+  'ELOOP',
+  'ENOTREG',
+  'EREPLACED',
+])
+
+/**
+ * Tells whether a failed read of a tracked record's name found something that is no record (a link, a folder, a file too large, or a file swapped in at the open) rather than failing to read it; called by {@link lookAtTrackedJournal}, which words the first as another file at that name and only the second as a name it could not read.
+ * @param cause - What {@link inspectCopy} threw.
+ * @returns `true` for an {@link UnsaneCopyError} or an open refused for a link, no regular file or a swapped file; `false` for any other failure (a permission, an I/O error).
+ * @example
+ * isOtherFileCause(Object.assign(new Error('too many links'), { code: 'ELOOP' })) // => true
+ * isOtherFileCause(Object.assign(new Error('permission denied'), { code: 'EACCES' })) // => false
+ */
+function isOtherFileCause(cause: unknown): boolean {
+  return cause instanceof UnsaneCopyError || OTHER_FILE_CODES.has(codeOf(cause))
+}
+
+/**
+ * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
+ * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
+ * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}). Any other name the first look finds empty still gets `assertStill`, after an awaited look at its names: the caller goes on as after a delete, so a setup record a backup puts back without its take-back mark while it moves the journal away is seen before {@link inspect} reads it.
+ * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode. Moving the journal to another name first and deleting it there only once it proves to be this run's would leave a journal a backup put there in that moment only at a name no build reads, should the process end before it goes back, so that journal's rollback would be lost all the same.
+ * The journal's own synchronous look comes right after its awaited one ({@link lookAtTrackedJournal}), and `assertStill`'s right after an awaited look at its names, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds the extension host's thread.
+ * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
+ * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and before the unlink, or right after the first look when that look finds the name empty ({@link removeRecord}); throwing keeps the journal.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then), or (`gone`) when a publish record's name is found empty while this run knows a version of it; what `assertStill` throws, also for a name found empty; what the unlink throws other than for a name that is gone.
+ * @example
+ * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
+ * await dropTrackedJournal(heldRun) // throws a `gone` JournalConflictError once a sync tool moved pending.json away right before the unlink
+ * await dropTrackedJournal(rollbackContext, await markLeftCheck(context, decision, legacy)) // throws the `record-reread` refusal once a backup moved pending.json.rollback away and put the unmarked setup record back at pending.json
+ */
+async function dropTrackedJournal(
+  context: Context,
+  assertStill?: StillLook,
+): Promise<void> {
+  const look = await lookAtTrackedJournal(context)
+  // Nothing stands at the name: nothing is deleted, and a publish record that disappeared ends the run.
+  if (!look) {
+    if (isEmptiedByAnother(context)) throw journalConflictError(context, 'gone')
+    // The caller goes on as after a delete, so the names it rests on must still hold: a setup record a backup put back without its mark while it moved this journal away is never adopted.
+    if (assertStill) {
+      await lookAheadAt(assertStill.names)
+      assertStill.assert()
+    }
+    return
+  }
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, then `assertStill`'s names.
+  if (assertStill)
+    await lookAheadAt([context.pendingPath, ...assertStill.names])
+  assertTrackedJournalStill(context, look)
+  assertStill?.assert()
+  const isUnlinked = await unlink(context.pendingPath).then(
+    () => true,
+    (error: unknown) => {
+      // Another program removed it first: the name is empty, as the delete wanted, but this run did not empty it.
+      if (codeOf(error) !== 'ENOENT') throw error
+      return false
+    },
+  )
+  // Only this run's own unlink clears the version: nothing of it stands there any more.
+  if (isUnlinked && context.journalVersion)
+    context.journalVersion.current = undefined
+  // Moved away right before the unlink: a publish record that may come back right after ends the run here.
+  if (!isUnlinked && isEmptiedByAnother(context))
+    throw journalConflictError(context, 'gone')
+}
+
+/**
+ * Tells whether an empty tracked name is a publish record another program moved away, not one this run deleted itself; called by {@link dropTrackedJournal} when its look or its unlink finds the name empty, and by {@link adoptedRecordCheck} when its look does.
+ * @param context - The run; its tracker says whether the record is a publish record a decision read (`refusesEmptyName`) and whether this run still knows a version of it.
+ * @returns `true` for such a record while a version is known; `false` for a rollback journal, and once this run deleted the record itself.
+ * @example
+ * isEmptiedByAnother({ ...context, journalVersion: { current: version, refusesEmptyName: true } }) // => true
+ * isEmptiedByAnother(rollbackContext) // => false
+ */
+function isEmptiedByAnother(context: Context): boolean {
+  return (
+    context.journalVersion?.refusesEmptyName === true &&
+    context.journalVersion.current !== undefined
+  )
 }
 
 /**
@@ -5057,13 +6757,218 @@ function assertHeldJournalStill(
   throw unmatchedJournalRefusal(context, 'reread', held.legacy)
 }
 
+/**
+ * Binds the rest of a run that holds a legacy rollback journal ({@link HeldJournal}) to the publish record that journal's decision read; called by {@link inspect} right after its own read of `pending.json`, before anything is recovered, adopted or ended from it.
+ * A backup or sync tool may put another record at that name, or move it away, after the decision read it: the run then stops instead of adopting or ending a record the journal was never decided on, and the held journal stays for the next run. From here on the run tracks the version it read ({@link Context.journalVersion}), so every later write or delete of that record goes on only while its name still shows what this run read or last wrote ({@link writeRecord}, {@link removeRecord}), and a write never puts that record back at a name found empty (`refusesEmptyName`).
+ * @param context - The run.
+ * @param held - The held journal; undefined when none is held.
+ * @param version - The version of `pending.json` that {@link inspect}'s read saw, which {@link readPublishRecord} found to be the one the decision read; undefined when the name was empty.
+ * @returns
+ * - `context` itself when no journal is held
+ * - the run tracking that version as its publish record's ({@link Context.journalVersion}) otherwise
+ * @throws The `record-gone` {@link unmatchedJournalRefusal} when the record is gone; nothing is written or retired then, so the next run decides on both records again.
+ * @example
+ * const run = heldPublishContext(context, held, read?.version) // throws once a sync tool moved pending.json away after the journal was decided
+ */
+function heldPublishContext(
+  context: Context,
+  held: HeldJournal | undefined,
+  version: RecordVersion | undefined,
+): Context {
+  if (!held) return context
+  if (!version)
+    throw unmatchedJournalRefusal(context, 'record-gone', held.legacy)
+  // An empty name later means this record disappeared: it is never written back there.
+  return {
+    ...context,
+    journalVersion: { current: version, refusesEmptyName: true },
+  }
+}
+
+/**
+ * Reads the publish record for {@link inspect}. Beside a held legacy rollback journal ({@link HeldJournal}) the bytes and the inode at that name are compared with the version that journal's decision read before they are parsed, so another file a backup or sync tool put there meanwhile, whatever it holds, ends the run with the refusal that keeps both records as they stand, never with advice to remove that file.
+ * @param context - The run; its seam is called as for every record read ({@link readRecordFile}).
+ * @param held - The held journal; undefined when none is held.
+ * @returns The record and its version ({@link readVersionedRecord}); undefined when the name is empty, which {@link heldPublishContext} words beside a held journal.
+ * @throws What {@link readVersionedRecord} throws when no journal is held. Beside a held journal the `record-reread` {@link unmatchedJournalRefusal} when the name shows another inode or other bytes than the decision read, or something that is no record now (a link, a folder or a file too large), and the `record-unread` one when the read itself fails ({@link isFailedRead}): nothing is parsed, written or retired then, so the next run decides on both records again.
+ * @example
+ * const read = await readPublishRecord(context, held) // throws the record-reread refusal once a backup put a file that is no record at pending.json
+ */
+async function readPublishRecord(
+  context: Context,
+  held: HeldJournal | undefined,
+): Promise<{ record: Pending; version: RecordVersion } | undefined> {
+  const { pendingPath, retry, seam } = context
+  if (!held) return readVersionedRecord(pendingPath, pendingSchema, retry, seam)
+  const read = await readRecordFile(pendingPath, retry, seam).catch(
+    (error: unknown) => {
+      // The decision read a record at this name: a read that failed is said as one, anything else that is no record now is another file, and both records stay as they stand.
+      throw unmatchedJournalRefusal(
+        context,
+        isFailedRead(error) ? 'record-unread' : 'record-reread',
+        held.legacy,
+      )
+    },
+  )
+  if (!read) return undefined
+  const version = { ino: read.ino, sha256: bytesSha256(read.bytes) }
+  const decided = held.publishVersion
+  // Another inode or other bytes: not the record the journal was decided on, whatever they hold.
+  if (version.ino !== decided.ino || version.sha256 !== decided.sha256)
+    throw unmatchedJournalRefusal(context, 'record-reread', held.legacy)
+  return {
+    record: parseRecord(pendingPath, pendingSchema, retry, read.bytes),
+    version,
+  }
+}
+
+/**
+ * Retires a held legacy rollback journal ({@link HeldJournal}) once the publish record can no longer adopt, only while that record's name shows what this run left there, at a look before the journal is read again and once more right before its unlink ({@link publishLeftCheck}); called by {@link settleAfterRecovery} after the publish record was settled.
+ * @param context - The run ({@link heldPublishContext}); its pending path is the publish record.
+ * @param held - The held journal; undefined when none is held, and nothing is looked at or deleted.
+ * @throws What {@link publishLeftCheck} and its synchronous look throw, and what the journal's retirement throws; the journal stays then.
+ * @example
+ * await retireHeldJournal(run, held) // pending.json.rollback is gone, or the call throws and both records stay
+ */
+async function retireHeldJournal(
+  context: Context,
+  held: HeldJournal | undefined,
+): Promise<void> {
+  if (!held) return
+  await held.retire(await publishLeftCheck(context, held.legacy))
+}
+
+/**
+ * Stops a run unless the publish record's name shows what this run left there (the version it read or last wrote, or nothing once this run deleted that record itself or found that name empty), and gives the synchronous look that must still find the same right before the unlink of the rollback journal that rests on that record; called by {@link retireHeldJournal} before a held legacy journal goes, so that journal goes only after the record it was decided on was settled as read, and by {@link markLeftCheck} before a settled journal goes.
+ * This look reads the bytes without holding the extension host's thread; the one it gives compares the inode, size and times of what it read, or an empty name, after the journal's own last look ({@link dropTrackedJournal}), so a record a backup puts at that name while the journal is read again is seen.
+ * The journal's delete looks at the publish record's name through the thread pool once more right before that synchronous look ({@link StillLook}, {@link dropTrackedJournal}), so a storage that already stalls holds that step there, not the extension host's thread.
+ * Limit: a record put at that name between that last look and the unlink, or after it, is decided without the journal, like one restored after the run; a stall that starts between that awaited look and the synchronous one holds the extension host's thread.
+ * @param context - The run; its pending path is the publish record, which it tracks ({@link Context.journalVersion}), and its seam is called around each synchronous look ({@link isLeftoverStill}).
+ * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
+ * @returns The synchronous look at the publish record's name ({@link assertPublishStillLeft}).
+ * @throws The `record-gone` {@link unmatchedJournalRefusal} when the name is empty while this run left a record there; the `record-reread` one when it shows another file or cannot be read again. Nothing is retired then.
+ * @example
+ * const assertPublishStill = await publishLeftCheck(run, held.legacy) // throws once a sync tool moved pending.json away while the run settled it
+ */
+async function publishLeftCheck(
+  context: Context,
+  legacy: LegacyJournalEvidence | undefined,
+): Promise<StillLook> {
+  let left: InspectedCopy | undefined
+  try {
+    left = await lookAtTrackedJournal(context)
+    // The hash came from an open handle: the name must still show that same file.
+    if (left) assertTrackedJournalStill(context, left)
+  } catch (error) {
+    throw publishRecordConflict(context, legacy, error)
+  }
+  // An empty name passes only once this run deleted the record itself.
+  if (!left && context.journalVersion?.current !== undefined)
+    throw unmatchedJournalRefusal(context, 'record-gone', legacy)
+  return {
+    names: [context.pendingPath],
+    assert: (): void => assertPublishStillLeft(context, legacy, left),
+  }
+}
+
+/**
+ * Looks once more, synchronously, at the publish record's name right before the unlink of a rollback journal that rests on it; the look {@link publishLeftCheck} gives.
+ * @param context - The run; its pending path is the publish record, its seam is called around the look ({@link isLeftoverStill}).
+ * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
+ * @param left - What {@link publishLeftCheck} found there: the record this run left, or undefined for a name this run emptied.
+ * @throws The `record-reread` {@link unmatchedJournalRefusal} when the name no longer shows that file (or shows a file where it was empty) or cannot be looked at; nothing is deleted then.
+ * @example
+ * assertPublishStillLeft(run, legacy, undefined) // throws once a backup put a record back at pending.json after the run deleted it
+ */
+function assertPublishStillLeft(
+  context: Context,
+  legacy: LegacyJournalEvidence | undefined,
+  left: InspectedCopy | undefined,
+): void {
+  try {
+    assertNameLeft(context, left)
+  } catch (error) {
+    throw publishRecordConflict(context, legacy, error)
+  }
+}
+
+/**
+ * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal, and by the look {@link adoptedRecordCheck} gives right before an adoption's receipt is published.
+ * @param context - The run; its pending path is the name, its seam is called around the look ({@link isLeftoverStill}).
+ * @param left - What the earlier look found: a file (its inode, size and times must still show), or undefined for a name that must still be empty.
+ * @throws A {@link JournalConflictError}: `changed` when the name no longer shows that file or shows a file where it was empty, `unread` when the look itself fails.
+ * @example
+ * assertNameLeft(run, undefined) // throws once a backup put a record back at a name this run emptied
+ */
+function assertNameLeft(
+  context: Context,
+  left: InspectedCopy | undefined,
+): void {
+  if (left) assertTrackedJournalStill(context, left)
+  // A name found empty must still be empty.
+  else if (!isNameEmptyNow(context.pendingPath))
+    throw journalConflictError(context, 'changed')
+}
+
+/**
+ * Words a conflict at the publish record's name as that record's own refusal beside the rollback record: a write or delete that tracked the version this run read of `pending.json` ({@link Context.journalVersion}) found another file there, could not read it again or found the name empty; called by {@link markTakeBackOwed}, {@link settleAfterRecovery} for a held run, {@link publishLeftCheck} and {@link assertPublishStillLeft}.
+ * @param context - The run; its pending path is the publish record.
+ * @param legacy - The legacy journal's evidence, which the refusal names; undefined for a journal of this build.
+ * @param error - What the write, delete or look threw.
+ * @returns
+ * - the `record-gone` {@link unmatchedJournalRefusal} for a `gone` {@link JournalConflictError} (the name was found empty)
+ * - the `record-unread` one for an `unread` one (the name could not be read again)
+ * - the `record-reread` one for a `changed` one
+ * - `error` itself otherwise, also for a {@link HeldJournalConflictError}, which a held legacy journal's own name threw
+ * @example
+ * throw publishRecordConflict(context, legacy, conflict) // 'Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at …/pending.json changed while Codebook was settling it …'
+ * throw publishRecordConflict(context, legacy, goneConflict) // '… but the record of that setup at …/pending.json disappeared while Codebook was settling it …'
+ */
+function publishRecordConflict(
+  context: Context,
+  legacy: LegacyJournalEvidence | undefined,
+  error: unknown,
+): unknown {
+  // A conflict at the held journal's own name keeps that journal's sentence.
+  if (
+    !(error instanceof JournalConflictError) ||
+    error instanceof HeldJournalConflictError
+  )
+    return error
+  // A disappearance, a failed read and another file there are each said as what they are.
+  const reason: Record<JournalConflictError['kind'], UnmatchedReason> = {
+    gone: 'record-gone',
+    unread: 'record-unread',
+    changed: 'record-reread',
+  }
+  return unmatchedJournalRefusal(context, reason[error.kind], legacy)
+}
+
+/**
+ * Turns a conflict at the name of a run's own `pending.json` into a refusal about that record ({@link RecordConflictError}) with the conflict's own sentence ({@link journalConflictError}), so the private file recovery could not settle is named after it ({@link mergeWithLeftover}): the record that named that file changed or disappeared under the run; called by {@link settleAfterRecovery} for a run that holds no legacy journal, and by {@link takeBackRecordLook} before a take-back moves the config.
+ * @param error - What settling the record threw.
+ * @returns
+ * - a {@link RecordConflictError} with the same message, the conflict as its cause, for a {@link JournalConflictError}
+ * - `error` itself otherwise
+ * @example
+ * throw asRecordConflict(conflict) // 'While Codebook settled its record of an earlier change at …/pending.json, another program changed or replaced it …'
+ */
+function asRecordConflict(error: unknown): unknown {
+  if (!(error instanceof JournalConflictError)) return error
+  return new RecordConflictError(error.message, { cause: error })
+}
+
 /** How a rollback journal relates to the publish record ({@link markTakeBackOwed}): `belongs` marks the take-back, `another` leaves the record as it is; only for an older build's journal ({@link legacyBelonging}), `another-config` leaves it too but was decided on one read of a restored config that is valid and lacks the setup's entry, so the journal is held until the run's own look shows those bytes ({@link settleRollbackJournal}), and `unmatched` (the evidence contradicts itself), `unread` (the config that decides could not be read) and `invalid` (it was read but is no valid JSON config, as while an editor saves it) refuse and keep both records ({@link unmatchedJournalRefusal}), so the next run decides again. */
 type JournalBelonging =
   'belongs' | 'another' | 'another-config' | 'unmatched' | 'unread' | 'invalid'
 
-/** Why an older build's rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, or `reread` when the config changed between the read that decided the journal and the run's own look ({@link assertHeldJournalStill}). */
+/** Why a rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, `reread` when the config changed between the read that decided an older build's journal and the run's own look ({@link assertHeldJournalStill}), `record-reread` when the publish record a decision read changed before the run adopted, marked or ended it ({@link markTakeBackOwed}, {@link readPublishRecord}, {@link publishRecordConflict}), `record-gone` when it disappeared before a held journal could go ({@link heldPublishContext}, {@link publishLeftCheck}), or `record-unread` when it could not be read again then ({@link publishRecordConflict}, {@link readPublishRecord}). */
 type UnmatchedReason =
-  Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'> | 'reread'
+  | Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'>
+  | 'reread'
+  | 'record-reread'
+  | 'record-gone'
+  | 'record-unread'
 
 /** What a rollback journal of an older build (no publish generation) offers {@link legacyBelonging}: the journal (its displaced file's inode and hash), the config its recovery put back, and what that recovery could not settle. */
 type LegacyJournalEvidence = {
@@ -5196,31 +7101,176 @@ function legacyBelonging(
 
 /**
  * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record (`unmatched`), or cannot match yet because the config that decides could not be read (`unread`), is no valid JSON config yet (`invalid`) or changed between the read that decided the journal and the run's own look (`reread`); thrown by {@link markTakeBackOwed} and {@link assertHeldJournalStill} before any record is written or retired, so both records stay: the learner decides about the entry, or the next run reads the config again.
+ * It also refuses a run whose publish record changed (`record-reread`) or disappeared (`record-gone`) after a decision on a journal read it, before that record was adopted, marked or ended and before the journal is deleted ({@link markTakeBackOwed}, {@link readPublishRecord}, {@link heldPublishContext}, {@link publishLeftCheck}, {@link assertPublishStillLeft}); the journal may be of either build then.
  * The journal's recovery already ran (a displaced file may be back at the config name), so the sentence claims only what stays: the entry or the file's bytes, both records, and a leftover that recovery could not settle, which is named here because this refusal comes before its own ({@link unmatchedLeftoverSentence}).
  * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
- * @param belonging - Which of the three answers {@link legacyBelonging} gave, or `reread`.
- * @param legacy - The journal and the first leftover its recovery could not settle, if any ({@link LegacyJournalEvidence}).
- * @returns The error, not thrown yet.
+ * @param belonging - Which of the three answers {@link legacyBelonging} gave, `reread`, `record-reread` or `record-gone`.
+ * @param legacy - The journal and the first leftover its recovery could not settle, if any ({@link LegacyJournalEvidence}); undefined for a journal of this build.
+ * @returns The error, not thrown yet; a {@link RecordConflictError} for `record-reread` and `record-gone`.
  * @example
  * throw unmatchedJournalRefusal(context, 'unread', legacy) // 'Codebook found a record of a setup that ended early and a record of its rollback that it cannot match yet: …'
+ * throw unmatchedJournalRefusal(context, 'record-gone', held.legacy) // 'Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at …/pending.json disappeared while Codebook was settling it …'
  */
 function unmatchedJournalRefusal(
   context: Context,
   belonging: UnmatchedReason,
   legacy: LegacyJournalEvidence | undefined,
 ): Error {
+  const message = unmatchedJournalSentence(context, belonging, legacy)
+  // A refusal about the publish record itself is told apart: the record that names this run's leftovers no longer stands as read.
+  return belonging.startsWith('record-')
+    ? new RecordConflictError(message)
+    : new Error(message)
+}
+
+/**
+ * Words an {@link unmatchedJournalRefusal}: the reason's sentence, then the journal's leftover ({@link unmatchedLeftoverSentence}); called only by that refusal.
+ * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
+ * @param belonging - The reason ({@link UnmatchedReason}).
+ * @param legacy - The journal and the first leftover its recovery could not settle, if any; undefined for a journal of this build.
+ * @returns The whole message.
+ * @example
+ * unmatchedJournalSentence(context, 'record-gone', undefined) // => 'Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at …/pending.json disappeared while Codebook was settling it …'
+ */
+function unmatchedJournalSentence(
+  context: Context,
+  belonging: UnmatchedReason,
+  legacy: LegacyJournalEvidence | undefined,
+): string {
   const { path, pendingPath, retry } = context
-  const records = `${pendingPath}, ${rollbackContextOf(context).pendingPath}`
+  const journalPath = rollbackContextOf(context).pendingPath
+  const records = `${pendingPath}, ${journalPath}`
   const notYet = `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match yet: the rollback's file has the inode the setup published but other bytes`
+  const settling = `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath}`
   // A config that could not be read, or that is no valid config yet, decides nothing: the next run reads it again.
   const sentence = {
+    'record-reread': `${settling} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${records}), so the next run decides on them again; wait until that tool is done, ${retry}.`,
+    'record-gone': `${settling} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, ${retry}.`,
+    'record-unread': `${settling} could not be read again while Codebook was settling it, so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand (${records}), so the next run decides on them again; make that file readable by you if it is not, ${retry}.`,
     unread: `${notYet}, and Codebook could not read ${path} again (it is gone, a link, no regular file, larger than ${DEVIN_MCP_CONFIG_LIMIT_BYTES} bytes or unreadable) to see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; make that file readable, or delete both records if it is gone, ${retry}.`,
     invalid: `${notYet}, and ${path} is no valid JSON config right now (an editor may still be saving it), so Codebook cannot see whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; fix that file or wait until it is saved, ${retry}.`,
     reread: `${notYet}, and ${path} changed between two of Codebook's reads of it, so Codebook cannot see yet whether it holds the "${SERVER_NAME}" entry the setup wrote. Codebook changed nothing in that file and kept both records (${records}), so the next run looks again; wait until it is saved, ${retry}.`,
     unmatched: `Codebook found a record of a setup that ended early and a record of its rollback that it cannot match: the rollback's file has the inode the setup published but other bytes, and the "${SERVER_NAME}" entry in ${path} is the one the setup wrote. Codebook left that entry in place and kept both records (${records}); if you did not write that entry, remove it by hand, delete both records, ${retry}.`,
   }[belonging]
   // A leftover that stays with the kept journal is named once more, so the advice to delete both records never hides it.
-  return new Error(`${sentence}${unmatchedLeftoverSentence(context, legacy)}`)
+  return `${sentence}${unmatchedLeftoverSentence(context, legacy)}`
+}
+
+/**
+ * Builds the refusal for a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), shows nothing (`gone`), or cannot be read again (`unread`); thrown by {@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}, {@link claimJournal}, {@link writeTrackedJournal} and {@link dropTrackedJournal}, so nothing is written or deleted at that name and the run goes no further ({@link settleRollbackJournal}).
+ * A tracked `pending.json` (the record a decision read, `refusesEmptyName`: {@link heldPublishContext}, {@link trackedPublishContext}, {@link markTakeBackOwed}; or the run's own record after {@link inspect}, {@link ownRecordContext}) is named as Codebook's record of an earlier change, never as a rollback record, wherever its conflict surfaces; a held run's caller words it with both records instead ({@link publishRecordConflict}).
+ * @param context - The run whose pending path is tracked: the rollback's context ({@link rollbackContextOf}) or a run tracking `pending.json`; its retry ends the sentence.
+ * @param kind - What the look found.
+ * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw journalConflictError(rollbackContext, 'changed') // 'While Codebook settled its rollback record at …/pending.json.rollback (a rollback that ended early), another program changed, removed or replaced it …'
+ * throw journalConflictError(run, 'gone') // 'While Codebook settled its record of an earlier change at …/pending.json, another program moved it away or deleted it …'
+ */
+function journalConflictError(
+  context: Context,
+  kind: JournalConflictError['kind'],
+  cause?: unknown,
+): JournalConflictError {
+  // The name decides the wording, whichever tracker reached it: a rollback journal is that record, `pending.json` Codebook's record of an earlier change.
+  const sentence = context.pendingPath.endsWith(ROLLBACK_JOURNAL_SUFFIX)
+    ? rollbackRecordSentence(context, kind)
+    : earlierRecordSentence(context, kind)
+  return new JournalConflictError(
+    sentence,
+    kind,
+    cause === undefined ? undefined : { cause },
+  )
+}
+
+/**
+ * Words a conflict at a rollback journal's name ({@link journalConflictError}); a name found empty is worded as a removal too.
+ * @param context - The rollback's context; its pending path is the journal, its retry ends the sentence.
+ * @param kind - What the look found.
+ * @returns The sentence.
+ * @example
+ * rollbackRecordSentence(rollbackContext, 'unread') // => 'While Codebook settled its rollback record at …/pending.json.rollback (a rollback that ended early), it could not read that name again …'
+ */
+function rollbackRecordSentence(
+  { pendingPath: journal, retry }: Context,
+  kind: JournalConflictError['kind'],
+): string {
+  const settling = `While Codebook settled its rollback record at ${journal} (a rollback that ended early)`
+  const replaced = `${settling}, another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`
+  return {
+    changed: replaced,
+    gone: replaced,
+    unread: `${settling}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, ${retry}, and that run reads that name first.`,
+  }[kind]
+}
+
+/**
+ * Words a conflict at the name of a run's own `pending.json` ({@link journalConflictError}): the record of an earlier write or removal this run settles, which another program changed, moved away or made unreadable after the run read it.
+ * @param context - The run; its pending path is the record, its retry ends the sentence.
+ * @param kind - What the look found.
+ * @returns The sentence.
+ * @example
+ * earlierRecordSentence(run, 'changed') // => 'While Codebook settled its record of an earlier change at …/pending.json, another program changed or replaced it …'
+ */
+function earlierRecordSentence(
+  { pendingPath, retry }: Context,
+  kind: JournalConflictError['kind'],
+): string {
+  const settling = `While Codebook settled its record of an earlier change at ${pendingPath}`
+  return {
+    changed: `${settling}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`,
+    gone: `${settling}, another program moved it away or deleted it (a backup or sync tool may be moving it), so Codebook did not write it back and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`,
+    unread: `${settling}, it could not read that name again to check that it still holds that record, so Codebook left that name as it is and went no further; make that file readable by you if it is not, ${retry}, and that run reads that name first.`,
+  }[kind]
+}
+
+/**
+ * Joins the refusal of a leftover recovery could not settle with the conflict that ended the run, at the journal's name or at the publish record's, so the learner reads both in one message; called by {@link withJournalLeftover}.
+ * @param leftoverRefusal - The leftover's refusal ({@link unsettledRefusal}).
+ * @param conflict - The {@link JournalConflictError} the journal's write or delete threw, or the {@link RecordConflictError} about the publish record.
+ * @returns One error: the leftover's sentence, a space, then the conflict's.
+ * @example
+ * refusalWithConflict(unsettledRefusal(rollbackContext, phase, reported), conflict) // => 'Codebook found a private file at … While Codebook settled its rollback record at …'
+ */
+function refusalWithConflict(
+  leftoverRefusal: Error,
+  conflict: JournalConflictError | RecordConflictError,
+): Error {
+  return new Error(`${leftoverRefusal.message} ${conflict.message}`, {
+    cause: conflict,
+  })
+}
+
+/**
+ * Names the leftover a rollback journal's recovery could not settle before the conflict that ended the run, so a refusal about a name never hides that private file; called by {@link settleRollbackJournal} for the take-back mark and for the journal's hold or retirement.
+ * @param error - What the mark, the hold or the retirement threw.
+ * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); it words the leftover.
+ * @param phase - The phase recovery read the journal in ({@link leftoverPhaseOf}).
+ * @param reported - The first leftover that stays; undefined when none does.
+ * @param legacy - The journal's evidence for a journal of an older build, whose refusals about the publish record name that leftover themselves ({@link unmatchedLeftoverSentence}); undefined for a journal of this build.
+ * @returns
+ * - The leftover's refusal followed by `error` ({@link refusalWithConflict}) for a {@link JournalConflictError}, and for a {@link RecordConflictError} about a journal of this build
+ * - `error` itself otherwise, or when no leftover stays
+ * @example
+ * throw withJournalLeftover(recordReread, rollbackContext, undefined, reported, undefined) // 'Codebook found a private file at … Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup … changed …'
+ */
+function withJournalLeftover(
+  error: unknown,
+  rollbackContext: Context,
+  phase: Pending['phase'],
+  reported: Unsettled | undefined,
+  legacy: LegacyJournalEvidence | undefined,
+): unknown {
+  if (!reported) return error
+  if (
+    error instanceof JournalConflictError ||
+    (error instanceof RecordConflictError && !legacy)
+  )
+    return refusalWithConflict(
+      unsettledRefusal(rollbackContext, phase, reported),
+      error,
+    )
+  return error
 }
 
 /**
@@ -5247,31 +7297,44 @@ function unmatchedLeftoverSentence(
 }
 
 /**
- * Records in this config's publish record that its entry must be taken back; called by {@link takeOutUnrecordedEntry} before the rollback's first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
- * Only the publish of the given generation is marked: another installation's pending publish stays as it is.
+ * Records in this config's publish record that its entry must be taken back; called by {@link markBeforeTakeBack} before a first setup's rollback takes its first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
+ * Only the publish of the given generation is marked: another installation's pending publish stays as it is. The mark replaces only the version of the record this call read ({@link Context.journalVersion}): a record a backup or sync tool put at that name meanwhile stays, one it moved away is not written back at the empty name, and the run stops.
  * @param context - The run.
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
  * @returns
- * - The belonging it decided ({@link JournalBelonging}): `belongs` once the mark is written, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`)
- * - undefined when there is no publish record of this config, or it is marked already
- * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet; nothing is written then. What reading or writing the record throws.
+ * - The decision ({@link PublishDecision}): the belonging it decided ({@link JournalBelonging}), `belongs` once the mark is written, with the version of that mark, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`), with the version of the record it was decided on; `another` also for a record of another config
+ * - `belongs` with the version this call read as the mark's ({@link PublishDecision.isMarkFound}) when the record carries the mark already (an earlier run wrote it and stopped before its journal went), so that journal too ends only while the record's name still shows that mark; nothing is written then
+ * - undefined when the publish record's name is empty
+ * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written, and its `record-gone` sentence when that name is found empty then ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
  * @example
- * await markTakeBackOwed(context, generation) // => 'belongs'; pending.json now holds takeBack: true
+ * await markTakeBackOwed(context, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
   publishGeneration: string | undefined,
   legacy?: LegacyJournalEvidence,
-): Promise<JournalBelonging | undefined> {
-  const publish = await readRecord(
+): Promise<PublishDecision | undefined> {
+  const read = await readVersionedRecord(
     context.pendingPath,
     pendingSchema,
     context.retry,
     context.seam,
   )
-  // No publish record, one of another config, or one already marked: nothing to mark.
-  if (publish?.targetPath !== context.path || publish.takeBack) return undefined
+  // No publish record: nothing to mark, and the journal ends only while that name is still empty ({@link markLeftCheck}).
+  if (!read) return undefined
+  const { record: publish, version } = read
+  // A record of another config is another publish's: nothing to mark, and the journal ends only while that name still shows it.
+  if (publish.targetPath !== context.path)
+    return { belonging: 'another', publishVersion: version }
+  // An earlier run wrote the mark and stopped before its journal went: that mark stands as read, so the journal ends only while the record's name still shows this version ({@link markLeftCheck}).
+  if (publish.takeBack)
+    return {
+      belonging: 'belongs',
+      publishVersion: version,
+      markVersion: version,
+      isMarkFound: true,
+    }
   // A journal of this build names the publish it rolled back (another generation is another installation's publish); one of an older build names none, so its displaced file and the restored config decide.
   const belonging: JournalBelonging =
     publishGeneration === undefined
@@ -5279,16 +7342,60 @@ async function markTakeBackOwed(
       : publish.generation === publishGeneration
         ? 'belongs'
         : 'another'
-  if (belonging === 'another' || belonging === 'another-config')
-    return belonging
+  const decision: PublishDecision = { belonging, publishVersion: version }
+  if (belonging === 'another' || belonging === 'another-config') return decision
   // Contradicting, unread or half-saved evidence keeps both records: the learner or the next run decides.
   if (belonging !== 'belongs')
     throw unmatchedJournalRefusal(context, belonging, legacy)
-  await writeRecord(context, context.pendingPath, {
+  // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, one it moved away is not written back, and the run stops.
+  const marking: Context = {
+    ...context,
+    journalVersion: { current: version, refusesEmptyName: true },
+  }
+  await writeRecord(marking, context.pendingPath, {
     ...publish,
     takeBack: true,
+  }).catch((error: unknown) => {
+    throw publishRecordConflict(context, legacy, error)
   })
-  return belonging
+  return { ...decision, markVersion: marking.journalVersion?.current }
+}
+
+/** What {@link markTakeBackOwed} decided on one read of the publish record: how the rollback journal relates to it, and the version of the record it read ({@link RecordVersion}), which a held journal binds the rest of its run to ({@link heldPublishContext}) and a journal retired on this decision must still find at that name when nothing is marked ({@link markLeftCheck}). */
+type PublishDecision = {
+  belonging: JournalBelonging
+  publishVersion: RecordVersion
+  /** The version of the take-back mark that stands: the one this call wrote ({@link stageRecord}), or the one it read when the record carried the mark already ({@link PublishDecision.isMarkFound}); undefined when nothing is marked. The journal that proves that take-back is ended only while the record's name still shows it ({@link markLeftCheck}). */
+  markVersion?: RecordVersion
+  /** Set when the record carried the mark already, written by an earlier run that stopped before its journal went: this call wrote nothing, so that record is never deleted as this call's own mark ({@link takeOutUnrecordedEntry}). */
+  isMarkFound?: true
+}
+
+/**
+ * Gives the synchronous look that must still find at the publish record's name what the decision on the rollback journal left there, right before that journal is ended: the take-back mark this run wrote, or found as an earlier run left it ({@link PublishDecision.isMarkFound}), else the record the decision read, or the empty name it found; called by {@link settleRollbackJournal}, so a setup record a backup puts back without that mark, or where the decision found another setup's record or none, keeps the journal, and the next run decides on both again instead of adopting that record.
+ * @param context - The run; its pending path is the publish record.
+ * @param decision - What {@link markTakeBackOwed} decided; undefined when it found the name empty.
+ * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
+ * @returns The look {@link publishLeftCheck} gives once its own look found the mark ({@link PublishDecision.markVersion}), the record the decision read when nothing was marked ({@link PublishDecision.publishVersion}), or an empty name when the decision found none.
+ * @throws What {@link publishLeftCheck} throws: the `record-reread`, `record-gone` or `record-unread` {@link unmatchedJournalRefusal} when the name no longer shows that or cannot be read again; nothing is retired then.
+ * @example
+ * await retirePending(rollbackContext, retained, await markLeftCheck(context, decision, legacy)) // throws, keeping both records, once a backup put the unmarked record back
+ */
+async function markLeftCheck(
+  context: Context,
+  decision: PublishDecision | undefined,
+  legacy: LegacyJournalEvidence | undefined,
+): Promise<StillLook> {
+  return publishLeftCheck(
+    {
+      ...context,
+      journalVersion: {
+        current: decision?.markVersion ?? decision?.publishVersion,
+        refusesEmptyName: true,
+      },
+    },
+    legacy,
+  )
 }
 
 /**
@@ -5334,8 +7441,9 @@ function isTakeBackOwed(
  * @param receipt - The receipt that stands, if any.
  * @param retained - What stays of the setup's record after recovery ({@link retainedRecord}).
  * @param look - The config as it stands.
+ * @param emptiedRetiredPath - The old record's private name that this run's put-back found empty ({@link settleRetiredReceipt}); the record ends only while that name is still empty ({@link retirePending}). Undefined otherwise.
  * @returns The config as it looks after the entry was taken out, and what the take-back removed (`removal`: the file or only the entry); undefined when nothing was taken back (the record is then settled as before).
- * @throws A refusal when the entry could not be taken out again; nothing else is changed then.
+ * @throws A refusal when the entry could not be taken out again; nothing else is changed then. A {@link RecordConflictError} when the setup's record no longer stands at its name as this run read it right before the take-back would move the config ({@link assertTakeBackRecordStill}); the config is unchanged then. What {@link retirePending} throws after the take-back.
  * @example
  * const afterTakeBack = await finishCutShortSetup(context, pending, receipt, retained, look)
  */
@@ -5345,6 +7453,7 @@ async function finishCutShortSetup(
   receipt: Receipt | undefined,
   retained: Pending | undefined,
   look: ConfigLook,
+  emptiedRetiredPath?: string,
 ): Promise<
   { look: ConfigLook; removal?: 'file-removed' | 'removed' } | undefined
 > {
@@ -5375,7 +7484,9 @@ async function finishCutShortSetup(
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
   try {
     result = await rollBackPublishedEntry(context, written)
-  } catch {
+  } catch (error) {
+    // The record this take-back rests on changed or disappeared before the config moved: nothing changed, and the run goes no further.
+    if (error instanceof RecordConflictError) throw error
     // A refusal after the entry was confirmed as Codebook's own: the message below says it may still stand.
   }
   const { outcome, keptLeft } = result
@@ -5383,10 +7494,35 @@ async function finishCutShortSetup(
   if (outcome === 'replaced-config' || outcome === 'not-ours') return undefined
   if (outcome !== 'took-out' || keptLeft.length > 0)
     throw new Error(
-      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
+      `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome, context)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
-  await retirePending(context, retained)
+  await retirePending(
+    context,
+    retained,
+    await retiredNameCheck(context, emptiedRetiredPath),
+  )
   return { look: await lookAtConfig(context), removal: result.removal }
+}
+
+/**
+ * Makes the rest of a run track the version of `pending.json` it read ({@link Context.journalVersion}), so recovery, the take-back and the record's settlement rewrite or delete only that version, never a record a backup or sync tool put at that name meanwhile, and never write it back at a name such a tool emptied; called by {@link inspect} right after its read, on what {@link heldPublishContext} gives.
+ * @param context - The run, as {@link heldPublishContext} gave it.
+ * @param version - The version of `pending.json` that {@link inspect}'s read saw; undefined when the name was empty.
+ * @returns
+ * - `context` itself when it tracks that record already (a held run) or no record was read
+ * - the run tracking that version, refusing an empty name (`refusesEmptyName`), otherwise
+ * @example
+ * trackedPublishContext(context, read?.version).journalVersion // => { current: { ino: 42n, sha256: 'ab…' }, refusesEmptyName: true }
+ */
+function trackedPublishContext(
+  context: Context,
+  version: RecordVersion | undefined,
+): Context {
+  if (context.journalVersion || !version) return context
+  return {
+    ...context,
+    journalVersion: { current: version, refusesEmptyName: true },
+  }
 }
 
 /** What a run decides on after {@link inspect}: the look at the config, its `codebook` entry and the receipt that stands. */
@@ -5396,6 +7532,8 @@ type Inspection = {
   receipt: Receipt | undefined
   /** Set when this run's take-back of an interrupted first setup removed the entry (or the file Codebook created): the removal answers it instead of `not-managed`. */
   tookBack?: 'file-removed' | 'removed'
+  /** The version of `pending.json` this run read or last wrote and left standing ({@link Context.journalVersion}); undefined when the run found that name empty or emptied it itself. The rest of the run writes and deletes its own record only from that version on ({@link ownRecordContext}). */
+  pendingVersion?: RecordVersion
 }
 
 /**
@@ -5403,32 +7541,31 @@ type Inspection = {
  * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that; a refusal of the steps after recovery names it too when it was handed over in this run or its own text names both files ({@link mergeWithLeftover}).
  * @param context - The run.
  * @returns The {@link Inspection}.
- * @throws What {@link recoverLeftovers} and {@link settleAfterRecovery} throw, and a refusal naming the first leftover that could not be settled.
+ * @throws What {@link recoverLeftovers} and {@link settleAfterRecovery} throw, a refusal naming the first leftover that could not be settled, and what {@link readPublishRecord} and {@link heldPublishContext} throw for a publish record that is gone or is no longer the one a held legacy journal was decided on.
  * @example
  * const { look, current, receipt } = await inspect(context)
  */
 async function inspect(context: Context): Promise<Inspection> {
   // A rollback cut short comes first: its original may be the only copy of the learner's other servers. A legacy journal decided as another publish's is held until the publish record is settled.
   const held = await settleRollbackJournal(context)
-  const pending = await readRecord(
-    context.pendingPath,
-    pendingSchema,
-    context.retry,
-    context.seam,
+  const read = await readPublishRecord(context, held)
+  // A held journal was decided on one read of the publish record: the run goes on only with that version, and every later write or delete of it checks its name; so does every other run that read a record.
+  const run = trackedPublishContext(
+    heldPublishContext(context, held, read?.version),
+    read?.version,
   )
+  const pending = read?.record
   // Looked at before recovery drops a staged name that is a second name of the config: both names showing the staged inode prove a first setup's link.
-  const isStagedLinked = await isStagedNameLinked(context, pending)
+  const isStagedLinked = await isStagedNameLinked(run, pending)
   // A copy an interrupted run kept comes back, or is deleted, or stays and is named, before the config is read.
-  const unsettled = await recoverOwnLeftovers(context, pending)
+  const unsettled = await recoverOwnLeftovers(run, pending)
   // An unverified put-back's handed record is read as the change in progress it is.
   const phase = pending && leftoverPhaseOf(pending)
   // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable. A write that failed is said in the refusal, which then promises no handover.
   const isHandoverUnrecorded = Boolean(
-    pending &&
-    isHandedNow &&
-    !(await persistHandover(context, pending, unsettled)),
+    pending && isHandedNow && !(await persistHandover(run, pending, unsettled)),
   )
   const tracked = phase ? unsettled.slice(1) : unsettled
   const [first] = unsettled
@@ -5439,20 +7576,37 @@ async function inspect(context: Context): Promise<Inspection> {
   const retained =
     pending &&
     retainedRecord(
-      await recordAfterRecovery(context, pending, unsettled, isHandedNow),
+      await recordAfterRecovery(run, pending, unsettled, isHandedNow),
       tracked,
     )
   const inspection = await settleAfterRecovery(
-    context,
+    run,
     pending,
     retained,
     held,
     isStagedLinked,
   ).catch((cause: unknown) => {
-    throw mergeWithLeftover(context, cause, phase, reported, isHandedNow)
+    throw mergeWithLeftover(run, cause, phase, reported, isHandedNow)
   })
-  if (pending && reported) throw unsettledRefusal(context, phase, reported)
-  return inspection
+  if (pending && reported) throw unsettledRefusal(run, phase, reported)
+  // The rest of the run writes and deletes its own record only from the version this run left at that name ({@link ownRecordContext}).
+  return { ...inspection, pendingVersion: run.journalVersion?.current }
+}
+
+/**
+ * Makes the rest of a locked run track its own `pending.json` from the version {@link inspect} left at that name ({@link Inspection.pendingVersion}), so the setup's publish, the removal and the removal retry write that record only while its name shows the version this run read or last wrote, claim a name this run left or found empty instead of writing over what another program put there ({@link claimJournal}), and delete it only as the version they last wrote ({@link dropTrackedJournal}); a record a backup or sync tool puts at that name meanwhile stays for the next run. Called by {@link writeManagedDevinMcpEntry}, {@link refreshManagedDevinMcpEntry} and {@link removeManagedDevinMcpEntry} right after {@link inspect}.
+ * Unlike the record a decision read ({@link trackedPublishContext}), this run's own record is written again at a name another program emptied, as a rollback journal is: it is the run's own record of what it still tracks.
+ * @param context - The locked run.
+ * @param inspection - What {@link inspect} returned; only its {@link Inspection.pendingVersion} is used.
+ * @returns The run tracking its own record.
+ * @example
+ * ownRecordContext(context, await inspect(context)).journalVersion // => { current: undefined } once inspect retired the record it read
+ */
+function ownRecordContext(
+  context: Context,
+  { pendingVersion }: Pick<Inspection, 'pendingVersion'>,
+): Context {
+  return { ...context, journalVersion: { current: pendingVersion } }
 }
 
 /**
@@ -5534,14 +7688,14 @@ function persistHandover(
 
 /**
  * Reads the config and the receipt once recovery settled the leftovers, finishes the take-back of a cut-short first setup and settles the pending record; called by {@link inspect}, which merges a refusal from here with a leftover that stays ({@link mergeWithLeftover}).
- * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the config is read after that settlement, so a config that a backup restored while the old receipt went back is the one this run decides on, with the receipt that stands by then. A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it, and is retired once the publish record is settled, so a refusal or failure before then leaves both records for the next run.
- * @param context - The run.
+ * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the config is read after that settlement, so a config that a backup restored while the old receipt went back is the one this run decides on, with the receipt that stands by then. When that settlement found the old record's private name empty, the publish record that leads there ends only while that name is still empty right before ({@link retirePending}). A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it; the publish record is ended or rewritten only while the journal's name still shows the journal this run held, at a look right before that record's unlink or rename ({@link HeldJournal.lookStill}), so a journal a backup restores there meanwhile keeps the record it rests on; and the journal is retired once the publish record is settled and that record's name shows what this run left there, also right before the journal's unlink ({@link retireHeldJournal}), so a refusal or failure before then leaves both records for the next run.
+ * @param context - The run; it tracks its publish record while a journal is held ({@link heldPublishContext}).
  * @param pending - The pending record as it was read; undefined when there is none.
  * @param retained - What stays of that record after recovery ({@link retainedRecord}); undefined when nothing stays.
  * @param held - The legacy rollback journal {@link settleRollbackJournal} held; undefined when none is held.
  * @param isStagedLinked - What {@link isStagedNameLinked} found before recovery; it proves a first setup's link to {@link settleRetiredReceipt}.
  * @returns The {@link Inspection}.
- * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, {@link settlePending} and the held journal's retirement throw.
+ * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, the held journal's look ({@link HeldJournal.lookStill}), {@link settlePending} and {@link retireHeldJournal} throw; a conflict at a held run's publish record is worded as that record's ({@link publishRecordConflict}), one at the held journal's name as that journal's.
  * @example
  * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held, false)
  */
@@ -5552,17 +7706,38 @@ async function settleAfterRecovery(
   held: HeldJournal | undefined,
   isStagedLinked: boolean,
 ): Promise<Inspection> {
-  await settleRetiredReceipt(context, pending, isStagedLinked)
+  // A conflict at the publish record's name is that record's refusal, never a rollback record's, unless the held journal's own name threw it: a held run's says so with both records, any other run's as its own record's.
+  const asPublishRefusal = (error: unknown): never => {
+    throw held
+      ? publishRecordConflict(context, held.legacy, error)
+      : asRecordConflict(error)
+  }
+  // A later run's put-back of the old record looks at the publish record right before its link ({@link assertPutBackRecordStill}).
+  const emptiedRetiredPath = await settleRetiredReceipt(
+    context,
+    pending,
+    isStagedLinked,
+  ).catch(asPublishRefusal)
   let look = await lookAtConfig(context)
   assertHeldJournalStill(context, held, look)
   const stored = await readReceipt(context)
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
   const afterTakeBack =
     pending && isTakeBackOwed(pending, stored)
-      ? await finishCutShortSetup(context, pending, stored, retained, look)
+      ? await finishCutShortSetup(
+          context,
+          pending,
+          stored,
+          retained,
+          look,
+          emptiedRetiredPath,
+        )
       : undefined
   if (afterTakeBack) look = afterTakeBack.look
   const current = currentEntryOf(look)
+  // A held journal must still stand as this run held it while the publish record it rests on ends: a journal a backup restores at that name meanwhile may need that record to take its setup back.
+  const assertHeldStill = await held?.lookStill()
+  // A held run takes nothing back (its look holds the decided bytes, which lack that record's entry), so the take-back above never writes that record.
   const receipt = await settlePending(
     context,
     current,
@@ -5570,9 +7745,11 @@ async function settleAfterRecovery(
     afterTakeBack ? undefined : pending,
     look,
     retained,
-  )
-  // The publish record can no longer adopt: a held legacy journal goes now.
-  await held?.retire()
+    emptiedRetiredPath,
+    assertHeldStill,
+  ).catch(asPublishRefusal)
+  // The publish record can no longer adopt: a held legacy journal goes now, while that record's name shows what this run left there.
+  await retireHeldJournal(context, held)
   return {
     look,
     current,
@@ -5583,7 +7760,7 @@ async function settleAfterRecovery(
 
 /**
  * Joins a refusal of the steps after recovery with the leftover recovery could not settle, so the learner reads both in one message; called by {@link inspect} when {@link settleAfterRecovery} throws.
- * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read.
+ * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read. It also applies to a refusal about the publish record itself ({@link RecordConflictError}): the record that names the leftover changed or disappeared, so no later run may find that leftover through it; and to another file at a held legacy journal's name ({@link JournalConflictError}), which ends the run before the leftover's own refusal, as it does in {@link withJournalLeftover}.
  * @param context - The run.
  * @param cause - What {@link settleAfterRecovery} threw.
  * @param phase - The phase of the pending record.
@@ -5603,8 +7780,14 @@ function mergeWithLeftover(
   isHandedNow: boolean,
 ): unknown {
   if (!reported || !(cause instanceof Error)) return cause
-  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it.
-  if (!isHandedNow && !namesBothFiles(reported.cause)) return cause
+  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it; a record that changed or disappeared under the run may never lead there again, and a run stopped by another file at a rollback record's name (a held legacy journal's) names it now, as {@link withJournalLeftover} does.
+  if (
+    !isHandedNow &&
+    !namesBothFiles(reported.cause) &&
+    !(cause instanceof RecordConflictError) &&
+    !(cause instanceof JournalConflictError)
+  )
+    return cause
   return new Error(
     `${cause.message} ${unsettledRefusal(context, phase, reported).message}`,
     { cause },
@@ -5670,9 +7853,12 @@ export async function writeManagedDevinMcpEntry(
 }> {
   return inLockedFolder(storageRoot, homeRoot, entry, seam, async (context) => {
     const { path, entryHash, retry } = context
-    const { look, current, receipt } = await inspect(context)
+    const inspection = await inspect(context)
+    const { look, current, receipt } = inspection
+    // The publish writes and deletes its own record only from the version inspect left there.
+    const run = ownRecordContext(context, inspection)
     if (current === undefined) {
-      const published = await publishEntry(context, look, receipt)
+      const published = await publishEntry(run, look, receipt)
       return { status: 'installed', path, ...published }
     }
     if (!receipt)
@@ -5699,7 +7885,7 @@ export async function writeManagedDevinMcpEntry(
         ...disabled,
       }
     }
-    const published = await publishEntry(context, look, receipt)
+    const published = await publishEntry(run, look, receipt)
     return { status: 'updated', path, ...published, ...disabled }
   })
 }
@@ -5730,7 +7916,8 @@ export async function refreshManagedDevinMcpEntry(
 }> {
   return inLockedFolder(storageRoot, homeRoot, entry, seam, async (context) => {
     const { path, entryHash } = context
-    const { look, current, receipt } = await inspect(context)
+    const inspection = await inspect(context)
+    const { look, current, receipt } = inspection
     if (!receipt || current === undefined)
       return { status: 'not-managed', path }
     const disabled = disabledFlagOf(current)
@@ -5744,7 +7931,12 @@ export async function refreshManagedDevinMcpEntry(
       await withInstallationId(context, receipt)
       return { status: 'current', path, ...disabled }
     }
-    const published = await publishEntry(context, look, receipt)
+    // The publish writes and deletes its own record only from the version inspect left there.
+    const published = await publishEntry(
+      ownRecordContext(context, inspection),
+      look,
+      receipt,
+    )
     return {
       status: 'refreshed',
       path,
@@ -5795,7 +7987,7 @@ function removalOwnership(
  * @param context - The run.
  * @param owned - The present config and the receipt that owns its entry ({@link removalOwnership}).
  * @returns `file-removed` when the file went, `removed` when only the entry went, and the private files that could not be deleted (empty when none).
- * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot}, and an {@link unrecordedRemovalRefusal} when the reduced config stands but the completed record could not be written (the receipt stays).
+ * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot} (a removal's own record that cannot be written first, because another file stands at its name, among them: {@link ownRecordContext}), and an {@link unrecordedRemovalRefusal} when the reduced config stands but the completed record could not be written (the receipt stays); a {@link TakenOutConflictError} when the entry is out but a take-back's tracked rollback record could not be deleted because its name shows another file ({@link dropFinishedRecord}).
  * @example
  * await takeEntryOut(context, owned) // => { status: 'removed' }
  */
@@ -5824,7 +8016,7 @@ async function takeEntryOut(
   )
   // Without the completed record the receipt stays: success is reported only once the removal is recorded.
   if (!isRecorded) throw await unrecordedRemovalRefusal(context, keptLeft)
-  if (keptLeft.length === 0) await dropPending(context)
+  if (keptLeft.length === 0) await dropFinishedRecord(context)
   return { status: 'removed', keptLeft }
 }
 
@@ -5978,8 +8170,10 @@ export async function removeManagedDevinMcpEntry(
       // Read before inspect retires it: an earlier removal that took the entry out and left its record unwritten.
       const wasUnrecorded = await hasUnrecordedRemoval(context)
       const inspected = await inspect(context)
-      // The retry has read the record; it ends it now ({@link inspect} leaves an unrecorded removal's record for this read).
-      if (wasUnrecorded) await dropPending(context)
+      // From here the removal writes and deletes its own record only from the version inspect left there.
+      const run = ownRecordContext(context, inspected)
+      // The retry has read the record; it ends it now, only as the version inspect read ({@link inspect} leaves an unrecorded removal's record for this read).
+      if (wasUnrecorded) await dropPending(run)
       const ownership = removalOwnership(inspected, options.expectedGeneration)
       // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
       if ('status' in ownership)
@@ -5989,7 +8183,7 @@ export async function removeManagedDevinMcpEntry(
           inspected,
           wasUnrecorded,
         )
-      const { status, keptLeft } = await takeEntryOut(context, ownership)
+      const { status, keptLeft } = await takeEntryOut(run, ownership)
       return dropReceiptAfterRemoval(
         context.receiptPath,
         status,

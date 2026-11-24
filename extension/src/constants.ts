@@ -412,7 +412,7 @@ export const NEXT_PACKAGE_ROOT_ENVELOPE_SENTENCE =
  */
 export const NEXT_APP_SELECTION_RULE =
   "Choose the Next app the question is about: the repository root only when the next-dev-webpack readiness reports rootIsApp true (the root package.json names next and the root has a route folder), otherwise the packages entry the question is about, started only when that entry is ready, in a version 3 configuration that declares its packageRoot (API 1.18 or later); a node_modules/next at the root alone (a hoisted install) never makes the root the choice. When packagesTruncated is true and the app the question names is not listed, declare packageRoot from the repository's files; the start checks it."
-export const EXTENSION_VERSION = '0.2.143'
+export const EXTENSION_VERSION = '0.2.144'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -546,7 +546,7 @@ export const DEVIN_SETUP_ROLLBACK_BUDGET_MS = 10_000
 export const DEVIN_MARK_READ_RETRY_DELAY_MS = 500
 /** How often a late mark of a Devin Desktop window's descriptor (the server start's or a sync's) checks, without reading storage, whether the setup, take-back or removal of the window it waits for (the one that ran that sync included) has ended before it decides the mark. */
 export const DEVIN_LATE_MARK_RUN_CHECK_MS = 500
-/** How many of a late mark's fresh reads of the setup receipts may give no answer at all, each only after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS} (a storage that stays out of file descriptors), before the late mark ends and leaves the window's descriptor unmarked, as a server start does when no read answered within that budget: each such read holds the descriptor queue, which a stop, a setup's mark and a removal's unmark wait behind, for up to that budget. */
+/** How many of a late mark's fresh reads of the setup receipts may give no answer at all, each only after {@link DEVIN_MARK_READ_RETRY_BUDGET_MS} (a failing disk that answers each read only after that budget), before the late mark ends and leaves the window's descriptor unmarked, as a server start does when no read answered within that budget, unless a setup, take-back or removal of this window runs then, which it waits for first: each such read holds the descriptor queue, which a stop, a setup's mark and a removal's unmark wait behind, for up to that budget. */
 export const DEVIN_LATE_MARK_UNANSWERED_READS_MAX = 3
 /** How long in all a server start, or the sync of a rollback, keeps asking for an answer of the setup receipts, a read that never returns included, before it publishes the descriptor unmarked. */
 export const DEVIN_MARK_READ_RETRY_BUDGET_MS = 5_000
