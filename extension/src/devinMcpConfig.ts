@@ -138,10 +138,12 @@ const noteVersionSchema = z.object({
   ino: z.string().regex(/^\d+$/),
   sha256: z.string(),
 })
-/** The note a rewrite or delete of a tracked record writes beside it (`<record>.codebook-dropping-note`, {@link noteDroppingMove}) before its last looks and the move to its dropping name: the version that move takes there, so the next run puts back only that file ({@link settleDroppedRecord}). 0.2.144.0 and earlier never read or write it. */
+/** The note a rewrite or delete of a tracked record writes beside it (`<record>.codebook-dropping-note`, {@link noteDroppingMove}) before its last looks and the move to its dropping name: the version that move takes there, and for a rewrite the version it publishes at the record's name, so the next run puts back only that file, or deletes it only beside that new record ({@link settleDroppedRecord}). 0.2.144.0 and earlier never read or write it. */
 const droppingNoteSchema = z.object({
   /** The version the last looks found at the record's name: its inode and the hash of its bytes. */
   moved: noteVersionSchema,
+  /** A rewrite's staged file, which it publishes at the record's name once the old version moved: its inode and the hash of its bytes. Absent for a delete. */
+  published: noteVersionSchema.optional(),
 })
 type DroppingNote = z.infer<typeof droppingNoteSchema>
 /** What a run knows about a pending record before the file is staged. */
@@ -2836,21 +2838,28 @@ async function writeTrackedJournal(
   let version: RecordVersion
   try {
     // Should the run stop with the record at its dropping name, the next run puts back only the file the note names.
-    version = await withDroppingNote(context, look, async () => {
-      context.seam?.beforeRecordWrite?.({ path, record: value })
-      // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the record's name, `assertStill`'s names, the staged name, the dropping name.
-      await lookAheadAt([
-        path,
-        ...(assertStill?.names ?? []),
-        staged.staged,
-        droppingPathOf(context),
-      ])
-      const source = await lookAtStagedRecord(staged)
-      assertTrackedJournalStill(context, look)
-      assertStill?.assert()
-      assertStagedRecordStill(staged, source)
-      return replaceThroughDroppingName(context, look, { staged, assertStill })
-    })
+    version = await withDroppingNote(
+      context,
+      { moved: look, published: staged.version },
+      async () => {
+        context.seam?.beforeRecordWrite?.({ path, record: value })
+        // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the record's name, `assertStill`'s names, the staged name, the dropping name.
+        await lookAheadAt([
+          path,
+          ...(assertStill?.names ?? []),
+          staged.staged,
+          droppingPathOf(context),
+        ])
+        const source = await lookAtStagedRecord(staged)
+        assertTrackedJournalStill(context, look)
+        assertStill?.assert()
+        assertStagedRecordStill(staged, source)
+        return replaceThroughDroppingName(context, look, {
+          staged,
+          assertStill,
+        })
+      },
+    )
   } finally {
     // A linked staged file is only another name of the record; one that published nothing goes while it shows the file this call wrote.
     await dropStagedRecord(staged)
@@ -2867,7 +2876,7 @@ type TrackedWrite = {
 /**
  * Replaces a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and publishing the new bytes at the emptied name without replacing anything; called by {@link writeTrackedJournal} right after those looks.
  * After the move the staged name, the caller's names and the dropping name are looked at again ({@link assertAfterMove}), so nothing that changed while the record moved is published; any refusal puts the record back first ({@link putTrackedBack}). The new bytes go in with a link, which never replaces a file; where the storage gives no file a second name ({@link NO_LINK_CODES}), the complete staged file is renamed into the emptied name right after a synchronous look finds it empty ({@link publishMovedRecord}), so that name shows nothing or the whole record at every instant. The moved record goes last, while its dropping name still shows it ({@link dropAsideRecord}).
- * Limits: a file put at the dropping name between its synchronous look and the move is replaced (a name only Codebook uses); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run keeps and names ({@link settleDroppedRecord}); on storage without hard links a file another program puts at the emptied name between that last look and the rename is replaced ({@link claimWithoutLinks}).
+ * Limits: a file put at the dropping name between its synchronous look and the move is replaced (a name only Codebook uses); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run settles as this step would have, deleting the old version while the dropping note proves both ({@link settleDroppedRecord}); on storage without hard links a file another program puts at the emptied name between that last look and the rename is replaced ({@link claimWithoutLinks}).
  * @param context - The run; its pending path is the record.
  * @param look - The record as the last look saw it: this run's version.
  * @param write - The staged bytes and the caller's look ({@link TrackedWrite}).
@@ -3111,23 +3120,26 @@ function droppingNotePathOf(context: Context): string {
   return `${context.pendingPath}.${DROPPING_NOTE_SUFFIX}`
 }
 
+/** What a dropping note names ({@link droppingNoteSchema}): the version a rewrite or delete moves to the dropping name, and for a rewrite the staged version it publishes at the record's name. */
+type NotedMove = { moved: RecordVersion; published?: RecordVersion }
+
 /**
  * Runs the last looks, the move to the dropping name and what follows of a tracked record's rewrite or delete with a dropping note beside the record that names the version those looks must find ({@link noteDroppingMove}), written before them; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, so a run that stops with the record at its dropping name leaves the next run the proof that the file there is that record ({@link provenDroppedRecord}), and a file another program puts at the dropping name never matches it.
  * However the step ends in this run, the note goes once nothing stands at the dropping name ({@link dropNoteUnlessDropping}); while something stands there (the record a refusal left there, or another program's file), it stays for the next run.
  * @param context - The run; its pending path is the record.
- * @param moved - The version the last looks must find at the record's name.
+ * @param noted - The version the last looks must find at the record's name, and a rewrite's staged version ({@link NotedMove}).
  * @param step - The last looks, the move and the publication or delete.
  * @returns What `step` returns.
  * @throws What `step` throws.
  * @example
- * const isDeleted = await withDroppingNote(rollbackContext, look, () => deleteThroughDroppingName(rollbackContext, look, undefined)) // => true; neither the record nor its note stands
+ * const isDeleted = await withDroppingNote(rollbackContext, { moved: look }, () => deleteThroughDroppingName(rollbackContext, look, undefined)) // => true; neither the record nor its note stands
  */
 async function withDroppingNote<Result>(
   context: Context,
-  moved: RecordVersion,
+  noted: NotedMove,
   step: () => Promise<Result>,
 ): Promise<Result> {
-  await noteDroppingMove(context, moved)
+  await noteDroppingMove(context, noted)
   try {
     return await step()
   } finally {
@@ -3140,17 +3152,20 @@ async function withDroppingNote<Result>(
  * The note's complete bytes are flushed under a temporary name and renamed over the note's name ({@link atomicPrivateWrite}), so a stop leaves the old note or the new one, never part of one.
  * Limit: best effort. A note that cannot be written (a full disk) leaves the previous note, which names an older version, or none: the move still runs, and a stop in it leaves a record the next run cannot prove and keeps, names and goes no further over ({@link unprovenDroppingError}). A file another program puts at the note's name is replaced.
  * @param context - The run; its pending path is the record.
- * @param moved - The version the last looks must find at the record's name.
+ * @param noted - What the note names ({@link NotedMove}).
  * @returns Resolves once the note is written or could not be.
  * @example
- * await noteDroppingMove(rollbackContext, look) // '…/pending.json.rollback.codebook-dropping-note' holds {"moved":{"ino":"43","sha256":"cd…"}}
+ * await noteDroppingMove(rollbackContext, { moved: look, published: staged.version }) // '…/pending.json.rollback.codebook-dropping-note' holds {"moved":{"ino":"43","sha256":"cd…"},"published":{"ino":"44","sha256":"ef…"}}
  */
 async function noteDroppingMove(
   context: Context,
-  moved: RecordVersion,
+  { moved, published }: NotedMove,
 ): Promise<void> {
   const note: DroppingNote = {
     moved: { ino: moved.ino.toString(), sha256: moved.sha256 },
+    ...(published && {
+      published: { ino: published.ino.toString(), sha256: published.sha256 },
+    }),
   }
   await atomicPrivateWrite(
     droppingNotePathOf(context),
@@ -3207,17 +3222,25 @@ async function readDroppingNote(
   }
 }
 
+/** A file at a tracked record's dropping name that the dropping note proves ({@link provenDroppedRecord}): that file as the read found it, and the version a stopped rewrite published at the record's name (none for a delete). */
+type DroppedProof = {
+  moved: InspectedCopy
+  published: RecordVersion | undefined
+}
+
 /**
- * Reads the file at a tracked record's dropping name through one open file and gives it only while it is the version the dropping note names, its inode and the hash of its bytes: the record a run that stopped inside its move left there; called by {@link settleDroppedRecord} before that file goes back to the record's empty name.
+ * Reads the file at a tracked record's dropping name through one open file and gives it only while it is the version the dropping note names, its inode and the hash of its bytes: the record a run that stopped inside its move left there; called by {@link settleDroppedRecord} before that file goes back to the record's empty name or, beside the new record a stopped rewrite published, is deleted.
  * @param context - The run; its pending path is the record.
- * @returns That file as the read found it (inode, hash, size and times), which the put-back's look must still find ({@link putTrackedBack}); undefined when no note proves it: no note, a note that proves nothing ({@link readDroppingNote}), a file that cannot be read, or another inode or other bytes than the note names.
+ * @returns
+ * - That file as the read found it (inode, hash, size and times), which the put-back's or the delete's look must still find ({@link putTrackedBack}, {@link dropAsideRecord}), with the version a rewrite's note names as published
+ * - undefined when no note proves it: no note, a note that proves nothing ({@link readDroppingNote}), a file that cannot be read, or another inode or other bytes than the note names
  * @example
- * await provenDroppedRecord(rollbackContext) // => { ino: 43n, sha256: 'cd…', size: 310n, … } after a stop right after the move
+ * await provenDroppedRecord(rollbackContext) // => { moved: { ino: 43n, sha256: 'cd…', size: 310n, … }, published: { ino: 44n, sha256: 'ef…' } } after a stop right after a rewrite's publication
  * await provenDroppedRecord(rollbackContext) // => undefined once a backup replaced the file at the dropping name
  */
 async function provenDroppedRecord(
   context: Context,
-): Promise<InspectedCopy | undefined> {
+): Promise<DroppedProof | undefined> {
   const note = await readDroppingNote(context)
   if (!note) return undefined
   const dropped = await inspectCopy(droppingPathOf(context)).catch(
@@ -3228,7 +3251,13 @@ async function provenDroppedRecord(
     dropped !== undefined &&
     isSameFileId(note.moved.ino, dropped.ino) &&
     dropped.sha256 === note.moved.sha256
-  return isNoted ? dropped : undefined
+  if (!isNoted) return undefined
+  // The note's digits are checked by its schema, so they make an inode as they stand.
+  const published = note.published && {
+    ino: BigInt(note.published.ino),
+    sha256: note.published.sha256,
+  }
+  return { moved: dropped, published }
 }
 
 /**
@@ -3325,7 +3354,7 @@ async function renewOrPutBack(
 }
 
 /**
- * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, only while a read of the record's name through one open file finds the version just published there, its inode and the hash of its bytes, and synchronous looks right before the unlink find the record's name still showing the file that read found (its inode, size and times) and the dropping name still showing the moved file; called by {@link replaceThroughDroppingName}, so a new record another program moves away, replaces or rewrites in place right after its publication never takes the old one with it: the old one stays at the dropping name, which the next run puts back or names ({@link settleDroppedRecord}).
+ * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, only while a read of the record's name through one open file finds the version just published there, its inode and the hash of its bytes, and synchronous looks right before the unlink find the record's name still showing the file that read found (its inode, size and times) and the dropping name still showing the moved file; called by {@link replaceThroughDroppingName}, so a new record another program moves away, replaces or rewrites in place right after its publication never takes the old one with it: the old one stays at the dropping name, which the next run puts back or names ({@link settleDroppedRecord}); and by {@link settleDroppedRecord} for a rewrite that stopped right after its publication, with what its dropping note names.
  * The read waits for the file system without holding the extension host's thread, and an awaited look at both names comes right before their synchronous looks, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds that thread.
  * Limit: a swap at either name, or a write into the new record, between these looks and the unlink is not seen (no Node primitive unlinks by inode or content); the read after the cleanup checks the record's bytes once more ({@link confirmPublished}).
  * @param context - The run; its pending path is the record.
@@ -3442,13 +3471,14 @@ async function settleDroppedRecords(context: Context): Promise<void> {
 }
 
 /**
- * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there only while it is the record the dropping note names ({@link putNotedRecordBack}), and any other file stays there, named; when it is only another name of the file at the record's name, that name goes; beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. A dropping note beside an empty dropping name names nothing and goes. Called by {@link settleDroppedRecords}.
+ * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there only while it is the record the dropping note names ({@link putNotedRecordBack}), and any other file stays there, named; when it is only another name of the file at the record's name, that name goes; when the note proves it to be the old version of a rewrite that stopped right after it published the new record the note names, it goes while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have deleted it; beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. A dropping note beside an empty dropping name names nothing and goes. Called by {@link settleDroppedRecords}.
  * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last, right before its unlink.
  * Limit: a swap at either name between the last look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run; its pending path is the record.
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when another file stands at the record's name; what {@link putNotedRecordBack} throws; what a look or the unlink throws other than for a missing name.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when another file stands at the record's name; what {@link putNotedRecordBack} and {@link dropAsideRecord} throw; what a look or the unlink throws other than for a missing name.
  * @example
  * await settleDroppedRecord(rollbackContextOf(context)) // pending.json.rollback stands again after a stop right after its move
+ * await settleDroppedRecord(rollbackContextOf(context)) // pending.json.rollback.codebook-dropping is gone after a stop right after a rewrite published its new record
  */
 async function settleDroppedRecord(context: Context): Promise<void> {
   const droppingPath = droppingPathOf(context)
@@ -3471,6 +3501,16 @@ async function settleDroppedRecord(context: Context): Promise<void> {
     })
     return dropDroppingNote(context)
   }
+  const proof = await provenDroppedRecord(context)
+  // The old version a rewrite moved there, beside the new record it names: a rewrite that stopped right after its publication, whose old version now goes, while the record's name still shows that new record.
+  if (proof?.published) {
+    await dropAsideRecord(
+      context,
+      { droppingPath, moved: proof.moved },
+      proof.published,
+    )
+    return dropDroppingNote(context)
+  }
   throw bothRecordNamesError(context)
 }
 
@@ -3484,10 +3524,10 @@ async function settleDroppedRecord(context: Context): Promise<void> {
  * await putNotedRecordBack(rollbackContext) // throws the refusal naming the dropping name once a backup replaced the record there
  */
 async function putNotedRecordBack(context: Context): Promise<void> {
-  const noted = await provenDroppedRecord(context)
+  const proof = await provenDroppedRecord(context)
   // A file no note proves (another program's, or the record with another inode or other bytes) never goes back as the record: it stays, named.
-  if (!noted) throw unprovenDroppingError(context)
-  await putTrackedBack(context, droppingPathOf(context), noted)
+  if (!proof) throw unprovenDroppingError(context)
+  await putTrackedBack(context, droppingPathOf(context), proof.moved)
   // The record stands at its name again: the note of its move names nothing any more.
   await dropDroppingNote(context)
 }
@@ -8667,17 +8707,21 @@ async function dropTrackedJournal(
     return assertLeftEmpty(context, assertStill)
   }
   // Should the run stop with the journal at its dropping name, the next run puts back only the file the note names.
-  const isDeleted = await withDroppingNote(context, look, async () => {
-    // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, `assertStill`'s names, the dropping name.
-    await lookAheadAt([
-      context.pendingPath,
-      ...(assertStill?.names ?? []),
-      droppingPathOf(context),
-    ])
-    assertTrackedJournalStill(context, look)
-    assertStill?.assert()
-    return deleteThroughDroppingName(context, look, assertStill)
-  })
+  const isDeleted = await withDroppingNote(
+    context,
+    { moved: look },
+    async () => {
+      // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, `assertStill`'s names, the dropping name.
+      await lookAheadAt([
+        context.pendingPath,
+        ...(assertStill?.names ?? []),
+        droppingPathOf(context),
+      ])
+      assertTrackedJournalStill(context, look)
+      assertStill?.assert()
+      return deleteThroughDroppingName(context, look, assertStill)
+    },
+  )
   // Only this run's own delete clears the version: nothing of it stands there any more.
   if (isDeleted && context.journalVersion)
     context.journalVersion.current = undefined

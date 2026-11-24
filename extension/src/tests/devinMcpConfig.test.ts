@@ -9347,6 +9347,172 @@ test("A take-back's rollback record a sync tool rewrites in place right after Co
   assert.equal(existsSync(keptPath), true)
 })
 
+test("A take-back's rollback record whose rewrite stopped right after Codebook published the new record is finished by the next refresh, which deletes the version it replaced and takes the failed first setup back", async (context) => {
+  // Value: protects=the run start recognizes its own stopped rewrite: when the record's name shows, inode and bytes, the new record the dropping note names and the dropping name shows the version that note says the rewrite moved there, the old version goes and the record is read, so a stop between the publication and the old version's delete never makes every later run refuse (Cycle 0149 task 36); fails_when=the stop does not fire, the dropping name holds anything but the replaced record or the record's name anything but the completed take-back record after the first refresh, the second refresh answers anything but not-managed, the config is not the learner's own without the entry, or the dropping name, its note, the rollback record, the copy it names, the setup record or a receipt stays; no_claim=a real process end (seam.beforeRecordWrite arms at the take-back's write of its completed record and reads the record as it stands then, and the config module is loaded with a link that, once armed, publishes that rewrite at pending.json.rollback and then ends the run; the run's own error handling still runs after that stop), the route where links fail
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  let isArmed = false
+  let replacedJournalText = ''
+  let hasStopped = false
+  const stoppingAfterPublish = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // The process ends right after the link that published the take-back's completed record.
+          if (
+            isArmed &&
+            !hasStopped &&
+            to === journalPath &&
+            from.endsWith('.tmp')
+          ) {
+            hasStopped = true
+            throw new Error('process ended')
+          }
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await stoppingAfterPublish
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the take-back's completed record, a rewrite of the record its claim wrote, which stands at that name now.
+        if (path !== journalPath || isArmed) return
+        if (JSON.parse(JSON.stringify(record)).phase !== 'completed') return
+        isArmed = true
+        replacedJournalText = readFileSync(journalPath, 'utf8')
+      },
+    })
+    .catch(() => undefined)
+  // A name the first refresh left empty reads as 'absent', so the assertions below name it.
+  const droppingAfterFirst = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const journalPhaseAfterFirst = existsSync(journalPath)
+    ? String(JSON.parse(readFileSync(journalPath, 'utf8')).phase)
+    : 'absent'
+  const keptPath =
+    replacedJournalText === ''
+      ? ''
+      : join(
+          dirname(configPath),
+          String(JSON.parse(replacedJournalText).keptName),
+        )
+
+  // Act
+  const outcome = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(hasStopped, true)
+  assert.notEqual(replacedJournalText, '')
+  assert.equal(droppingAfterFirst, replacedJournalText)
+  assert.equal(journalPhaseAfterFirst, 'completed')
+  assert.equal(outcome, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(`${journalPath}.codebook-dropping-note`), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A file another program puts at a take-back's rollback record name while its rewrite waits at the dropping name stays at the next refresh too, and so does the version that rewrite moved there: both are named", async (context) => {
+  // Value: protects=the run start finishes a stopped rewrite only while the record's name shows the very new record the dropping note names, so a file another program puts at the emptied name keeps both it and the old version, which names the moved-aside copy of the learner's config, at the next run as well (Cycle 0149 task 36, acceptance criterion 13's third state); fails_when=the file does not land, either refresh resolves or says anything but the not-taken-out refusal and then the sentence naming both names, the file at the record's name or the old version at the dropping name changes or is gone, or the copy the old version names is gone; no_claim=a real sync tool (seam.beforeRecordWrite arms at the take-back's write of its completed record and reads the record as it stands then, and the config module is loaded with a link that, once armed, puts another file at pending.json.rollback right before the link that would publish that rewrite there), what the learner does with both files next
+  // Arrange
+  const { home, storage, configPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  const otherText = '{"written":"by a sync tool"}\n'
+  let isArmed = false
+  let replacedJournalText = ''
+  let hasLanded = false
+  const landingBeforePublish = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // A sync tool puts its own file at the emptied record name right before the link that would publish the take-back's completed record.
+          if (
+            isArmed &&
+            !hasLanded &&
+            to === journalPath &&
+            from.endsWith('.tmp')
+          ) {
+            hasLanded = true
+            writeFileSync(journalPath, otherText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const firstOutcome = await landingBeforePublish
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the take-back's completed record, a rewrite of the record its claim wrote, which stands at that name now.
+        if (path !== journalPath || isArmed) return
+        if (JSON.parse(JSON.stringify(record)).phase !== 'completed') return
+        isArmed = true
+        replacedJournalText = readFileSync(journalPath, 'utf8')
+      },
+    })
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  const secondOutcome = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const keptPath =
+    replacedJournalText === ''
+      ? ''
+      : join(
+          dirname(configPath),
+          String(JSON.parse(replacedJournalText).keptName),
+        )
+
+  // Assert
+  assert.equal(hasLanded, true)
+  assert.equal(secondOutcome, bothRecordNamesRefusal(journalPath))
+  assert.equal(
+    firstOutcome,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, and could not take that entry out again, so remove the "codebook" entry from that file by hand if it is still there; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(journalPath, 'utf8'), otherText)
+  assert.equal(readFileSync(droppingPath, 'utf8'), replacedJournalText)
+  assert.equal(existsSync(keptPath), true)
+})
+
 test('A rollback record a stopped run left at its dropping name is put back by the next refresh, which settles it and takes the failed first setup back', async (context) => {
   // Value: protects=the run start finds a rollback record that a run which stopped inside its move left at the dropping name and, while it is the file the dropping note names, puts it back at the empty record name before anything reads that record, so the moved-aside copy of the learner's config it names comes back and the failed first setup is taken back (Cycle 0149 tasks 13 and 35, acceptance criterion 13's first state); fails_when=the refresh answers anything but not-managed, the config is not the learner's own without the entry, or the dropping name, its note, the rollback record, the copy it names, the setup record or a receipt stays; no_claim=a real process end (the test writes the dropping note and renames the rollback record to its dropping name, as a stop right after that move leaves them)
   // Arrange
