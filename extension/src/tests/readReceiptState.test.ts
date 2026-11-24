@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { DEVIN_DESCRIPTOR_LIMIT_BYTES } from '../constants'
 import { checkDevinBridgeReceipts as realCheckDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import * as realReadDescriptorText from '../utils/readDescriptorText'
+import type { PrivateJsonState } from '../utils/readPrivateJsonState'
 import { readReceiptState } from '../utils/readReceiptState'
 import { createPathReadGate } from '../utils/shareReceiptRead'
 
@@ -88,6 +89,61 @@ async function loadWithFailingRead(code: string) {
   )
 }
 
+/** The MCP receipt every scripted read answers: installed for `installation-b`, with the hash of its bytes. */
+const SCRIPTED_RECEIPT: PrivateJsonState = {
+  state: 'read',
+  value: { installed: true, installationId: 'installation-b' },
+  sha256: 'hash of the bytes at receipt.json',
+}
+
+/** A publish record whose note says that receipt.json is unverified and names other bytes than the scripted receipt's. */
+const SCRIPTED_NOTED_RECORD: PrivateJsonState = {
+  state: 'read',
+  value: {
+    targetPath: '/home/lume/.config/devin/mcp_config.json',
+    createdFile: false,
+    retiresReceipt: {
+      sha256: 'hash of the record setup moved aside',
+      receiptUnverified: true,
+    },
+  },
+  sha256: 'hash of the bytes at the publish record',
+}
+
+/** A name that holds no file. */
+const SCRIPTED_EMPTY_NAME: PrivateJsonState = {
+  state: 'removed',
+  reason: 'missing',
+}
+
+/**
+ * Loads {@link readReceiptState} over a bounded read that answers `/storage/devin-mcp/receipt.json` with {@link SCRIPTED_RECEIPT} and each read of the publish record's two names from a script, so a test can place a step of the config module between two of those reads.
+ * @param script - Per bare name (`pending.json`, `pending.json.codebook-dropping`), what its reads answer in turn; the last answer repeats, and a name left out answers {@link SCRIPTED_EMPTY_NAME}.
+ * @returns The loaded reader.
+ */
+async function loadWithScriptedRecordReads(
+  script: Record<string, PrivateJsonState[]>,
+) {
+  const readsOf = new Map<string, number>()
+  return loadModule<{ readReceiptState: typeof readReceiptState }>(
+    resolve(__dirname, '../utils/readReceiptState.js'),
+    {
+      './readPrivateJsonState': {
+        readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
+          const name = basename(path)
+          if (name === 'receipt.json') return Promise.resolve(SCRIPTED_RECEIPT)
+          const answers = script[name] ?? [SCRIPTED_EMPTY_NAME]
+          const count = readsOf.get(name) ?? 0
+          readsOf.set(name, count + 1)
+          return Promise.resolve(
+            answers[Math.min(count, answers.length - 1)] ?? SCRIPTED_EMPTY_NAME,
+          )
+        },
+      },
+    },
+  )
+}
+
 // protects=a receipt that stands being told from the other states; fails_when=an installed receipt answers removed or its fields are lost; no_claim=the bridge's reconnect behavior
 test('a receipt that says installed answers installed with its fields', async (context) => {
   // Arrange
@@ -162,6 +218,157 @@ test('an installed MCP receipt answers removed with the reason unverified while 
     state: 'removed',
     reason: 'unverified',
     receiptPath,
+  })
+})
+
+// Value: protects=a note that receipt.json is unverified still counts for the bridge and the window's mark while the publish record stands only at its dropping name, as every rewrite or delete of that record leaves it for a moment and a run that stopped inside that step leaves it until the next run puts it back (Cycle 0149 task 39; /ship pass 1 outside voice 9, Codex structured readReceiptState.ts:66, red team 2); fails_when=the empty publish record name reads as no note and the receipt answers installed, or removed with another reason; no_claim=how the record came to stand there (the test writes it by hand), and the config module's own put-back
+test('an installed MCP receipt answers removed with the reason unverified while only the dropping name of its publish record holds the note that receipt.json is unverified', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    receiptPath,
+    JSON.stringify({ installed: true, installationId: 'installation-b' }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json.codebook-dropping'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: {
+        sha256: sha256Of(
+          JSON.stringify({ installed: true, installationId: 'installation-a' }),
+        ),
+        receiptUnverified: true,
+      },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
+  })
+})
+
+// Value: protects=a note that receipt.json is unverified at the publish record's dropping name counts although another file stands at the record's name without it (for example a backup put an older record back after a run stopped inside a rewrite), as the config module then keeps both and goes no further (Cycle 0149 task 39; /ship pass 1 outside voice 9, Codex structured readReceiptState.ts:66); fails_when=the record's name alone decides and the receipt answers installed; no_claim=which of the two files the config module later keeps
+test('an installed MCP receipt answers removed with the reason unverified while the dropping name holds that note beside a publish record without it', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    receiptPath,
+    JSON.stringify({ installed: true, installationId: 'installation-b' }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+    }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json.codebook-dropping'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: {
+        sha256: sha256Of(
+          JSON.stringify({ installed: true, installationId: 'installation-a' }),
+        ),
+        receiptUnverified: true,
+      },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
+  })
+})
+
+// Value: protects=a live rewrite of the publish record that puts the record back at its name between the read of that name and the read of its dropping name never hides its note: both names read empty, so the record's name is read once more and the note found there counts (Cycle 0149 task 39; red team 2, the live-rewrite gap); fails_when=one empty read of the record's name reads as no note and the receipt answers installed; no_claim=real file timing (scripted reads answer the record's name empty, the dropping name empty, then the record's name with the note), and a second rewrite that begins before the third read (the stated residual)
+test('an installed MCP receipt answers removed with the reason unverified when a rewrite puts its noted publish record back at its name between the reads of both names', async () => {
+  // Arrange
+  const { readReceiptState: readWithRewrite } =
+    await loadWithScriptedRecordReads({
+      'pending.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_NOTED_RECORD],
+      'pending.json.codebook-dropping': [SCRIPTED_EMPTY_NAME],
+    })
+  // Act
+  const state = await readWithRewrite('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a read of the publish record that fails to look (descriptor exhaustion, EIO) leaves the receipt unknown rather than standing or removed (Cycle 0149 ship review, specialist note on unverifiedVerdictOf); fails_when=the failed read answers installed, so a window marks itself and the bridge connects past a note it could not read, or removed, so a transient failure ends the bridge; no_claim=which codes count as no answer (readPrivateJsonState's own tests); scripted reads answer the record's name with no-answer and the dropping name empty
+test('an installed MCP receipt answers no-answer when the read of its publish record fails to look', async () => {
+  // Arrange
+  const { readReceiptState: readWithFailedRecord } =
+    await loadWithScriptedRecordReads({
+      'pending.json': [{ state: 'no-answer' }],
+    })
+  // Act
+  const state = await readWithFailedRecord('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'no-answer',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a publish record that stands but cannot be read as a record (here no JSON) keeps the receipt from standing, since Codebook cannot tell that no note stands there (Cycle 0149 ship review, specialist note on unverifiedVerdictOf); fails_when=the unreadable record reads as no note and the receipt answers installed; no_claim=the other unreadable forms (a link, too large), which take the same branch
+test('an installed MCP receipt answers removed with the reason unverified when its publish record is no JSON', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    receiptPath,
+    JSON.stringify({ installed: true, installationId: 'installation-a' }),
+  )
+  await writePrivate(join(storage, 'devin-mcp', 'pending.json'), '{ not json')
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
+  })
+})
+
+// Value: protects=only the MCP entry's receipt is weighed against a publish record: the skill's receipt stands on its own whatever file stands beside it (Cycle 0149 ship review, specialist note on the folder guard of unverifiedVerdictOf); fails_when=a pending.json beside the skill receipt makes it answer removed; no_claim=the MCP receipt, and why such a file stands there (the config module writes none in that folder)
+test('an installed skill receipt answers installed although a file beside it notes receipt.json unverified', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-skill', 'receipt.json')
+  await writePrivate(receiptPath, JSON.stringify({ installed: true }))
+  await writePrivate(
+    join(storage, 'devin-skill', 'pending.json'),
+    JSON.stringify({
+      retiresReceipt: {
+        sha256: sha256Of('other bytes'),
+        receiptUnverified: true,
+      },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'installed',
+    receipt: { installed: true },
   })
 })
 
