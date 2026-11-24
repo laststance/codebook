@@ -86,6 +86,8 @@ const receiptSchema = z.object({
   installationId: z.string().optional(),
   /** The inode of the config Codebook last wrote; the file counts as Codebook's own only while it still matches. An older receipt also holds a device number, which is ignored. */
   config: z.object({ ino: fileIdSchema }),
+  /** Set by an adoption ({@link adoptPending}): the receipt rests on the entry's hash alone, not on its setup's own word, so it never keeps its generation's entry from a take-back that a record of that setup asks for ({@link isTakeBackCovered}), also when the adoption could not take it back out ({@link withdrawAdoptedReceipt}); every rewrite of the receipt keeps it, and a new setup's receipt has none. Released builds read past it and drop it when they rewrite the receipt. */
+  adopted: z.literal(true).optional(),
 })
 /** What a first setup's publish record of this build holds about the old receipt it moves aside ({@link Pending.retiresReceipt}); an object, which 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse as unreadable before they look at the old receipt's private name. */
 const retiredReceiptSchema = z.object({
@@ -5941,6 +5943,8 @@ async function adoptPending(
     installationId:
       pending.installationId ?? installationIdOf(await readReceipt(context)),
     config: { ino: recordedFileId(identity.ino) },
+    // The receipt rests on the entry's hash alone: a record of this setup that asks for its take-back still gets it ({@link isTakeBackCovered}).
+    adopted: true,
   }
   await writeReceipt(
     context,
@@ -5953,11 +5957,30 @@ async function adoptPending(
     const assertRecordLeft = await adoptedRecordCheck(context)
     assertRecordLeft.assert()
   } catch (error) {
-    // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back): that receipt would make the next run skip the take-back, so it goes back out while it still is the version this call wrote.
-    if (hasRecordConflictCause(error)) await withdrawAdoptedReceipt(context)
+    // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back): that receipt goes back out while it still is the version this call wrote, and a receipt that may still stand is named.
+    if (
+      hasRecordConflictCause(error) &&
+      !(await withdrawAdoptedReceipt(context))
+    )
+      throw withKeptAdoptedReceipt(context, error)
     throw error
   }
   return adopted
+}
+
+/**
+ * Adds to the refusal of an adoption that a changed record stopped the sentence that the receipt it had just published may still stand at `receipt.json` ({@link withdrawAdoptedReceipt} could not take it back out), and that the next run still takes that setup back when a record of it asks, because an adopted receipt never covers such a take-back ({@link isTakeBackCovered}); called only by {@link adoptPending}.
+ * The sentence goes onto the refusal itself, so the conflict keeps its class and is worded as the record's own by the run's caller ({@link asRecordConflict}).
+ * @param context - The run; its receipt path is named.
+ * @param error - What the record's end or the look after it threw.
+ * @returns `error` with that sentence after its own; `error` itself when it is no `Error`.
+ * @example
+ * throw withKeptAdoptedReceipt(run, conflict) // 'While Codebook settled its rollback record at … Codebook also could not delete its record of the "codebook" entry at …/receipt.json, which it had just written for that setup, …'
+ */
+function withKeptAdoptedReceipt(context: Context, error: unknown): unknown {
+  if (!(error instanceof Error)) return error
+  error.message = `${error.message} Codebook also could not delete its record of the "${SERVER_NAME}" entry at ${context.receiptPath}, which it had just written for that setup, so that file stays there; the next run still takes that setup back when a record of that setup asks for it.`
+  return error
 }
 
 /**
@@ -5987,15 +6010,25 @@ function hasRecordConflictCause(error: unknown): boolean {
 /**
  * Takes the receipt an adoption just published back out once a record that adoption rests on changed after the receipt's rename, so the adoption could not end its record ({@link hasRecordConflictCause}: a rollback record at its name again, another setup record at `pending.json`), only while `receipt.json` still shows the very version that adoption's write published there ({@link Context.receiptVersion}, which {@link writeReceipt} moved to it), so the next run, which settles those records first, takes the failed setup back when they say so instead of finding its receipt ({@link finishCutShortSetup}); called only by {@link adoptPending}.
  * The delete is {@link dropReceipt}'s: the name is read through the thread pool and must show that inode and those bytes, then it is looked at once more synchronously, and the receipt moves to its dropping name and is deleted there only while it proves to be that version, so a file a backup or sync tool put there since, even one with the same bytes on another inode, stays, also one renamed over that name after the last look.
- * Limit: those of {@link dropReceipt}; a receipt that another program replaced, or that cannot be looked at or deleted, stays, and the next run then keeps the entry as receipted, as does a run that ends before this step.
+ * When the delete fails, or the name cannot be read, the receipt stays and the caller names it ({@link withKeptAdoptedReceipt}); it never keeps the next run from the take-back a record of that setup asks for, because it carries the adoption's mark ({@link Receipt.adopted}, {@link isTakeBackCovered}), and neither does a receipt that stays because the run ended before this step.
+ * Limit: those of {@link dropReceipt}; a receipt that another program replaced stays and is not named (it is no longer the file this adoption wrote; a copy of its bytes carries the same mark).
  * @param context - The run; its receipt version is the one the adoption's write published.
- * @returns Resolves once the receipt is gone, or once it stays because `receipt.json` shows another file, other bytes or nothing, or the look or the delete failed: the adoption's own refusal is what the run says.
+ * @returns
+ * - `true` once nothing of this adoption's receipt stands at `receipt.json`: this call deleted it, or the name shows nothing, another file or other bytes
+ * - `false` when it may still stand there: the delete failed, or the name could not be read, by the delete's own look or by one more look after it
  * @example
- * await withdrawAdoptedReceipt(run) // receipt.json is gone while it held the receipt this run's adoption wrote; a copy with the same bytes on another inode stays
+ * await withdrawAdoptedReceipt(run) // => true; receipt.json is gone while it held the receipt this run's adoption wrote, and a copy with the same bytes on another inode stays
+ * await withdrawAdoptedReceipt(run) // => false once the disk answered that unlink with EIO
  */
-async function withdrawAdoptedReceipt(context: Context): Promise<void> {
-  // A receipt that cannot be looked at or deleted stays as it is.
-  await dropReceipt(context).catch(() => undefined)
+async function withdrawAdoptedReceipt(context: Context): Promise<boolean> {
+  const written = context.receiptVersion.current
+  const answer = await dropReceipt(context).catch(() => undefined)
+  if (answer === 'gone') return true
+  // The delete failed: the receipt stays where it was.
+  if (answer === undefined) return false
+  // Kept: the name showed another file or other bytes, or could not be read; one more look tells them apart, and a look that fails again proves nothing, so it counts as the receipt still there.
+  const standing = await inspectCopy(context.receiptPath).catch(() => written)
+  return standing?.ino !== written?.ino || standing?.sha256 !== written?.sha256
 }
 
 /** A {@link JournalConflictError} at the rollback journal's name met by the look an adoption rests on ({@link journalLeftCheck}): a rollback record stands there where settlement left none, another file stands there than the one it left, or that name could not be read again; {@link adoptPending} takes back the receipt it published when this ends its record's retirement, as it does for a held journal's ({@link HeldJournalConflictError}). */
@@ -10162,15 +10195,55 @@ function isTakeBackOwed(
 }
 
 /**
+ * Tells whether the receipt that stands is the one a publish record's own setup wrote, so the take-back that record asks for is not owed ({@link finishCutShortSetup}); an adoption's receipt ({@link Receipt.adopted}) never is, because it rests on the entry's hash alone, so a record of that setup that asks for its take-back, also one that came back after the adoption or beside a receipt the adoption could not take back out ({@link withdrawAdoptedReceipt}), still gets it.
+ * @param pending - The publish record.
+ * @param receipt - The receipt that stands, if any.
+ * @returns `true` for a receipt of the record's generation without the adoption's mark (also, as before, no receipt beside a record that names no generation); `false` for another generation's receipt, no receipt beside a record with a generation, and an adopted receipt.
+ * @example
+ * isTakeBackCovered({ ...pending, generation: 'g1' }, { ...receipt, generation: 'g1' })                // => true
+ * isTakeBackCovered({ ...pending, generation: 'g1' }, { ...receipt, generation: 'g1', adopted: true }) // => false
+ */
+function isTakeBackCovered(
+  pending: Pending,
+  receipt: Receipt | undefined,
+): boolean {
+  return receipt?.generation === pending.generation && receipt?.adopted !== true
+}
+
+/**
+ * Deletes an adopted receipt of the setup whose entry a take-back just took out ({@link finishCutShortSetup}), only while `receipt.json` still shows the version this run read ({@link dropReceipt}), so no receipt of that setup stays beside no entry; any other receipt stays as read.
+ * @param context - The run; its receipt version is the one its decisions rest on ({@link settleAfterRecovery}).
+ * @param pending - The setup's publish record.
+ * @param receipt - The receipt that stood; of the record's generation only when an adoption wrote it ({@link isTakeBackCovered}).
+ * @returns
+ * - undefined once that adopted receipt is gone
+ * - `receipt` itself otherwise: another generation's receipt, none, or an adopted one that stays (another file at its name, or a delete that failed)
+ * @example
+ * await dropAdoptedReceiptOf(run, pending, adoptedReceipt) // => undefined; receipt.json is gone
+ */
+async function dropAdoptedReceiptOf(
+  context: Context,
+  pending: Pending,
+  receipt: Receipt | undefined,
+): Promise<Receipt | undefined> {
+  // Only a receipt of the setup taken back goes.
+  if (receipt === undefined || receipt.generation !== pending.generation)
+    return receipt
+  const answer = await dropReceipt(context).catch(() => 'kept' as const)
+  return answer === 'gone' ? undefined : receipt
+}
+
+/**
  * Finishes the take-back of a first setup whose rollback was cut short; called by {@link inspect} after {@link settleRollbackJournal} put the published config back.
- * That config holds the entry the failed setup published, and its receipt was never written, so the publish record is not adopted: the entry is taken out again with the rollback's own steps and checks ({@link rollBackPublishedEntry}) and the setup's record is retired. A config with no matching publish record, one a receipt of the same generation covers, or a record marked {@link Pending.notLinked} (that publish linked nothing), is not concerned.
+ * That config holds the entry the failed setup published, and its receipt was never written, so the publish record is not adopted: the entry is taken out again with the rollback's own steps and checks ({@link rollBackPublishedEntry}) and the setup's record is retired. A config with no matching publish record, one a receipt of the same generation that setup wrote itself covers ({@link isTakeBackCovered}), or a record marked {@link Pending.notLinked} (that publish linked nothing), is not concerned. A receipt of the same generation that an adoption wrote ({@link Receipt.adopted}) covers nothing: the entry is taken back all the same, and that receipt goes with it, before the record ends, while `receipt.json` still shows the version this run read ({@link dropAdoptedReceiptOf}).
+ * Limit: an adopted receipt that cannot go then (another file at its name, a delete that fails) stays beside no entry, as a removal's receipt that it left does, and the next setup or removal settles it.
  * @param context - The run.
  * @param pending - The setup's pending record.
  * @param receipt - The receipt that stands, if any.
  * @param retained - What stays of the setup's record after recovery ({@link retainedRecord}).
  * @param look - The config as it stands.
  * @param emptiedRetiredPath - The old record's private name that this run's put-back found empty ({@link settleRetiredReceipt}); the record ends only while that name is still empty ({@link retirePending}). Undefined otherwise.
- * @returns The config as it looks after the entry was taken out, and what the take-back removed (`removal`: the file or only the entry); undefined when nothing was taken back (the record is then settled as before).
+ * @returns The config as it looks after the entry was taken out, what the take-back removed (`removal`: the file or only the entry) and the receipt that stands after it (`receipt`: undefined once an adopted receipt of that setup went); undefined when nothing was taken back (the record is then settled as before).
  * @throws A refusal when the entry could not be taken out again; nothing else is changed then. A {@link RecordConflictError} when the setup's record no longer stands at its name as this run read it right before the take-back would move the config ({@link assertTakeBackRecordStill}); the config is unchanged then. What {@link retirePending} throws after the take-back.
  * @example
  * const afterTakeBack = await finishCutShortSetup(context, pending, receipt, retained, look)
@@ -10183,7 +10256,12 @@ async function finishCutShortSetup(
   look: ConfigLook,
   emptiedRetiredPath?: string,
 ): Promise<
-  { look: ConfigLook; removal?: 'file-removed' | 'removed' } | undefined
+  | {
+      look: ConfigLook
+      removal?: 'file-removed' | 'removed'
+      receipt: Receipt | undefined
+    }
+  | undefined
 > {
   const { stagedIno } = pending
   // A first setup's record carries the prefix; the entry and the receipt the rollback checks against hash plainly.
@@ -10195,7 +10273,7 @@ async function finishCutShortSetup(
     pending.targetPath !== context.path ||
     entrySha256 === undefined ||
     stagedIno === undefined ||
-    receipt?.generation === pending.generation ||
+    isTakeBackCovered(pending, receipt) ||
     coreHashOf(currentEntryOf(look)) !== entrySha256
   )
     return undefined
@@ -10224,12 +10302,18 @@ async function finishCutShortSetup(
     throw new Error(
       `A setup of Codebook that ended early left its "${SERVER_NAME}" entry in ${context.path}, ${rollbackOutcomeClause(outcome, context)}; ${context.retry}.${keptCopiesSentence(keptLeft)}`,
     )
+  // An adopted receipt of this setup goes with its entry, before the record that proves the take-back ends.
+  const receiptLeft = await dropAdoptedReceiptOf(context, pending, receipt)
   await retirePending(
     context,
     retained,
     await retiredNameCheck(context, emptiedRetiredPath),
   )
-  return { look: await lookAtConfig(context), removal: result.removal }
+  return {
+    look: await lookAtConfig(context),
+    removal: result.removal,
+    receipt: receiptLeft,
+  }
 }
 
 /**
@@ -10510,10 +10594,11 @@ async function settleAfterRecovery(
   // A held journal must still stand as this run held it while the publish record it rests on ends: a journal a backup restores at that name meanwhile may need that record to take its setup back.
   const assertHeldStill = await held?.lookStill()
   // A held run takes nothing back (its look holds the decided bytes, which lack that record's entry), so the take-back above never writes that record.
+  // After a take-back the run decides on the receipt that stands then: an adopted receipt of that setup went with its entry.
   const receipt = await settlePending(
     context,
     current,
-    stored,
+    afterTakeBack ? afterTakeBack.receipt : stored,
     afterTakeBack ? undefined : pending,
     look,
     retained,
