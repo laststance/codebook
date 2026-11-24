@@ -117,8 +117,8 @@ const SCRIPTED_EMPTY_NAME: PrivateJsonState = {
 }
 
 /**
- * Loads {@link readReceiptState} over a bounded read that answers `/storage/devin-mcp/receipt.json` with {@link SCRIPTED_RECEIPT} and each read of the publish record's two names from a script, so a test can place a step of the config module between two of those reads.
- * @param script - Per bare name (`pending.json`, `pending.json.codebook-dropping`), what its reads answer in turn; the last answer repeats, and a name left out answers {@link SCRIPTED_EMPTY_NAME}.
+ * Loads {@link readReceiptState} over a bounded read that answers `/storage/devin-mcp/receipt.json` with {@link SCRIPTED_RECEIPT} unless the script names it, and each read of the publish record's two names and the receipt's dropping name from a script, so a test can place a step of the config module between two of those reads.
+ * @param script - Per bare name (`receipt.json`, `receipt.json.codebook-dropping`, `pending.json`, `pending.json.codebook-dropping`), what its reads answer in turn; the last answer repeats; `receipt.json` left out answers {@link SCRIPTED_RECEIPT}, and any other name left out answers {@link SCRIPTED_EMPTY_NAME}.
  * @returns The loaded reader.
  */
 async function loadWithScriptedRecordReads(
@@ -131,7 +131,9 @@ async function loadWithScriptedRecordReads(
       './readPrivateJsonState': {
         readPrivateJsonState: (path: string): Promise<PrivateJsonState> => {
           const name = basename(path)
-          if (name === 'receipt.json') return Promise.resolve(SCRIPTED_RECEIPT)
+          // The receipt stands unless the script reads it otherwise.
+          if (name === 'receipt.json' && script[name] === undefined)
+            return Promise.resolve(SCRIPTED_RECEIPT)
           const answers = script[name] ?? [SCRIPTED_EMPTY_NAME]
           const count = readsOf.get(name) ?? 0
           readsOf.set(name, count + 1)
@@ -514,6 +516,87 @@ test('a receipt that is not there answers removed with the reason missing', asyn
   // Arrange
   const storage = await arrangeStorage(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, { state: 'removed', reason: 'missing', receiptPath })
+})
+
+// Value: protects=a bridge check or a window's mark that lands while Codebook rewrites or deletes its record of the entry, which it moves to receipt.json.codebook-dropping first so that receipt.json stands empty for a moment, reads that record there, so a connected bridge whose setup stands never ends with the not-set-up line and a window never unmarks itself in that moment (Cycle 0149 ship review, specialist testing note on readReceiptState.ts:154); fails_when=the empty receipt.json alone decides and the receipt answers removed with the reason missing, or the fields of the record at the dropping name are lost; no_claim=real file timing (the test writes the record at the dropping name and nothing at receipt.json, as the move leaves them), which file the config module's next run keeps there
+test('an MCP receipt that Codebook holds at its dropping name while receipt.json is empty answers installed with its fields', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    `${receiptPath}.codebook-dropping`,
+    JSON.stringify({ installed: true, installationId: 'installation-a' }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-a' },
+  })
+})
+
+// Value: protects=a rewrite of Codebook's record of the entry that publishes its new record and deletes the old one between the read of receipt.json and the read of its dropping name never reads as a removal: both names read empty, so receipt.json is read once more and the record found there stands (Cycle 0149 ship review, specialist testing note; task 39's three-read rule for the publish record); fails_when=one empty read of receipt.json decides and the receipt answers removed with the reason missing; no_claim=real file timing (scripted reads answer receipt.json empty, its dropping name empty, then receipt.json with the record), and a second rewrite or a delete that begins before the third read (the stated residual)
+test('an MCP receipt that a rewrite publishes between the reads of receipt.json and its dropping name answers installed', async () => {
+  // Arrange
+  const { readReceiptState: readWithRewrite } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME, SCRIPTED_RECEIPT],
+      'receipt.json.codebook-dropping': [SCRIPTED_EMPTY_NAME],
+    })
+  // Act
+  const state = await readWithRewrite('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-b' },
+  })
+})
+
+// Value: protects=a read of the receipt's dropping name that fails to look (descriptor exhaustion, EIO) while receipt.json reads empty leaves the receipt unknown, since Codebook may hold its record there at that moment, so a transient failure never ends a connected bridge (Cycle 0149 ship review, specialist testing note); fails_when=the empty receipt.json decides and the receipt answers removed with the reason missing; no_claim=which codes count as no answer (readPrivateJsonState's own tests); scripted reads answer receipt.json empty and its dropping name with no-answer
+test('an MCP receipt answers no-answer when receipt.json is empty and the read of its dropping name fails to look', async () => {
+  // Arrange
+  const { readReceiptState: readWithFailedDropping } =
+    await loadWithScriptedRecordReads({
+      'receipt.json': [SCRIPTED_EMPTY_NAME],
+      'receipt.json.codebook-dropping': [{ state: 'no-answer' }],
+    })
+  // Act
+  const state = await readWithFailedDropping('/storage/devin-mcp/receipt.json')
+  // Assert
+  // The module ran in its own realm, so its answer is compared by its JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    state: 'no-answer',
+    receiptPath: '/storage/devin-mcp/receipt.json',
+  })
+})
+
+// Value: protects=a file at the receipt's dropping name that is no record (here no JSON) never stands for Codebook's record of the entry: the empty receipt.json still answers removed with the reason missing (Cycle 0149 ship review, specialist testing note); fails_when=that file answers for the receipt, as installed, unparsable or no-answer; no_claim=the other unreadable forms (a link, too large, a mode others can read), which take the same branch
+test('an MCP receipt answers removed with the reason missing when receipt.json is empty and its dropping name holds no record', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(`${receiptPath}.codebook-dropping`, 'not json')
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, { state: 'removed', reason: 'missing', receiptPath })
+})
+
+// Value: protects=only the MCP entry's receipt, which Codebook's config module moves through a dropping name, is read there: a removed skill receipt stays removed beside any file at its own dropping name (Cycle 0149 ship review, specialist testing note); fails_when=the skill receipt answers installed from that file; no_claim=the skill module's own writes, which never use that name
+test('a skill receipt that is not there answers removed with the reason missing although a receipt stands at its dropping name', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-skill', 'receipt.json')
+  await writePrivate(
+    `${receiptPath}.codebook-dropping`,
+    JSON.stringify({ installed: true }),
+  )
   // Act
   const state = await readReceiptState(receiptPath)
   // Assert
