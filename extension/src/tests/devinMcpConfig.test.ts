@@ -9967,6 +9967,79 @@ test("A take-back's rollback record whose rewrite stopped right after Codebook p
   assert.equal(existsSync(receiptPath), false)
 })
 
+/** A step of the file system after which a test's process ends ({@link loadEndingAfterStep}): a link or a rename, with its source and its target. */
+type EndingStep = { step: 'link' | 'rename'; from: string; to: string }
+
+/**
+ * Loads the config module so that its process ends right after one step of the file system: once `isLastStep` answers true for a link or a rename that resolved, that call throws, and every later link, rename, unlink, removal, folder creation and open for writing fails as after the process ended, also inside the module's atomic write ({@link loadModule}'s same-context files); reads still answer, so the run's own error handling runs but changes nothing on disk (Cycle 0149 tasks 55 to 57).
+ * @param isLastStep - Called with each link and rename right after it resolved; true for the step after which the process ends.
+ * @returns The config module, and whether the process ended.
+ * @example
+ * const ending = await loadEndingAfterStep(({ step, from, to }) => step === 'link' && to === pendingPath && from.endsWith('.tmp'))
+ * await ending.module.refreshManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
+ * ending.hasEnded() // => true
+ */
+async function loadEndingAfterStep(
+  isLastStep: (step: EndingStep) => boolean,
+): Promise<{ module: typeof DevinMcpConfigModule; hasEnded: () => boolean }> {
+  let isEnded = false
+  const failIfEnded = (): void => {
+    if (isEnded) throw new Error('process ended')
+  }
+  const endAfter = (step: EndingStep): void => {
+    if (!isLastStep(step)) return
+    isEnded = true
+    failIfEnded()
+  }
+  const module = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          failIfEnded()
+          await link(from, to)
+          endAfter({ step: 'link', from, to })
+        },
+        lstat,
+        mkdir: async (...args: Parameters<typeof mkdir>) => {
+          failIfEnded()
+          return mkdir(...args)
+        },
+        open: async (...args: Parameters<typeof open>) => {
+          // Reads still answer; nothing is written once the process ended.
+          if (args[1] !== undefined && args[1] !== 'r') failIfEnded()
+          return open(...args)
+        },
+        rename: async (from: string, to: string) => {
+          failIfEnded()
+          await rename(from, to)
+          endAfter({ step: 'rename', from, to })
+        },
+        rm: async (...args: Parameters<typeof rm>) => {
+          failIfEnded()
+          return rm(...args)
+        },
+        unlink: async (path: string) => {
+          failIfEnded()
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+    {
+      './utils/atomicPrivateWrite': resolve(
+        __dirname,
+        '../utils/atomicPrivateWrite.js',
+      ),
+      './atomicPrivateBytes': resolve(
+        __dirname,
+        '../utils/atomicPrivateBytes.js',
+      ),
+    },
+  )
+  return { module, hasEnded: () => isEnded }
+}
+
 test("A file another program puts at a take-back's rollback record name while its rewrite waits at the dropping name stays at the next refresh too, and so does the version that rewrite moved there: both are named", async (context) => {
   // Value: protects=the run start finishes a stopped rewrite only while the record's name shows the very new record the dropping note names, so a file another program puts at the emptied name keeps both it and the old version, which names the moved-aside copy of the learner's config, at the next run as well (Cycle 0149 task 36, acceptance criterion 13's third state); fails_when=the file does not land, either refresh resolves or says anything but the not-taken-out refusal and then the sentence naming both names, the file at the record's name or the old version at the dropping name changes or is gone, or the copy the old version names is gone; no_claim=a real sync tool (seam.beforeRecordWrite arms at the take-back's write of its completed record and reads the record as it stands then, and the config module is loaded with a link that, once armed, puts another file at pending.json.rollback right before the link that would publish that rewrite there), what the learner does with both files next
   // Arrange
@@ -19974,6 +20047,93 @@ test("A refresh after a run that stopped right after it moved Codebook's record 
     receiptText,
   )
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
+test("A refresh that stopped right after it moved Codebook's record of the entry to its private name to add the installation id leaves the next refresh to put that record back, add the id and find the entry current", async (context) => {
+  // Value: protects=a rewrite of Codebook's record of the entry notes the version it moves to receipt.json's private name before it moves it, so a run that really stops right after that move leaves the next run the proof to put that record back at receipt.json, and the entry stays Codebook's own instead of every later run refusing that record as a file it cannot prove (Cycle 0149 task 55; README line 95's dropping note); fails_when=the stop is not reached, the stop leaves a file at receipt.json or anything but the older record at its private name, the next refresh answers anything but current, receipt.json then holds no installation id, or a private name of the record or its dropping note stays; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the backfill's move, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older build (the receipt is rewritten without its installation id), storage without hard links (the move is a rename there), the stopped run's staged and vacated names (they stay under their fresh private names, as after any stop; no build reads such a name)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const olderReceipt = await readRecordFile(storage, 'receipt.json')
+  // A receipt of an older build holds no installation id, so the refresh rewrites it.
+  delete olderReceipt.installationId
+  const olderReceiptText = JSON.stringify(olderReceipt)
+  writeFileSync(receiptPath, olderReceiptText)
+  const endingAfterMove = await loadEndingAfterStep(
+    // The rename that empties receipt.json once a link gave its file the private name as well.
+    ({ step, from, to }) =>
+      step === 'rename' && from === receiptPath && to.endsWith('.tmp'),
+  )
+  await endingAfterMove.module
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .catch(() => undefined)
+  const isReceiptAfterStop = existsSync(receiptPath)
+  // A name the stopped refresh left empty reads as 'absent', so the assertion names it.
+  const droppingAfterStop = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(endingAfterMove.hasEnded(), true)
+  assert.equal(isReceiptAfterStop, false)
+  assert.equal(droppingAfterStop, olderReceiptText)
+  assert.deepEqual(result, { status: 'current', path: configPath })
+  assert.match(
+    (await readRecordFile(storage, 'receipt.json')).installationId,
+    /^[0-9a-f-]{36}$/,
+  )
+  // The stopped run's staged and vacated names stay under their fresh private names, as after any stop; no build reads such a name.
+  assert.deepEqual(
+    (await recordsIn(storage)).filter((name) => !name.endsWith('.tmp')),
+    ['receipt.json'],
+  )
+})
+
+test("A removal that stopped right after it moved Codebook's record of the entry to its private name to delete it leaves the next removal to put that record back and settle it", async (context) => {
+  // Value: protects=a delete of Codebook's record of the entry notes the version it moves to receipt.json's private name before it moves it, so a removal that really stops right after that move leaves the next run the proof to put that record back, and the next removal settles it instead of every later run refusing that record as a file it cannot prove (Cycle 0149 task 55; README line 95's dropping note); fails_when=the stop is not reached, the stop leaves a file at receipt.json or anything but the record at its private name, the next removal answers anything but not-managed, the config gets the entry back or loses the other server, or a record, its private name or its dropping note stays; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the removal's move, and every later link, rename, unlink, removal and write, fail as after the process ended), storage without hard links (the move is a rename there), the stopped run's vacated name (it stays under its fresh private name, as after any stop; no build reads such a name)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  const endingAfterMove = await loadEndingAfterStep(
+    // The rename that empties receipt.json once a link gave its file the private name as well.
+    ({ step, from, to }) =>
+      step === 'rename' && from === receiptPath && to.endsWith('.tmp'),
+  )
+  await endingAfterMove.module
+    .removeManagedDevinMcpEntry(storage, home)
+    .catch(() => undefined)
+  const isReceiptAfterStop = existsSync(receiptPath)
+  // A name the stopped removal left empty reads as 'absent', so the assertion names it.
+  const droppingAfterStop = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(endingAfterMove.hasEnded(), true)
+  assert.equal(isReceiptAfterStop, false)
+  assert.equal(droppingAfterStop, receiptText)
+  assert.deepEqual(result, { status: 'not-managed', path: configPath })
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  // The stopped run's vacated name stays under its fresh private name, as after any stop; no build reads such a name.
+  assert.deepEqual(
+    (await recordsIn(storage)).filter((name) => !name.endsWith('.tmp')),
+    [],
+  )
 })
 
 test("A removal that finds a file at its record of the entry's private name keeps both, names both in its notice, and still answers removed", async (context) => {

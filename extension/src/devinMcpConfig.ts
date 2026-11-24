@@ -3364,7 +3364,7 @@ function droppingNotePathOf(context: Context): string {
 type NotedMove = { moved: RecordVersion; published?: RecordVersion }
 
 /**
- * Runs the last looks, the move to the dropping name and what follows of a tracked record's rewrite or delete with a dropping note beside the record that names the version those looks must find ({@link noteDroppingMove}), written before them; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, so a run that stops with the record at its dropping name leaves the next run the proof that the file there is that record ({@link provenDroppedRecord}), and a file another program puts at the dropping name never matches it.
+ * Runs the last looks, the move to the dropping name and what follows of a tracked record's rewrite or delete with a dropping note beside the record that names the version those looks must find ({@link noteDroppingMove}), written before them; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, by {@link writeReceipt} and {@link dropReceipt} for Codebook's record of the entry ({@link receiptTrackedContextOf}), and by {@link whileJournalHeld} for a rollback journal's hold, so a run that stops with the record at its dropping name leaves the next run the proof that the file there is that record ({@link provenDroppedRecord}), and a file another program puts at the dropping name never matches it.
  * However the step ends in this run, the note goes once nothing stands at the dropping name ({@link dropNoteUnlessDropping}); while something stands there (the record a refusal left there, or another program's file), it stays for the next run.
  * @param context - The run; its pending path is the record.
  * @param noted - The version the last looks must find at the record's name, and a rewrite's staged version ({@link NotedMove}).
@@ -4266,7 +4266,7 @@ function otherConfigReceiptRefusal(
 /**
  * Writes Codebook's record of the entry (`receipt.json`) without ever replacing a file this run did not read there; called by {@link recordPublishedEntry}, {@link adoptPending} and {@link withInstallationId}, every write of that record.
  * A valid record of the entry in another config that the run's read found there is never written over: the write refuses before it stages anything ({@link assertNoOtherConfigReceipt}).
- * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), that version is replaced through its dropping name right after a synchronous look that still finds that file ({@link replaceReceipt}): it moves aside first and the new record is linked in at the emptied name, so a record another program renames over that name after the look moves instead and stays; while it shows nothing and no version is known (none was read there, or this run deleted it or moved it aside itself), the name is claimed ({@link claimReceiptName}), which never replaces a file; an empty name where a version is known (another program moved that record away) and anything else there stay as they are and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
+ * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), that version is noted beside it ({@link withDroppingNote}) and then replaced through its dropping name right after the last looks still find that file ({@link publishReceipt}, {@link replaceReceipt}): it moves aside first and the new record is linked in at the emptied name, so a record another program renames over that name after the look moves instead and stays, and a run that stops with the record at its dropping name leaves the next run the proof that the file there is that version ({@link settleDroppedRecord}); while it shows nothing and no version is known (none was read there, or this run deleted it or moved it aside itself), the name is claimed ({@link claimReceiptName}), which never replaces a file; an empty name where a version is known (another program moved that record away) and anything else there stay as they are and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
  * Limits: those of {@link replaceReceipt} and {@link claimReceiptName}; a file put at the name right after the link is not looked at again here, and the next write or delete of this run finds it.
  * @param context - The run; its seam is called after the bytes were flushed and before the look at the name.
  * @param value - The complete receipt.
@@ -4289,21 +4289,15 @@ async function writeReceipt(
     // The record this run read, and neither deleted nor moved aside itself, is gone: its empty name is never claimed, since another program may put that record back.
     if (!standing && context.receiptVersion.current !== undefined)
       throw receiptConflictError(context, 'gone')
-    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the receipt's name, `assertStill`'s names, the staged name, and the dropping name a replacement's move looks at.
-    await lookAheadAt([
-      path,
-      ...(assertStill?.names ?? []),
-      ...(standing ? [receiptDroppingPathOf(context)] : []),
-    ])
-    const source = await lookAtStagedRecord(staged)
-    if (standing && !isStagedNameStill(path, standing))
-      throw receiptConflictError(context, 'changed')
-    assertStill?.assert()
-    assertStagedRecordStill(staged, source)
-    // The version this run read is replaced through its dropping name; an empty name is claimed, never replacing what lands there meanwhile.
+    const write: TrackedWrite = { staged, assertStill }
+    // The version this run read is replaced through its dropping name, noted beside it first, so a run that stops with it there leaves the next run the proof of which file it moved; an empty name is claimed, and nothing moves.
     context.receiptVersion.current = standing
-      ? await replaceReceipt(context, standing, { staged, assertStill })
-      : await claimReceiptName(context, staged, assertStill)
+      ? await withDroppingNote(
+          receiptTrackedContextOf(context),
+          { moved: standing },
+          () => publishReceipt(context, standing, write),
+        )
+      : await publishReceipt(context, undefined, write)
   } finally {
     // After a rename the staged name is gone; after a link it is a second name of the receipt, which goes while it shows this call's file.
     await dropStagedRecord(staged)
@@ -4311,7 +4305,41 @@ async function writeReceipt(
 }
 
 /**
- * Gives the run's context with `receipt.json` as its tracked record, so a rewrite or delete of Codebook's record of the entry moves it to its dropping name first, as a tracked record's does ({@link replaceThroughDroppingName}, {@link deleteThroughDroppingName}), and the run's start puts back what a stopped one left there ({@link settleDroppedRecord}); called by {@link replaceReceipt}, {@link dropReceipt}, {@link receiptDroppingPathOf} and {@link settleDroppedRecords}.
+ * Runs the last looks of a write of Codebook's record of the entry and publishes it: the version the run read is replaced through its dropping name ({@link replaceReceipt}), an empty name is claimed ({@link claimReceiptName}); called only by {@link writeReceipt}, inside the dropping note of a replacement ({@link withDroppingNote}), so that note is written before these looks and nothing is awaited between the synchronous looks and the move or link they guard.
+ * The receipt's name, the caller's names and, for a replacement, the dropping name its move looks at are looked at through the thread pool and the staged name is read again, then the receipt's name, the caller's look and the staged name are looked at synchronously in that order, so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
+ * @param context - The run.
+ * @param standing - `receipt.json` as {@link receiptNameState} read it: the version this run read or last wrote; undefined for an empty name that no known version stands behind.
+ * @param write - The staged bytes and the caller's look ({@link TrackedWrite}).
+ * @returns The version published: the staged file's.
+ * @throws The `changed` {@link receiptConflictError} when the receipt's name no longer shows `standing`; what `assertStill`, the look at the staged name ({@link leftoverReplacedError}), {@link replaceReceipt} and {@link claimReceiptName} throw.
+ * @example
+ * await publishReceipt(context, standing, { staged, assertStill }) // => { ino: 44n, sha256: 'ef…' }; receipt.json holds the new record
+ */
+async function publishReceipt(
+  context: Context,
+  standing: InspectedCopy | undefined,
+  { staged, assertStill }: TrackedWrite,
+): Promise<RecordVersion> {
+  const path = context.receiptPath
+  // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the receipt's name, `assertStill`'s names, the staged name, and the dropping name a replacement's move looks at.
+  await lookAheadAt([
+    path,
+    ...(assertStill?.names ?? []),
+    ...(standing ? [receiptDroppingPathOf(context)] : []),
+  ])
+  const source = await lookAtStagedRecord(staged)
+  if (standing && !isStagedNameStill(path, standing))
+    throw receiptConflictError(context, 'changed')
+  assertStill?.assert()
+  assertStagedRecordStill(staged, source)
+  // The version this run read is replaced through its dropping name; an empty name is claimed, never replacing what lands there meanwhile.
+  return standing
+    ? replaceReceipt(context, standing, { staged, assertStill })
+    : claimReceiptName(context, staged, assertStill)
+}
+
+/**
+ * Gives the run's context with `receipt.json` as its tracked record, so a rewrite or delete of Codebook's record of the entry moves it to its dropping name first, as a tracked record's does ({@link replaceThroughDroppingName}, {@link deleteThroughDroppingName}), and the run's start puts back what a stopped one left there ({@link settleDroppedRecord}); called by {@link writeReceipt}, {@link replaceReceipt}, {@link dropReceipt}, {@link receiptDroppingPathOf} and {@link settleDroppedRecords}.
  * Its tracker holds the version of `receipt.json` the run read or last wrote ({@link Context.receiptVersion}) and refuses an empty name while that version is known, as {@link writeReceipt} does; the conflicts the tracked record's steps meet at that name come as a {@link TrackedReceiptConflictError}, worded as the receipt's own ({@link journalConflictError}).
  * @param context - The run.
  * @returns A context whose pending path is `receipt.json`.
@@ -4342,7 +4370,7 @@ function receiptDroppingPathOf(context: Context): string {
 
 /**
  * Replaces Codebook's record of the entry that the last looks showed as the version this run read or last wrote, through its dropping name ({@link replaceThroughDroppingName}): that record moves to `receipt.json.codebook-dropping` first and must prove there to be that version (inode and bytes), the caller's names and the staged name are looked at again, and the new record is linked in at the emptied name, which never replaces a file; the moved one goes last, while its dropping name still shows it. Called only by {@link writeReceipt}.
- * So a record a backup or sync tool renames over `receipt.json` after the last look moves instead, goes back to that name ({@link putTrackedBack}) and stays, and the write refuses; a stop between the move and the end leaves the record at its dropping name, which the next run puts back first ({@link settleDroppedRecords}).
+ * So a record a backup or sync tool renames over `receipt.json` after the last look moves instead, goes back to that name ({@link putTrackedBack}) and stays, and the write refuses; a stop between the move and the end leaves the record at its dropping name, which the next run puts back first while the dropping note {@link writeReceipt} wrote before the last looks names it ({@link settleDroppedRecords}).
  * Limits: those of {@link replaceThroughDroppingName} (a file put at the dropping name between its synchronous look and the move is replaced, a name only Codebook uses; on storage without hard links a file put at the emptied name between its last look and the rename is replaced, {@link claimWithoutLinks}).
  * @param context - The run.
  * @param standing - `receipt.json` as the last looks saw it: the version this run read or last wrote.
@@ -4481,7 +4509,7 @@ function receiptConflictSentence(
 
 /**
  * Deletes `receipt.json` only while it shows the version the run's own read found there or its own last write published ({@link Context.receiptVersion}): the read that let a removal take its entry out or decide that nothing is Codebook's, or the adoption's receipt that goes back out; called by {@link dropReceiptAfterRemoval}, {@link answerRemovalWithoutTakeOut} and {@link withdrawAdoptedReceipt}.
- * The name is read through the thread pool ({@link receiptNameState}), then looked at once more synchronously, after an awaited look at it and at its dropping name ({@link lookAheadAt}); the record is never unlinked at its own name: it moves to its dropping name first and is deleted there only once it proves to be that version ({@link deleteThroughDroppingName}), so a record a backup or sync tool renames over `receipt.json` after the last look moves instead, goes back to that name and stays, and a stop in that moment leaves it at the dropping name, where the next run puts it back first ({@link settleDroppedRecords}).
+ * The name is read through the thread pool ({@link receiptNameState}), the version it shows is noted beside it ({@link withDroppingNote}), and the name is then looked at once more synchronously, after an awaited look at it and at its dropping name ({@link lookAheadAt}); the record is never unlinked at its own name: it moves to its dropping name first and is deleted there only once it proves to be that version ({@link deleteThroughDroppingName}), so a record a backup or sync tool renames over `receipt.json` after the last look moves instead, goes back to that name and stays, and a stop in that moment leaves it at the dropping name, where the next run puts it back first while that note names it ({@link settleDroppedRecords}).
  * Limits: those of {@link deleteThroughDroppingName} (a file put at the dropping name between its synchronous look and the move is replaced, and a swap there between its last look and the unlink is not seen: a name only Codebook uses).
  * @param context - The run.
  * @returns
@@ -4503,23 +4531,30 @@ async function dropReceipt(context: Context): Promise<'gone' | 'kept'> {
     return 'kept'
   }
   if (!standing) return 'gone'
-  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the receipt's name, then the dropping name the move looks at.
-  await lookAheadAt([path, receiptDroppingPathOf(context)])
-  if (!isStagedNameStill(path, standing)) return 'kept'
-  try {
-    // Moved aside first and deleted there only as the version the run read; a name another program emptied first is gone, as the delete wanted.
-    await deleteThroughDroppingName(
-      receiptTrackedContextOf(context),
-      standing,
-      undefined,
-    )
-  } catch (error) {
-    // What moved was not that version (it went back to receipt.json), or that name could not be read: what stands there stays.
-    if (error instanceof TrackedReceiptConflictError) return 'kept'
-    throw error
-  }
-  context.receiptVersion.current = undefined
-  return 'gone'
+  // Should the run stop with the record at its dropping name, the next run puts back only the file the note names.
+  return withDroppingNote<'gone' | 'kept'>(
+    receiptTrackedContextOf(context),
+    { moved: standing },
+    async () => {
+      // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the receipt's name, then the dropping name the move looks at.
+      await lookAheadAt([path, receiptDroppingPathOf(context)])
+      if (!isStagedNameStill(path, standing)) return 'kept'
+      try {
+        // Moved aside first and deleted there only as the version the run read; a name another program emptied first is gone, as the delete wanted.
+        await deleteThroughDroppingName(
+          receiptTrackedContextOf(context),
+          standing,
+          undefined,
+        )
+      } catch (error) {
+        // What moved was not that version (it went back to receipt.json), or that name could not be read: what stands there stays.
+        if (error instanceof TrackedReceiptConflictError) return 'kept'
+        throw error
+      }
+      context.receiptVersion.current = undefined
+      return 'gone'
+    },
+  )
 }
 
 /** A private file the pending record names that passed the name check, with what recovery may do to it. */
