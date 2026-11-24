@@ -2838,7 +2838,6 @@ async function writeTrackedJournal(
     assertStagedRecordStill(staged, source)
     version = await replaceThroughDroppingName(context, look, {
       staged,
-      value,
       assertStill,
     })
   } finally {
@@ -2848,24 +2847,23 @@ async function writeTrackedJournal(
   return confirmPublished(context, version)
 }
 
-/** What a rewrite of a tracked record publishes ({@link replaceThroughDroppingName}): its staged bytes ({@link stageRecord}), the record they hold, and the caller's look that must still hold right before they are published. */
+/** What a rewrite of a tracked record publishes ({@link replaceThroughDroppingName}): its staged bytes ({@link stageRecord}) and the caller's look that must still hold right before they are published. */
 type TrackedWrite = {
   staged: StagedRecord
-  value: unknown
   assertStill: StillLook | undefined
 }
 
 /**
  * Replaces a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and publishing the new bytes at the emptied name without replacing anything; called by {@link writeTrackedJournal} right after those looks.
- * After the move the staged name, the caller's names and the dropping name are looked at again ({@link assertAfterMove}), so nothing that changed while the record moved is published; any refusal puts the record back first ({@link putTrackedBack}). The new bytes go in with a link, which never replaces a file; where the storage gives no file a second name ({@link NO_LINK_CODES}) with an exclusive create in place ({@link createJournalInPlace}), which never replaces one either, never with a rename that would. The moved record goes last, while its dropping name still shows it ({@link dropAsideRecord}).
- * Limits: a file put at the dropping name between its synchronous look and the move is replaced (a name only Codebook uses); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run keeps and names ({@link settleDroppedRecord}); on storage without hard links a stop inside the create in place leaves the moved record beside a file with part of the new bytes, which the next run keeps and names the same way, and a record that must go back cannot ({@link recordNotBackError}).
+ * After the move the staged name, the caller's names and the dropping name are looked at again ({@link assertAfterMove}), so nothing that changed while the record moved is published; any refusal puts the record back first ({@link putTrackedBack}). The new bytes go in with a link, which never replaces a file; where the storage gives no file a second name ({@link NO_LINK_CODES}), the complete staged file is renamed into the emptied name right after a synchronous look finds it empty ({@link publishMovedRecord}), so that name shows nothing or the whole record at every instant. The moved record goes last, while its dropping name still shows it ({@link dropAsideRecord}).
+ * Limits: a file put at the dropping name between its synchronous look and the move is replaced (a name only Codebook uses); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run keeps and names ({@link settleDroppedRecord}); on storage without hard links a file another program puts at the emptied name between that last look and the rename is replaced ({@link claimWithoutLinks}).
  * @param context - The run; its pending path is the record.
  * @param look - The record as the last look saw it: this run's version.
- * @param write - The staged bytes, the record and the caller's look ({@link TrackedWrite}).
+ * @param write - The staged bytes and the caller's look ({@link TrackedWrite}).
  * @returns The version published at the record's name.
  * @throws What {@link moveTrackedAside}, {@link assertAfterMove}, {@link publishMovedRecord} and {@link dropAsideRecord} throw; a `gone` {@link JournalConflictError} when a publish record's name was empty at the move.
  * @example
- * await replaceThroughDroppingName(rollbackContext, look, { staged, value: journal, assertStill: undefined }) // => { ino: 43n, sha256: 'cd…' }
+ * await replaceThroughDroppingName(rollbackContext, look, { staged, assertStill: undefined }) // => { ino: 43n, sha256: 'cd…' }
  */
 async function replaceThroughDroppingName(
   context: Context,
@@ -2888,29 +2886,21 @@ async function replaceThroughDroppingName(
 }
 
 /**
- * Publishes a tracked record's staged bytes at its name once the record moved to its dropping name ({@link replaceThroughDroppingName}): a link, which never replaces a file, or, where the storage gives no file a second name ({@link NO_LINK_CODES}), an exclusive create in place ({@link createJournalInPlace}).
+ * Publishes a tracked record's staged bytes at its name once the record moved to its dropping name ({@link replaceThroughDroppingName}), as at any name that holds nothing of this run ({@link publishAtEmptyName}): a link, which never replaces a file, or, where the storage gives no file a second name ({@link NO_LINK_CODES}), a rename of the complete staged file right after a synchronous look finds that name empty ({@link claimWithoutLinks}), never an exclusive create in place, which would leave part of the bytes at that name for the time of one write.
  * @param context - The run; its pending path is the record.
  * @param aside - The record at its dropping name ({@link moveTrackedAside}).
- * @param write - The staged bytes and the record ({@link TrackedWrite}).
- * @returns The version published: the staged file's after a link, the created file's after a create in place.
- * @throws What {@link refuseMovedPublish} throws: the refusal naming both names when a file came to the emptied name, otherwise what the link or the create threw, once the record went back.
+ * @param write - The staged bytes and the caller's look, looked at again on the route without links ({@link TrackedWrite}).
+ * @returns The version published: the staged file's.
+ * @throws What {@link refuseMovedPublish} throws: the refusal naming both names when a file came to the emptied name, otherwise what the link or the rename route threw, once the record went back.
  * @example
  * await publishMovedRecord(rollbackContext, aside, write) // => { ino: 43n, sha256: 'cd…' }
  */
-async function publishMovedRecord(
+function publishMovedRecord(
   context: Context,
   aside: AsideRecord,
-  { staged, value }: TrackedWrite,
+  { staged, assertStill }: TrackedWrite,
 ): Promise<RecordVersion> {
-  try {
-    await link(staged.staged, context.pendingPath)
-    return staged.version
-  } catch (linkError) {
-    // Only storage that gives no file a second name goes on below; any other failure published nothing.
-    if (!NO_LINK_CODES.has(codeOf(linkError)))
-      return refuseMovedPublish(context, aside, linkError)
-  }
-  return createJournalInPlace(context, value, staged.version.sha256).catch(
+  return publishAtEmptyName(context, staged, assertStill).catch(
     (error: unknown) => refuseMovedPublish(context, aside, error),
   )
 }
@@ -2919,9 +2909,9 @@ async function publishMovedRecord(
  * Ends a rewrite whose publication failed after its record moved to the dropping name; called by {@link publishMovedRecord}.
  * @param context - The run; its pending path is the record.
  * @param aside - The record at its dropping name.
- * @param error - What the link or the create in place threw.
+ * @param error - What the link or the rename route ({@link claimWithoutLinks}) threw.
  * @returns Never.
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file came to the emptied name (`EEXIST`): that file stays, and so does the record at the dropping name. Otherwise `error`, once the record went back to its name ({@link putTrackedBack}), or what that put-back throws.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file came to the emptied name (the link's `EEXIST`, or a file a synchronous look finds there now): that file stays, and so does the record at the dropping name. Otherwise `error`, once the record went back to its name ({@link putTrackedBack}), or what that put-back throws.
  * @example
  * await refuseMovedPublish(rollbackContext, aside, linkError) // throws EIO once pending.json.rollback stands again
  */
@@ -2930,7 +2920,9 @@ async function refuseMovedPublish(
   aside: AsideRecord,
   error: unknown,
 ): Promise<never> {
-  if (codeOf(error) === 'EEXIST') throw bothRecordNamesError(context)
+  // A file came to the emptied name: it stays, and so does the record at the dropping name.
+  if (codeOf(error) === 'EEXIST' || !isNameEmptyNow(context.pendingPath))
+    throw bothRecordNamesError(context)
   // Nothing was published: the record goes back to its name.
   await putTrackedBack(context, aside.droppingPath)
   throw error
@@ -2974,7 +2966,7 @@ async function claimJournal(
 }
 
 /**
- * Publishes a tracked record's staged bytes at a name that holds nothing of this run: a link, which never replaces a file, or, where the storage gives no file a second name, {@link claimWithoutLinks}; called by {@link claimJournal}, and by {@link replaceThroughDroppingName} when the name went empty right before its move.
+ * Publishes a tracked record's staged bytes at a name that holds nothing of this run: a link, which never replaces a file, or, where the storage gives no file a second name, {@link claimWithoutLinks}; called by {@link claimJournal}, by {@link replaceThroughDroppingName} when the name went empty right before its move, and by {@link publishMovedRecord} at the name its move emptied.
  * @param context - The run; its pending path is the record.
  * @param staged - The staged bytes ({@link stageRecord}).
  * @param assertStill - The caller's look, looked at again on the route without links.
@@ -3023,7 +3015,7 @@ const NO_LINK_CODES: ReadonlySet<unknown> = new Set([
 ])
 
 /**
- * Claims a tracked record's empty name where the storage's file system gives no file a second name: the complete bytes {@link stageRecord} flushed are renamed there, so the name shows nothing or the whole record at every instant and a stop never leaves an empty or partial record that every run would refuse; called by {@link publishAtEmptyName} when its link failed.
+ * Claims a tracked record's empty name where the storage's file system gives no file a second name: the complete bytes {@link stageRecord} flushed are renamed there ({@link renameIntoEmptyName}), so the name shows nothing or the whole record at every instant and a stop never leaves an empty or partial record that every run would refuse; called by {@link publishAtEmptyName} when its link failed, for a first write and for a rewrite whose record moved to its dropping name alike.
  * The link was awaited, so the staged name is read again, and the caller's names, the staged name and the record's name are looked at through the thread pool and then synchronously right before the rename ({@link renameIntoEmptyName}): the staged name must still show the file this call wrote ({@link assertStagedRecordStill}), the caller's look must hold, and the record's name must be empty.
  * Limit: those of {@link renameIntoEmptyName}.
  * @param context - The run; its pending path is the record.
@@ -3078,31 +3070,6 @@ async function renameIntoEmptyName(
   if (!isNameEmptyNow(path)) throw conflict()
   await rename(staged.staged, path)
   return staged.version
-}
-
-/**
- * Creates a tracked record in place at its emptied name, where the storage's file system gives no file a second name; called by {@link publishMovedRecord} once the record moved to its dropping name, so the record as it stood stays complete there while this create writes.
- * An exclusive create never replaces a file, and the bytes are flushed before the call returns, so the look after it checks that file's inode and bytes as after a link ({@link confirmPublished}).
- * Limit: for the time of one write the name shows only part of the bytes, so a process that ends then leaves that file beside the record at the dropping name, which the next run keeps and names ({@link settleDroppedRecord}); a write that fails deletes that name ({@link stageConfigFile}).
- * @param context - The run; its pending path is the record.
- * @param value - The complete record, as {@link stageRecord} wrote it at the staged name.
- * @param sha256 - The hash of those bytes ({@link stageRecord}).
- * @returns The version the create published: the inode of the file it created and the hash of its bytes.
- * @throws What the create or its write throws: `EEXIST` when a file stands at the name, which stays as it is.
- * @example
- * await createJournalInPlace(rollbackContext, journal, staged.version.sha256) // => { ino: 45n, sha256: 'ef…' } once a link in an exFAT storage folder answered ENOTSUP
- */
-async function createJournalInPlace(
-  context: Context,
-  value: unknown,
-  sha256: string,
-): Promise<RecordVersion> {
-  const { ino } = await stageConfigFile(
-    context.pendingPath,
-    JSON.stringify(value),
-    PRIVATE_FILE_MODE,
-  )
-  return { ino, sha256 }
 }
 
 /** A tracked record moved to its dropping name ({@link moveTrackedAside}), and that file as the read right after the move found it: this run's version, whose inode, size and times the dropping name must still show before the record is published anew or deleted. */
@@ -3429,7 +3396,7 @@ function assertStagedRecordStill(
 }
 
 /**
- * Checks right after a tracked record's link, rename or create in place that its name shows the file this run wrote, inode and bytes; called by {@link claimJournal} right after its publication and by {@link confirmPublished} after the cleanup that follows a write, before the version goes back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
+ * Checks right after a tracked record's link or rename that its name shows the file this run wrote, inode and bytes; called by {@link claimJournal} right after its publication and by {@link confirmPublished} after the cleanup that follows a write, before the version goes back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
  * @param context - The run; its pending path is the record.
  * @param version - The version this run wrote ({@link stageRecord}).
  * @returns The record as this read saw it through its open handle (inode, hash, size and times), which {@link claimJournal}'s last synchronous look at the name compares with after its cleanup.

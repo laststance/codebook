@@ -12932,7 +12932,7 @@ test("A file another program renames over a take-back's first rollback record wh
 })
 
 test("A first setup whose receipt cannot be written still takes its entry out when Codebook's storage folder cannot give a file a second name, because its take-back writes its rollback record without links and never over another file", async (context) => {
-  // Value: protects=a take-back on a storage file system without hard links (every link there refused with ENOTSUP, as macOS answers for exFAT) still writes its rollback record, its first write renamed in complete at the empty name and its rewrite created in place at the name its move emptied, so the failed first setup's entry is still taken out, and neither that record nor its staged or dropping name stays (Cycle 0148 ship review; Cycle 0149 tasks 5 and 13); since Cycle 0149 task 13 every record write tries a link first, so the refused links are the setup's claim, completed record and take-back mark at pending.json, then the take-back's claim and completed record at pending.json.rollback (a delete needs no link); fails_when=the setup answers anything but the took-out refusal, another link is tried in the storage folder, the entry stays in the config, or the rollback record or a staged or dropping name of it stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), what a process end inside those writes leaves (the first write: its own test), the storage lock's own fallback
+  // Value: protects=a take-back on a storage file system without hard links (every link there refused with ENOTSUP, as macOS answers for exFAT) still writes its rollback record, its first write renamed in complete at the empty name and its rewrite renamed in complete at the name its move emptied (Cycle 0149 task 18), so the failed first setup's entry is still taken out, and neither that record nor its staged or dropping name stays (Cycle 0148 ship review; Cycle 0149 tasks 5 and 13); since Cycle 0149 task 13 every record write tries a link first, so the refused links are the setup's claim, completed record and take-back mark at pending.json, then the take-back's claim and completed record at pending.json.rollback (a delete needs no link); fails_when=the setup answers anything but the took-out refusal, another link is tried in the storage folder, the entry stays in the config, or the rollback record or a staged or dropping name of it stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), what a process end inside those writes leaves (the first write: its own test), the storage lock's own fallback
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -13225,6 +13225,98 @@ test("A setup record a stopped run left at its dropping name goes back at the ne
   assert.equal(existsSync(pendingPath), false)
   assert.equal(existsSync(journalPath), false)
   assert.equal(existsSync(receiptPath), false)
+})
+
+test("A setup record's rewrite that stops inside its publication where Codebook's storage folder cannot give a file a second name never leaves part of a record at its name, so the next refresh does not refuse", async (context) => {
+  // Value: protects=on storage without hard links a tracked record's rewrite publishes its flushed staged file with a rename into the name its move emptied, right after a synchronous look finds that name empty, so that name shows nothing or the whole record at every instant and a stop never leaves part of a record beside the moved one (Cycle 0149 task 18); fails_when=the stop is not injected, pending.json holds after the setup anything but the whole record the setup's claim wrote (an empty or partial file there fails it), the dropping name stays, or the next refresh answers anything but current or leaves a record; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, once the setup's completed record is written, an open that ends the run right after an exclusive create of pending.json and a rename that ends it right before publishing a staged file there, once; the run's own error handling still runs after that stop), a file another program puts at that name between the last look and the rename (stated residual on such storage)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const recordsPath = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsPath, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  let isArmed = false
+  let hasStopped = false
+  const endingInsidePublication = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The storage folder's file system gives no file a second name; the config's folder does.
+          if (dirname(to) === recordsPath)
+            throw Object.assign(
+              new Error(`ENOTSUP: operation not supported, link '${from}'`),
+              { code: 'ENOTSUP' },
+            )
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open: async (...args: Parameters<typeof open>) => {
+          // The process ends right after an exclusive create of the setup record's own name, before any byte is in it.
+          if (
+            isArmed &&
+            !hasStopped &&
+            args[0] === pendingPath &&
+            args[1] === 'wx'
+          ) {
+            hasStopped = true
+            await (await open(...args)).close()
+            throw new Error('process ended')
+          }
+          return open(...args)
+        },
+        rename: async (from: string, to: string) => {
+          // The process ends right before the rewrite's staged file is renamed to the setup record's own name.
+          if (
+            isArmed &&
+            !hasStopped &&
+            to === pendingPath &&
+            from.endsWith('.tmp')
+          ) {
+            hasStopped = true
+            throw new Error('process ended')
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await endingInsidePublication
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the setup's completed record, the first rewrite of the record its claim wrote.
+        if (path !== pendingPath) return
+        if (JSON.parse(JSON.stringify(record)).phase === 'completed')
+          isArmed = true
+      },
+    })
+    .catch(() => undefined)
+  // The bytes at pending.json after the setup, or 'absent', so the assertions below name what stands there.
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const isDroppingAfterSetup = existsSync(droppingPath)
+
+  // Act
+  const refresh = await endingInsidePublication.refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(hasStopped, true)
+  // Never an empty or partial record: the record the setup's claim wrote, whole.
+  assert.equal(JSON.parse(pendingAfterSetup).targetPath, configPath)
+  assert.equal('phase' in JSON.parse(pendingAfterSetup), false)
+  assert.equal(isDroppingAfterSetup, false)
+  assert.equal(refresh.status, 'current')
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(droppingPath), false)
 })
 
 test('A first record write whose link fails with an I/O error publishes nothing at that name by another route, so the setup refuses and leaves the config and Codebook records as they were', async (context) => {
