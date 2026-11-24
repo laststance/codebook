@@ -15838,8 +15838,8 @@ test("A setup that keeps another program's file at the old record's private name
   )
 })
 
-test("A setup that keeps another program's file at the old record's private name never writes over a setup record a backup puts back while Codebook rewrites that record for older versions", async (context) => {
-  // Value: protects=the later run's rewrite of the publish record that leads to a private name holding another program's file (retiresReceipt "foreign") replaces only the version of that record it read, so a record a backup or sync tool renames over pending.json while the rewrite is flushed stays as that program left it, byte for byte and at its own inode, and the run still refuses with the same sentence (Cycle 0148 ship review); fails_when=pending.json holds another record or another inode than the one the backup put there, the file at the private name changes or is gone, a file appears at receipt.json, or the refusal is another sentence; no_claim=a real backup tool (seam.beforeRecordWrite renames a copy of the record as it stood before that run over pending.json once, at the rewrite whose bytes were just flushed), a record put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode), and why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+test("A setup that keeps another program's file at the old record's private name never writes over a setup record a backup puts back while Codebook rewrites that record for older versions, and the next setup rewrites the record it reads then", async (context) => {
+  // Value: protects=the later run's rewrite of the publish record that leads to a private name holding another program's file (retiresReceipt "foreign") replaces only the version of that record it read, so a record a backup or sync tool renames over pending.json while the rewrite is flushed stays as that program left it, byte for byte and at its own inode, and the run still refuses with the same sentence; the record the backup put back still leads 0.2.142.0 and 0.2.143.0 to that file, and the next setup of this version, which reads that record, rewrites it in the shape they refuse while the file stays (Cycle 0148 ship review, final-range review); fails_when=pending.json holds another record or another inode than the one the backup put there after the first setup, the next setup leaves a record 0.2.143.0's field rules accept or changes it in any other way than carrying retiresReceipt "foreign", the file at the private name changes or is gone, a file appears at receipt.json, or either refusal is another sentence; no_claim=a real backup tool (seam.beforeRecordWrite renames a copy of the record as it stood before that run over pending.json once, at the rewrite whose bytes were just flushed), what a window of 0.2.142.0 or 0.2.143.0 does with the record the backup put back before this version's next run (it may put that file back: that record is another program's, which this version never writes over unread, and a backup may put such a record back at any later time too), a record put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode), and why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
   // Arrange
   const { home, storage, configPath, receiptPath, moveBack } =
     await arrangeMovedAwayConfig(context)
@@ -15897,15 +15897,35 @@ test("A setup that keeps another program's file at the old record's private name
     () => undefined,
     (error: unknown) => error,
   )
+  const pendingAfterRefusal = readFileSync(pendingPath, 'utf8')
+  const inoAfterRefusal = statSync(pendingPath, { bigint: true }).ino
+  const nextError = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const recordAfterNext = JSON.parse(readFileSync(pendingPath, 'utf8'))
 
   // Assert
+  const keptSentence = `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because that file is no record of Devin Desktop's MCP config at ${configPath} (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because that file is no record of Devin Desktop's MCP config at ${configPath} (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
+    keptSentence,
   )
   assert.notEqual(restoredIno, undefined)
-  assert.equal(readFileSync(pendingPath, 'utf8'), pendingBefore)
-  assert.equal(statSync(pendingPath, { bigint: true }).ino, restoredIno)
+  assert.equal(pendingAfterRefusal, pendingBefore)
+  assert.equal(inoAfterRefusal, restoredIno)
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    keptSentence,
+  )
+  assert.deepEqual(recordAfterNext, {
+    ...JSON.parse(pendingBefore),
+    retiresReceipt: 'foreign',
+  })
+  assert.equal(
+    RELEASED_PUT_BACK_FIELDS.safeParse(recordAfterNext).success,
+    false,
+  )
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
   assert.equal(readFileSync(retiredPath, 'utf8'), otherProgramText)
 })
