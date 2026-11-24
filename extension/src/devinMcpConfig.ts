@@ -3215,7 +3215,7 @@ async function dropAsideRecord(
  * @param context - The run; its pending path is the record.
  * @param droppingPath - The dropping name ({@link droppingPathOf}).
  * @param moved - The version this run moved there ({@link AsideRecord}): the dropping name must show its inode, size and times; undefined when whatever stands there goes back.
- * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the {@link droppingChangedError} when it shows another file than `moved`, which stays there; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason than storage without hard links; what {@link renameTrackedBack} throws; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
+ * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the {@link droppingChangedError} when it shows another file than `moved`, which stays there; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason than storage without hard links, or the dropping name holds no regular file (a folder), which never takes the record's name; what {@link renameTrackedBack} throws; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
  * @example
  * await putTrackedBack(rollbackContext, aside.droppingPath, aside.moved) // pending.json.rollback stands again, also on an exFAT storage folder
  */
@@ -3233,8 +3233,8 @@ async function putTrackedBack(
   try {
     await link(droppingPath, context.pendingPath)
   } catch (linkError) {
-    // Storage that gives no file a second name: the moved file goes back by a rename once a last look finds the record's name empty.
-    if (NO_LINK_CODES.has(codeOf(linkError)))
+    // Storage that gives no file a second name: the moved file goes back by a rename once a last look finds the record's name empty; a folder there (whose link fails the same way) never takes the record's name.
+    if (NO_LINK_CODES.has(codeOf(linkError)) && dropping.isFile())
       return renameTrackedBack(context, droppingPath, dropping)
     // A file at the record's name stays, and so does the moved one; a link that failed otherwise leaves the moved file at the dropping name.
     throw isNameEmptyNow(context.pendingPath)

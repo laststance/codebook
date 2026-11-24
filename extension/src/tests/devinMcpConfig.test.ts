@@ -13545,6 +13545,33 @@ test("A setup record a stopped run left at its dropping name goes back at the ne
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A folder at a rollback record's dropping name beside an empty record name is never moved to the record's name, so the refresh names where it stands and changes nothing", async (context) => {
+  // Value: protects=the rename that puts a tracked record back where a link is refused moves only a regular file, so a folder at the dropping name, whose link the file system refuses with EPERM like a storage without hard links, never takes the record's name (Cycle 0149 task 17, regression guard of its rename route); fails_when=the refresh resolves or says anything but the sentence naming the dropping name, the rollback record's name holds anything, the folder or the file in it is gone, or the setup record or a receipt changes; no_claim=a real backup tool (the test moves the rollback record away and makes a folder at its dropping name), what the learner does with that folder next
+  // Arrange
+  const { home, storage, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  renameSync(journalPath, join(home, 'rollback-record-moved-away.json'))
+  mkdirSync(droppingPath)
+  writeFileSync(join(droppingPath, 'note.txt'), 'a sync tool folder\n')
+  const pendingText = readFileSync(pendingPath, 'utf8')
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `Codebook moved its record at ${journalPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and could not move it back (the file system refused to give it that name again), so it left it at ${droppingPath} and went no further; move the file at ${droppingPath} back to ${journalPath} if nothing stands there, then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(
+    readFileSync(join(droppingPath, 'note.txt'), 'utf8'),
+    'a sync tool folder\n',
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A setup record's rewrite that stops inside its publication where Codebook's storage folder cannot give a file a second name never leaves part of a record at its name, so the next refresh does not refuse", async (context) => {
   // Value: protects=on storage without hard links a tracked record's rewrite publishes its flushed staged file with a rename into the name its move emptied, right after a synchronous look finds that name empty, so that name shows nothing or the whole record at every instant and a stop never leaves part of a record beside the moved one (Cycle 0149 task 18); fails_when=the stop is not injected, pending.json holds after the setup anything but the whole record the setup's claim wrote (an empty or partial file there fails it), the dropping name stays, or the next refresh answers anything but current or leaves a record; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, once the setup's completed record is written, an open that ends the run right after an exclusive create of pending.json and a rename that ends it right before publishing a staged file there, once; the run's own error handling still runs after that stop), a file another program puts at that name between the last look and the rename (stated residual on such storage)
   // Arrange
