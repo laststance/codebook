@@ -5089,11 +5089,11 @@ async function putBackLater(
 }
 
 /**
- * Rewrites the publish record that leads to an old record's private name in the shape older builds refuse ({@link foreignKeptRecordOf}), as it stands now, since recovery may have rewritten it in this run (a handover); best effort, because the run refuses anyway and the record otherwise stays as it was; called only by {@link putBackLater}.
- * Limit: a record another program puts at that name between this read and the write is replaced, as by every write of a record this run does not track ({@link writeRecord}).
- * @param context - The run; its pending path is the record, which a held run writes only as the version it tracks ({@link writeRecord}).
+ * Rewrites the publish record that leads to an old record's private name in the shape older builds refuse ({@link foreignKeptRecordOf}), as it stands now, since recovery may have rewritten it in this run (a handover); best effort, because the run refuses anyway; called only by {@link putBackLater}.
+ * The rewrite replaces only the version of the record this call read ({@link readVersionedRecord}), through the tracked-record guard ({@link Context.journalVersion}; a held run's own tracking when it holds a legacy journal): the bytes are staged first, and the synchronous last look right before the rename refuses when the name no longer shows that version, so a record a backup or sync tool put there meanwhile stays as that program left it; an emptied name is never claimed (`refusesEmptyName`). Limit: a record put there between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * @param context - The run; its pending path is the record.
  * @param retiredPath - The private name that keeps a file that is no record of this config.
- * @returns Resolves once the record was rewritten, or when it was left as it was: it already has that shape, leads to another private name, or could not be read or written.
+ * @returns Resolves once the record was rewritten, or when it was left as it was: it already has that shape, leads to another private name, could not be read or written, or another record or an empty name stood there by the write.
  * @example
  * await markForeignKept(context, retiredPath) // pending.json now carries retiresReceipt 'foreign'
  */
@@ -5101,21 +5101,32 @@ async function markForeignKept(
   context: Context,
   retiredPath: string,
 ): Promise<void> {
-  const record = await readRecord(
+  const read = await readVersionedRecord(
     context.pendingPath,
     pendingSchema,
     context.retry,
     context.seam,
   ).catch(() => undefined)
+  if (read === undefined) return
+  const { record, version } = read
   // Only the record that leads to that private name, and only while older builds would still put back from it.
   const leadsThere =
-    record?.retiresReceipt === true &&
+    record.retiresReceipt === true &&
     record.targetPath === context.path &&
     record.generation !== undefined &&
     retiredReceiptPathOf(context, record.generation) === retiredPath
   if (!leadsThere) return
+  // Only the version this call read is replaced: a held run keeps its own tracking, any other run tracks this read.
+  const rewriting: Context = {
+    ...context,
+    journalVersion: context.journalVersion ?? {
+      current: version,
+      refusesEmptyName: true,
+    },
+  }
+  // Another record or an empty name by then: it stays as the other program left it, and the run refuses anyway.
   await writeRecord(
-    context,
+    rewriting,
     context.pendingPath,
     foreignKeptRecordOf(record),
   ).catch(() => undefined)

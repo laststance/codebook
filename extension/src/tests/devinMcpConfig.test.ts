@@ -14621,6 +14621,78 @@ test("A setup never puts back a file at the old record's private name that is no
   assert.equal(readFileSync(movedAwayPath, 'utf8'), otherProgramText)
 })
 
+test("A setup that keeps another program's file at the old record's private name never writes over a setup record a backup puts back while Codebook rewrites that record for older versions", async (context) => {
+  // Value: protects=the later run's rewrite of the publish record that leads to a private name holding another program's file (retiresReceipt "foreign") replaces only the version of that record it read, so a record a backup or sync tool renames over pending.json while the rewrite is flushed stays as that program left it, byte for byte and at its own inode, and the run still refuses with the same sentence (Cycle 0148 ship review); fails_when=pending.json holds another record or another inode than the one the backup put there, the file at the private name changes or is gone, a file appears at receipt.json, or the refusal is another sentence; no_claim=a real backup tool (seam.beforeRecordWrite renames a copy of the record as it stood before that run over pending.json once, at the rewrite whose bytes were just flushed), a record put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode), and why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const { home, storage, configPath, receiptPath, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const failingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    failingPutBack.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: moveBack,
+    }),
+    /could not put it back/,
+  )
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const retiredName = `receipt.json.${String(generation)}.retired`
+  const retiredPath = join(storage, 'devin-mcp', retiredName)
+  const otherProgramText = '{"note":"a settings file of another program"}'
+  writeFileSync(retiredPath, otherProgramText)
+  const pendingBefore = readFileSync(pendingPath, 'utf8')
+  let restoredIno: bigint | undefined
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      const isForeignRewrite =
+        path === pendingPath &&
+        typeof record === 'object' &&
+        record !== null &&
+        'retiresReceipt' in record &&
+        record.retiresReceipt === 'foreign'
+      if (!isForeignRewrite || restoredIno !== undefined) return
+      // A backup puts its copy of the record back while the rewrite's bytes were just flushed.
+      const backupPath = join(home, 'pending-backup.json')
+      writeFileSync(backupPath, pendingBefore)
+      restoredIno = statSync(backupPath, { bigint: true }).ino
+      renameSync(backupPath, pendingPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because that file is no record of Devin Desktop's MCP config at ${configPath} (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
+  )
+  assert.notEqual(restoredIno, undefined)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingBefore)
+  assert.equal(statSync(pendingPath, { bigint: true }).ino, restoredIno)
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), otherProgramText)
+})
+
 test("A setup that finds another program's file at the old record's private name and a folder at receipt.json asks to move both, never calls that file its old record and promises no put-back", async (context) => {
   // Value: protects=a file at the private name that is no record of this config is named as such also while something that is not Codebook's record stands at receipt.json: the refusal asks to move that file and what stands at receipt.json, promises no put-back, and says what the run after that move does with the entry the config holds, which that run then does (Cycle 0148 review round); fails_when=the refusal calls that file Codebook's own old record, promises that a run puts it back, omits either path, a file changes or is gone, pending.json changes in any other way than carrying retiresReceipt "foreign" (which 0.2.143.0 refuses to read) or is gone, or the setup after both were moved away answers anything but the entry-of-your-own refusal; no_claim=why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), a real program writing that file or making that folder (the test does), and a swap at the private name between the look that identified that file and the comparison's read of it
   // Arrange
