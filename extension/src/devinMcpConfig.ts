@@ -831,7 +831,7 @@ async function handOver(context: Context, journal: Pending): Promise<boolean> {
 }
 
 /**
- * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards.
+ * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards; {@link writeTrackedJournal} also awaits it right before a synchronous last look, whose answer alone decides, so a storage that already stalls holds that step in the thread pool, and {@link dropStagedRecord} looks at a staged name only this run made.
  * @param path - The name to look at.
  * @returns Its status with bigint numbers; undefined when nothing stands there.
  * @throws Any other failure of the look.
@@ -2411,13 +2411,14 @@ async function writeRecord(
 
 /**
  * Writes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote, or nothing; called only by {@link writeRecord}.
- * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed under a fresh private name first ({@link stageRecord}), and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced.
- * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed under a fresh private name first ({@link stageRecord}), and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced; the staged name is looked at last, so only the file this call wrote is renamed ({@link lookAtStagedRecord}), and after the rename the name must show that file ({@link assertPublishedRecord}).
+ * Each synchronous look comes right after an awaited look at the same name, so a storage that already stalls holds this step in the thread pool, where the step's budget answers, instead of the extension host's thread; a stall that starts between the two looks still holds that thread.
+ * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode. Moving the record aside first and linking the new one in would leave no record at the only name any build reads until that link, so a process that ends there would lose the rollback the record tracks.
  * @param context - The run; its pending path is the journal, its seam is called right before the last look.
  * @param value - The complete journal.
  * @param assertStill - What else must still hold, looked at right after the last look ({@link writeRecord}).
  * @returns The version this write published: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write or `assertStill` throws. The name then stays as it was.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, before or right after the rename, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write, the look at the staged name ({@link leftoverReplacedError}) or `assertStill` throws. The name then stays as it was, unless another program changed it after the rename.
  * @example
  * await writeTrackedJournal(rollbackContext, retained) // => { ino: 43n, sha256: 'cd…' }; pending.json.rollback holds `retained` while it held this run's version
  * await writeTrackedJournal(heldRun, retained) // throws a `gone` JournalConflictError once a sync tool moved pending.json away after the run read it
@@ -2438,28 +2439,34 @@ async function writeTrackedJournal(
     return claimJournal(context, value, assertStill)
   }
   const path = context.pendingPath
-  const { staged, version } = await stageRecord(path, value)
+  const staged = await stageRecord(path, value)
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
+    const source = await lookAtStagedRecord(staged)
+    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous look below.
+    await lstatOrAbsent(path).catch(() => undefined)
     assertTrackedJournalStill(context, look)
     assertStill?.()
-    await rename(staged, path)
+    assertStagedRecordStill(staged, source)
+    await rename(staged.staged, path)
   } catch (error) {
-    // Nothing was published: the staged name goes, and the name stays as it was.
-    await unlink(staged).catch(() => undefined)
+    // Nothing was published: the staged name goes while it shows the file this call wrote, and the name stays as it was.
+    await dropStagedRecord(staged)
     throw error
   }
-  return version
+  await assertPublishedRecord(context, staged.version)
+  return staged.version
 }
 
 /**
  * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file; called by {@link writeTrackedJournal} when no version is known or the name was found empty.
- * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}), which goes again whatever happens.
+ * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}).
+ * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
  * @param assertStill - What else must still hold, looked at right after the seam and before the link ({@link writeRecord}).
  * @returns The version the link published: the inode of the file this call wrote and the hash of its bytes.
- * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is; what the write, `assertStill` or the link throws otherwise.
+ * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the link throws otherwise.
  * @example
  * await claimJournal(rollbackContext, journal) // => { ino: 44n, sha256: 'ef…' }; pending.json.rollback holds `journal`, or the call throws and the name stays as it was
  */
@@ -2469,21 +2476,24 @@ async function claimJournal(
   assertStill?: () => void,
 ): Promise<RecordVersion> {
   const path = context.pendingPath
-  const { staged, version } = await stageRecord(path, value)
+  const staged = await stageRecord(path, value)
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
+    const source = await lookAtStagedRecord(staged)
     assertStill?.()
-    await link(staged, path).catch((error: unknown) => {
+    assertStagedRecordStill(staged, source)
+    await link(staged.staged, path).catch((error: unknown) => {
       // Something stands at the name already: it is never replaced.
       throw codeOf(error) === 'EEXIST'
         ? journalConflictError(context, 'changed', error)
         : error
     })
+    await assertPublishedRecord(context, staged.version)
   } finally {
-    // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened.
-    await unlink(staged).catch(() => undefined)
+    // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened, while it shows the file this call wrote.
+    await dropStagedRecord(staged)
   }
-  return version
+  return staged.version
 }
 
 /** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}). */
@@ -2513,6 +2523,82 @@ async function stageRecord(
     PRIVATE_FILE_MODE,
   )
   return { staged: temporary, version: { ino, sha256: bytesSha256(bytes) } }
+}
+
+/**
+ * Reads a tracked record's staged name again right before the rename or link that publishes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link claimJournal}, which then look at that name synchronously ({@link assertStagedRecordStill}), because another program may put a file at that name after the bytes were flushed.
+ * @param staged - The staged name and the version this run wrote there ({@link stageRecord}).
+ * @returns That file as this read saw it: inode, hash, size and times.
+ * @throws A {@link leftoverReplacedError} naming the staged name when it is gone, shows another inode or other bytes, or cannot be read; nothing is published then, and the file there stays.
+ * @example
+ * await lookAtStagedRecord(staged) // throws once a sync tool swapped another file in at '…/pending.json.rollback.<uuid>.tmp'
+ */
+async function lookAtStagedRecord({
+  staged,
+  version,
+}: StagedRecord): Promise<InspectedCopy> {
+  const source = await inspectCopy(staged).catch(() => undefined)
+  if (source?.ino !== version.ino || source.sha256 !== version.sha256)
+    throw leftoverReplacedError(staged)
+  return source
+}
+
+/**
+ * Looks synchronously, once more, at a tracked record's staged name right before the rename or link that publishes it; called by {@link writeTrackedJournal} and {@link claimJournal} right after their other last looks, with what {@link lookAtStagedRecord} read.
+ * Limit: a file put at the staged name between this look and the rename or link is published; the check after it ({@link assertPublishedRecord}) refuses before anything that rests on the record moves.
+ * @param staged - The staged name ({@link stageRecord}).
+ * @param source - That file as {@link lookAtStagedRecord} read it: its inode, size and times must still show.
+ * @throws A {@link leftoverReplacedError} naming the staged name when it is gone, shows another file, size or times, or cannot be looked at; nothing is published then.
+ * @example
+ * assertStagedRecordStill(staged, source) // throws once a sync tool swapped another file in at the staged name after its read
+ */
+function assertStagedRecordStill(
+  { staged }: StagedRecord,
+  source: InspectedCopy,
+): void {
+  let now: BigIntStats | undefined
+  try {
+    now = lstatSync(staged, { bigint: true, throwIfNoEntry: false })
+  } catch {
+    // A look that fails proves nothing: nothing is published.
+    now = undefined
+  }
+  if (!showsChecked(now, source)) throw leftoverReplacedError(staged)
+}
+
+/**
+ * Checks right after a tracked record's rename or link that its name shows the file this run wrote, inode and bytes; called by {@link writeTrackedJournal} and {@link claimJournal} before they hand that version back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
+ * @param context - The run; its pending path is the record.
+ * @param version - The version this run wrote ({@link stageRecord}).
+ * @throws A {@link JournalConflictError}: `gone` when the name is empty (another program moved the record away right after it was published), `changed` when it shows another file or other bytes, `unread` when it cannot be read; the run's tracked version does not move then ({@link writeRecord}).
+ * @example
+ * await assertPublishedRecord(rollbackContext, staged.version) // throws once a sync tool's file was linked in place of the staged record
+ */
+async function assertPublishedRecord(
+  context: Context,
+  version: RecordVersion,
+): Promise<void> {
+  // An empty name right after this run published there: another program moved that record away.
+  if (!(await lookAtTrackedJournal(context, version)))
+    throw journalConflictError(context, 'gone')
+}
+
+/**
+ * Deletes a tracked record's staged name while it still shows the file this run wrote there; called by {@link writeTrackedJournal} after a write that published nothing and by {@link claimJournal} after its link, so a file another program put at that name stays.
+ * Limit: a file put there between this look and the unlink is deleted; no Node primitive unlinks by inode.
+ * @param staged - The staged name and the version written there ({@link stageRecord}).
+ * @returns Nothing; best effort: a staged name that cannot be deleted stays, and no build reads it.
+ * @example
+ * await dropStagedRecord(staged) // '…/pending.json.rollback.<uuid>.tmp' is gone while it held this run's file
+ */
+async function dropStagedRecord({
+  staged,
+  version,
+}: StagedRecord): Promise<void> {
+  const now = await lstatOrAbsent(staged).catch(() => undefined)
+  // Another program's file at the staged name, or none, is never deleted.
+  if (now?.ino !== version.ino) return
+  await unlink(staged).catch(() => undefined)
 }
 
 /** The receipt, when it covers this run's config path. */
@@ -6008,17 +6094,19 @@ function bothLooks(
 }
 
 /**
- * Looks at a tracked rollback journal's name ({@link Context.journalVersion}) before this run writes or deletes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, which look once more synchronously right before their rename or unlink ({@link assertTrackedJournalStill}), and by {@link publishLeftCheck} for a tracked publish record.
+ * Looks at a tracked rollback journal's name ({@link Context.journalVersion}) before this run writes or deletes it, without holding the extension host's thread; called by {@link writeTrackedJournal} and {@link dropTrackedJournal}, which look once more synchronously right before their rename or unlink ({@link assertTrackedJournalStill}), by {@link assertPublishedRecord} right after a rename or link with the version it wrote, and by {@link publishLeftCheck} for a tracked publish record.
  * @param context - The run; its pending path is the journal.
+ * @param expected - The version the name must show; the one this run settled or last wrote unless given.
  * @returns
  * - undefined when nothing stands at the name
- * - the journal as this read saw it (inode, hash, size and times) while it shows the version this run settled or last wrote
- * @throws A {@link JournalConflictError}: `changed` when the name shows another inode or other bytes, any file while this run knows no version of it, or something that is no record at all (a link, a folder, a file too large: {@link isOtherFileCause}); `unread` when reading the name fails. Nothing is written or deleted then.
+ * - the journal as this read saw it (inode, hash, size and times) while it shows the expected version
+ * @throws A {@link JournalConflictError}: `changed` when the name shows another inode or other bytes, any file while no version is expected, or something that is no record at all (a link, a folder, a file too large: {@link isOtherFileCause}); `unread` when reading the name fails. Nothing is written or deleted then.
  * @example
  * await lookAtTrackedJournal(rollbackContext) // => undefined once the journal's name is empty
  */
 async function lookAtTrackedJournal(
   context: Context,
+  expected = context.journalVersion?.current,
 ): Promise<InspectedCopy | undefined> {
   let now: InspectedCopy | undefined
   try {
@@ -6032,9 +6120,8 @@ async function lookAtTrackedJournal(
     )
   }
   if (!now) return undefined
-  const settled = context.journalVersion?.current
   // Only this run's own version is written over or deleted; whatever else stands at the name stays for the next run.
-  if (now.ino !== settled?.ino || now.sha256 !== settled.sha256)
+  if (now.ino !== expected?.ino || now.sha256 !== expected.sha256)
     throw journalConflictError(context, 'changed')
   return now
 }
