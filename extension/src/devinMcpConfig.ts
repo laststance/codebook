@@ -764,6 +764,22 @@ function dropPending(context: Context): Promise<void> {
 }
 
 /**
+ * Removes the record of a removal or take-back that took the entry out, as the last step before it reports success; called by {@link takeEntryOut}, {@link settleMovedAside} and {@link finishRemoval}.
+ * Any failure leaves a record the next run finds stale, as {@link dropPending} does, except another file at a tracked rollback record's name ({@link JournalConflictError}): that file stays, and the run must not go on as if the take-back were settled, so the conflict is thrown as a {@link TakenOutConflictError}, which says that the entry is out already ({@link rollBackPublishedEntry}).
+ * @param context - The run; its pending path is the record.
+ * @throws A {@link TakenOutConflictError} when a tracked record's name shows another file or cannot be read again; nothing is deleted then.
+ * @example
+ * await dropFinishedRecord(rollbackContext) // pending.json.rollback is gone, or the call throws once a backup put another journal there
+ */
+async function dropFinishedRecord(context: Context): Promise<void> {
+  await removeRecord(context).catch((error: unknown) => {
+    // Another file at a tracked record's name: the entry is out, and the run goes no further.
+    if (error instanceof JournalConflictError)
+      throw new TakenOutConflictError(error)
+  })
+}
+
+/**
  * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending}, {@link retirePending} and {@link handOver}.
  * @param context - The run; its pending path is deleted.
  * @param assertStill - A synchronous look at another name that must still hold, called right before the delete (for a tracked journal after its last look); throwing keeps the record. Undefined when nothing else must hold ({@link retirePending}).
@@ -2167,7 +2183,7 @@ async function deleteConfig(
  * @param moved - The private name and the bytes and inode the file must have.
  * @param journal - The record as it was written before the rename.
  * @returns The copy that stays when it could not be deleted.
- * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot go back.
+ * @throws A {@link refusal} after a different file was put back, or naming the copy when it cannot go back; what {@link finishRemoval} throws, and a {@link TakenOutConflictError} when the renamed file is gone and a take-back's tracked record could not be deleted ({@link dropFinishedRecord}).
  */
 async function settleMovedAside(
   context: Context,
@@ -2184,7 +2200,7 @@ async function settleMovedAside(
     context.seam?.afterMoveAside?.(moved.path)
     // The renamed file is gone: nothing is left to settle.
     if (!opened) {
-      await dropPending(context)
+      await dropFinishedRecord(context)
       return { keptLeft: [] }
     }
     return await settleHeldRemoval(context, { moved, journal }, opened)
@@ -2235,7 +2251,7 @@ async function settleHeldRemoval(
  * @param context - The run.
  * @param discarded - What became of the old file and where it stays ({@link Discarded}); `unrecorded` never reaches here.
  * @returns The copy that stays, if any.
- * @throws A {@link savedAgainRefusal} when a file stands at the config name; the receipt and that file stay as they are.
+ * @throws A {@link savedAgainRefusal} when a file stands at the config name; the receipt and that file stay as they are. A {@link TakenOutConflictError} when the old file was deleted and a take-back's tracked record could not be deleted because its name shows another file ({@link dropFinishedRecord}).
  */
 async function finishRemoval(
   context: Context,
@@ -2247,7 +2263,7 @@ async function finishRemoval(
     throw savedAgainRefusal(context)
   }
   if (!isDeleted) return { keptLeft: [copy] }
-  await dropPending(context)
+  await dropFinishedRecord(context)
   return { keptLeft: [] }
 }
 
@@ -3018,6 +3034,13 @@ class JournalConflictError extends Error {
     options?: ErrorOptions,
   ) {
     super(message, options)
+  }
+}
+
+/** Thrown by {@link dropFinishedRecord} when a removal or take-back that took the entry out finds another file at its tracked rollback record's name as it deletes that record: the entry is out already, that file stays ({@link JournalConflictError}, its cause), and {@link rollBackPublishedEntry} answers `took-out-record-taken`, so the run goes no further. */
+class TakenOutConflictError extends Error {
+  constructor(conflict: JournalConflictError) {
+    super(conflict.message, { cause: conflict })
   }
 }
 
@@ -5615,7 +5638,7 @@ function disabledFlagOf(entry: unknown): { disabled?: true } {
 /** What a write reports about the entry it published. */
 type PublishedEntry = { generation: string; cleanupFailure?: string }
 
-/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing), `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out) or `journal-taken` (something already stood at the name of the rollback's own journal, which its first write never replaces, so nothing moved and the config was left unchanged); `keptLeft` holds the copies the rollback itself left. */
+/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing), `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out) `journal-taken` (something already stood at the name of the rollback's own journal, which its first write never replaces, so nothing moved and the config was left unchanged) or `took-out-record-taken` (the entry is gone, but another file stood at the rollback journal's name as the rollback was about to delete its journal, so that file stays and the run goes no further, {@link dropFinishedRecord}); `keptLeft` holds the copies the rollback itself left. */
 type RollbackResult = {
   outcome:
     | 'took-out'
@@ -5624,6 +5647,7 @@ type RollbackResult = {
     | 'unreadable'
     | 'not-taken-out'
     | 'journal-taken'
+    | 'took-out-record-taken'
   keptLeft: KeptFile[]
   /** Set with `took-out`: whether the whole file went or only the entry. */
   removal?: 'file-removed' | 'removed'
@@ -5634,7 +5658,7 @@ type RollbackResult = {
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
- * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name is `journal-taken`, and nothing moved.
+ * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and that file stays.
  * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`.
  */
 async function rollBackPublishedEntry(
@@ -5664,7 +5688,10 @@ async function rollBackPublishedEntry(
     )
     return { outcome: 'took-out', keptLeft, removal: status }
   } catch (error) {
-    // Only the journal's first write, a claim, lets this escape (every later journal write of the take-back swallows its failure), so nothing moved.
+    // The entry is out, but another file stood where the take-back's journal was to be deleted: that file stays, and the run goes no further.
+    if (error instanceof TakenOutConflictError)
+      return { outcome: 'took-out-record-taken', keptLeft: [] }
+    // Only the journal's first write, a claim, lets this escape otherwise (every later journal write of the take-back swallows its failure), so nothing moved.
     if (error instanceof JournalConflictError)
       return { outcome: 'journal-taken', keptLeft: [] }
     throw error
@@ -5749,6 +5776,7 @@ function rollbackOutcomeClause(
     unreadable: `and could not read that file again, so it left it unchanged; check that its "${SERVER_NAME}" entry is what you want before you change it`,
     'not-taken-out': `and could not take that entry out again, so remove the "${SERVER_NAME}" entry from that file by hand if it is still there`,
     'journal-taken': `but something already stands at ${journal}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${path} unchanged; the next run reads ${journal} before it takes the entry out (if what stands there is not Codebook's for ${path}, move it to another folder first)`,
+    'took-out-record-taken': `so it took that entry out again and changed nothing else, but then found another file at ${journal}, where it keeps the record of that take-back (a backup or sync tool may have put an older file there), so it left that file as it is and went no further; the next run reads ${journal} first (if what stands there is not Codebook's for ${path}, move it to another folder first)`,
   }[outcome]
 }
 
@@ -7386,7 +7414,7 @@ function removalOwnership(
  * @param context - The run.
  * @param owned - The present config and the receipt that owns its entry ({@link removalOwnership}).
  * @returns `file-removed` when the file went, `removed` when only the entry went, and the private files that could not be deleted (empty when none).
- * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot}, and an {@link unrecordedRemovalRefusal} when the reduced config stands but the completed record could not be written (the receipt stays).
+ * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot}, and an {@link unrecordedRemovalRefusal} when the reduced config stands but the completed record could not be written (the receipt stays); a {@link TakenOutConflictError} when the entry is out but a take-back's tracked rollback record could not be deleted because its name shows another file ({@link dropFinishedRecord}).
  * @example
  * await takeEntryOut(context, owned) // => { status: 'removed' }
  */
@@ -7415,7 +7443,7 @@ async function takeEntryOut(
   )
   // Without the completed record the receipt stays: success is reported only once the removal is recorded.
   if (!isRecorded) throw await unrecordedRemovalRefusal(context, keptLeft)
-  if (keptLeft.length === 0) await dropPending(context)
+  if (keptLeft.length === 0) await dropFinishedRecord(context)
   return { status: 'removed', keptLeft }
 }
 
