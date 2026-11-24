@@ -7354,13 +7354,14 @@ test("A legacy rollback journal decided on two matching reads stays until the se
 })
 
 test("A held legacy rollback journal is deleted only while its name still holds the journal the refresh held, so another journal a backup restores there while the setup's own record is settled stays for the next refresh", async (context) => {
-  // Value: protects=a legacy journal held as another setup's is retired only as the version this run held, so a journal a backup restored at its name while the setup's own record was settled keeps its rollback for the next run, and the refresh stops and says so (Cycle 0148 task 3); fails_when=the journal's name is empty or holds other bytes than the restored journal after the refresh, a receipt is written, or the refresh answers anything but the refusal that names the replaced journal; no_claim=a real backup tool (seam.afterStat renames another journal over the journal's name once, at the read of the config right after the one that decided the journal), a restore in the syscall gap after the last look before the unlink, and what the next run does with the restored journal
+  // Value: protects=a legacy journal held as another setup's is retired only as the version this run held, so a journal a backup restored at its name while the setup's own record was settled keeps its rollback for the next run, and the refresh stops and says so (Cycle 0148 task 3), and that setup record, which the restored journal may need to take its setup back, is kept too (Cycle 0148 ship review); fails_when=the journal's name is empty or holds other bytes than the restored journal after the refresh, the setup record is deleted or changed, a receipt is written, or the refresh answers anything but the refusal that names the replaced journal; no_claim=a real backup tool (seam.afterStat renames another journal over the journal's name once, at the read of the config right after the one that decided the journal), a restore in the syscall gap after the last look before the unlink, and what the next run does with the restored journal
   // Arrange
-  const { home, storage, configPath, receiptPath, journalPath } =
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
     await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
       appendFileSync(keptPath, '\n')
       journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
     })
+  const pendingText = readFileSync(pendingPath, 'utf8')
   const restoredJournalText = `${JSON.stringify({
     targetPath: configPath,
     createdFile: false,
@@ -7394,6 +7395,64 @@ test("A held legacy rollback journal is deleted only while its name still holds 
   assert.equal(
     existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
     restoredJournalText,
+  )
+  // A record the refresh retired reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
+    pendingText,
+  )
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("Another rollback journal a backup restores at a held legacy journal's name right as the refresh deletes the setup's own record keeps that record, and the refresh says the rollback record changed", async (context) => {
+  // Value: protects=a run that holds a legacy journal ends the setup record that journal was decided on only while the journal's name still shows the version this run held, at a look right before that record's unlink, so a journal a backup restores there meanwhile keeps the record it may need to take its setup back, and the refusal speaks of the replaced rollback record, never of the setup record (Cycle 0148 ship review); fails_when=the setup record is deleted or changed, the journal's name holds other bytes than the restored journal, a receipt is written, or the refresh answers anything but the refusal that names the replaced journal; no_claim=a real backup tool (seam.beforeLeftoverCheck renames another journal over the journal's name once, at the setup record's last look before its unlink), a restore after the journal's last look before that unlink, what the next run does with the restored journal
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000202',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000203',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasEmptied = false
+  let hasRestoredJournal = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      if (path !== configPath || hasEmptied) return
+      hasEmptied = true
+      writeFileSync(configPath, '{"mcpServers":{}}\n')
+    },
+    beforeLeftoverCheck: (path) => {
+      if (path !== pendingPath || !hasEmptied || hasRestoredJournal) return
+      // A backup restores another journal at the journal's name right before the run's last look at the setup record it then deletes.
+      hasRestoredJournal = true
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : 'absent',
+    restoredJournalText,
+  )
+  // A record the refresh retired reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
+    pendingText,
   )
   assert.equal(existsSync(receiptPath), false)
 })
