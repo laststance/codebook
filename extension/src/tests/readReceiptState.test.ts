@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -33,6 +34,11 @@ async function arrangeStorage(context: TestContext): Promise<string> {
 /** Writes a private file with the given text. */
 async function writePrivate(path: string, text: string): Promise<void> {
   await writeFile(path, text, { mode: 0o600 })
+}
+
+/** SHA-256 of a text's UTF-8 bytes, as a publish record names the bytes of a receipt. */
+function sha256Of(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
 }
 
 /** Writes the three files the bridge's check reads, each standing for the installation `installation-a`. */
@@ -88,6 +94,68 @@ test('a receipt that says installed answers installed with its fields', async (c
   await writePrivate(
     receiptPath,
     JSON.stringify({ installed: true, installationId: 'installation-a' }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'installed',
+    receipt: { installed: true, installationId: 'installation-a' },
+  })
+})
+
+// Value: protects=while Codebook's publish record beside the MCP receipt notes that a put-back left a file it did not verify at receipt.json, that file never counts as an installed receipt, so neither the window's descriptor mark nor the bridge's check takes the installation it names (Cycle 0149 task 32; CLI passes 1 and 3 Major on devinMcpConfig.test.ts:18789 and :18769); fails_when=the receipt answers installed, or removed with another reason; no_claim=how the note came to be (the test writes the publish record by hand, with the hash of other bytes than the receipt's), and a note left only at the publish record's dropping name by a stopped rewrite (the next setup, refresh or removal puts it back first)
+test('an installed MCP receipt answers removed with the reason unverified while its publish record notes that receipt.json is unverified', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    receiptPath,
+    JSON.stringify({ installed: true, installationId: 'installation-b' }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: {
+        sha256: sha256Of(
+          JSON.stringify({ installed: true, installationId: 'installation-a' }),
+        ),
+        receiptUnverified: true,
+      },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
+  })
+})
+
+// Value: protects=the note that receipt.json is unverified passes the very bytes it names, as every setup, refresh and removal does (Cycle 0149 task 32, the same rule as the config module's), so the old record put back with those bytes still stands for the bridge; fails_when=that receipt answers anything but installed with its fields; no_claim=how the note came to be (the test writes the publish record by hand with the hash of the receipt's own bytes)
+test('an installed MCP receipt that holds the very bytes its publish record names answers installed although that record notes receipt.json unverified', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const receiptText = JSON.stringify({
+    installed: true,
+    installationId: 'installation-a',
+  })
+  await writePrivate(receiptPath, receiptText)
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: {
+        sha256: sha256Of(receiptText),
+        receiptUnverified: true,
+      },
+    }),
   )
   // Act
   const state = await readReceiptState(receiptPath)

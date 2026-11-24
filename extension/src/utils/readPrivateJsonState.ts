@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import {
   DESCRIPTOR_NOT_PRIVATE_CODE,
   DESCRIPTOR_NOT_REGULAR_CODE,
@@ -14,9 +16,9 @@ export type PrivateJsonRemovedReason =
   | 'oversized'
   | 'unparsable'
 
-/** What looking at one private JSON file found: its parsed value (`read`), an observed absence or invalid state with the reason (`removed`), or no answer because the read itself failed (`no-answer`, for example descriptor exhaustion or `EIO`). */
+/** What looking at one private JSON file found: its parsed value and the SHA-256 of the text it was parsed from (`read`), an observed absence or invalid state with the reason (`removed`), or no answer because the read itself failed (`no-answer`, for example descriptor exhaustion or `EIO`). The hash is that of the text as UTF-8, which are the file's own bytes whenever those are valid UTF-8 (every record Codebook writes is), so a caller can tell one record's bytes from another's ({@link readReceiptState}). */
 export type PrivateJsonState =
-  | { state: 'read'; value: unknown }
+  | { state: 'read'; value: unknown; sha256: string }
   | { state: 'removed'; reason: PrivateJsonRemovedReason }
   | { state: 'no-answer' }
 
@@ -49,12 +51,12 @@ function removedReasonOf(
 }
 
 /**
- * Reads one private JSON file with the bounded read and says what it found, so a caller can tell a file that is gone or invalid from a read that merely failed; called by {@link readReceiptState} and by the Devin bridge's receipts check for the connection descriptor.
- * @param path - The file; a `receipt.json` of the global storage or a connection descriptor.
+ * Reads one private JSON file with the bounded read and says what it found, so a caller can tell a file that is gone or invalid from a read that merely failed; called by {@link readReceiptState} (for a receipt and the MCP receipt's publish record) and by the Devin bridge's receipts check for the connection descriptor.
+ * @param path - The file; a `receipt.json` of the global storage, the `pending.json` beside the MCP receipt, or a connection descriptor.
  * @param platform - The platform whose file modes are judged; defaults to this process's platform.
- * @returns `read` with the parsed value; `removed` with the reason for an observed absence or invalid state; `no-answer` for every other failure (descriptor exhaustion, `EIO`, `EAGAIN`, `EBUSY`, `EINTR`, an unknown code), which proves nothing about the file.
+ * @returns `read` with the parsed value and the SHA-256 of the text it was parsed from; `removed` with the reason for an observed absence or invalid state; `no-answer` for every other failure (descriptor exhaustion, `EIO`, `EAGAIN`, `EBUSY`, `EINTR`, an unknown code), which proves nothing about the file.
  * @example
- * await readPrivateJsonState('/storage/devin-mcp/receipt.json') // => { state: 'read', value: { installed: true } }
+ * await readPrivateJsonState('/storage/devin-mcp/receipt.json') // => { state: 'read', value: { installed: true }, sha256: '…' }
  */
 export async function readPrivateJsonState(
   path: string,
@@ -70,7 +72,11 @@ export async function readPrivateJsonState(
       : { state: 'removed', reason }
   }
   try {
-    return { state: 'read', value: JSON.parse(text) }
+    return {
+      state: 'read',
+      value: JSON.parse(text),
+      sha256: createHash('sha256').update(text).digest('hex'),
+    }
   } catch {
     return { state: 'removed', reason: 'unparsable' }
   }

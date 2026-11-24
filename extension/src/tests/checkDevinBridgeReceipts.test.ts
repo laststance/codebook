@@ -94,6 +94,8 @@ async function loadCheckWith(
 const MARKED_DESCRIPTOR: PrivateJsonState = {
   state: 'read',
   value: { devinChat: true, devinSetupInstallation: 'installation-a' },
+  // The check never compares a descriptor's bytes; a real read carries their hash.
+  sha256: 'not compared for a descriptor',
 }
 const MCP_REMOVED: ReceiptState = {
   state: 'removed',

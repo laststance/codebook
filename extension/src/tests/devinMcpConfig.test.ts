@@ -52,7 +52,10 @@ import {
   type DevinMcpTestSeam,
 } from '../devinMcpConfig'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing'
+import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
+import { createPathReadGate } from '../utils/shareReceiptRead'
 
 import { defer } from './utils/defer'
 import { loadModule } from './utils/loadModule'
@@ -18927,6 +18930,48 @@ test("A refresh never drops the old record beside another installation's record 
   assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
   assert.equal(readFileSync(receiptPath, 'utf8'), unverifiedText)
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+})
+
+test("Neither the window's descriptor mark nor the Devin bridge's check takes the installation of another installation's record that a put-back's link left unverified at receipt.json while the publish record notes it", async (context) => {
+  // Value: protects=the installation-id read that marks a window's descriptor and the bridge's receipts check refuse receipt.json while the publish record notes that a put-back left it unverified (Cycle 0149 task 32; CLI passes 1 and 3 Major on this file's :18789 and :18769), so a refresh's refusal is not the only guard: no window is marked for that installation and a descriptor marked for it does not stand; fails_when=the read gives that installation's id, or the check answers stands or another reason; no_claim=the window's own mark write in extension.ts (it marks only with what this read gives) and the bridge process (the same check runs there), the skill's receipt and the descriptor (written by hand, private), and a sync tool keeping the private mode (receipt.json is made private by chmodSync)
+  // Arrange
+  const { storage, receiptPath } = await arrangeUnverifiedPutBack(context)
+  chmodSync(receiptPath, 0o600)
+  mkdirSync(join(storage, 'devin-skill'), { recursive: true })
+  writeFileSync(
+    join(storage, 'devin-skill', 'receipt.json'),
+    JSON.stringify({ installed: true }),
+    { mode: 0o600 },
+  )
+  mkdirSync(join(storage, 'agent'), { recursive: true })
+  const descriptorPath = join(storage, 'agent', 'x.connection.json')
+  writeFileSync(
+    descriptorPath,
+    JSON.stringify({
+      devinChat: true,
+      devinSetupInstallation: 'c0ffee00-0000-4000-8000-000000149108',
+    }),
+    { mode: 0o600 },
+  )
+
+  // Act
+  const markedInstallation = await readStandingDevinInstallationId(
+    storage,
+    createPathReadGate(),
+  )
+  const bridgeAnswer = await checkDevinBridgeReceipts(
+    descriptorPath,
+    {},
+    createPathReadGate(),
+  )
+
+  // Assert
+  assert.equal(markedInstallation, undefined)
+  assert.deepEqual(bridgeAnswer, {
+    answer: 'removed',
+    reason: 'unverified',
+    path: receiptPath,
+  })
 })
 
 test("A setup keeps receipt.json, the old record's private file and its publish record and says that what stands at receipt.json is unverified when a backup puts another record at both names, as one file, right after the old record went back", async (context) => {
