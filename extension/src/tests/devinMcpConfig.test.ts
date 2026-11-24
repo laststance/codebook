@@ -9867,13 +9867,13 @@ test("A file another program renames over a take-back's first rollback record wh
 })
 
 test("A first setup whose receipt cannot be written still takes its entry out when Codebook's storage folder cannot give a file a second name, because its take-back creates its first rollback record in place, never over another file", async (context) => {
-  // Value: protects=a take-back's first rollback-record write on a storage file system without hard links (its link refused with ENOTSUP, as macOS answers for exFAT) creates that record at its empty name with an exclusive create instead, so the failed first setup's entry is still taken out, and neither that record nor its staged name stays (Cycle 0148 ship review); fails_when=the setup answers anything but the took-out refusal, the entry stays in the config, or the rollback record or a staged name of it stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), what a process end inside that in-place write leaves, the storage lock's own fallback
+  // Value: protects=a take-back's first rollback-record write on a storage file system without hard links (its link refused with ENOTSUP, as macOS answers for exFAT) creates that record at its empty name with an exclusive create instead, so the failed first setup's entry is still taken out, and neither that record nor its staged name stays (Cycle 0148 ship review); the setup's own first record (pending.json) is claimed the same way since Cycle 0148 task 33, so exactly two links are refused, one per record; fails_when=the setup answers anything but the took-out refusal, a link other than those two first writes is tried in the storage folder, the entry stays in the config, or the rollback record or a staged name of it stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), what a process end inside that in-place write leaves, the storage lock's own fallback
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
   const recordsPath = join(storage, 'devin-mcp')
   const receiptPath = join(recordsPath, 'receipt.json')
-  let refusedLinks = 0
+  const refusedLinkNames: string[] = []
   const withoutStorageLinks = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
@@ -9881,7 +9881,7 @@ test("A first setup whose receipt cannot be written still takes its entry out wh
         link: async (from: string, to: string) => {
           // The storage folder's file system gives no file a second name; the config's folder does.
           if (dirname(to) === recordsPath) {
-            refusedLinks += 1
+            refusedLinkNames.push(basename(to))
             throw Object.assign(
               new Error(`ENOTSUP: operation not supported, link '${from}'`),
               { code: 'ENOTSUP' },
@@ -9915,7 +9915,8 @@ test("A first setup whose receipt cannot be written still takes its entry out wh
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
   )
-  assert.equal(refusedLinks, 1)
+  // One refused link per first write: the setup's own record, then the take-back's rollback record.
+  assert.deepEqual(refusedLinkNames, ['pending.json', 'pending.json.rollback'])
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' } },
   })
