@@ -3014,10 +3014,11 @@ async function confirmPublished(
   return version
 }
 
-/** The codes of a link refused because the storage's file system gives no file a second name: `EPERM` on Linux (vfat), `ENOTSUP` on macOS (exFAT) and `ENOSYS` where the file system has no such call, the codes the Cursor skill's refused link names as well ({@link describeRefusedSkillLink}). Only these start a record write's route without links ({@link claimWithoutLinks}, {@link publishMovedRecord}); every other failure of a link is thrown as it is, so a failing disk never gets a record published by another route. */
+/** The codes of a link refused because the storage's file system gives no file a second name: `EPERM` on Linux (vfat), `ENOTSUP` (or its alias `EOPNOTSUPP`) on macOS (exFAT) and `ENOSYS` where the file system has no such call, the codes the Cursor skill's refused link names as well ({@link describeRefusedSkillLink}). The one set for Codebook's tracked records and its record of the entry alike: only these start a write's route without links ({@link claimWithoutLinks}, {@link publishMovedRecord}, {@link claimReceiptName}) and a put-back's ({@link putTrackedBack}); every other failure of a link is thrown as it is, so a failing disk never gets a record published by another route. */
 const NO_LINK_CODES: ReadonlySet<unknown> = new Set([
   'EPERM',
   'ENOTSUP',
+  'EOPNOTSUPP',
   'ENOSYS',
 ])
 
@@ -3227,14 +3228,14 @@ async function dropAsideRecord(
 }
 
 /**
- * Puts a file at a tracked record's dropping name back at the record's empty name with a link, which never replaces a file that appeared there, and deletes the dropping name only once both names show that file; called by {@link moveTrackedAside} and {@link renewOrPutBack} for a record this run moved, by {@link refuseMovedPublish} after a failed publication, and by {@link settleDroppedRecord} for a record a stopped run left there.
+ * Puts a file at a tracked record's dropping name back at the record's empty name with a link, which never replaces a file that appeared there, and deletes the dropping name only once both names show that file; where the storage gives no file a second name ({@link NO_LINK_CODES}), by a rename right after a synchronous look finds the record's name empty ({@link renameTrackedBack}). Called by {@link moveTrackedAside} and {@link renewOrPutBack} for a record this run moved, by {@link refuseMovedPublish} after a failed publication, and by {@link settleDroppedRecord} for a record a stopped run left there.
  * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last.
- * Limit: on storage without hard links no file can go back this way (no Node primitive moves a name without replacing what stands at the other); the file then stays at the dropping name, which the refusal names.
+ * Limit: on storage without hard links a file another program puts at the record's name between the rename's last look and the rename is replaced, the residual {@link claimWithoutLinks} accepts (no Node primitive moves a name there without replacing what stands at the other).
  * @param context - The run; its pending path is the record.
  * @param droppingPath - The dropping name ({@link droppingPathOf}).
- * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
+ * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason than storage without hard links; what {@link renameTrackedBack} throws; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
  * @example
- * await putTrackedBack(rollbackContext, `${rollbackContext.pendingPath}.codebook-dropping`) // pending.json.rollback stands again
+ * await putTrackedBack(rollbackContext, `${rollbackContext.pendingPath}.codebook-dropping`) // pending.json.rollback stands again, also on an exFAT storage folder
  */
 async function putTrackedBack(
   context: Context,
@@ -3245,8 +3246,11 @@ async function putTrackedBack(
   if (!moved) throw journalConflictError(context, 'gone')
   try {
     await link(droppingPath, context.pendingPath)
-  } catch {
-    // A file at the record's name stays, and so does the moved one; where no link can be made, the moved file stays at the dropping name.
+  } catch (linkError) {
+    // Storage that gives no file a second name: the moved file goes back by a rename once a last look finds the record's name empty.
+    if (NO_LINK_CODES.has(codeOf(linkError)))
+      return renameTrackedBack(context, droppingPath, moved)
+    // A file at the record's name stays, and so does the moved one; a link that failed otherwise leaves the moved file at the dropping name.
     throw isNameEmptyNow(context.pendingPath)
       ? recordNotBackError(context)
       : bothRecordNamesError(context)
@@ -3259,6 +3263,32 @@ async function putTrackedBack(
   )
     throw bothRecordNamesError(context)
   await unlink(droppingPath).catch(() => undefined)
+}
+
+/**
+ * Puts a tracked record back at its empty name with a rename where the storage gives no file a second name ({@link NO_LINK_CODES}), so a record a rewrite or delete moved to its dropping name never stays there for good and every later run refuses; called only by {@link putTrackedBack} once its link was refused for that reason.
+ * The refused link was awaited, so both names are looked at again through the thread pool and then synchronously, the record's name first: it must be empty, and the dropping name must still show the file the put-back's first look found there; nothing is awaited between those looks and the rename.
+ * Limit: a file another program puts at the record's name between that last look and the rename is replaced, and one swapped in at the dropping name then moves to the record's name (no Node primitive moves a name without replacing what stands at the other where links fail; {@link claimWithoutLinks} accepts the same).
+ * @param context - The run; its pending path is the record, its seam is called around the dropping name's look ({@link nameStateNow}).
+ * @param droppingPath - The dropping name ({@link droppingPathOf}).
+ * @param moved - The dropping name as the put-back's first look saw it: its inode, size and times must still show.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name, which stays, and so does the moved one; a `changed` {@link JournalConflictError} when the dropping name no longer shows that file or cannot be looked at, which stays; what the rename throws.
+ * @example
+ * await renameTrackedBack(rollbackContext, droppingPath, moved) // pending.json.rollback stands again on an exFAT storage folder; its dropping name is gone
+ */
+async function renameTrackedBack(
+  context: Context,
+  droppingPath: string,
+  moved: LeftoverLookback,
+): Promise<void> {
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([context.pendingPath, droppingPath])
+  // A file came to the record's name: it is never replaced, and the moved one stays where it is.
+  if (!isNameEmptyNow(context.pendingPath)) throw bothRecordNamesError(context)
+  // Only the file the first look found at the dropping name goes back.
+  if (nameStateNow(context, droppingPath, moved) !== 'still')
+    throw journalConflictError(context, 'changed')
+  await rename(droppingPath, context.pendingPath)
 }
 
 /**
@@ -3319,7 +3349,7 @@ function bothRecordNamesError(context: Context): JournalConflictError {
 }
 
 /**
- * The refusal of a tracked record that stands at its dropping name and could not go back to its empty name ({@link putTrackedBack}), as on storage without hard links: it stays there, named, and the run goes no further.
+ * The refusal of a tracked record that stands at its dropping name and could not go back to its empty name ({@link putTrackedBack}) because the link failed for another reason than storage without hard links (which a rename puts back, {@link renameTrackedBack}): it stays there, named, and the run goes no further.
  * @param context - The run; its pending path is the record, its retry ends the sentence.
  * @returns The `gone` {@link JournalConflictError}, not thrown yet.
  * @example
@@ -3503,14 +3533,6 @@ async function readReceiptWithVersion(
     : { version }
 }
 
-/** The codes a link answers on storage whose file system gives no file a second name (macOS exFAT answers `ENOTSUP`, Linux vfat `EPERM`); only these let {@link claimReceiptName} rename the staged receipt into `receipt.json` instead ({@link renameIntoEmptyName}). */
-const UNSUPPORTED_LINK_CODES: ReadonlySet<unknown> = new Set([
-  'ENOTSUP',
-  'EOPNOTSUPP',
-  'EPERM',
-  'ENOSYS',
-])
-
 /**
  * Writes Codebook's record of the entry (`receipt.json`) without ever replacing a file this run did not read there; called by {@link recordPublishedEntry}, {@link adoptPending} and {@link withInstallationId}, every write of that record.
  * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), the staged file is renamed over it right after a synchronous look that still finds that file; while it shows nothing and no version is known (none was read there, or this run deleted it or moved it aside itself), the name is claimed ({@link claimReceiptName}), which never replaces a file; an empty name where a version is known (another program moved that record away) and anything else there stay as they are and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
@@ -3578,7 +3600,7 @@ async function receiptNameState(
 }
 
 /**
- * Publishes a receipt at an empty `receipt.json` without replacing what stands there: with a link of the staged file, or, where the storage's file system gives no file a second name ({@link UNSUPPORTED_LINK_CODES}), with a rename of the flushed staged file right after a synchronous look still finds that name empty ({@link renameIntoEmptyName}), so the name shows nothing or the whole receipt at every instant and a stop never leaves a partial receipt that every run refuses; called only by {@link writeReceipt}.
+ * Publishes a receipt at an empty `receipt.json` without replacing what stands there: with a link of the staged file, or, where the storage's file system gives no file a second name ({@link NO_LINK_CODES}), with a rename of the flushed staged file right after a synchronous look still finds that name empty ({@link renameIntoEmptyName}), so the name shows nothing or the whole receipt at every instant and a stop never leaves a partial receipt that every run refuses; called only by {@link writeReceipt}.
  * Limit: on such storage a file another program puts at the name between that last look and the rename is replaced (no Node primitive publishes complete bytes without replacing where links fail).
  * @param context - The run; its receipt path is the name.
  * @param staged - The flushed staged receipt and its version ({@link stageRecord}).
@@ -3602,7 +3624,7 @@ async function claimReceiptName(
     if (codeOf(error) === 'EEXIST')
       throw receiptConflictError(context, 'changed', error)
     // Only storage that gives no file a second name takes the rename; any other failure is the write's.
-    if (!UNSUPPORTED_LINK_CODES.has(codeOf(error))) throw error
+    if (!NO_LINK_CODES.has(codeOf(error))) throw error
   }
   return renameIntoEmptyName(path, staged, assertStill, () =>
     receiptConflictError(context, 'changed'),

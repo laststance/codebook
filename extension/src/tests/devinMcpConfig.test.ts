@@ -13082,8 +13082,153 @@ test("A first setup's take-back that stops inside its first rollback-record writ
   )
 })
 
+test("A setup record whose rewrite cannot be published where Codebook's storage folder cannot give a file a second name goes back to its name in that run, so the next refresh reads it instead of refusing every run", async (context) => {
+  // Value: protects=on storage without hard links a tracked record that a rewrite moved to its dropping name goes back to its emptied name in that run when the new bytes cannot be published, by a rename right after a synchronous look finds that name empty, so no later setup, refresh or removal refuses at its start (Cycle 0149 task 17); fails_when=the failure is not injected, the dropping name stays after the setup, pending.json does not hold the record the setup's claim wrote (complete, not yet completed) after the setup, or the next refresh answers anything but current or leaves a record or its dropping name; no_claim=a real full disk or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, once the setup's completed record is written, fails the first publication of that rewrite with ENOSPC: an exclusive create of pending.json before Cycle 0149 task 18, a rename of its staged file there since), a file another program puts at the record's name between that last look and the rename (stated residual on such storage)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const recordsPath = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsPath, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  let isArmed = false
+  let hasFailedPublish = false
+  const fullDisk = (): Error =>
+    Object.assign(new Error('ENOSPC: no space left on device'), {
+      code: 'ENOSPC',
+    })
+  const withoutStorageLinks = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The storage folder's file system gives no file a second name; the config's folder does.
+          if (dirname(to) === recordsPath)
+            throw Object.assign(
+              new Error(`ENOTSUP: operation not supported, link '${from}'`),
+              { code: 'ENOTSUP' },
+            )
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open: async (...args: Parameters<typeof open>) => {
+          // The disk is full at the rewrite's exclusive create of the setup record's own name.
+          if (
+            isArmed &&
+            !hasFailedPublish &&
+            args[0] === pendingPath &&
+            args[1] === 'wx'
+          ) {
+            hasFailedPublish = true
+            throw fullDisk()
+          }
+          return open(...args)
+        },
+        rename: async (from: string, to: string) => {
+          // The disk is full at the rewrite's rename of its staged file to the setup record's own name.
+          if (
+            isArmed &&
+            !hasFailedPublish &&
+            to === pendingPath &&
+            from.endsWith('.tmp')
+          ) {
+            hasFailedPublish = true
+            throw fullDisk()
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await withoutStorageLinks.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      // Only the setup's completed record, the first rewrite of the record its claim wrote.
+      if (path !== pendingPath) return
+      if (JSON.parse(JSON.stringify(record)).phase === 'completed')
+        isArmed = true
+    },
+  })
+  const isDroppingAfterSetup = existsSync(droppingPath)
+  // The record the claim wrote, back at its name, or 'absent', so the assertions below name what stands there.
+  const recordAfterSetup = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+
+  // Act
+  const refresh = await withoutStorageLinks.refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(hasFailedPublish, true)
+  assert.equal(isDroppingAfterSetup, false)
+  assert.equal(recordAfterSetup.targetPath, configPath)
+  assert.equal('phase' in recordAfterSetup, false)
+  assert.equal(refresh.status, 'current')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(droppingPath), false)
+})
+
+test("A setup record a stopped run left at its dropping name goes back at the next refresh where Codebook's storage folder cannot give a file a second name, so that refresh takes the failed first setup back instead of refusing every run", async (context) => {
+  // Value: protects=the run start puts a tracked record that a run which stopped inside its move left at the dropping name back at its empty name also where links fail, by a rename right after a synchronous look finds that name empty, so the record is read and the failed first setup is taken back (Cycle 0149 task 17, acceptance criterion 13's first state on such storage); fails_when=the refresh answers anything but not-managed, the config is not the learner's own without the entry, or a dropping name, the setup record, the rollback record or a receipt stays; no_claim=a real process end or exFAT (the test renames the setup record to its dropping name, as a stop right after that move leaves it, and the refresh runs with a config module whose link refuses every name in the storage folder with ENOTSUP), a file another program puts at the record's name between that last look and the rename (stated residual on such storage)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const recordsPath = dirname(pendingPath)
+  const pendingDroppingPath = `${pendingPath}.codebook-dropping`
+  renameSync(pendingPath, pendingDroppingPath)
+  const withoutStorageLinks = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The storage folder's file system gives no file a second name; the config's folder does.
+          if (dirname(to) === recordsPath)
+            throw Object.assign(
+              new Error(`ENOTSUP: operation not supported, link '${from}'`),
+              { code: 'ENOTSUP' },
+            )
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refresh = await withoutStorageLinks.refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(refresh.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(pendingDroppingPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A first record write whose link fails with an I/O error publishes nothing at that name by another route, so the setup refuses and leaves the config and Codebook records as they were', async (context) => {
-  // Value: protects=only the codes of storage without hard links (EPERM, ENOTSUP, ENOSYS) start the no-link route of a record's first write, so a failing disk never gets a record published at that name by another route (Cycle 0149 task 5, D5 review); fails_when=the setup resolves, pending.json, a receipt or a staged name of a record stays, or the config changes; no_claim=a real I/O error (the config module is loaded with a link that fails with EIO for pending.json only), other codes than EIO
+  // Value: protects=only the codes of storage without hard links (EPERM, ENOTSUP, EOPNOTSUPP, ENOSYS) start the no-link route of a record's first write, so a failing disk never gets a record published at that name by another route (Cycle 0149 task 5, D5 review); fails_when=the setup resolves, pending.json, a receipt or a staged name of a record stays, or the config changes; no_claim=a real I/O error (the config module is loaded with a link that fails with EIO for pending.json only), other codes than EIO
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
