@@ -8401,21 +8401,24 @@ async function settleRecordConflict(
 }
 
 /**
- * Words what another program did to a setup's record of its change as it was to be recorded as completed ({@link Published.recordConflict}); used by {@link settleRecordConflict}.
+ * Words what another program did to a setup's or a removal's record of its change as it was to be recorded as completed ({@link Published.recordConflict}); used by {@link settleRecordConflict} and, for a removal, by {@link unrecordedRemovalWording}.
  * @param context - The run; its pending path is named.
  * @param conflict - What stood at the record's name.
+ * @param record - How the clause names that record: a setup's own words by default, `that record` after a removal's sentence that already named it.
  * @returns A clause that follows "because".
  * @example
  * recordConflictCause(context, 'unread') // => 'it could not read its record of this setup at …/pending.json again'
+ * recordConflictCause(context, 'changed', 'that record') // => 'another program changed or replaced that record at …/pending.json (…)'
  */
 function recordConflictCause(
   { pendingPath }: Context,
   conflict: JournalConflictError['kind'],
+  record = 'its record of this setup',
 ): string {
   return {
-    changed: `another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back)`,
-    gone: `another program moved its record of this setup at ${pendingPath} away (a backup or sync tool may be moving it)`,
-    unread: `it could not read its record of this setup at ${pendingPath} again`,
+    changed: `another program changed or replaced ${record} at ${pendingPath} (a backup or sync tool may have put an older one back)`,
+    gone: `another program moved ${record} at ${pendingPath} away (a backup or sync tool may be moving it)`,
+    unread: `it could not read ${record} at ${pendingPath} again`,
   }[conflict]
 }
 
@@ -10315,14 +10318,15 @@ async function takeEntryOut(
   )
     return { status: 'file-removed', ...(await deleteConfig(context, look)) }
   assertRewritable(context, look)
-  const { keptLeft, isRecorded } = await publishRoot(
+  const { keptLeft, isRecorded, recordConflict } = await publishRoot(
     context,
     { ...look.root, mcpServers: otherServers },
     look,
     { createdFile: false },
   )
-  // Without the completed record the receipt stays: success is reported only once the removal is recorded.
-  if (!isRecorded) throw await unrecordedRemovalRefusal(context, keptLeft)
+  // Without the completed record the receipt stays: success is reported only once the removal is recorded, and the refusal says what kept that record from being written.
+  if (!isRecorded)
+    throw await unrecordedRemovalRefusal(context, keptLeft, recordConflict)
   if (keptLeft.length === 0) await dropFinishedRecord(context)
   return { status: 'removed', keptLeft }
 }
@@ -10335,18 +10339,21 @@ export class DevinMcpUnrecordedRemovalError extends Error {}
 
 /**
  * Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses; called by {@link takeEntryOut}.
- * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link recordedCopyFateOf} answers `tracked`), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record.
+ * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link recordedCopyFateOf} answers `tracked`), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record. What kept the completed record from being written picks the rest ({@link unrecordedRemovalWording}): a full disk asks for room, another program's change at that record's name names that record and asks for no room.
  * @param context - The run; gives the paths and the command to run again.
  * @param keptLeft - The files the publish left.
+ * @param recordConflict - What stood at the record's name when another program kept the completed record from being written, or Codebook's own step at its dropping name refused ({@link Published.recordConflict}); undefined for a write that failed (a full disk).
  * @returns The error, not thrown yet.
  * @example
- * throw await unrecordedRemovalRefusal(context, keptLeft) // 'Codebook took its entry out of … but could not write its own record of that step, so it kept its receipt and …'
+ * throw await unrecordedRemovalRefusal(context, keptLeft, undefined) // 'Codebook took its entry out of … but could not write its own record of that step, so it kept its receipt and …; make room for that record, …'
+ * throw await unrecordedRemovalRefusal(context, keptLeft, journalConflictError(context, 'changed')) // '… could not write its own record of that step, because another program changed or replaced that record at …/pending.json (…), so it kept its receipt …'
  */
 async function unrecordedRemovalRefusal(
   context: Context,
   keptLeft: KeptFile[],
+  recordConflict: JournalConflictError | undefined,
 ): Promise<DevinMcpUnrecordedRemovalError> {
-  const { path, retry } = context
+  const { path } = context
   const previous = keptLeft.find(({ holds }) => holds === 'previous')
   // Only a record that still names the copy lets a later run delete it.
   const fate =
@@ -10354,9 +10361,38 @@ async function unrecordedRemovalRefusal(
       ? LEFTOVER_CLAUSE
       : UNCONFIRMED_CLAUSE
   const copy = previous ? ` and ${keptCopyPhrase(previous.path)}, ${fate}` : ''
+  const { because, ending } = unrecordedRemovalWording(context, recordConflict)
   return new DevinMcpUnrecordedRemovalError(
-    `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step, so it kept its receipt${copy}; make room for that record, ${retry}.`,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step${because}, so it kept its receipt${copy}${ending}`,
   )
+}
+
+/**
+ * Words why a removal's completed record was not written and the way out, by what kept it from being written; called only by {@link unrecordedRemovalRefusal}.
+ * @param context - The run; its pending path and retry are named.
+ * @param recordConflict - The conflict at the record's name ({@link Published.recordConflict}); undefined for a write that failed (a full disk, the only failure that leaves the removal's own record as it wrote it, {@link Completion}).
+ * @returns
+ * - without a conflict: no cause, and `; make room for that record, <retry>.`
+ * - for Codebook's own step at the record's dropping name ({@link DroppingNameConflictError}): no cause, and that refusal's own sentence, which names where the record stands and its way out
+ * - for another program's change: the cause that names that record at `pending.json` ({@link recordConflictCause}), and `; <retry>, and that run reads <pending.json> first.`
+ * @example
+ * unrecordedRemovalWording(context, journalConflictError(context, 'gone')) // => { because: ', because another program moved that record at …/pending.json away (…)', ending: '; then run Codebook: Remove Devin Desktop Setup again, and that run reads …/pending.json first.' }
+ */
+function unrecordedRemovalWording(
+  context: Context,
+  recordConflict: JournalConflictError | undefined,
+): { because: string; ending: string } {
+  const { pendingPath, retry } = context
+  // A full disk: room for the record is the way out.
+  if (!recordConflict)
+    return { because: '', ending: `; make room for that record, ${retry}.` }
+  // Codebook's own step at the record's dropping name says where that record stands and its way out in its own sentence.
+  if (recordConflict instanceof DroppingNameConflictError)
+    return { because: '', ending: `. ${recordConflict.message}` }
+  return {
+    because: `, because ${recordConflictCause(context, recordConflict.kind, 'that record')}`,
+    ending: `; ${retry}, and that run reads ${pendingPath} first.`,
+  }
 }
 
 /**

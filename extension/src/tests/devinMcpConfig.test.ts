@@ -2304,10 +2304,49 @@ test('A removal whose record another program replaced with a folder does not pro
   await assert.rejects(removal, (error: Error) => {
     assert.equal(
       error.message,
-      `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; make room for that record, then run Codebook: Remove Devin Desktop Setup again.`,
+      `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because another program changed or replaced that record at ${pendingPath} (a backup or sync tool may have put an older one back), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
     )
     return true
   })
+  assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
+})
+
+test('A removal whose own record a backup replaces right after it took the entry out names that record instead of asking to make room, and keeps its receipt and that record', async (context) => {
+  // Value: protects=a removal whose completed record another program kept from being written says which record changed and how to go on, never that the disk needs room, which cannot help, and keeps its receipt and the record that stands (Cycle 0149 ship review, the removal's dropped recordConflict); fails_when=the refusal says anything but the changed-record cause with the copy's sentence and the read-first ending, asks to make room, or receipt.json, pending.json or the copy changes; no_claim=a real backup tool (seam.afterPublish renames another removal's record, with another generation, over pending.json once, right after the reduced config went in), what the next run does with that record and the copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const configBeforeRemoval = readFileSync(configPath, 'utf8')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let restoredText = ''
+  let copyPath = ''
+
+  // Act
+  const removalOutcome = await removeManagedDevinMcpEntry(storage, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      restoredText = JSON.stringify({
+        ...JSON.parse(readFileSync(pendingPath, 'utf8')),
+        generation: 'c0ffee00-0000-4000-8000-000000009951',
+      })
+      // A backup renames another removal's record over the removal's own record right after its config went in.
+      swapFile(pendingPath, restoredText)
+    },
+  }).then(
+    (result) => JSON.stringify(result),
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    removalOutcome,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because another program changed or replaced that record at ${pendingPath} (a backup or sync tool may have put an older one back), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), restoredText)
   assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
 })
 
