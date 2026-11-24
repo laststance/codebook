@@ -8724,6 +8724,202 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A held legacy rollback journal's deletion waits for an asynchronous look at the setup record's name before its synchronous last look at that name, so a stalled disk holds the refresh instead of the window", async (context) => {
+  // Value: protects=the last synchronous look at the setup record's name, made inside the held journal's deletion right before its unlink, comes right after an awaited look at that name, so storage that already stalls holds that step in the thread pool, not the extension host's thread, and the journal goes once storage answers (Cycle 0148 ship review); fails_when=no asynchronous look at the setup record's name is held while the refresh runs, the refresh settles or the journal is gone while that look is held, or the journal stays after the release; no_claim=a real stalled disk (an lstat of pending.json held until the test releases it stands for it), a stall that starts between the asynchronous and the synchronous look; seam=seam.afterStat rewrites the config in place once, at the read that decides the journal, so the journal is held as another setup's
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const release = defer<void>()
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // Storage stops answering for the setup record's name until the test releases it.
+          if (args[0] === pendingPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let hasEmptied = false
+  let isSettled = false
+
+  // Act
+  const refresh = stalled
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+        if (path !== configPath || hasEmptied) return
+        hasEmptied = true
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+      },
+    })
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    "the held look at the setup record's name",
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  const isJournalWhileHeld = existsSync(journalPath)
+  release.resolve()
+  const result = await refresh
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(isJournalWhileHeld, true)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("Recovery's delete of a finished change's leftover waits for an asynchronous look at that leftover's name before its synchronous last look, so a stalled disk holds the refresh instead of the window", async (context) => {
+  // Value: protects=each synchronous look at a leftover's name before recovery deletes it comes right after an awaited look at that name, so storage that already stalls holds that step in the thread pool, not the extension host's thread, and the leftover goes once storage answers (Cycle 0148 ship review); fails_when=no asynchronous look at the leftover's name is held while the refresh runs, the refresh settles or the leftover is gone while that look is held, or the leftover or the record stays after the release; no_claim=a real stalled disk (an lstat of the staged name held until the test releases it stands for it), a stall that starts between the asynchronous and the synchronous look; seam=hand-written completed record of a finished change whose staged file holds the recorded bytes
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const stagedPath = privateNameOf(configPath, 'tmp')
+  const stagedText = '{"mcpServers":{"staged":{"command":"s"}}}\n'
+  await writeFile(stagedPath, stagedText)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    stagedName: basename(stagedPath),
+    stagedIno: (await stat(stagedPath)).ino,
+    stagedSha256: sha256(stagedText),
+  })
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const release = defer<void>()
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // Storage stops answering for the leftover's name until the test releases it.
+          if (args[0] === stagedPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const refresh = stalled
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    "the held look at the leftover's name",
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  const isLeftoverWhileHeld = existsSync(stagedPath)
+  release.resolve()
+  const result = await refresh
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(isLeftoverWhileHeld, true)
+  assert.equal(result.status, 'not-managed')
+  assert.equal(existsSync(stagedPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(
+    readFileSync(configPath, 'utf8'),
+    '{"mcpServers":{"alpha":{"command":"a"}}}\n',
+  )
+})
+
+test("A setup's delete of the copy of the previous config it moved aside waits for an asynchronous look at that copy's name before its synchronous last look, so a stalled disk holds the setup instead of the window", async (context) => {
+  // Value: protects=the synchronous look at the displaced copy's name right before a setup deletes it comes right after an awaited look at that name, so storage that already stalls holds that step in the thread pool, not the extension host's thread, and the copy goes once storage answers (Cycle 0148 ship review); fails_when=no asynchronous look at the copy's name is held while the setup runs, the setup settles or the copy is gone while that look is held, or the setup does not install the entry beside the other server or leaves the copy after the release; no_claim=a real stalled disk (an lstat of the displaced name held until the test releases it stands for it), a stall that starts between the asynchronous and the synchronous look
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const release = defer<void>()
+  let heldDisplacedPath = ''
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // Storage stops answering for the displaced copy's name until the test releases it.
+          if (String(args[0]).endsWith('.codebook-displaced')) {
+            heldDisplacedPath = String(args[0])
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const setup = stalled
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldDisplacedPath !== '',
+    "the held look at the displaced copy's name",
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  const isCopyWhileHeld = existsSync(heldDisplacedPath)
+  release.resolve()
+  const result = await setup
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(isCopyWhileHeld, true)
+  assert.equal(result.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(existsSync(heldDisplacedPath), false)
+})
+
 test('Another rollback journal a backup restores at the journal name after a refresh settled a cut-short rollback whose staged copy stays is not overwritten with what stays of the settled journal', async (context) => {
   // Value: protects=the rollback journal a refresh rewrites to the leftovers that stay once it settled a cut-short rollback of this build is only the version its recovery read, so a journal a backup restored at its name after that read keeps its rollback for the next run; fails_when=the journal's name holds other bytes than the restored journal after the refresh (the settled journal's staged copy written over it), the staged copy is gone or changed, the refusal does not name the staged copy, or a receipt is written; no_claim=a real backup tool (seam.afterStat renames another journal over the journal's name once, at the read of the setup's publish record that comes after the journal's recovery and before its rewrite), a restore in the syscall gap after the last look before the rename, the wording of the refusal beyond the staged copy's path, and what the next run does with the restored journal or the staged copy
   // Arrange

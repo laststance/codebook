@@ -779,20 +779,32 @@ async function dropFinishedRecord(context: Context): Promise<void> {
   })
 }
 
+/** A synchronous look at other names that must still hold right before a record's rename, link or unlink ({@link writeRecord}, {@link removeRecord}), with the names it looks at, so the step first awaits a look at each of them ({@link lookAheadAt}): a storage that already stalls holds that step in the thread pool, where the step's budget answers, instead of the extension host's thread. */
+type StillLook = {
+  /** The names `assert` looks at, in its order. */
+  readonly names: readonly string[]
+  /** Throws when a name no longer shows what an earlier look found; nothing is awaited between it and the rename, link or unlink. */
+  readonly assert: () => void
+}
+
 /**
  * Deletes a run's pending record: a tracked rollback journal ({@link Context.journalVersion}) only while its name still shows the version this run settled or wrote ({@link dropTrackedJournal}), any other record whatever stands at its name; called by {@link dropPending}, {@link retirePending} and {@link handOver}.
+ * Limit: a stall of storage that starts between the awaited look at `assertStill`'s names and its synchronous look holds the extension host's thread.
  * @param context - The run; its pending path is deleted.
- * @param assertStill - A synchronous look at another name that must still hold, called right before the delete (for a tracked journal after its last look); throwing keeps the record. Undefined when nothing else must hold ({@link retirePending}).
+ * @param assertStill - A synchronous look at other names that must still hold, called right before the delete (for a tracked journal after its last look), after an awaited look at its names; throwing keeps the record. Undefined when nothing else must hold ({@link retirePending}).
  * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (nothing is deleted then); what `assertStill` throws; what the delete throws other than for a name that is gone.
  * @example
  * await removeRecord(context) // pending.json is gone
  */
 async function removeRecord(
   context: Context,
-  assertStill?: () => void,
+  assertStill?: StillLook,
 ): Promise<void> {
   if (context.journalVersion) return dropTrackedJournal(context, assertStill)
-  assertStill?.()
+  if (assertStill) {
+    await lookAheadAt(assertStill.names)
+    assertStill.assert()
+  }
   await rm(context.pendingPath, { force: true })
 }
 
@@ -1045,6 +1057,7 @@ const KEPT_COPY_SUFFIX = 'codebook-kept'
 
 /**
  * Deletes the displaced copy after the config was published or removed, unless a writer changed it since the comparison; called by {@link settlePublished} and by the removal.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The record turns to completed first, so a copy that stays is a leftover that never goes back to the config name; a copy that changed is handed to the learner ({@link handOver}) or moved out of recovery's reach ({@link keepFromRecovery}); any other copy that stays, also an unchanged one whose last look or delete failed, is reported as one a later run deletes ({@link KeptFile.isLeftover}). When the completed record cannot be written nothing is deleted.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
@@ -1062,7 +1075,10 @@ async function discardDisplaced(
   if (!(await markCompleted(context, journal)))
     return { outcome: 'unrecorded', copy }
   // A copy a writer changed since the comparison, or a name that shows another file now, is handed to the learner.
-  const look = (await didCopyChange(held))
+  const isChanged = await didCopyChange(held)
+  // A storage that already stalls holds this step here, not at the synchronous look at that name below.
+  await lookAheadAt([displacedPath])
+  const look = isChanged
     ? 'changed'
     : lookAtComparedName(context, displacedPath, held)
   if (look === 'changed') {
@@ -2400,7 +2416,7 @@ function parseRecord<Schema extends z.ZodType>(
  * @param context - The run; its seam is called with the path and the value after the bytes were flushed and before the rename (for a tracked journal also before the last look at its name).
  * @param path - The record file.
  * @param value - The complete record.
- * @param assertStill - A synchronous look at another name that must still hold, called after the seam (and a tracked journal's last look) right before the rename or link, so nothing that the caller's earlier look found can change while the bytes are flushed; throwing cancels the write. Undefined when nothing else must hold ({@link retirePending}).
+ * @param assertStill - A synchronous look at other names that must still hold, called after the seam (and a tracked journal's last look) right before the rename or link, so nothing that the caller's earlier look found can change while the bytes are flushed; throwing cancels the write. A tracked journal's write awaits a look at its names right before its last looks ({@link writeTrackedJournal}); any other write awaits it before it stages its bytes, since its synchronous looks run inside {@link atomicPrivateWrite} (limit: a stall that starts while those bytes are flushed holds the extension host's thread at that look). Undefined when nothing else must hold ({@link retirePending}).
  * @throws When the record is larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES}, the temporary file cannot be written or renamed, or the seam or `assertStill` throws; a {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again. The previous record then stays byte for byte, and so does a tracked version.
  * @example
  * await writeRecord(context, context.pendingPath, { ...journal, phase: 'completed' })
@@ -2409,15 +2425,16 @@ async function writeRecord(
   context: Context,
   path: string,
   value: unknown,
-  assertStill?: () => void,
+  assertStill?: StillLook,
 ): Promise<void> {
   const tracked =
     path === context.pendingPath ? context.journalVersion : undefined
   // Every record but a tracked journal is replaced whatever stands at its name.
   if (!tracked) {
+    if (assertStill) await lookAheadAt(assertStill.names)
     await atomicPrivateWrite(path, value, DEVIN_MCP_RECORD_LIMIT_BYTES, () => {
       context.seam?.beforeRecordWrite?.({ path, record: value })
-      assertStill?.()
+      assertStill?.assert()
     })
     return
   }
@@ -2432,7 +2449,7 @@ async function writeRecord(
  * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode. Moving the record aside first and linking the new one in would leave no record at the only name any build reads until that link, so a process that ends there would lose the rollback the record tracks.
  * @param context - The run; its pending path is the journal, its seam is called right before the last look.
  * @param value - The complete journal.
- * @param assertStill - What else must still hold, looked at right after the last look ({@link writeRecord}).
+ * @param assertStill - What else must still hold, looked at right after the last look, after an awaited look at its names together with the record's own ({@link writeRecord}).
  * @returns The version this write published: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
  * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, before or right after the rename, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write, the look at the staged name ({@link leftoverReplacedError}) or `assertStill` throws. The name then stays as it was, unless another program changed it after the rename.
  * @example
@@ -2442,7 +2459,7 @@ async function writeRecord(
 async function writeTrackedJournal(
   context: Context,
   value: unknown,
-  assertStill?: () => void,
+  assertStill?: StillLook,
 ): Promise<RecordVersion> {
   // No version of this run stands at the name: the write claims it, never replacing what stands there.
   if (context.journalVersion?.current === undefined)
@@ -2458,11 +2475,11 @@ async function writeTrackedJournal(
   const staged = await stageRecord(path, value)
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
+    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the record's name, `assertStill`'s names, the staged name.
+    await lookAheadAt([path, ...(assertStill?.names ?? [])])
     const source = await lookAtStagedRecord(staged)
-    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous look below.
-    await lookAheadAt([path])
     assertTrackedJournalStill(context, look)
-    assertStill?.()
+    assertStill?.assert()
     assertStagedRecordStill(staged, source)
     await rename(staged.staged, path)
   } catch (error) {
@@ -2477,10 +2494,10 @@ async function writeTrackedJournal(
 /**
  * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file; called by {@link writeTrackedJournal} when no version is known or the name was found empty.
  * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}).
- * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves.
+ * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
- * @param assertStill - What else must still hold, looked at right after the seam and before the link ({@link writeRecord}).
+ * @param assertStill - What else must still hold, looked at right after the seam and before the link, after an awaited look at its names ({@link writeRecord}).
  * @returns The version the link published: the inode of the file this call wrote and the hash of its bytes.
  * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the link throws otherwise.
  * @example
@@ -2489,14 +2506,16 @@ async function writeTrackedJournal(
 async function claimJournal(
   context: Context,
   value: unknown,
-  assertStill?: () => void,
+  assertStill?: StillLook,
 ): Promise<RecordVersion> {
   const path = context.pendingPath
   const staged = await stageRecord(path, value)
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
+    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order.
+    await lookAheadAt(assertStill?.names ?? [])
     const source = await lookAtStagedRecord(staged)
-    assertStill?.()
+    assertStill?.assert()
     assertStagedRecordStill(staged, source)
     await link(staged.staged, path).catch((error: unknown) => {
       // Something stands at the name already: it is never replaced.
@@ -2783,7 +2802,7 @@ type LeftoverLookback = {
 
 /**
  * Tells whether a leftover's name still shows the file that was checked; called right before each link and unlink of a leftover ({@link tidyLeftover}, {@link putBackDisplaced}, {@link discardDisplaced}) and before the move that keeps a copy out of recovery's reach ({@link lookBeforeMove}), because a sync tool may swap another file in between the first look and the call.
- * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode.
+ * Limit: a swap between this look and the syscall that follows is not seen; no Node primitive links or unlinks by inode. Every caller awaits a look at the same name right before ({@link lookAheadAt}, or a read of that name as {@link keepFromRecovery} makes), so a storage that already stalls holds that step in the thread pool; a stall that starts between the two looks still holds the extension host's thread.
  * @param context - The run; its seam is called around the look.
  * @param path - The leftover's name.
  * @param checked - The inode that was checked and, when the call deletes bytes, the size (and times) that were read; a put-back passes no size, because it accepts a recorded file whatever its bytes.
@@ -2992,6 +3011,7 @@ function configChangedError(
 
 /**
  * Throws unless the config name still shows the published staged file (inode and bytes); called by {@link tidyLeftover} after the last read of a displaced original and before it is unlinked.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The bytes are read again because an editor can rewrite the published file in place and keep its inode.
  * Limit: the read is async, so {@link tidyLeftover} hashes the displaced copy again after it and checks only synchronously from there; a change between that last hash and the unlink syscalls is not seen (no Node primitive unlinks by inode or content).
  * @param context - The run.
@@ -3009,6 +3029,8 @@ async function assertConfigStillPublished(
   ino: bigint,
   leftoverPath: string,
 ): Promise<InspectedCopy> {
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([context.path])
   assertConfigStill(context, ino, leftoverPath)
   const config = await inspectCopy(context.path, context.seam)
   if (!config || config.ino !== ino || config.sha256 !== pending.stagedSha256)
@@ -3313,7 +3335,7 @@ function retainedRecord(
  * So is the publish record of a run that holds a legacy journal ({@link heldPublishContext}): it is ended only as the version that journal's decision read, what stays of it is never written back at a name found empty (a sync tool moved it away), and a rejection there is worded as that record's ({@link publishRecordConflict}).
  * @param context - The run; its pending path is the record.
  * @param retained - What stays of the record; undefined when nothing does.
- * @param assertStill - A synchronous look at another name that must still hold right before the rename or unlink ({@link retiredNameCheck}); undefined when nothing else must hold.
+ * @param assertStill - A synchronous look at other names that must still hold right before the rename or unlink ({@link retiredNameCheck}), after an awaited look at its names ({@link StillLook}); undefined when nothing else must hold.
  * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (the name stays as it is); what `assertStill` throws, such as the {@link retiredBackRefusal} (the record stays byte for byte and the run goes no further); what the write or delete throws.
  * @example
  * await retirePending(rollbackContext, undefined) // pending.json.rollback is gone while it held the version this run settled
@@ -3322,7 +3344,7 @@ function retainedRecord(
 async function retirePending(
   context: Context,
   retained: Pending | undefined,
-  assertStill?: () => void,
+  assertStill?: StillLook,
 ): Promise<void> {
   if (retained)
     await writeRecord(context, context.pendingPath, retained, assertStill)
@@ -3330,28 +3352,31 @@ async function retirePending(
 }
 
 /**
- * Gives the synchronous look that must still find the old record's private name empty right before a publish record that leads there ends ({@link retirePending}), once one look at that name through the thread pool answered ({@link lookAheadAt}), so a storage that already stalls stalls there, where the step's budget answers; called by {@link settlePending} and {@link finishCutShortSetup} with what {@link settleRetiredReceipt} found, right before they call {@link retirePending}.
+ * Gives the synchronous look that must still find the old record's private name empty right before a publish record that leads there ends ({@link retirePending}), once one look at that name through the thread pool answered ({@link lookAheadAt}), so a storage that already stalls stalls there, where the step's budget answers; the record's rename or unlink looks at that name through the thread pool once more right before its synchronous looks ({@link StillLook}); called by {@link settlePending} and {@link finishCutShortSetup} with what {@link settleRetiredReceipt} found, right before they call {@link retirePending}.
  * Limit: a stall that starts between that look and the synchronous one still holds the extension host's thread.
  * @param context - The run; gives the refusal's publish record path and the command to run again.
  * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
  * @returns
  * - undefined when no private name was found empty
- * - a look that throws the {@link retiredBackRefusal} when a file stands at that name again or the look fails, otherwise
+ * - a look at that name that throws the {@link retiredBackRefusal} when a file stands there again or the look fails, otherwise
  * @example
  * await retiredNameCheck(context, undefined) // => undefined
- * (await retiredNameCheck(context, retiredPath))?.() // throws once a backup put the old record back at retiredPath
+ * (await retiredNameCheck(context, retiredPath))?.assert() // throws once a backup put the old record back at retiredPath
  */
 async function retiredNameCheck(
   context: Context,
   emptiedRetiredPath: string | undefined,
-): Promise<(() => void) | undefined> {
+): Promise<StillLook | undefined> {
   if (emptiedRetiredPath === undefined) return undefined
   // A storage that already stalls stalls in the thread pool first, where the step's budget answers.
   await lookAheadAt([emptiedRetiredPath])
-  return (): void => {
-    // A file back at the private name found empty (or a look that failed): the record that leads there stays.
-    if (!isNameEmptyNow(emptiedRetiredPath))
-      throw retiredBackRefusal(context, emptiedRetiredPath)
+  return {
+    names: [emptiedRetiredPath],
+    assert: (): void => {
+      // A file back at the private name found empty (or a look that failed): the record that leads there stays.
+      if (!isNameEmptyNow(emptiedRetiredPath))
+        throw retiredBackRefusal(context, emptiedRetiredPath)
+    },
   }
 }
 
@@ -3372,6 +3397,7 @@ function isNameEmptyNow(path: string): boolean {
 
 /**
  * Puts back or deletes one leftover; called by {@link recoverLeftovers}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * @param context - The run.
  * @param leftover - The accepted leftover.
  * Right before each link and unlink the name is looked at again ({@link isLeftoverStill}); a file swapped in since the first look is neither linked nor deleted. A displaced original of an unfinished change whose config name holds another file (not the published staged one) is handed to the learner ({@link handOver}) and never deleted.
@@ -3389,12 +3415,15 @@ async function tidyLeftover(
   const phase = leftoverPhaseOf(pending)
   // The probe is a link to the staged file; its inode was checked.
   if (role === 'probe') {
+    // A storage that already stalls holds this step here, not at the synchronous look below.
+    await lookAheadAt([path])
     assertLeftoverStill(context, path, { ino: copy.ino })
     return unlink(path)
   }
   // A copy handed to the learner is never touched, not even when the learner linked it back to the config (checked before the same-inode branch).
   if (role === 'kept' && phase === 'handed')
     throw new Error('The copy was handed to the learner.')
+  await lookAheadAt([context.path])
   const config = lstatSync(context.path, {
     bigint: true,
     throwIfNoEntry: false,
@@ -3420,17 +3449,43 @@ async function tidyLeftover(
     ))
   )
     return
+  return deleteRecordedLeftover(context, leftover, copy, pending, publishedIno)
+}
+
+/**
+ * Deletes a leftover that holds exactly the bytes its record names, once its name, a fresh hash of it and, for a displaced original of a change that published, the published config still show what recovery checked; called by {@link tidyLeftover}.
+ * Same-size overwrites keep inode and size, so the file is hashed again right before; a copy of the previous config goes only on the word of the record as recovery read it ({@link recordStillCheck}). Each synchronous look comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers.
+ * Limits: a swap or a write between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode or content); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run.
+ * @param leftover - The accepted leftover; its hash is the one its record holds.
+ * @param copy - What {@link lookAtLeftover} found.
+ * @param pending - The pending record of the interrupted run; its staged hash names the published bytes.
+ * @param publishedIno - The published config's inode for a displaced original of a change that published ({@link keepOriginalUnlessPublished}); undefined otherwise.
+ * @throws When the leftover's bytes are not the ones its record names, a name no longer shows what was checked, the bytes changed, the config is no longer the published file, the record changed, or the unlink fails; the leftover stays then.
+ * @example
+ * await deleteRecordedLeftover(context, stagedLeftover, copy, pending, undefined) // the staged name is gone
+ */
+async function deleteRecordedLeftover(
+  context: Context,
+  leftover: Leftover,
+  copy: InspectedCopy,
+  pending: Pending,
+  publishedIno: bigint | undefined,
+): Promise<void> {
+  const { role, path, sha256: expectedSha256 } = leftover
   if (copy.sha256 !== expectedSha256)
     throw new Error('The leftover file differs from what Codebook expected.')
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([path])
   assertLeftoverStill(context, path, { ino: copy.ino, size: copy.size })
-  // Same-size overwrites keep inode and size: hash the file again right before deleting it.
   let lastLook = await inspectCopy(path, context.seam)
   // The file went away while it was read: whatever stands at the name now was never hashed, so nothing is deleted.
   if (!lastLook) return
   assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
+  let publishedLook: InspectedCopy | undefined
   if (publishedIno !== undefined) {
-    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it, and that read is the last async step.
-    const publishedLook = await assertConfigStillPublished(
+    // A save by rename or in place may have changed the published config since the first look. Its read is async, so another writer can change the displaced copy meanwhile: the copy is hashed again after it.
+    publishedLook = await assertConfigStillPublished(
       context,
       pending,
       publishedIno,
@@ -3439,32 +3494,43 @@ async function tidyLeftover(
     lastLook = await inspectCopy(path, context.seam)
     if (!lastLook) return
     assertLeftoverHoldsChecked(path, lastLook, copy.ino, expectedSha256)
-    // Only synchronous looks follow: the config name first, the displaced name last. The config must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode.
-    assertConfigUnchangedSince(context, publishedLook, path)
   }
   // A copy of the previous config goes only on the word of the record as recovery read it: a record a sync tool put back meanwhile may hand that copy to the learner.
-  const assertRecordStill =
+  const recordStill =
     role === 'kept' ? await recordStillCheck(context) : undefined
-  assertRecordStill?.()
+  // The awaited looks come in the order of the synchronous ones below.
+  await lookAheadAt([
+    ...(publishedLook ? [context.path] : []),
+    ...(recordStill?.names ?? []),
+    path,
+  ])
+  // Only synchronous looks follow: the config name first (it must also show the size and times it had at its hash: an in-place rewrite during the copy's read keeps the inode), the record, the displaced name last.
+  if (publishedLook) assertConfigUnchangedSince(context, publishedLook, path)
+  recordStill?.assert()
   // The hash came from the open handle; the unlink acts on the name, which must still show that same file with the size and times it had at its last hash.
   assertLeftoverStill(context, path, lastLook)
   await unlink(path)
 }
 
 /**
- * Looks at the record recovery acts on (`pending.json` or a rollback journal, {@link Context.journalVersion}) right before recovery deletes a copy of the previous config on that record's word, and gives the synchronous look that must still find it right before the unlink; called by {@link tidyLeftover}, because a backup or sync tool may put back a record of the same change that hands that copy to the learner (`handed`) after recovery read it as finished.
+ * Looks at the record recovery acts on (`pending.json` or a rollback journal, {@link Context.journalVersion}) right before recovery deletes a copy of the previous config on that record's word, and gives the synchronous look that must still find it right before the unlink; called by {@link deleteRecordedLeftover}, because a backup or sync tool may put back a record of the same change that hands that copy to the learner (`handed`) after recovery read it as finished.
  * @param context - The run; its pending path is the record it tracks.
- * @returns The synchronous look ({@link assertTrackedJournalStill}); a look that checks nothing when the run tracks no version of its record.
+ * @returns The synchronous look at the record's name ({@link assertTrackedJournalStill}), whose name the caller looks at through the thread pool right before ({@link StillLook}); undefined when the run tracks no version of its record.
  * @throws A {@link JournalConflictError}: `changed` when the record's name shows another file or other bytes than the version recovery read or last wrote, `gone` when it shows nothing, `unread` when it cannot be read; the copy stays then, and the run goes no further once it settles that record.
  * @example
- * const assertRecordStill = await recordStillCheck(run) // throws once a sync tool put a handed record back at pending.json
+ * const recordStill = await recordStillCheck(run) // throws once a sync tool put a handed record back at pending.json
  */
-async function recordStillCheck(context: Context): Promise<() => void> {
-  if (context.journalVersion?.current === undefined) return (): void => {}
+async function recordStillCheck(
+  context: Context,
+): Promise<StillLook | undefined> {
+  if (context.journalVersion?.current === undefined) return undefined
   const look = await lookAtTrackedJournal(context)
   // The record went away after recovery read it: nothing shows that the copy may go.
   if (!look) throw journalConflictError(context, 'gone')
-  return (): void => assertTrackedJournalStill(context, look)
+  return {
+    names: [context.pendingPath],
+    assert: (): void => assertTrackedJournalStill(context, look),
+  }
 }
 
 /**
@@ -3482,6 +3548,7 @@ function leftoverPhaseOf(pending: Pending): Pending['phase'] {
 
 /**
  * Drops a staged or displaced name that is only another name of the config (the same inode): a put-back whose unlink failed, a published staged file, or a put-back that only the bytes proved and that stopped after its link, whose shared bytes are checked first; called by {@link tidyLeftover}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The displaced name of a change in progress first has a dropping name beside it dropped when that is a third name of the same file ({@link dropDroppingSecondName}), as a return of a cut-short drop leaves it when it stops right after its link: otherwise that name would stay a second name of the config that no record holds.
  * The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass.
  * @param context - The run.
@@ -3505,6 +3572,8 @@ async function dropSecondName(
   // Only the bytes ever proved this file: the config may hold bytes nobody checked, so the private name goes only once they are verified.
   if (isSharedBytesPutBack(role, phase, expectedIno, copy))
     return assertSharedPutBackBytes(context, path, copy, expectedSha256)
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([context.path, path])
   assertConfigStill(context, copy.ino, path)
   assertLeftoverStill(context, path, { ino: copy.ino })
   return unlink(path)
@@ -3870,6 +3939,7 @@ async function keepOriginalUnlessPublished(
 
 /**
  * Puts the displaced config of an interrupted move-aside back at the config name, even if it is not the bytes that were read; called by {@link tidyLeftover}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted.
  * Limit: a swap between the look before the link and the link is not seen.
  * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}).
@@ -3910,8 +3980,11 @@ async function putBackDisplaced(
       bytesUnverified: true,
     } satisfies Pending)
   try {
+    // A storage that already stalls holds this step here, not at the synchronous looks below.
+    await lookAheadAt([path])
     assertLeftoverStill(context, path, lastLook)
     await link(path, context.path)
+    await lookAheadAt([context.path])
     const linked = lstatSync(context.path, {
       bigint: true,
       throwIfNoEntry: false,
@@ -4042,6 +4115,7 @@ async function rehashBeforeLink(
 
 /**
  * Checks the file that a put-back just linked to the config name: its inode and bytes must still be the checked ones before the private name is retired; called by {@link putBackDisplaced}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * A file that changed in the gap between the last look and the link stays at the private name only: the config name is unlinked again, while it still shows that inode.
  * Limit: a write after this read is not seen here; the caller's last looks compare the size and times this read returns ({@link dropPutBackName}).
  * @param context - The run.
@@ -4065,6 +4139,8 @@ async function assertLinkedBytes(
   )
   if (published?.ino === ino && published.sha256 === expectedSha256)
     return published
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([path, context.path])
   // The undo runs only while both names still are the link pair Codebook made; otherwise nothing is removed and the refusal says so. The displaced name is looked at first and the config name last, synchronously right before the unlink: only the syscall gap after that last look remains.
   if (
     !isLeftoverStill(context, path, { ino }) ||
@@ -4108,6 +4184,7 @@ function isUnrecordedRemoval(context: Context, pending: Pending): boolean {
 
 /**
  * Settles a put-back whose link produced another file than the checked one; called by {@link putBackDisplaced}.
+ * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The config name is looked at again right before it is unlinked ({@link isLeftoverStill}); one that shows another inode now is somebody else's, so both names stay. Limit: a swap between that look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run.
  * @param leftoverPath - The displaced name that was linked.
@@ -4119,6 +4196,8 @@ async function undoForeignLink(
   leftoverPath: string,
   configIno: bigint | undefined,
 ): Promise<never> {
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([leftoverPath, context.path])
   const leftover = lstatSync(leftoverPath, {
     bigint: true,
     throwIfNoEntry: false,
@@ -4158,7 +4237,7 @@ async function settlePending(
   look: ConfigLook,
   retained: Pending | undefined,
   emptiedRetiredPath?: string,
-  assertHeldStill?: () => void,
+  assertHeldStill?: StillLook,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
   // Only synchronous steps follow before the record ends, so the private name's look through the thread pool here still comes right before its last look.
@@ -6047,9 +6126,9 @@ type HeldJournal = {
   /** The journal's evidence, which the refusal of a changed config names. */
   legacy: LegacyJournalEvidence
   /** Deletes the journal, only while its name still shows the version this run settled or last wrote ({@link dropTrackedJournal}) and the given synchronous look at the publish record's name, made right after that name's last look and before the unlink, passes ({@link publishLeftCheck}); rejects with a {@link JournalConflictError} or what that look throws, and leaves the journal as it is otherwise. */
-  retire: (assertPublishStill: () => void) => Promise<void>
-  /** Looks at the journal's name without holding the extension host's thread ({@link lookAtTrackedJournal}) and gives the synchronous look that must still find what it found there right before the publish record this journal rests on is deleted or rewritten ({@link settlePending}), so a journal a backup restores at that name meanwhile keeps the record it may need to take its setup back ({@link assertHeldJournalLeft}); rejects with a {@link JournalConflictError} when the name shows another file or cannot be read. */
-  lookStill: () => Promise<() => void>
+  retire: (assertPublishStill: StillLook) => Promise<void>
+  /** Looks at the journal's name without holding the extension host's thread ({@link lookAtTrackedJournal}) and gives the synchronous look that must still find what it found there right before the publish record this journal rests on is deleted or rewritten ({@link settlePending}), so a journal a backup restores at that name meanwhile keeps the record it may need to take its setup back ({@link assertHeldJournalLeft}); the record's delete or rewrite looks at the journal's name through the thread pool once more right before ({@link StillLook}); rejects with a {@link JournalConflictError} when the name shows another file or cannot be read. */
+  lookStill: () => Promise<StillLook>
 }
 
 /** A {@link JournalConflictError} at a held legacy journal's own name, met by the look right before the publish record that journal rests on ends ({@link assertHeldJournalLeft}); {@link publishRecordConflict} leaves it as the journal's own refusal instead of wording it as that record's. */
@@ -6087,9 +6166,12 @@ async function holdLegacyJournal(
     // Nothing writes through this context between the hold and the retirement: the version it tracks is the one this run settled or last wrote.
     retire: (assertPublishStill): Promise<void> =>
       dropTrackedJournal(rollbackContext, assertPublishStill),
-    lookStill: async (): Promise<() => void> => {
+    lookStill: async (): Promise<StillLook> => {
       const look = await lookAtTrackedJournal(rollbackContext)
-      return (): void => assertHeldJournalLeft(rollbackContext, look)
+      return {
+        names: [rollbackContext.pendingPath],
+        assert: (): void => assertHeldJournalLeft(rollbackContext, look),
+      }
     },
   }
 }
@@ -6125,19 +6207,22 @@ function assertHeldJournalLeft(
  * @returns
  * - undefined when neither look is given
  * - the one look given
- * - one look that runs both in that order otherwise
+ * - one look that runs both in that order otherwise, with the names of both in that order, which the rename or unlink looks at through the thread pool first ({@link StillLook})
  * @example
  * bothLooks(undefined, undefined) // => undefined
- * bothLooks(await retiredNameCheck(context, retiredPath), assertHeldStill)?.() // throws when either name changed
+ * bothLooks(await retiredNameCheck(context, retiredPath), assertHeldStill)?.assert() // throws when either name changed
  */
 function bothLooks(
-  first: (() => void) | undefined,
-  second: (() => void) | undefined,
-): (() => void) | undefined {
+  first: StillLook | undefined,
+  second: StillLook | undefined,
+): StillLook | undefined {
   if (!first || !second) return first ?? second
-  return (): void => {
-    first()
-    second()
+  return {
+    names: [...first.names, ...second.names],
+    assert: (): void => {
+      first.assert()
+      second.assert()
+    },
   }
 }
 
@@ -6227,7 +6312,9 @@ function isOtherFileCause(cause: unknown): boolean {
  * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}).
  * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode. Moving the journal to another name first and deleting it there only once it proves to be this run's would leave a journal a backup put there in that moment only at a name no build reads, should the process end before it goes back, so that journal's rollback would be lost all the same.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param assertStill - A synchronous look at another name that must still hold, called right after the last look and before the unlink ({@link removeRecord}); throwing keeps the journal.
+ * The journal's own synchronous look comes right after its awaited one ({@link lookAtTrackedJournal}), and `assertStill`'s right after an awaited look at its names, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds the extension host's thread.
+ * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
+ * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and before the unlink ({@link removeRecord}); throwing keeps the journal.
  * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then), or (`gone`) when a publish record's name is found empty while this run knows a version of it; what `assertStill` throws; what the unlink throws other than for a name that is gone.
  * @example
  * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
@@ -6235,7 +6322,7 @@ function isOtherFileCause(cause: unknown): boolean {
  */
 async function dropTrackedJournal(
   context: Context,
-  assertStill?: () => void,
+  assertStill?: StillLook,
 ): Promise<void> {
   const look = await lookAtTrackedJournal(context)
   // Nothing stands at the name: nothing is deleted, and a publish record that disappeared ends the run.
@@ -6243,8 +6330,11 @@ async function dropTrackedJournal(
     if (isEmptiedByAnother(context)) throw journalConflictError(context, 'gone')
     return
   }
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, then `assertStill`'s names.
+  if (assertStill)
+    await lookAheadAt([context.pendingPath, ...assertStill.names])
   assertTrackedJournalStill(context, look)
-  assertStill?.()
+  assertStill?.assert()
   const isUnlinked = await unlink(context.pendingPath).then(
     () => true,
     (error: unknown) => {
@@ -6416,10 +6506,11 @@ async function retireHeldJournal(
 /**
  * Stops a run unless the publish record's name shows what this run left there (the version it read or last wrote, or nothing once this run deleted that record itself), and gives the synchronous look that must still find the same right before the unlink of the rollback journal that rests on that record; called by {@link retireHeldJournal} before a held legacy journal goes, so that journal goes only after the record it was decided on was settled as read.
  * This look reads the bytes without holding the extension host's thread; the one it gives compares the inode, size and times of what it read, or an empty name, after the journal's own last look ({@link dropTrackedJournal}), so a record a backup puts at that name while the journal is read again is seen.
- * Limit: a record put at that name between that last look and the unlink, or after it, is decided without the journal, like one restored after the run.
+ * The journal's delete looks at the publish record's name through the thread pool once more right before that synchronous look ({@link StillLook}, {@link dropTrackedJournal}), so a storage that already stalls holds that step there, not the extension host's thread.
+ * Limit: a record put at that name between that last look and the unlink, or after it, is decided without the journal, like one restored after the run; a stall that starts between that awaited look and the synchronous one holds the extension host's thread.
  * @param context - The run; its pending path is the publish record, which it tracks ({@link Context.journalVersion}), and its seam is called around each synchronous look ({@link isLeftoverStill}).
  * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
- * @returns The synchronous look ({@link assertPublishStillLeft}).
+ * @returns The synchronous look at the publish record's name ({@link assertPublishStillLeft}).
  * @throws The `record-gone` {@link unmatchedJournalRefusal} when the name is empty while this run left a record there; the `record-reread` one when it shows another file or cannot be read again. Nothing is retired then.
  * @example
  * const assertPublishStill = await publishLeftCheck(run, held.legacy) // throws once a sync tool moved pending.json away while the run settled it
@@ -6427,7 +6518,7 @@ async function retireHeldJournal(
 async function publishLeftCheck(
   context: Context,
   legacy: LegacyJournalEvidence | undefined,
-): Promise<() => void> {
+): Promise<StillLook> {
   let left: InspectedCopy | undefined
   try {
     left = await lookAtTrackedJournal(context)
@@ -6439,7 +6530,10 @@ async function publishLeftCheck(
   // An empty name passes only once this run deleted the record itself.
   if (!left && context.journalVersion?.current !== undefined)
     throw unmatchedJournalRefusal(context, 'record-gone', legacy)
-  return (): void => assertPublishStillLeft(context, legacy, left)
+  return {
+    names: [context.pendingPath],
+    assert: (): void => assertPublishStillLeft(context, legacy, left),
+  }
 }
 
 /**
@@ -6954,7 +7048,7 @@ async function markLeftCheck(
   context: Context,
   markVersion: RecordVersion | undefined,
   legacy: LegacyJournalEvidence | undefined,
-): Promise<(() => void) | undefined> {
+): Promise<StillLook | undefined> {
   if (markVersion === undefined) return undefined
   return publishLeftCheck(
     {
