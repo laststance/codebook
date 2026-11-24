@@ -2350,6 +2350,51 @@ test('A removal whose own record a backup replaces right after it took the entry
   assert.equal(readFileSync(copyPath, 'utf8'), configBeforeRemoval)
 })
 
+test('A removal whose own record a backup moves away right after it took the entry out, while the backup puts the entry back, keeps its receipt and says that record moved away', async (context) => {
+  // Value: protects=a removal never writes its own record again at a name another program emptied after the removal wrote it, so a backup that moves that record away and puts an older config with the entry back leaves the removal refusing with the moved-record cause instead of reporting removed and deleting its receipt, and the entry the backup put back stays Codebook's, which the next removal takes out (Cycle 0149 ship review, FC3's note on task 53); fails_when=the removal resolves or says anything but the moved-record cause with the copy's sentence and the read-first ending, asks to make room, writes a record at pending.json, receipt.json is gone or changes, the moved record or the copy changes, or the next removal answers anything but removed; no_claim=a real backup tool (seam.afterPublish moves pending.json into the home folder and renames the config the removal read back over the reduced one, once, right after the reduced config went in), what becomes of the copy after the next removal
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const configWithEntry = readFileSync(configPath, 'utf8')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedPath = join(home, 'record-in-backup.json')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let movedText = ''
+  let copyPath = ''
+
+  // Act
+  const removalOutcome = await removeManagedDevinMcpEntry(storage, home, {
+    afterPublish: (displacedPath) => {
+      copyPath = displacedPath ?? ''
+      movedText = readFileSync(pendingPath, 'utf8')
+      // A backup moves the removal's own record away and puts the config with the entry back, right after the reduced config went in.
+      renameSync(pendingPath, movedPath)
+      swapFile(configPath, configWithEntry)
+    },
+  }).then(
+    (result) => JSON.stringify(result),
+    (error: Error) => error.message,
+  )
+  const isPendingAfterRemoval = existsSync(pendingPath)
+  const receiptAfterRemoval = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const next = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(
+    removalOutcome,
+    `Codebook took its entry out of Devin Desktop's MCP config at ${configPath} but could not write its own record of that step, because another program moved that record at ${pendingPath} away (a backup or sync tool may be moving it), so it kept its receipt and a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it; then run Codebook: Remove Devin Desktop Setup again, and that run reads ${pendingPath} first.`,
+  )
+  assert.equal(isPendingAfterRemoval, false)
+  assert.equal(receiptAfterRemoval, receiptText)
+  assert.equal(readFileSync(movedPath, 'utf8'), movedText)
+  assert.equal(readFileSync(copyPath, 'utf8'), configWithEntry)
+  assert.equal(next.status, 'removed')
+})
+
 test('A removal whose record a backup restored as handed over does not promise that a later run deletes the moved-aside copy', async (context) => {
   // Value: protects=a removal whose completed record failed says that a later run deletes the moved-aside copy only while the record on disk is one recovery deletes that copy from, so a record that names the same copy but hands it over (recovery never deletes a handed copy) never backs that promise; fails_when=the refusal says that Codebook still tracks the copy, leaves it to the learner at will, or omits its path, or the copy is gone or changed; no_claim=a real backup tool and a real ENOSPC (seam.beforeRecordWrite puts the removal's own record back at pending.json as handed, with the same private name, and then fails the completed record's write), and what a later run does with that handed record
   // Arrange

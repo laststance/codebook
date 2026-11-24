@@ -9867,19 +9867,22 @@ async function inspect(context: Context): Promise<Inspection> {
 }
 
 /**
- * Makes the rest of a locked run track its own `pending.json` from the version {@link inspect} left at that name ({@link Inspection.pendingVersion}), so the setup's publish, the removal and the removal retry write that record only while its name shows the version this run read or last wrote, claim a name this run left or found empty instead of writing over what another program put there ({@link claimJournal}), and delete it only as the version they last wrote ({@link dropTrackedJournal}); a record a backup or sync tool puts at that name meanwhile stays for the next run. Called by {@link writeManagedDevinMcpEntry}, {@link refreshManagedDevinMcpEntry} and {@link removeManagedDevinMcpEntry} right after {@link inspect}.
- * Unlike the record a decision read ({@link trackedPublishContext}), this run's own record is written again at a name another program emptied, as a rollback journal is: it is the run's own record of what it still tracks.
+ * Makes the rest of a locked run track its own `pending.json` from the version {@link inspect} left at that name ({@link Inspection.pendingVersion}), so the setup's publish, the removal and the removal retry write that record only while its name shows the version this run read or last wrote, claim a name only while no version is known there ({@link claimJournal}) instead of writing over what another program put there, and delete it only as the version they last wrote ({@link dropTrackedJournal}); a record a backup or sync tool puts at that name meanwhile stays for the next run. Called by {@link writeManagedDevinMcpEntry}, {@link refreshManagedDevinMcpEntry} and {@link removeManagedDevinMcpEntry} right after {@link inspect}.
+ * As for the record a decision read ({@link trackedPublishContext}), a name found empty while this run knows a version there (the one inspect left, or the one it last wrote) is another program's move and is refused (`refusesEmptyName`): a backup that moves the record away may put an older config back at the same moment, so writing that record again there would let a removal report its entry removed and delete its receipt while the config holds that entry again. The completed record's write then answers a `gone` conflict ({@link markCompleted}), and the removal keeps its receipt and names that record ({@link unrecordedRemovalRefusal}).
  * @param context - The locked run.
  * @param inspection - What {@link inspect} returned; only its {@link Inspection.pendingVersion} is used.
- * @returns The run tracking its own record.
+ * @returns The run tracking its own record and refusing an emptied name.
  * @example
- * ownRecordContext(context, await inspect(context)).journalVersion // => { current: undefined } once inspect retired the record it read
+ * ownRecordContext(context, await inspect(context)).journalVersion // => { current: undefined, refusesEmptyName: true } once inspect retired the record it read
  */
 function ownRecordContext(
   context: Context,
   { pendingVersion }: Pick<Inspection, 'pendingVersion'>,
 ): Context {
-  return { ...context, journalVersion: { current: pendingVersion } }
+  return {
+    ...context,
+    journalVersion: { current: pendingVersion, refusesEmptyName: true },
+  }
 }
 
 /**
