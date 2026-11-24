@@ -7205,7 +7205,13 @@ test('A setup record without its take-back mark that a backup restores while a r
   // Act
   const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
     afterLeftoverCheck: (path) => {
-      if (path !== journalPath || journalAtRestore !== '') return
+      // Recovery looks at the rollback record right before it puts the displaced config back at the empty config name; its last look before its unlink comes once that config is back.
+      if (
+        path !== journalPath ||
+        journalAtRestore !== '' ||
+        !existsSync(configPath)
+      )
+        return
       // A backup restores the setup record as it stood before the mark.
       journalAtRestore = readFileSync(journalPath, 'utf8')
       writeFileSync(backupPath, pendingText)
@@ -8412,6 +8418,112 @@ test("A copy of the previous config that a finished change left is not deleted w
   )
 })
 
+test("A copy of the previous config that a finished change left as a second name of the config is not deleted when a backup puts back that change's record handing the copy to you right before recovery drops that name, and the refresh says the record changed", async (context) => {
+  // Value: protects=recovery drops a private name that is a second name of the config on a finished change's word only while the record it read still stands at its name right before the unlink, so a record of that change a backup or sync tool put back as handing the copy to the learner keeps that name (Cycle 0148 ship review); fails_when=the copy's name is gone, holds other bytes or is no longer a second name of the config, the restored record is gone or changes, the config changes, or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (seam.beforeLeftoverCheck renames the handed record over pending.json once, at the last look at the config name before the drop), a swap after the last look before the unlink, what the next run says about the handed copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"old":{"command":"o"}}}\n'
+  await writeConfig(configPath, configText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  // The copy is a second name of the config, as a learner who linked it back to the config leaves it.
+  await link(configPath, keptPath)
+  const completedRecord = {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(configText),
+  }
+  await writeRecordFile(storage, 'pending.json', completedRecord)
+  // The same change's record, as it stood once that copy was handed to the learner.
+  const handedPendingText = `${JSON.stringify({ ...completedRecord, phase: 'handed' })}\n`
+  const backupPath = join(home, 'pending-from-backup.json')
+  let hasRestoredPending = false
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeLeftoverCheck: (path) => {
+      // The first look at the config name is the drop's own, right before the looks at the record and the copy's name.
+      if (path !== configPath || hasRestoredPending) return
+      hasRestoredPending = true
+      writeFileSync(backupPath, handedPendingText)
+      renameSync(backupPath, pendingPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a private file at ${keptPath} that Codebook left after its last change and could not delete (it holds a copy of your Devin MCP config, including the settings of your other servers) in Devin Desktop's MCP config at ${configPath} and left that file untouched; delete that file when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(hasRestoredPending, true)
+  // A file the refresh deleted reads as 'absent', so the assertions name it.
+  assert.equal(
+    existsSync(keptPath) ? readFileSync(keptPath, 'utf8') : 'absent',
+    configText,
+  )
+  assert.equal(statSync(keptPath).ino, statSync(configPath).ino)
+  assert.equal(
+    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
+    handedPendingText,
+  )
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
+test("A copy of the previous config that a change in progress moved aside is not put back at the empty config name when a backup puts back that change's record handing the copy to you while recovery reads it, and the refresh says the record changed", async (context) => {
+  // Value: protects=recovery puts a displaced copy back by its inode, and then drops its private name, only while the record it read still stands at its name right before the link, so a record of that change a backup or sync tool put back as handing the copy to the learner keeps the copy at its private name (Cycle 0148 ship review); fails_when=the copy's name is gone or holds other bytes, a file stands at the config name, the restored record is gone or changes, or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (seam.afterStat renames the handed record over pending.json once, at recovery's read of the copy), a put-back by bytes (its record write before the link already checks the record), a record put back after the link, what the next run says about the handed copy
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await mkdir(dirname(configPath), { recursive: true })
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const keptText = '{"mcpServers":{"old":{"command":"o"}}}\n'
+  await writeFile(keptPath, keptText)
+  const inProgressRecord = {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(keptText),
+  }
+  await writeRecordFile(storage, 'pending.json', inProgressRecord)
+  // The same change's record, as it stood once that copy was handed to the learner.
+  const handedPendingText = `${JSON.stringify({ ...inProgressRecord, phase: 'handed' })}\n`
+  const backupPath = join(home, 'pending-from-backup.json')
+  let copyReads = 0
+
+  // Act
+  const refresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      copyReads += 1
+      // The first read is recovery's look at the copy, before the put-back.
+      if (copyReads !== 1) return
+      writeFileSync(backupPath, handedPendingText)
+      renameSync(backupPath, pendingPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(refresh, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+  })
+  assert.equal(copyReads, 1)
+  // A file the refresh deleted reads as 'absent', so the assertions name it.
+  assert.equal(
+    existsSync(keptPath) ? readFileSync(keptPath, 'utf8') : 'absent',
+    keptText,
+  )
+  assert.equal(existsSync(configPath), false)
+  assert.equal(
+    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
+    handedPendingText,
+  )
+})
+
 test('A setup record a refresh beside a held legacy rollback journal cannot read again as it deletes it keeps that journal, and the refresh says that record could not be read, not that it changed', async (context) => {
   // Value: protects=a held run that cannot read the setup record again at its delete says so and keeps both records, instead of claiming another program changed that record (Cycle 0148 ship review); fails_when=the refresh resolves or says anything but the could-not-be-read sentence, the journal or the setup record is deleted or changes, or a receipt is written; no_claim=a real unreadable file system (seam.afterStat takes the read permission off pending.json at the run's own read of the config, after the read that decides the journal), what the next run does once the file is readable
   if (process.getuid?.() === 0 || process.platform === 'win32') {
@@ -8482,7 +8594,9 @@ test("A setup record a sync tool moves away at a held run's last look at it befo
       writeFileSync(configPath, '{"mcpServers":{}}\n')
     },
     beforeLeftoverCheck: (path) => {
-      if (path === journalPath) hasSeenJournalLastLook = true
+      // Recovery looks at the journal right before it puts the displaced config back at the empty config name; the journal's own last look comes once that config is back.
+      if (path === journalPath && existsSync(configPath))
+        hasSeenJournalLastLook = true
       if (path !== pendingPath || !hasSeenJournalLastLook || hasMovedPending)
         return
       // A sync tool moves the rewritten setup record away right as the run looks at it last, before the journal's unlink.
@@ -10549,7 +10663,10 @@ test('A put-back never publishes a file that a sync tool swapped in at the displ
 
   // Act
   const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
-    beforeLeftoverCheck: (path) => swapFile(path, '{"swapped":true}\n'),
+    beforeLeftoverCheck: (path) => {
+      // The look at the record before the put-back comes first; the swap is at the displaced name.
+      if (path === keptPath) swapFile(path, '{"swapped":true}\n')
+    },
   })
 
   // Assert
@@ -10625,7 +10742,8 @@ test('A put-back whose link produced the swapped-in file unlinks the config name
   // Act
   const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
     afterLeftoverCheck: (path) => {
-      if (isSwapped) return
+      // The look at the record before the put-back comes first; the swap is at the displaced name.
+      if (isSwapped || path !== keptPath) return
       isSwapped = true
       swapFile(path, '{"swapped":true}\n')
     },
@@ -10671,7 +10789,8 @@ test('A put-back that cannot tell which name its link made keeps both names and 
   // Act
   const attempt = changingLink.writeManagedDevinMcpEntry(storage, ENTRY, home, {
     afterLeftoverCheck: (path) => {
-      if (isSwapped) return
+      // The look at the record before the put-back comes first; the swap is at the displaced name.
+      if (isSwapped || path !== keptPath) return
       isSwapped = true
       swapFile(path, '{"swapped":true}\n')
     },
@@ -10776,7 +10895,8 @@ test('A put-back whose config name was replaced before the foreign link is undon
   // Act
   const attempt = writeManagedDevinMcpEntry(storage, ENTRY, home, {
     afterLeftoverCheck: (path) => {
-      if (isSwapped) return
+      // The look at the record before the put-back comes first; the swap is at the displaced name.
+      if (isSwapped || path !== keptPath) return
       isSwapped = true
       swapFile(path, '{"swapped":true}\n')
     },
