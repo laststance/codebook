@@ -1529,18 +1529,26 @@ async function linkWithoutStaleReceipt(
 }
 
 /**
- * Gives the publish record a first setup writes once its old record could not go back: marked {@link Pending.notLinked}, and, while the file kept at the private name is one Codebook did not verify as its record of this config ({@link UnrestoredReceiptError.isForeignKept}), in the shape older builds refuse ({@link foreignKeptRecordOf}); called by {@link linkWithoutStaleReceipt} and {@link linkInStaged}.
+ * Gives the publish record a first setup writes once its old record could not go back: marked {@link Pending.notLinked}, naming the bytes of the file that waits at the private name when the setup's undo of a move that took another receipt proved that file ({@link UndoneMoveError}), and, while the file kept at the private name is one Codebook did not verify as its record of this config ({@link UnrestoredReceiptError.isForeignKept}), in the shape older builds refuse ({@link foreignKeptRecordOf}); called by {@link linkWithoutStaleReceipt} and {@link linkInStaged}.
  * @param journal - The publish record as the setup wrote it.
  * @param error - Why the old record could not go back.
  * @returns The record to write.
  * @example
- * notLinkedRecordOf(journal, linkFailed) // => { ...journal, notLinked: true }
+ * notLinkedRecordOf(journal, linkFailed)  // => { ...journal, notLinked: true }
+ * notLinkedRecordOf(journal, undoFailed)  // => { ...journal, notLinked: true, retiresReceipt: { sha256: undoFailed.movedSha256 } }
  */
 function notLinkedRecordOf(
   journal: Pending,
   error: UnrestoredReceiptError,
 ): Pending {
-  const marked: Pending = { ...journal, notLinked: true }
+  const marked: Pending = {
+    ...journal,
+    notLinked: true,
+    // The undo's own file waits there, not the receipt the run read: the next run puts that file back.
+    ...(error instanceof UndoneMoveError && {
+      retiresReceipt: { sha256: error.movedSha256 },
+    }),
+  }
   return keptRecordOf(marked, error) ?? marked
 }
 
@@ -1788,6 +1796,23 @@ class UnrestoredReceiptError extends Error {
   /** Whether the file this error keeps at the private name is one Codebook did not verify as its record of this config: no record of this config, or a record of this config other than the one the publish record names ({@link UnverifiedForeignStanding}), beside a record of this config at `receipt.json` (`foreign`, {@link compareStandingReceipt}) or beside anything else there ({@link settleForeignMoved}), or a file that replaced the record Codebook read there (`moved-changed` and `linked-unverified`), so an older build's publish record that leads there is written in the shape older builds refuse ({@link foreignKeptRecordOf}). */
   get isForeignKept(): boolean {
     return FOREIGN_KEPT_STANDINGS.has(this.standing)
+  }
+}
+
+/** The {@link UnrestoredReceiptError} of a first setup's undo of a move that took another receipt than the one its run read ({@link retireStaleReceipt}), once the file the move took is proven (its inode and the bytes read right after the move, {@link undoIdentityOf}): it names those bytes, so the publish record marked {@link Pending.notLinked} names the file that waits at the private name and the next run puts that file back as the sentence promises, never comparing it with the receipt the run had read ({@link notLinkedRecordOf}). */
+class UndoneMoveError extends UnrestoredReceiptError {
+  constructor(
+    context: Context,
+    error: UnrestoredReceiptError,
+    readonly movedSha256: string,
+  ) {
+    super(
+      context,
+      error.retiredPath,
+      error.failure,
+      error.cause,
+      error.standing,
+    )
   }
 }
 
@@ -5798,12 +5823,18 @@ async function retireStaleReceipt(
   )
     return { retiredPath, look: moved.look }
   // Another receipt was saved at that name since the read: it goes back only as the file the move took there, and nothing is published. A put-back that fails carries the refusal that claims no put-back, and its own sentence says where the receipt is.
+  const undoIdentity = undoIdentityOf(moved, movedIno)
   await putBackRetiredReceipt(
     context,
     retiredPath,
     changedRecordRefusal(context, false),
-    { identity: undoIdentityOf(moved, movedIno) },
-  )
+    { identity: undoIdentity },
+  ).catch((error: unknown) => {
+    // The proven file the move took waits at the private name: the record that leads the next run there names its bytes, not the receipt this run read.
+    throw error instanceof UnrestoredReceiptError && undoIdentity !== undefined
+      ? new UndoneMoveError(context, error, undoIdentity.sha256)
+      : error
+  })
   throw changedRecordRefusal(context, true)
 }
 
