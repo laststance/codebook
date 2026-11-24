@@ -15,6 +15,7 @@ import {
   symlinkSync,
   utimesSync,
   writeFileSync,
+  type BigIntStats,
   type StatSyncOptions,
 } from 'node:fs'
 import {
@@ -14901,55 +14902,129 @@ test('A refresh that decided to delete the old record on the entry a stopped fir
   assert.equal(readFileSync(retiredPath, 'utf8'), ownerRecordText)
 })
 
-test('A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps that record when the config is written again in place at the same size within the same millisecond right before the delete', async (context) => {
-  // Value: protects=the last look at the config before the old record is deleted compares the nanosecond modification and change times too, so a write into the same file at the same size whose modification time stays within the millisecond the drop was decided on stops the delete and keeps both records; fails_when=the refresh deletes the old record or answers without the changed-config refusal, a record is gone after it, or the config holds anything but the text written again; no_claim=a real backup tool (seam.afterLeftoverCheck writes the config the old record covers into the same file once at the same size, then utimes sets its modification time back into the millisecond it had), a write after that last look (the syscall gap), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
-  // Arrange
-  const { home, storage, configPath, retiredName, retiredPath } =
-    await arrangeResavedAfterStoppedFirstSetup(context, OTHER_ENTRY)
-  // The config the old record covers (ENTRY), padded with spaces to the 187 bytes of the config that stands.
-  const restoredText = `${'{"mcpServers":{"codebook":{"command":"/usr/bin/node","args":["/ext/dist/devinMcpBridge.js","/storage/agent"],"env":{}}}}'.padEnd(186, ' ')}\n`
-  const looks: Array<{ ino: bigint; size: bigint; mtimeMs: bigint }> = []
+/**
+ * Moves a nanosecond time by one nanosecond inside its millisecond, so a look compared by milliseconds sees no change and a look compared by nanoseconds sees one.
+ * @param nanoseconds - A `*Ns` field of a bigint status.
+ * @returns The time one nanosecond later, or earlier when that would reach the next millisecond.
+ * @example
+ * withinSameMillisecond(1_700_000_000_123_456_789n) // => 1_700_000_000_123_456_788n
+ */
+function withinSameMillisecond(nanoseconds: bigint): bigint {
+  return nanoseconds % 1_000_000n === 0n ? nanoseconds + 1n : nanoseconds - 1n
+}
 
-  // Act
-  const refreshError = await refreshManagedDevinMcpEntry(
-    storage,
-    OTHER_ENTRY,
-    home,
+test("A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps that record when the config's last look before the delete differs from the decided config only in the nanoseconds of its modification time", async (context) => {
+  // Value: protects=the last look at the config before the old record is deleted compares the nanosecond modification time, so a config whose inode, size and millisecond modification and change times all equal those the drop was decided on, but whose modification time moved within that millisecond, stops the delete and keeps both records (Cycle 0148 final-range review); fails_when=the refresh deletes the old record or answers without the changed-config refusal, a record is gone after it, the stand-in's look differs in anything but that nanosecond field, or the config changes; no_claim=a real write within the same millisecond (the config module is loaded with an lstatSync stand-in that, at the look at the config right after the look at the private name passed, answers the real status with only mtimeNs moved inside its millisecond), a write after that last look (the syscall gap), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
+  // Arrange
+  const { home, storage, configPath, retiredName, retiredPath, configText } =
+    await arrangeResavedAfterStoppedFirstSetup(context, OTHER_ENTRY)
+  let isArmed = false
+  const looks: BigIntStats[] = []
+  const nanosecondLook = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
     {
-      afterLeftoverCheck: (path) => {
-        if (path !== retiredPath || looks.length > 0) return
-        // A backup tool writes the old config into the same file, and its modification time goes back into the millisecond it had.
-        const before = statSync(configPath, { bigint: true })
-        writeFileSync(configPath, restoredText)
-        utimesSync(
-          configPath,
-          Number(before.atimeMs) / 1000,
-          Number(before.mtimeMs) / 1000 + 0.0005,
-        )
-        const after = statSync(configPath, { bigint: true })
-        looks.push(before, after)
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          const status = lstatSync(path, options)
+          if (!isArmed || path !== configPath || looks.length > 0) return status
+          // The config's last look before the delete: only its nanosecond modification time moves, inside its millisecond.
+          const real = lstatSync(path, { bigint: true })
+          const moved = Object.assign(
+            Object.create(Object.getPrototypeOf(real)),
+            real,
+            { mtimeNs: withinSameMillisecond(real.mtimeNs) },
+          )
+          looks.push(real, moved)
+          return moved
+        },
       },
     },
-  ).then(
-    () => undefined,
-    (error: unknown) => error,
+    { Error, TextDecoder },
   )
 
+  // Act
+  const refreshError = await nanosecondLook
+    .refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterLeftoverCheck: (path) => {
+        if (path === retiredPath) isArmed = true
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
   // Assert
-  // The write kept the inode, the size and the millisecond of the modification time, which alone show no change.
-  const [before, after] = looks.map(({ ino, size, mtimeMs }) => [
-    ino,
-    size,
-    mtimeMs,
-  ])
-  assert.notEqual(before, undefined)
-  assert.deepEqual(after, before)
+  const [real, moved] = looks
+  assert.notEqual(moved, undefined)
+  assert.deepEqual(
+    [moved?.ino, moved?.size, moved?.mtimeMs, moved?.ctimeMs, moved?.ctimeNs],
+    [real?.ino, real?.size, real?.mtimeMs, real?.ctimeMs, real?.ctimeNs],
+  )
+  assert.notEqual(moved?.mtimeNs, real?.mtimeNs)
   assert.equal(
     refreshError instanceof Error ? refreshError.message : refreshError,
     `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
-  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
+test("A refresh that decided to delete the old record on the entry a stopped first setup wrote keeps that record when the config's last look before the delete differs from the decided config only in the nanoseconds of its change time", async (context) => {
+  // Value: protects=the last look at the config before the old record is deleted compares the nanosecond change time, so a config whose inode, size and millisecond modification and change times all equal those the drop was decided on, but whose change time moved within that millisecond (as an in-place write whose modification time was set back leaves it), stops the delete and keeps both records (Cycle 0148 final-range review); fails_when=the refresh deletes the old record or answers without the changed-config refusal, a record is gone after it, the stand-in's look differs in anything but that nanosecond field, or the config changes; no_claim=a real write within the same millisecond (the config module is loaded with an lstatSync stand-in that, at the look at the config right after the look at the private name passed, answers the real status with only ctimeNs moved inside its millisecond), a write after that last look (the syscall gap), a real process end (seam.afterPublish throws), why the private name's unlink fails in that setup (unlink stub EBUSY), a real sync tool (swapFile saves the stopped setup's config again at another inode)
+  // Arrange
+  const { home, storage, configPath, retiredName, retiredPath, configText } =
+    await arrangeResavedAfterStoppedFirstSetup(context, OTHER_ENTRY)
+  let isArmed = false
+  const looks: BigIntStats[] = []
+  const nanosecondLook = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs': {
+        lstatSync: (path: string, options?: StatSyncOptions) => {
+          const status = lstatSync(path, options)
+          if (!isArmed || path !== configPath || looks.length > 0) return status
+          // The config's last look before the delete: only its nanosecond change time moves, inside its millisecond.
+          const real = lstatSync(path, { bigint: true })
+          const moved = Object.assign(
+            Object.create(Object.getPrototypeOf(real)),
+            real,
+            { ctimeNs: withinSameMillisecond(real.ctimeNs) },
+          )
+          looks.push(real, moved)
+          return moved
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshError = await nanosecondLook
+    .refreshManagedDevinMcpEntry(storage, OTHER_ENTRY, home, {
+      afterLeftoverCheck: (path) => {
+        if (path === retiredPath) isArmed = true
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  const [real, moved] = looks
+  assert.notEqual(moved, undefined)
+  assert.deepEqual(
+    [moved?.ino, moved?.size, moved?.mtimeMs, moved?.mtimeNs, moved?.ctimeMs],
+    [real?.ino, real?.size, real?.mtimeMs, real?.mtimeNs, real?.ctimeMs],
+  )
+  assert.notEqual(moved?.ctimeNs, real?.ctimeNs)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
 test("A first setup with another bridge path that wrote its own record but could not delete its publish record or the old record's private file leaves its record standing, and the old record never comes back", async (context) => {
