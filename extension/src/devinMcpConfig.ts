@@ -91,7 +91,7 @@ const receiptSchema = z.object({
 const retiredReceiptSchema = z.object({
   /** SHA-256 of the old receipt's bytes as the setup read them through one handle right before its first record ({@link readRetiringReceipt}): only a file with these bytes at the private name is put back or deleted ({@link isMovedFile}). Absent in a record this build rewrote from an older build's, which names no bytes ({@link foreignKeptRecordOf}). */
   sha256: z.string().optional(),
-  /** Set once a put-back's link left a file at `receipt.json` that Codebook did not verify as that record ({@link refuseUnverifiedLink}): until `receipt.json` holds those very bytes again or is empty, no run takes that file for its record ({@link assertReceiptVerified}). */
+  /** Set right before a put-back's link into an empty `receipt.json`, naming the bytes that put-back puts there ({@link noteBeforePutBack}), so a run that stops right after it leaves the note; gone again when nothing reached that name ({@link withdrawPutBackNote}), and kept once the look after the link found a file there that Codebook did not verify as that record ({@link refuseUnverifiedLink}): until `receipt.json` holds those very bytes again or is empty, no run takes that file for its record ({@link assertReceiptVerified}), and the bridge's receipt reader treats it as removed. */
   receiptUnverified: z.literal(true).optional(),
 })
 const pendingSchema = z.object({
@@ -1539,8 +1539,9 @@ async function linkWithoutStaleReceipt(
       () => true,
       () => false,
     )
-    // Without that mark the next run cannot tell, so the sentence promises no put-back.
-    throw isMarked ? error : error.withoutMark(context)
+    if (isMarked) throw error
+    // Without that mark the next run cannot tell, so the sentence promises no put-back; a note that receipt.json is unverified counts only while the record on disk carries it (the put-back may have written it before its link).
+    throw await withNoteState(context, error.withoutMark(context))
   }
 }
 
@@ -1573,8 +1574,8 @@ function notLinkedRecordOf(
  * @param record - The publish record.
  * @param error - Why the put-back kept what it kept.
  * @returns
- * - This build's record ({@link retiredReceiptSchema}) with `receiptUnverified` once the put-back's link left a file Codebook did not verify at `receipt.json` (`linked-unverified`), so no later run takes that file for its record ({@link assertReceiptVerified})
- * - An older build's record (`true`, or 0.2.144.0's `foreign`) that found that file at `receipt.json` too (`linked-unverified`, one file at both names, {@link compareStandingReceipt}) in this build's form without bytes and with that note, which 0.2.142.0, 0.2.143.0 and 0.2.144.0 refuse and which passes no file at `receipt.json`
+ * - This build's record ({@link retiredReceiptSchema}) with `receiptUnverified` once the put-back's link left a file Codebook did not verify at `receipt.json` ({@link UNVERIFIED_RECEIPT_STANDINGS}), so no later run takes that file for its record ({@link assertReceiptVerified})
+ * - An older build's record (`true`, or 0.2.144.0's `foreign`) that found that file at `receipt.json` too (one of {@link UNVERIFIED_RECEIPT_STANDINGS}, for example one file at both names, {@link compareStandingReceipt}) in this build's form without bytes and with that note, which 0.2.142.0, 0.2.143.0 and 0.2.144.0 refuse and which passes no file at `receipt.json`
  * - An older build's record that leads to a file Codebook did not verify ({@link UnrestoredReceiptError.isForeignKept}) otherwise in the shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 refuse ({@link foreignKeptRecordOf})
  * - undefined when the record stays as it is
  * @example
@@ -1589,7 +1590,7 @@ function keptRecordOf(
   const { retiresReceipt } = record
   // This build's record keeps older builds away already: it only notes a file its link left unverified at receipt.json.
   if (typeof retiresReceipt === 'object')
-    return error.standing === 'linked-unverified' &&
+    return UNVERIFIED_RECEIPT_STANDINGS.has(error.standing) &&
       retiresReceipt.receiptUnverified !== true
       ? {
           ...record,
@@ -1599,7 +1600,7 @@ function keptRecordOf(
   // Only an older build's record, which those builds would follow to that file, is rewritten below.
   if (retiresReceipt !== true && retiresReceipt !== 'foreign') return undefined
   // That file stands at receipt.json too: the record notes it, so no later run and no window takes it for Codebook's record.
-  if (error.standing === 'linked-unverified')
+  if (UNVERIFIED_RECEIPT_STANDINGS.has(error.standing))
     return { ...record, retiresReceipt: { receiptUnverified: true } }
   return error.isForeignKept ? foreignKeptRecordOf(record) : undefined
 }
@@ -1728,7 +1729,7 @@ type UnrestoredStanding =
   | 'config-unread'
   | 'undeleted'
   | 'undeleted-replaced'
-  | 'linked-unverified'
+  | UnverifiedReceiptStanding
   | 'moved-gone'
   | 'moved-gone-beside'
   | 'moved-foreign'
@@ -1743,6 +1744,22 @@ type UnverifiedForeignStanding =
   | 'moved-unverified'
   | 'moved-unverified-other'
   | 'moved-unverified-unread'
+
+/** The answers of a put-back that left a file at `receipt.json` Codebook did not verify as the old record it read (criterion 17's residual, {@link refuseUnverifiedLink}): `linked-unverified` while the publish record on disk notes that `receipt.json` is unverified, `linked-unnoted` when no write of that note went through ({@link withNoteState}), so the sentence says that a window may take that file for Codebook's record until it is moved ({@link unverifiedPutBackSentence}). */
+type UnverifiedReceiptStanding = 'linked-unverified' | 'linked-unnoted'
+
+/** Every {@link UnverifiedReceiptStanding}: the answers whose publish record must note that `receipt.json` is unverified ({@link keptRecordOf}) and whose sentence {@link unverifiedPutBackSentence} words. */
+const UNVERIFIED_RECEIPT_STANDINGS: ReadonlySet<
+  UnrestoredStanding | undefined
+> = new Set<UnrestoredStanding>(['linked-unverified', 'linked-unnoted'])
+
+/** The `…-unnoted` counterpart of each noted {@link UnverifiedReceiptStanding}, which {@link UnrestoredReceiptError.withoutNote} takes once no write of the note went through. */
+const UNNOTED_STANDINGS: ReadonlyMap<
+  UnrestoredStanding | undefined,
+  UnverifiedReceiptStanding
+> = new Map<UnrestoredStanding, UnverifiedReceiptStanding>([
+  ['linked-unverified', 'linked-unnoted'],
+])
 
 /** What a put-back found at the old record's private name when it settles that file beside what stands at `receipt.json` ({@link settleForeignMoved}): `no-record` for a file that is no record of this config, `unverified-record` for a record of this config that is not the one the publish record names ({@link UnverifiedForeignStanding}). */
 type MovedFileKind = 'no-record' | 'unverified-record'
@@ -1767,6 +1784,7 @@ const FOREIGN_KEPT_STANDINGS: ReadonlySet<UnrestoredStanding | undefined> =
     'moved-foreign-unread',
     'moved-changed',
     'linked-unverified',
+    'linked-unnoted',
     'undeleted-replaced',
     'foreign-unverified',
     'moved-unverified',
@@ -1787,11 +1805,31 @@ class UnrestoredReceiptError extends Error {
     readonly failure: unknown,
     cause: unknown,
     readonly standing?: UnrestoredStanding,
-    mark: PublishMark = 'marked',
+    readonly mark: PublishMark = 'marked',
   ) {
     super(unrestoredSentence(context, retiredPath, standing, mark), {
       cause,
     })
+  }
+
+  /**
+   * Gives the same error worded for a put-back whose note that `receipt.json` is unverified could not be written ({@link UNNOTED_STANDINGS}); called by {@link withNoteState} once the publish record on disk carries no such note.
+   * @param context - The run; gives the paths and the command to run again.
+   * @returns An error with the same private file, failure, cause and mark whose sentence says that the note could not be written; this error itself for any other answer.
+   * @example
+   * throw error.withoutNote(context) // '… is unverified, and Codebook could not note that in its publish record at …/pending.json (for example on a full disk), …'
+   */
+  withoutNote(context: Context): UnrestoredReceiptError {
+    const unnoted = UNNOTED_STANDINGS.get(this.standing)
+    if (unnoted === undefined) return this
+    return new UnrestoredReceiptError(
+      context,
+      this.retiredPath,
+      this.failure,
+      this.cause,
+      unnoted,
+      this.mark,
+    )
   }
 
   /**
@@ -1911,7 +1949,7 @@ function unrestoredSentence(
  * @returns
  * - `undeleted`: the {@link retiredDropRefusal} sentence, which names that file and the publish record that stay, and that the next run looks at that file again
  * - `undeleted-replaced`: the sentence that the old record went back to `receipt.json` and another file took its private name right after, which Codebook did not verify, so that file and the publish record stay and that file is to be moved to another folder
- * - `linked-unverified`: the sentence that a put-back put another file at `receipt.json` than the record Codebook had read at the private name and could not take that back, so what stands at `receipt.json` is unverified; it names both files and the publish record, which stay, and says that the next run looks at both names again
+ * - each {@link UnverifiedReceiptStanding}: what {@link unverifiedPutBackSentence} words
  * - `moved-gone`, `moved-gone-beside`: what {@link goneNameSentence} words
  * - `receipt-unverified`: the sentence that the publish record notes a file a put-back left at `receipt.json` unverified, which still stands there, so Codebook did not take it for its record, deleted nothing, and asks to move it to another folder
  * - `foreign`, `moved-foreign`, `moved-foreign-other`, `moved-foreign-unread` and their unverified counterparts ({@link UnverifiedForeignStanding}): what {@link foreignMovedSentence} words
@@ -1935,9 +1973,9 @@ function keptNameSentence(
   // The old record went back, and another file took its private name right after: that file is never called Codebook's old record.
   if (standing === 'undeleted-replaced')
     return `Codebook put its own old record of a setup whose entry is gone back at ${receiptPath}, but right after that another file took ${retiredPath}, which Codebook did not verify as its record of Devin Desktop's MCP config at ${path} (another program may have put it there); Codebook kept that file and its publish record at ${pendingPath}, so move that file to another folder, ${retry}.`
-  // The put-back's link put a file Codebook never read at receipt.json and could not take it back: both names stay, and receipt.json is called unverified.
-  if (standing === 'linked-unverified')
-    return `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${path} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; ${retry}.`
+  // The put-back's link put a file Codebook never read at receipt.json and could not take it back: that file stays, and receipt.json is called unverified.
+  if (UNVERIFIED_RECEIPT_STANDINGS.has(standing))
+    return unverifiedPutBackSentence(context, retiredPath, standing)
   // A put-back's link left a file Codebook did not verify at receipt.json, and that file still stands there: it is never taken for Codebook's record.
   if (standing === 'receipt-unverified')
     return `Codebook's publish record at ${pendingPath} notes that a put-back for a setup left a file at ${receiptPath} that Codebook did not verify as its record of Devin Desktop's MCP config at ${path} (another program may have replaced the record Codebook read at ${retiredPath}), and that file still stands there, so Codebook did not take it for its record, deleted nothing and kept that publish record; move the file at ${receiptPath} to another folder, ${retry}.`
@@ -1954,6 +1992,31 @@ function keptNameSentence(
       undecided,
     )
   return undefined
+}
+
+/**
+ * Words a put-back that left a file at `receipt.json` that Codebook did not verify as the old record it had read at the private name, and could not take that put-back back ({@link UnverifiedReceiptStanding}); called only by {@link keptNameSentence}.
+ * The sentence says whether the publish record notes that `receipt.json` is unverified, because only that note keeps a window from marking itself for the installation that file names: with the note, the next run looks again; without it, the file is to be moved.
+ * @param context - The run; gives the paths and the command to run again.
+ * @param retiredPath - The old record's private name.
+ * @param standing - Whether the put-back's note stands ({@link UnverifiedReceiptStanding}).
+ * @returns
+ * - `linked-unverified`: the sentence that the link put another file at `receipt.json`, that Codebook kept both files and noted that in its publish record, and that the next run looks at both names again
+ * - `linked-unnoted`: the sentence that Codebook could not note that in its publish record (for example on a full disk), so a window may take that file for Codebook's record until it is moved, and that the file at `receipt.json` is to be moved to another folder
+ * @example
+ * unverifiedPutBackSentence(context, retiredPath, 'linked-unverified') // => 'Codebook put the file at … back at …/receipt.json for a setup, …, so what stands at …/receipt.json is unverified; Codebook kept both files and noted that in its publish record at …/pending.json, and the next run looks at both names again; …'
+ * unverifiedPutBackSentence(context, retiredPath, 'linked-unnoted')    // => '…, and Codebook could not note that in its publish record at …/pending.json (for example on a full disk), …'
+ */
+function unverifiedPutBackSentence(
+  { path, receiptPath, pendingPath, retry }: Context,
+  retiredPath: string,
+  standing: UnrestoredStanding | undefined,
+): string {
+  const lead = `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${path} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified`
+  // Without the note a window may take that file for Codebook's record: it is to be moved.
+  if (standing === 'linked-unnoted')
+    return `${lead}, and Codebook could not note that in its publish record at ${pendingPath} (for example on a full disk), so a window may take that file for Codebook's record until you move it; Codebook kept both files, so move the file at ${receiptPath} to another folder, ${retry}.`
+  return `${lead}; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; ${retry}.`
 }
 
 /**
@@ -6245,7 +6308,7 @@ type RetiredMove = { retiredPath: string; look: LeftoverLookback }
 
 /**
  * Puts a receipt that a first setup moved aside back at `receipt.json`; called by {@link linkWithoutStaleReceipt} when the link failed, by {@link retireStaleReceipt} when the file that moved was not the receipt it read, and by {@link settleRetiredReceipt} at a later run.
- * A hard link: it needs no free space and never replaces what stands at that name by then. Only a regular file that parses as a record of this config, read at the private name, which a look right before the link still shows, is linked ({@link readMovedForPutBack}), and only while synchronous looks run in the same continuation as the link, after every awaited step, still show at a later run the publish record that run read at `pending.json`, and last that file at the private name ({@link lookBeforePutBackLink}); a file there that is no record of this config is never linked and is named as the one to move. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). After a link that stood, the private name is unlinked only while a read at `receipt.json` still finds the record that was read and looks still show the file of that read at `receipt.json` and at the private name as a second name of it ({@link dropLinkedPrivateName}); otherwise that file and the publish record stay, also beside another file at `receipt.json`, which the link may have put there (the private name was replaced right before it) or another program after it, so neither name goes ({@link refuseUnverifiedLink}). A private name that the link or a look found empty is never unlinked, and it never ends the publish record that leads there by itself ({@link endOnEmptyName}): in the setup that moved the record there, Codebook put a verified file there moments earlier, so the setup keeps that record and says so; a later run ends that record only while a look right before that end still finds the name empty ({@link retirePending}).
+ * A hard link: it needs no free space and never replaces what stands at that name by then. Right before it, while `receipt.json` is empty, the publish record notes that `receipt.json` is unverified unless it holds the bytes that were read ({@link noteBeforePutBack}), so a run that stops right after the link leaves that note, and the note goes again when nothing reached that name ({@link withdrawPutBackNote}); that write needs free space, so on a full disk the put-back still links without it. Only a regular file that parses as a record of this config, read at the private name, which a look right before the link still shows, is linked ({@link readMovedForPutBack}), and only while synchronous looks run in the same continuation as the link, after every awaited step, still show at a later run the publish record that run read at `pending.json`, and last that file at the private name ({@link lookBeforePutBackLink}); a file there that is no record of this config is never linked and is named as the one to move. When the name is taken, the moved record goes only while it and a record that stands there are both records of this config with the same entry (a newer one, which wins, {@link standingReceiptOf}); a name found empty again is linked again, with at most {@link DEVIN_RECEIPT_PUT_BACK_ATTEMPTS} links in all. A put-back chosen only because something stood at `receipt.json` (`options.isBesideStanding`) never links: it only compares with what stands there ({@link settleTakenName}). After a link that stood, the private name is unlinked only while a read at `receipt.json` still finds the record that was read and looks still show the file of that read at `receipt.json` and at the private name as a second name of it ({@link dropLinkedPrivateName}); otherwise that file and the publish record stay, also beside another file at `receipt.json`, which the link may have put there (the private name was replaced right before it) or another program after it, so neither name goes ({@link refuseUnverifiedLink}). A private name that the link or a look found empty is never unlinked, and it never ends the publish record that leads there by itself ({@link endOnEmptyName}): in the setup that moved the record there, Codebook put a verified file there moments earlier, so the setup keeps that record and says so; a later run ends that record only while a look right before that end still finds the name empty ({@link retirePending}).
  * @param context - The run.
  * @param retiredPath - The private name that holds the receipt.
  * @param failure - What made the put-back necessary, carried by the error below so the caller still words it; undefined at a later run.
@@ -6275,6 +6338,133 @@ async function putBackRetiredReceipt(
     options,
   )
   if (typeof linked === 'string') return linked
+  // Before anything can reach receipt.json, the publish record names the bytes that may stand there, so a run that stops right after the link leaves that note.
+  const note = await noteBeforePutBack(context, retiredPath, linked.sha256)
+  const putBack: LinkedPutBack = { retiredPath, failure, linked, options, note }
+  const attempt = await linkMovedRecord(context, putBack).catch(
+    async (error: unknown) => {
+      // Nothing was linked: the note goes again.
+      await withdrawPutBackNote(context, putBack)
+      throw error
+    },
+  )
+  // The last looks found the private name empty: nothing was linked.
+  if (typeof attempt === 'string') {
+    await withdrawPutBackNote(context, putBack)
+    return attempt
+  }
+  return settleLinkAttempt(context, putBack, attempt.cause)
+}
+
+/** One put-back of a first setup's old record past its read ({@link putBackRetiredReceipt}): the private name, what made it necessary (undefined at a later run), the record of this config that was read there ({@link MovedRecord}), how it runs ({@link PutBackOptions}) and the note this put-back wrote right before its link ({@link PutBackNote}). */
+type LinkedPutBack = {
+  retiredPath: string
+  failure: unknown
+  linked: MovedRecord
+  options: PutBackOptions
+  note: PutBackNote
+}
+
+/** The note that `receipt.json` is unverified as one put-back wrote it into the publish record right before its link ({@link noteBeforePutBack}): the bytes it names and the publish record's `retiresReceipt` as it stood before, which {@link withdrawPutBackNote} writes back when nothing reached `receipt.json`; undefined when this put-back wrote no note (one stood already, `receipt.json` was not empty, or the write failed). */
+type PutBackNote =
+  { sha256: string; before: Pending['retiresReceipt'] } | undefined
+
+/**
+ * Notes in the publish record that `receipt.json` is unverified unless it holds the bytes a put-back is about to link there, right before that link, so a run that stops right after the link, or a full disk at the write after it, never leaves a file another program swapped in at the private name (criterion 17's residual) at `receipt.json` without that note; called only by {@link putBackRetiredReceipt}, once the old record was read ({@link readMovedForPutBack}).
+ * The note passes those very bytes, so the record that goes back stands for every reader ({@link assertNotedReceipt}, the bridge's receipt reader); it is written only while `receipt.json` is empty at an awaited look, because a name that holds something takes no link. Best effort: a write that fails (a full disk, say) leaves the record as it was, and the put-back still links, as it does without free space; the run's answer then says whether the note stands ({@link withNoteState}). Limit: a file put at `receipt.json` between that look and the link meets a note that names other bytes until {@link withdrawPutBackNote} takes it back.
+ * @param context - The run; its pending path is the publish record, rewritten through its tracked guard ({@link rewriteLeadingRecord}).
+ * @param retiredPath - The old record's private name; only the publish record that leads there is noted.
+ * @param sha256 - The SHA-256 of the bytes the put-back read at the private name and links.
+ * @returns The note this call wrote ({@link PutBackNote}); undefined when it wrote none.
+ * @example
+ * await noteBeforePutBack(context, retiredPath, linked.sha256) // => { sha256: '9f86…', before: { sha256: '9f86…' } }; pending.json now carries receiptUnverified
+ */
+async function noteBeforePutBack(
+  context: Context,
+  retiredPath: string,
+  sha256: string,
+): Promise<PutBackNote> {
+  // A name that holds something, or that cannot be looked at, takes no link that this note would cover.
+  const standing = await lstatOrAbsent(context.receiptPath).catch(() => null)
+  if (standing !== undefined) return undefined
+  const rewrite = await rewriteLeadingRecord(context, retiredPath, (record) =>
+    notedRecordOf(record, sha256),
+  )
+  return rewrite.outcome === 'written'
+    ? { sha256, before: rewrite.record?.retiresReceipt }
+    : undefined
+}
+
+/**
+ * Gives a publish record that notes `receipt.json` unverified unless it holds the given bytes; called by {@link noteBeforePutBack} through {@link rewriteLeadingRecord}.
+ * @param record - The publish record as read.
+ * @param sha256 - The bytes the note passes.
+ * @returns The record with `retiresReceipt.receiptUnverified` naming those bytes; undefined when it notes them already, or when it is an older build's record, whose put-back never links ({@link movedIdentityOf}).
+ * @example
+ * notedRecordOf({ ...pending, retiresReceipt: { sha256: '9f86…' } }, '9f86…') // => { ...pending, retiresReceipt: { sha256: '9f86…', receiptUnverified: true } }
+ */
+function notedRecordOf(record: Pending, sha256: string): Pending | undefined {
+  const { retiresReceipt } = record
+  // Only this build's record leads a put-back to its link, and one that notes those bytes already stays as it is.
+  if (typeof retiresReceipt !== 'object' || isNotedBy(record, sha256))
+    return undefined
+  return {
+    ...record,
+    retiresReceipt: { ...retiresReceipt, sha256, receiptUnverified: true },
+  }
+}
+
+/**
+ * Tells whether a publish record notes `receipt.json` unverified unless it holds the given bytes; called by {@link notedRecordOf} and {@link withdrawPutBackNote}.
+ * @param record - The publish record as read.
+ * @param sha256 - The bytes the note must pass.
+ * @returns `true` when `retiresReceipt` carries `receiptUnverified` with those bytes; `false` otherwise.
+ * @example
+ * isNotedBy({ ...pending, retiresReceipt: { sha256: '9f86…', receiptUnverified: true } }, '9f86…') // => true
+ */
+function isNotedBy(record: Pending, sha256: string): boolean {
+  const { retiresReceipt } = record
+  return (
+    typeof retiresReceipt === 'object' &&
+    retiresReceipt.receiptUnverified === true &&
+    retiresReceipt.sha256 === sha256
+  )
+}
+
+/**
+ * Takes back the note a put-back wrote right before its link ({@link noteBeforePutBack}) once nothing of that put-back reached `receipt.json` (its last looks ended or threw, or its link failed), so a later run never holds a record that comes to stand there meanwhile (a newer one of the same entry, say) against the bytes of an old record that never went back; called by {@link putBackRetiredReceipt} and {@link settleLinkAttempt}.
+ * Best effort and only while the publish record still carries that very note: the record goes back to the `retiresReceipt` it had before, through its tracked guard ({@link rewriteLeadingRecord}), so a record another program put there meanwhile stays. Limit: a stop or a failed write here leaves the note, and the next run then refuses any other bytes at `receipt.json` until they are moved ({@link assertReceiptVerified}).
+ * @param context - The run.
+ * @param putBack - The put-back ({@link LinkedPutBack}); nothing happens when it wrote no note.
+ * @returns Resolves once the note is gone, or was left as it was.
+ * @example
+ * await withdrawPutBackNote(context, putBack) // pending.json carries retiresReceipt as it did before the note
+ */
+async function withdrawPutBackNote(
+  context: Context,
+  { retiredPath, note }: LinkedPutBack,
+): Promise<void> {
+  if (note === undefined) return
+  await rewriteLeadingRecord(context, retiredPath, (record) =>
+    isNotedBy(record, note.sha256)
+      ? { ...record, retiresReceipt: note.before }
+      : undefined,
+  )
+}
+
+/**
+ * Runs the last looks before a put-back's link and the link itself, with nothing awaited between the synchronous looks and the link ({@link lookBeforePutBackLink}); called only by {@link putBackRetiredReceipt}.
+ * @param context - The run.
+ * @param putBack - The put-back ({@link LinkedPutBack}).
+ * @returns What {@link endOnEmptyName} answers when the last looks found the private name empty; otherwise the link's failure, undefined once the link stood.
+ * @throws What {@link lookBeforePutBackLink} and its synchronous looks throw; nothing is linked then.
+ * @example
+ * await linkMovedRecord(context, putBack) // => { cause: undefined } once receipt.json is a second name of the old record
+ */
+async function linkMovedRecord(
+  context: Context,
+  { retiredPath, failure, linked, options }: LinkedPutBack,
+): Promise<PutBackEnd | { cause: unknown }> {
   // The awaited steps come first: a later run reads its publish record, and every name is looked at through the thread pool.
   const lastLooks = await lookBeforePutBackLink(
     context,
@@ -6285,10 +6475,28 @@ async function putBackRetiredReceipt(
   // From the synchronous last looks to the link nothing is awaited: a record a backup put at pending.json, or a file at the private name, since those awaited steps keeps both receipt names as they are.
   const end = lastLooks(linked)
   if (end !== undefined) return end
-  const cause = await link(retiredPath, context.receiptPath).then(
-    () => undefined,
-    (error: unknown) => error,
+  return link(retiredPath, context.receiptPath).then(
+    () => ({ cause: undefined }),
+    (cause: unknown) => ({ cause }),
   )
+}
+
+/**
+ * Ends a put-back by what its link answered: a link that stood is checked before the private name goes ({@link dropLinkedPrivateName}), and a link that failed takes back the note the put-back wrote before it ({@link withdrawPutBackNote}) and settles as before; called only by {@link putBackRetiredReceipt}.
+ * @param context - The run.
+ * @param putBack - The put-back ({@link LinkedPutBack}).
+ * @param cause - The link's failure; undefined once the link stood.
+ * @returns What {@link putBackRetiredReceipt} returns.
+ * @throws What {@link putBackRetiredReceipt} throws.
+ * @example
+ * await settleLinkAttempt(context, putBack, undefined) // => 'settled' once the private name, a second name of the record at receipt.json, is gone
+ */
+async function settleLinkAttempt(
+  context: Context,
+  putBack: LinkedPutBack,
+  cause: unknown,
+): Promise<PutBackEnd> {
+  const { retiredPath, failure, linked, options } = putBack
   if (cause === undefined)
     return dropLinkedPrivateName(
       context,
@@ -6297,6 +6505,8 @@ async function putBackRetiredReceipt(
       linked,
       options.mark,
     )
+  // Nothing was linked: the note goes again.
+  await withdrawPutBackNote(context, putBack)
   // ENOENT: the private name is gone already, and nothing is unlinked there, so a file put at that name after the link is never deleted unchecked.
   if (codeOf(cause) === 'ENOENT')
     return endOnEmptyName(context, retiredPath, failure, cause, options.mark)
@@ -7245,7 +7455,7 @@ function assertNotedReceipt(
 }
 
 /**
- * Runs a later run's put-back of a first setup's old record ({@link putBackRetiredReceipt}); when that put-back keeps a file Codebook did not verify at the private name ({@link UnrestoredReceiptError.isForeignKept}) or at `receipt.json` (`linked-unverified`), the publish record that leads there is rewritten first ({@link markForeignKept}, {@link keptRecordOf}): an older build's record in the shape older builds refuse, so a window of 0.2.142.0 or 0.2.143.0 never puts that file at `receipt.json`, and this build's record with the note that `receipt.json` is unverified, so no later run takes that file for its record ({@link assertReceiptVerified}); called only by {@link settleRetiredReceipt}.
+ * Runs a later run's put-back of a first setup's old record ({@link putBackRetiredReceipt}); when that put-back keeps a file Codebook did not verify at the private name ({@link UnrestoredReceiptError.isForeignKept}) or at `receipt.json` ({@link UnverifiedReceiptStanding}), the publish record that leads there is rewritten first ({@link markForeignKept}, {@link keptRecordOf}): an older build's record in the shape older builds refuse, so a window of 0.2.142.0 or 0.2.143.0 never puts that file at `receipt.json`, and this build's record with the note that `receipt.json` is unverified, so no later run takes that file for its record ({@link assertReceiptVerified}); the refusal then says whether that note stands ({@link withNoteState}); called only by {@link settleRetiredReceipt}.
  * @param context - The run.
  * @param retiredPath - The private name that holds the old record.
  * @param options - How the put-back runs ({@link PutBackOptions}).
@@ -7262,16 +7472,17 @@ async function putBackLater(
   try {
     return await putBackRetiredReceipt(context, retiredPath, undefined, options)
   } catch (error) {
+    if (!(error instanceof UnrestoredReceiptError)) throw error
     // A file Codebook did not verify stays at the private name or receipt.json: the record that leads there notes it, and older builds never reach it through that record.
-    if (error instanceof UnrestoredReceiptError)
-      await markForeignKept(context, retiredPath, error)
-    throw error
+    await markForeignKept(context, retiredPath, error)
+    // The answer claims the note that receipt.json is unverified only while the record on disk carries it.
+    throw await withNoteState(context, error)
   }
 }
 
 /**
- * Rewrites the publish record that leads to an old record's private name as a put-back that kept a file there or at `receipt.json` leaves it ({@link keptRecordOf}), as it stands now, since recovery may have rewritten it in this run (a handover); best effort, because the run refuses anyway; called only by {@link putBackLater}.
- * The rewrite replaces only the version of the record this call read ({@link readVersionedRecord}), through the tracked-record guard ({@link Context.journalVersion}; a held run's own tracking when it holds a legacy journal): the bytes are staged first, and the synchronous last look right before the rename refuses when the name no longer shows that version, so a record a backup or sync tool put there meanwhile stays as that program left it; an emptied name is never claimed (`refusesEmptyName`). Such a record may still lead 0.2.142.0 and 0.2.143.0 to that file (retiresReceipt `true`): it is another program's, so it is never written over unread, and the next run of this build, which reads it, rewrites it here; until then, as after any later restore of such a record, an older window may put that file back. Limit: a record put there between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * Rewrites the publish record that leads to an old record's private name as a put-back that kept a file there or at `receipt.json` leaves it ({@link keptRecordOf}), as it stands now, since recovery may have rewritten it in this run (a handover); best effort, because the run refuses anyway; called only by {@link putBackLater}, through {@link rewriteLeadingRecord}.
+ * Such a record may still lead 0.2.142.0 and 0.2.143.0 to that file (retiresReceipt `true`): it is another program's, so it is never written over unread, and the next run of this build, which reads it, rewrites it here; until then, as after any later restore of such a record, an older window may put that file back.
  * @param context - The run; its pending path is the record.
  * @param retiredPath - The private name that keeps a file Codebook did not verify as its record of this config, or the file a put-back's link left at `receipt.json`.
  * @param error - Why the put-back kept what it kept.
@@ -7284,21 +7495,46 @@ async function markForeignKept(
   retiredPath: string,
   error: UnrestoredReceiptError,
 ): Promise<void> {
+  // Another record or an empty name by then: it stays as the other program left it, and the run refuses anyway.
+  await rewriteLeadingRecord(context, retiredPath, (record) =>
+    keptRecordOf(record, error),
+  )
+}
+
+/** How {@link rewriteLeadingRecord} ended: `written` once the rewrite stands, `unchanged` when the rewrite asked for none, `unwritten` when the record could not be read, leads to another private name, or the write was refused or failed; with the record as it was read, when one was. */
+type LeadingRecordRewrite = {
+  outcome: 'written' | 'unchanged' | 'unwritten'
+  record?: Pending
+}
+
+/**
+ * Rewrites the publish record that leads to an old record's private name as it stands now, so a put-back's notes and marks never write back a record recovery rewrote earlier in the run (a handover); called by {@link markForeignKept}, {@link noteBeforePutBack} and {@link withdrawPutBackNote}.
+ * The rewrite replaces only the version of the record this call read ({@link readVersionedRecord}), through the tracked-record guard ({@link Context.journalVersion}; a held run's own tracking when it holds a legacy journal, any other run's tracking of this read): the bytes are staged first, and the synchronous last look right before the rename refuses when the name no longer shows that version, so a record a backup or sync tool put there meanwhile stays as that program left it; an emptied name is never claimed (`refusesEmptyName`). Limit: a record put there between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode.
+ * @param context - The run; its pending path is the record.
+ * @param retiredPath - The old record's private name; only the record of this config whose generation names it is rewritten.
+ * @param rewrite - Gives the record to write from the record as read; undefined when it stays as it is.
+ * @returns How the rewrite ended ({@link LeadingRecordRewrite}); never throws.
+ * @example
+ * await rewriteLeadingRecord(context, retiredPath, (record) => notedRecordOf(record, sha256)) // => { outcome: 'written', record }
+ */
+async function rewriteLeadingRecord(
+  context: Context,
+  retiredPath: string,
+  rewrite: (record: Pending) => Pending | undefined,
+): Promise<LeadingRecordRewrite> {
   const read = await readVersionedRecord(
     context.pendingPath,
     pendingSchema,
     context.retry,
     context.seam,
   ).catch(() => undefined)
-  if (read === undefined) return
+  if (read === undefined) return { outcome: 'unwritten' }
   const { record, version } = read
-  // Only the record that leads to that private name, and only when the put-back's end changes what it must say.
-  const leadsThere =
-    record.targetPath === context.path &&
-    record.generation !== undefined &&
-    retiredReceiptPathOf(context, record.generation) === retiredPath
-  const rewritten = leadsThere ? keptRecordOf(record, error) : undefined
-  if (rewritten === undefined) return
+  // Only the record that leads to that private name.
+  if (!isRecordLeadingTo(context, record, retiredPath))
+    return { outcome: 'unwritten', record }
+  const rewritten = rewrite(record)
+  if (rewritten === undefined) return { outcome: 'unchanged', record }
   // Only the version this call read is replaced: a held run keeps its own tracking, any other run tracks this read.
   const rewriting: Context = {
     ...context,
@@ -7307,10 +7543,64 @@ async function markForeignKept(
       refusesEmptyName: true,
     },
   }
-  // Another record or an empty name by then: it stays as the other program left it, and the run refuses anyway.
-  await writeRecord(rewriting, context.pendingPath, rewritten).catch(
-    () => undefined,
+  const isWritten = await writeRecord(
+    rewriting,
+    context.pendingPath,
+    rewritten,
+  ).then(
+    () => true,
+    () => false,
   )
+  return { outcome: isWritten ? 'written' : 'unwritten', record }
+}
+
+/**
+ * Tells whether a publish record is the one of this config that leads to an old record's private name; called by {@link rewriteLeadingRecord} and {@link withNoteState}.
+ * @param context - The run.
+ * @param record - The publish record as read.
+ * @param retiredPath - The old record's private name.
+ * @returns `true` when the record covers this config and its generation names that private name.
+ * @example
+ * isRecordLeadingTo(context, pending, retiredReceiptPathOf(context, pending.generation)) // => true
+ */
+function isRecordLeadingTo(
+  context: Context,
+  record: Pending,
+  retiredPath: string,
+): boolean {
+  return (
+    record.targetPath === context.path &&
+    record.generation !== undefined &&
+    retiredReceiptPathOf(context, record.generation) === retiredPath
+  )
+}
+
+/**
+ * Words a put-back's refusal by whether the publish record on disk notes that `receipt.json` is unverified, right before the run answers, so the answer never claims a note that no write put there; called by {@link linkWithoutStaleReceipt} once its mark could not be written and by {@link putBackLater} after its rewrite, for every refusal that left an unverified file at `receipt.json` ({@link UnverifiedReceiptStanding}).
+ * @param context - The run.
+ * @param error - The put-back's refusal.
+ * @returns `error` itself for any other answer, or while the publish record that leads to its private name carries `receiptUnverified` (written before the link, {@link noteBeforePutBack}, or after it, {@link keptRecordOf}); otherwise the same refusal worded without the note ({@link UnrestoredReceiptError.withoutNote}), also when that record cannot be read.
+ * @example
+ * throw await withNoteState(context, error) // '… is unverified, and Codebook could not note that in its publish record at …/pending.json (for example on a full disk), …' after a full disk at every write
+ */
+async function withNoteState(
+  context: Context,
+  error: UnrestoredReceiptError,
+): Promise<UnrestoredReceiptError> {
+  if (!UNNOTED_STANDINGS.has(error.standing)) return error
+  const read = await readVersionedRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  ).catch(() => undefined)
+  const retiresReceipt = read?.record.retiresReceipt
+  const isNoted =
+    read !== undefined &&
+    isRecordLeadingTo(context, read.record, error.retiredPath) &&
+    typeof retiresReceipt === 'object' &&
+    retiresReceipt.receiptUnverified === true
+  return isNoted ? error : error.withoutNote(context)
 }
 
 /**

@@ -54,6 +54,7 @@ import {
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { checkDevinBridgeReceipts } from '../utils/checkDevinBridgeReceipts'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing'
+import { readReceiptState } from '../utils/readReceiptState'
 import { readStandingDevinInstallationId } from '../utils/readStandingDevinInstallationId'
 import { createPathReadGate } from '../utils/shareReceiptRead'
 
@@ -18958,7 +18959,7 @@ test("A later setup never links to receipt.json a file a backup puts at the old 
 })
 
 test("A later setup whose put-back link puts another program's file at receipt.json, swapped in at the old record's private name inside the link, keeps that file at both names and its publish record and says that what stands at receipt.json is unverified", async (context) => {
-  // Value: protects=a file another program swaps in at the old record's private name after the put-back's last looks and before its link is the stated residual of that link (criterion 17): when it lands at receipt.json, a later run keeps it, never calls it its record, deletes neither name and names it unverified (Cycle 0149 task 16); fails_when=either name is gone or holds other bytes than the swapped-in record, pending.json is gone, or the refusal is another sentence than the linked-unverified one; no_claim=a real sync tool (the config module is loaded with a link that, for the put-back's link to receipt.json, first swaps another installation's record in at the private name, then links), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Value: protects=a file another program swaps in at the old record's private name after the put-back's last looks and before its link is the stated residual of that link (criterion 17): when it lands at receipt.json, a later run keeps it, never calls it its record, deletes neither name and names it unverified (Cycle 0149 task 16), and its publish record notes that receipt.json is unverified before the run answers, which the refusal says (Cycle 0149 task 43); fails_when=either name is gone or holds other bytes than the swapped-in record, pending.json lacks the note naming the old record's bytes, or the refusal is another sentence than the linked-unverified one; no_claim=a real sync tool (the config module is loaded with a link that, for the put-back's link to receipt.json, first swaps another installation's record in at the private name, then links), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
   // Arrange
   const {
     home,
@@ -19010,11 +19011,203 @@ test("A later setup whose put-back link puts another program's file at receipt.j
   assert.equal(hasSwapped, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(readFileSync(receiptPath, 'utf8'), swappedText)
   assert.equal(readFileSync(retiredPath, 'utf8'), swappedText)
-  assert.equal(existsSync(pendingPath), true)
+  assert.deepEqual(
+    (await readRecordFile(storage, 'pending.json')).retiresReceipt,
+    {
+      sha256: sha256(JSON.stringify(receiptBefore)),
+      receiptUnverified: true,
+    },
+  )
+})
+
+test("A later setup that stops right after its put-back link put another installation's record at receipt.json leaves its publish record's note that receipt.json is unverified, so the bridge never takes that record for the setup", async (context) => {
+  // Value: protects=the publish record notes that receipt.json is unverified, naming the bytes of the old record the put-back links, before the put-back's link (Cycle 0149 task 43), so the folder a run leaves when it stops right after that link (here: the moment the link stood, held there) already keeps the bridge's reader from taking a file swapped in at the private name for the setup's receipt; fails_when=the bridge's reader answers anything but removed as unverified for receipt.json at that moment, pending.json lacks the note naming the old record's bytes then, or receipt.json is not the swapped-in record; no_claim=a real stop of the editor (the run is held right after the link stood and the folder is read then; afterwards it goes on and refuses), a real sync tool (the config module is loaded with a link that, for the put-back's link to receipt.json, first swaps another installation's record in at the private name with the owner-only mode a receipt has, then links), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a release that reads receipt.json alone (0.2.142.0 to 0.2.144.0 never read the note: the stated residual)
+  // Arrange
+  const { home, storage, receiptPath, receiptBefore, retiredPath } =
+    await arrangeFailedPutBack(context)
+  const swappedText = JSON.stringify({
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000149165',
+    installationId: 'c0ffee00-0000-4000-8000-000000149166',
+  })
+  const release = defer<void>()
+  let hasSwapped = false
+  let isLinkHeld = false
+  const holdingAfterLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to !== receiptPath || hasSwapped) return link(from, to)
+          hasSwapped = true
+          // Another installation's record takes the private name inside the put-back's link, which then stands; the run waits right there, as a run that stops there leaves the folder.
+          writeFileSync(`${from}.swap-sibling`, swappedText, { mode: 0o600 })
+          renameSync(`${from}.swap-sibling`, from)
+          await link(from, to)
+          isLinkHeld = true
+          await release.promise
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const attempt = holdingAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  await waitUntil(() => isLinkHeld, 'the put-back link that stood', 10_000)
+  const receiptStateAfterLink = await readReceiptState(receiptPath)
+  const noteAfterLink = (await readRecordFile(storage, 'pending.json'))
+    .retiresReceipt
+  release.resolve()
+  await attempt
+
+  // Assert
+  assert.equal(readFileSync(receiptPath, 'utf8'), swappedText)
+  assert.equal(readFileSync(retiredPath, 'utf8'), swappedText)
+  assert.deepEqual(receiptStateAfterLink, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
+  })
+  assert.deepEqual(noteAfterLink, {
+    sha256: sha256(JSON.stringify(receiptBefore)),
+    receiptUnverified: true,
+  })
+})
+
+test("A later setup whose put-back link puts another installation's record at receipt.json and that cannot note that in its publish record on a full disk says so and asks to move that file, instead of saying it noted it", async (context) => {
+  // Value: protects=when a file another program swapped in at the old record's private name lands at receipt.json through the put-back's link (criterion 17's residual) and no write of the publish record goes through, the run never answers as though the note that receipt.json is unverified were saved (Cycle 0149 task 43): it says that it could not note that, that a window may take that file for Codebook's record until it is moved, and asks to move it; fails_when=the refusal is another sentence (the one that claims the note, say), pending.json carries the note or is gone, or either name holds other bytes than the swapped-in record; no_claim=a real full disk (seam.beforeRecordWrite fails every write of pending.json with ENOSPC in its place), a real sync tool (the config module is loaded with a link that, for the put-back's link to receipt.json, first swaps another installation's record in at the private name, then links), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    pendingPath,
+    retiredPath,
+  } = await arrangeFailedPutBack(context)
+  const swappedText = JSON.stringify({
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000149167',
+    installationId: 'c0ffee00-0000-4000-8000-000000149168',
+  })
+  let hasSwapped = false
+  const swappingInLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // Another installation's record takes the private name inside the put-back's link.
+          if (to === receiptPath && !hasSwapped) {
+            hasSwapped = true
+            swapFile(from, swappedText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await swappingInLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path === pendingPath) throw noSpaceLeft()
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasSwapped, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified, and Codebook could not note that in its publish record at ${pendingPath} (for example on a full disk), so a window may take that file for Codebook's record until you move it; Codebook kept both files, so move the file at ${receiptPath} to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(
+    (await readRecordFile(storage, 'pending.json')).retiresReceipt,
+    { sha256: sha256(JSON.stringify(receiptBefore)) },
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), swappedText)
+  assert.equal(readFileSync(retiredPath, 'utf8'), swappedText)
+})
+
+test('A later setup whose put-back link fails leaves its publish record as it read it, without a note that receipt.json is unverified, so the next setup still puts the old record back and finds that entry current', async (context) => {
+  // Value: protects=the note a put-back writes into the publish record right before its link (Cycle 0149 task 43) goes again when nothing was linked, so a later run never holds a receipt that comes to stand at receipt.json meanwhile (a newer one of the same entry, say) against the bytes of an old record that never went back, and the next setup still puts that old record back; fails_when=pending.json holds other fields than the record as it stood before the failed run (the note that receipt.json is unverified, say), the old record's private file changes or is gone, the next setup answers anything but current, receipt.json is not the old record then, or another record or private name stays; no_claim=the record's bytes (the withdrawal writes the same fields anew, in the order Codebook writes them),why a real link fails (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, in the failed first setup and in the run after it), a real sync tool (seam.afterCheck moves the config back right before the config's link), and a stop between the link's failure and the withdrawal (the note then stays, and the next run refuses any other bytes at receipt.json until they are moved)
+  // Arrange
+  const {
+    home,
+    storage,
+    receiptPath,
+    receiptBefore,
+    pendingPath,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const pendingBefore = readFileSync(pendingPath, 'utf8')
+  const failingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    failingPutBack.writeManagedDevinMcpEntry(storage, ENTRY, home),
+    /could not put it back/,
+  )
+  const pendingAfterFailedRun = readFileSync(pendingPath, 'utf8')
+  const retiredAfterFailedRun = readFileSync(retiredPath, 'utf8')
+
+  // Act
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.deepEqual(JSON.parse(pendingAfterFailedRun), JSON.parse(pendingBefore))
+  assert.deepEqual(JSON.parse(pendingAfterFailedRun).retiresReceipt, {
+    sha256: sha256(JSON.stringify(receiptBefore)),
+  })
+  assert.equal(retiredAfterFailedRun, retiredText)
+  assert.equal(next.status, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
 test("A later setup never puts another installation's record that stands at the old record's private name back at receipt.json in place of the record a first setup moved there: it keeps that file and its publish record and names that file as one Codebook cannot tell is its old record", async (context) => {
@@ -21721,7 +21914,7 @@ test("A setup keeps the old record's private file and its publish record and say
   )
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(recordsAfterRefusal, [
     'pending.json',
@@ -21779,7 +21972,7 @@ test("A setup whose put-back links another program's file to receipt.json, becau
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(await recordsIn(storage), [
     'pending.json',
@@ -22219,7 +22412,7 @@ test("A setup keeps receipt.json, the old record's private file and its publish 
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(recordsAfterRefusal, [
     'pending.json',
@@ -22306,7 +22499,7 @@ test("A setup keeps receipt.json, the old record's private file and its publish 
   assert.equal(hasTouched, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(recordsAfterRefusal, [
     'pending.json',
@@ -22369,7 +22562,7 @@ test("A setup whose put-back links a replaced file to receipt.json and then find
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(await recordsIn(storage), [
     'pending.json',
@@ -25675,7 +25868,7 @@ test('A first setup over an existing config whose link meets a restored config a
 })
 
 test('A first setup whose old record could not go back and whose mark could not be written keeps both records and refuses at the next run instead of guessing', async (context) => {
-  // Value: protects=an unmarked record whose old receipt owns the entry the config holds is preserved and refused, never guessed either way, and the setup that could not write the mark promises no put-back and no move by hand; fails_when=the first refusal promises that the next run puts the old record back or asks to move it back by hand, the next run puts the old record back or deletes either record; no_claim=a real full disk (seam fails the second pending.json write)
+  // Value: protects=an unmarked record whose old receipt owns the entry the config holds is preserved and refused, never guessed either way, and the setup that could not write the mark promises no put-back and no move by hand; fails_when=the first refusal promises that the next run puts the old record back or asks to move it back by hand, the next run puts the old record back or deletes either record; no_claim=a real full disk (seam fails the write of pending.json that carries the mark that nothing was linked)
   // Arrange
   const { home, storage, configPath, receiptPath, moveBack } =
     await arrangeMovedAwayConfig(context)
@@ -25699,17 +25892,20 @@ test('A first setup whose old record could not go back and whose mark could not 
     },
     { Error, TextDecoder },
   )
-  let pendingWrites = 0
 
   // Act
   const setupError = await failingPutBack
     .writeManagedDevinMcpEntry(storage, ENTRY, home, {
       afterCheck: moveBack,
-      beforeRecordWrite: ({ path }) => {
-        if (path !== pendingPath) return
-        pendingWrites += 1
-        // The second write of pending.json is the mark that nothing was linked.
-        if (pendingWrites === 2) throw noSpaceLeft()
+      beforeRecordWrite: ({ path, record }) => {
+        // The write of pending.json that carries the mark that nothing was linked.
+        if (
+          path === pendingPath &&
+          typeof record === 'object' &&
+          record !== null &&
+          'notLinked' in record
+        )
+          throw noSpaceLeft()
       },
     })
     .then(
@@ -25739,7 +25935,7 @@ test('A first setup whose old record could not go back and whose mark could not 
 })
 
 test('A first setup whose old record could not go back and whose mark could not be written never takes the restored entry out or drops the old record when the restored config has the inode it had staged', async (context) => {
-  // Value: protects=without proof that a first setup's link stood (no completed publish record, its staged file gone), the inode it staged proves nothing, so a restored config that took that freed inode number keeps its entry and both records stay behind the undecided refusal; fails_when=the next setup answers without the undecided refusal, the old record is deleted, a receipt stands, or the restored config changes; no_claim=a real inode reuse (the test writes the restored config's inode into the record's stagedIno), a real full disk (seam fails the second pending.json write), why the put-back failed (link stub EIO), a real sync tool (seam.afterCheck moves the old config back right before the link)
+  // Value: protects=without proof that a first setup's link stood (no completed publish record, its staged file gone), the inode it staged proves nothing, so a restored config that took that freed inode number keeps its entry and both records stay behind the undecided refusal; fails_when=the next setup answers without the undecided refusal, the old record is deleted, a receipt stands, or the restored config changes; no_claim=a real inode reuse (the test writes the restored config's inode into the record's stagedIno), a real full disk (seam fails the write of pending.json that carries the mark that nothing was linked), why the put-back failed (link stub EIO), a real sync tool (seam.afterCheck moves the old config back right before the link)
   // Arrange
   const { home, storage, configPath, receiptPath, oldConfigText, moveBack } =
     await arrangeMovedAwayConfig(context)
@@ -25763,15 +25959,18 @@ test('A first setup whose old record could not go back and whose mark could not 
     },
     { Error, TextDecoder },
   )
-  let pendingWrites = 0
   await assert.rejects(
     failingPutBack.writeManagedDevinMcpEntry(storage, ENTRY, home, {
       afterCheck: moveBack,
-      beforeRecordWrite: ({ path }) => {
-        if (path !== pendingPath) return
-        pendingWrites += 1
-        // The second write of pending.json is the mark that nothing was linked.
-        if (pendingWrites === 2) throw noSpaceLeft()
+      beforeRecordWrite: ({ path, record }) => {
+        // The write of pending.json that carries the mark that nothing was linked.
+        if (
+          path === pendingPath &&
+          typeof record === 'object' &&
+          record !== null &&
+          'notLinked' in record
+        )
+          throw noSpaceLeft()
       },
     }),
     /could not put it back/,
