@@ -5905,7 +5905,8 @@ function isPendingStale(
 /**
  * Writes the receipt for an entry an interrupted run published; called by {@link settlePending}.
  * The receipt is published only while `pending.json` still shows the record that allowed the adoption, the version this run read or last wrote ({@link adoptedRecordCheck}), and while the rollback journal's name still shows what settlement left there (`assertLeft`), so a record a backup or sync tool restores there meanwhile (one that marks the same setup's take-back, say), or a rollback record of that setup it puts back, never gains the receipt that would make the next run skip that take-back ({@link finishCutShortSetup}).
- * The record then ends only while that look still holds too. When a record it rests on changed by then (it came back or changed after the receipt's rename): a rollback record at its name, or another file, nothing or a name that cannot be read again at `pending.json` (a same-generation record with the take-back mark, say), anywhere in the cause chain of what the record's end threw ({@link hasRecordConflictCause}), the record that stands stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles those records first and takes the setup back when they say so.
+ * The record then ends only while that look still holds too, and once it ended, `pending.json` is read again through the thread pool and looked at once more synchronously ({@link adoptedRecordCheck}): it must show what the record's end left there (nothing, or what stays of it), so a record a backup or sync tool puts there while the adopted one stands at its dropping name ({@link deleteThroughDroppingName}) is never left beside this receipt. When a record it rests on changed by then (it came back or changed after the receipt's rename): a rollback record at its name, or another file, nothing or a name that cannot be read again at `pending.json` (a same-generation record with the take-back mark, say), anywhere in the cause chain of what the record's end or that last look threw ({@link hasRecordConflictCause}), the record that stands stays and the receipt this call published goes back out ({@link withdrawAdoptedReceipt}), so the next run settles those records first and takes the setup back when they say so.
+ * Limit: a record put at `pending.json` after that last look, or after the run, is decided without this run, like one restored after the run.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @param pending - The pending record.
  * @param entrySha256 - The pending hash.
@@ -5913,7 +5914,7 @@ function isPendingStale(
  * @param retained - What stays of the record after recovery; undefined when nothing stays.
  * @param assertLeft - The synchronous look at the other names the adoption rests on (the old record's private name, the rollback journal's name: {@link retiredNameCheck}, {@link journalLeftCheck}), run right before the receipt's rename after the publish record's own look, and right before the record's rename or unlink; undefined when nothing else must hold.
  * @returns The receipt that was written.
- * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end. The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
+ * @throws A {@link JournalConflictError} from {@link adoptedRecordCheck} or its look when `pending.json` no longer shows that record, and what `assertLeft` throws, such as a {@link JournalBackConflictError} for a rollback record at its name; no receipt is written then, or the one written goes back out when such a conflict stops the record's end or the look after it (`changed` for a file at `pending.json` after its delete). The {@link receiptConflictError} when `receipt.json` no longer shows the record this run read there ({@link writeReceipt}): that file stays and no receipt is written. What the receipt's write and {@link retirePending} throw otherwise.
  * @example
  * await adoptPending(run, pending, pending.entrySha256, look.identity, undefined, await journalLeftCheck(run, undefined)) // => the adopted receipt; it rejects, leaving no receipt and both records, once a backup put the rollback record of that setup back
  */
@@ -5946,13 +5947,16 @@ async function adoptPending(
     adopted,
     bothLooks(await adoptedRecordCheck(context), assertLeft),
   )
-  await retirePending(context, retained, assertLeft).catch(
-    async (error: unknown) => {
-      // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back): that receipt would make the next run skip the take-back, so it goes back out while it still is the version this call wrote.
-      if (hasRecordConflictCause(error)) await withdrawAdoptedReceipt(context)
-      throw error
-    },
-  )
+  try {
+    await retirePending(context, retained, assertLeft)
+    // The record's own name must still show what its retirement left there (nothing, or what stays of it): a record a backup put there while the adopted one stood at its dropping name, one that marks the same setup's take-back, say, never stays beside this receipt.
+    const assertRecordLeft = await adoptedRecordCheck(context)
+    assertRecordLeft.assert()
+  } catch (error) {
+    // A record the adoption rests on changed after the receipt's rename (a rollback record back at its name, or another setup record at pending.json, which may mark that setup's take-back): that receipt would make the next run skip the take-back, so it goes back out while it still is the version this call wrote.
+    if (hasRecordConflictCause(error)) await withdrawAdoptedReceipt(context)
+    throw error
+  }
   return adopted
 }
 
@@ -6056,8 +6060,8 @@ function asJournalBackConflict(error: unknown): unknown {
 }
 
 /**
- * Gives the synchronous look that must still find the publish record an adoption rests on at `pending.json`, as this run read or last wrote it ({@link Context.journalVersion}), right before the rename that publishes the adoption's receipt, once a read through the thread pool found it there; called only by {@link adoptPending}, which joins it with the look at the rollback journal's name ({@link journalLeftCheck}) and whose receipt write awaits a look at those names once more before its synchronous looks ({@link writeReceipt}).
- * Limit: a record put there after that synchronous look, also after the receipt's rename, is seen only by the record's retirement right after ({@link retirePending}), which keeps that record, refuses and takes that receipt back out ({@link withdrawAdoptedReceipt}), as it does for a rollback record put back at its name; no Node primitive renames only while another name shows a given inode.
+ * Gives the synchronous look that must still find the publish record an adoption rests on at `pending.json`, as this run read or last wrote it ({@link Context.journalVersion}), right before the rename that publishes the adoption's receipt, once a read through the thread pool found it there; called only by {@link adoptPending}, which joins it with the look at the rollback journal's name ({@link journalLeftCheck}) and whose receipt write awaits a look at those names once more before its synchronous looks ({@link writeReceipt}), and which calls it again once the record ended and runs its look at once, so `pending.json` must still show what that end left there (nothing, or what stays of the record).
+ * Limit: a record put there after that synchronous look, also after the receipt's rename, is seen only by the record's retirement right after ({@link retirePending}) or by that look after it, which keep that record, refuse and take that receipt back out ({@link withdrawAdoptedReceipt}), as they do for a rollback record put back at its name; no Node primitive renames only while another name shows a given inode.
  * @param context - The run; it tracks its publish record ({@link trackedPublishContext}).
  * @returns The look at the publish record's name ({@link StillLook}).
  * @throws A {@link JournalConflictError}: `changed` when the name shows another file or other bytes, `unread` when it cannot be read again, `gone` when it is empty while this run knows a version of it; the look it gives throws the same right before the rename ({@link assertNameLeft}). Nothing is written then.
@@ -9320,7 +9324,7 @@ async function dropTrackedJournal(
 
 /**
  * Deletes a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and deleting it there; called by {@link dropTrackedJournal} right after those looks.
- * After the move the caller's names and the dropping name are looked at again ({@link assertAfterMove}), right before the delete, and the record goes back to its name when anything changed ({@link renewOrPutBack}), so a record whose companion record changed while it moved is never deleted on the earlier look.
+ * After the move the caller's names and the dropping name are looked at again ({@link assertAfterMove}), right before the delete, and the record goes back to its name when anything changed ({@link renewOrPutBack}), so a record whose companion record changed while it moved is never deleted on the earlier look. A file another program puts at the record's own name after the move is not looked at here: it stays, and a caller that must not end beside such a file looks at that name once the delete is done ({@link adoptPending}).
  * Limits: a file put at the dropping name between its synchronous look and the move is replaced, and a swap there between its last look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode); a stop between the move and the unlink leaves the record at the dropping name, where the next run puts it back, while the dropping note proves it ({@link dropTrackedJournal}), and settles it again ({@link settleDroppedRecord}).
  * @param context - The run; its pending path is the record.
  * @param look - The record as the last look saw it: this run's version.
