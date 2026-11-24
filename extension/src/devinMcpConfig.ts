@@ -4726,7 +4726,7 @@ function unrestoredStandingOf(
  * - `covers` when the moved record and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names (and that config, when it decided) still show what was read
  * - `gone` when the moved record's private name is empty, by its first look or by the last: nothing is left there to keep, and nothing there is unlinked
  * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
- * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry, or the config that told that both own it changed by the last looks
+ * - `config-unread` when two records of this config with different entry hashes stand and the config could not be read to tell which owns its entry, or the config that told which owns it changed by the last looks
  * - `absent` when the name is empty, or changed between the look and the check
  * - `foreign` when a record of this config stands there and the moved file, read in full, is no record (no regular file, too many bytes or bytes of another shape) or a record of another config: neither goes, and the moved one never replaces it
  * - `other` for a folder, a link or another kind of file, bytes that are no record, a record of another config, or a record of another entry that owns nothing the config holds
@@ -4760,11 +4760,14 @@ async function standingReceiptOf(
   return stillness === 'still' ? answer : stillness
 }
 
-/** What {@link compareStandingReceipt} answers: the comparison, and the identity of the config when the config decided a `covers` ({@link ownerOfConfigEntry}), which the last looks must still find ({@link stillnessOf}). */
+/** What {@link compareStandingReceipt} answers: the comparison, and, when the config decided it ({@link ownerOfConfigEntry}), the identity of the config that was read (`absent` when none stood), which the last looks must still find ({@link stillnessOf}). */
 type StandingComparison = {
   answer: 'covers' | 'superseded' | 'other' | 'foreign' | 'config-unread'
-  boundConfig?: FileIdentity
+  boundConfig?: BoundConfig
 }
+
+/** The config a comparison's answer rests on ({@link ownerOfConfigEntry}): the identity of the file that was read, or `absent` when no config stood. */
+type BoundConfig = FileIdentity | 'absent'
 
 /**
  * Compares the record that stands at `receipt.json` with the moved one; called only by {@link standingReceiptOf}, which then looks at both names again before the put-back acts on the answer.
@@ -4793,17 +4796,17 @@ async function compareStandingReceipt(
 
 /**
  * Compares two records of this config whose entry hashes differ against the entry the config holds, so the put-back never names a record that owns that entry as the one to move; called only by {@link compareStandingReceipt}.
- * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}). That case depends on the config, so its `covers` carries the identity of the config that was read, and the drop holds only while the config still is that file at the last looks ({@link stillnessOf}).
+ * Two hashes may name one entry: a record of an older build hashes the whole entry, `disabled` included, a newer one its core ({@link ownsEntry}). Every answer this read decides depends on the config, so it carries the config that was read: a `covers` drops the moved record, and a `superseded` or `other` names a record to move, each only while the config is still that file, or still absent, at the last looks ({@link stillnessOf}); otherwise the answer is `config-unread`, which names no record to move.
  * @param context - The run.
  * @param standing - The record of this config at `receipt.json`.
  * @param moved - The moved record of this config.
- * @returns The answer ({@link StandingComparison}):
- * - `covers` with the config's identity when both own the entry the config holds: the moved one is a spare copy
+ * @returns The answer ({@link StandingComparison}), each but `config-unread` with the config that was read ({@link BoundConfig}):
+ * - `covers` when both own the entry the config holds: the moved one is a spare copy
  * - `superseded` when only the record at `receipt.json` owns it: the moved one, which owns nothing the config holds, is the one to move
  * - `other` when the record at `receipt.json` owns nothing the config holds, also when no config or no entry stands: that record is the one to move
  * - `config-unread` when the config could not be read ({@link lookAtConfig} refused): neither is named
  * @example
- * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => { answer: 'superseded' } while the config holds the entry only liveReceipt owns
+ * await ownerOfConfigEntry(context, liveReceipt, oldReceipt) // => { answer: 'superseded', boundConfig: look.identity } while the config holds the entry only liveReceipt owns
  */
 async function ownerOfConfigEntry(
   context: Context,
@@ -4812,14 +4815,15 @@ async function ownerOfConfigEntry(
 ): Promise<StandingComparison> {
   const look = await lookAtConfig(context).catch(() => undefined)
   if (look === undefined) return { answer: 'config-unread' }
-  // No config stands: the record at receipt.json owns nothing it holds.
-  if (look.kind !== 'present') return { answer: 'other' }
+  // No config stands: the record at receipt.json owns nothing it holds, while no config appears by the last looks.
+  if (look.kind !== 'present') return { answer: 'other', boundConfig: 'absent' }
   const current = currentEntryOf(look)
-  // Only a record that owns nothing the config holds is ever named as the one to move.
-  if (!ownsEntry(current, standing)) return { answer: 'other' }
-  if (!ownsEntry(current, moved)) return { answer: 'superseded' }
+  const boundConfig = look.identity
+  // Only a record that owns nothing the config holds is ever named as the one to move, and only while the config is still this file.
+  if (!ownsEntry(current, standing)) return { answer: 'other', boundConfig }
+  if (!ownsEntry(current, moved)) return { answer: 'superseded', boundConfig }
   // This look decided that both own the entry: the drop holds only while the config is still this file.
-  return { answer: 'covers', boundConfig: look.identity }
+  return { answer: 'covers', boundConfig }
 }
 
 /** The two records {@link readStandingReceipt} read, each with its name's look right before its read, so {@link stillnessOf} can tell after the comparison whether both names still show those files. */
@@ -4901,7 +4905,7 @@ async function readLookedRecord(
  * @param retiredPath - The private name that holds the moved record.
  * @param standingLook - `receipt.json`'s look before its read.
  * @param movedLook - The private name's look before its read.
- * @param boundConfig - The identity of the config that decided a `covers` ({@link ownerOfConfigEntry}); undefined when the config decided nothing.
+ * @param boundConfig - The config that decided the answer ({@link ownerOfConfigEntry}): a `covers` drop, or a `superseded` or `other` advice to move a record; undefined when the config decided nothing.
  * @returns
  * - `still` when every name shows what was read
  * - `moved-changed` when the private name shows another file; `moved-unread` when that look failed
@@ -4916,7 +4920,7 @@ function stillnessOf(
   retiredPath: string,
   standingLook: LeftoverLookback,
   movedLook: LeftoverLookback,
-  boundConfig?: FileIdentity,
+  boundConfig?: BoundConfig,
 ):
   | 'still'
   | 'absent'
@@ -4931,7 +4935,7 @@ function stillnessOf(
   if (movedState === 'gone') return 'gone'
   // Another file at the private name since the look: what the read compared is not what an unlink would delete.
   if (movedState === 'changed') return 'moved-changed'
-  // The config told that both records own its entry: that holds only while the config is still the file that was read.
+  // The config decided the answer: it holds only while the config is still the file that was read, or still absent.
   if (boundConfig && !isConfigStill(context, boundConfig))
     return 'config-unread'
   // receipt.json last: the record that covers the moved one must still stand there right before the delete.
@@ -4941,16 +4945,20 @@ function stillnessOf(
 }
 
 /**
- * Tells whether the config is still the file whose look decided a drop, with a failed look as a change; called only by {@link stillnessOf}.
+ * Tells whether the config is still the file whose look decided a drop or a move advice, or still absent, with a failed look as a change; called only by {@link stillnessOf}.
  * @param context - The run.
- * @param boundConfig - The identity of the config that decided.
- * @returns `true` when {@link isConfigUnchanged} finds that file; `false` when it changed or the look failed.
+ * @param boundConfig - The config that decided ({@link BoundConfig}).
+ * @returns `true` when {@link isConfigUnchanged} finds that file, or still no file for `absent`; `false` when it changed or the look failed.
  * @example
  * isConfigStill(context, look.identity) // => false after a sync tool saved the config again
+ * isConfigStill(context, 'absent')      // => false once a config stands
  */
-function isConfigStill(context: Context, boundConfig: FileIdentity): boolean {
+function isConfigStill(context: Context, boundConfig: BoundConfig): boolean {
   try {
-    return isConfigUnchanged(context, boundConfig)
+    return isConfigUnchanged(
+      context,
+      boundConfig === 'absent' ? undefined : boundConfig,
+    )
   } catch {
     return false
   }
