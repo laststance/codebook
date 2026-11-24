@@ -20,6 +20,8 @@ import { removeTestFolder } from './utils/removeTestFolder'
 import { within } from './utils/within'
 
 const WINDOWS_MODES = 'Windows reports mode 0o666 for every file'
+/** U+FFFD, the character a byte that is no UTF-8 decodes to; built from its code point so no formatter writes it as raw text. */
+const REPLACEMENT_CHARACTER = String.fromCodePoint(0xfffd)
 
 /** Makes a storage folder with an agent folder, removed after the test. */
 async function arrangeStorage(context: TestContext): Promise<string> {
@@ -78,7 +80,7 @@ async function loadWithFailingRead(code: string) {
         {
           './readDescriptorText': {
             ...realReadDescriptorText,
-            readDescriptorText: failingRead,
+            readDescriptorBytes: failingRead,
           },
         },
       ),
@@ -190,6 +192,80 @@ test('an installed MCP receipt that holds the very bytes its publish record name
   assert.deepEqual(state, {
     state: 'installed',
     receipt: { installed: true, installationId: 'installation-a' },
+  })
+})
+
+// Value: protects=the bridge judges the very bytes a publish record's note names by the file's own bytes, as the config module hashes them, so the old record put back byte for byte stands again although one of its strings holds a byte that is no UTF-8 (Cycle 0149 task 41; /ship pass 1 outside voice 11, Codex structured readPrivateJsonState.ts:78); fails_when=the receipt answers removed (the hash of the decoded text, where that byte became U+FFFD, differs from the bytes' hash); no_claim=how such bytes came to be (the test writes them by hand), and what a setup, refresh or removal says about them
+test('an installed MCP receipt whose string holds a byte that is no UTF-8 answers installed while its publish record notes receipt.json unverified with the hash of those very bytes', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const receiptBytes = Buffer.concat([
+    Buffer.from(
+      '{"installed":true,"installationId":"installation-a","label":"',
+    ),
+    Buffer.from([0xff]),
+    Buffer.from('"}'),
+  ])
+  await writeFile(receiptPath, receiptBytes, { mode: 0o600 })
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: {
+        sha256: createHash('sha256').update(receiptBytes).digest('hex'),
+        receiptUnverified: true,
+      },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'installed',
+    receipt: {
+      installed: true,
+      installationId: 'installation-a',
+      label: REPLACEMENT_CHARACTER,
+    },
+  })
+})
+
+// Value: protects=a file at receipt.json whose bytes differ from the ones a publish record's note names stays unverified for the bridge although both decode to the same text (a byte that is no UTF-8 where the named record held an encoded U+FFFD), as the config module, which hashes the bytes, refuses it (Cycle 0149 task 41; /ship pass 1 outside voice 11, Codex structured readPrivateJsonState.ts:78); fails_when=the receipt answers installed; no_claim=how such bytes came to be (the test writes them by hand)
+test('an installed MCP receipt answers removed with the reason unverified when its bytes differ from the ones its publish record names but decode to the same text', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const namedBytes = Buffer.from(
+    `{"installed":true,"installationId":"installation-a","label":"${REPLACEMENT_CHARACTER}"}`,
+  )
+  const standingBytes = Buffer.concat([
+    Buffer.from(
+      '{"installed":true,"installationId":"installation-a","label":"',
+    ),
+    Buffer.from([0xff]),
+    Buffer.from('"}'),
+  ])
+  await writeFile(receiptPath, standingBytes, { mode: 0o600 })
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: {
+        sha256: createHash('sha256').update(namedBytes).digest('hex'),
+        receiptUnverified: true,
+      },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
   })
 })
 
