@@ -6267,7 +6267,7 @@ function unrestoredStandingOf(
  * @param identity - What names the file the setup moved there ({@link PutBackOptions.identity}); a moved file it does not name is never dropped.
  * @param failure - What made the setup's put-back necessary; undefined at a later run, whose `covers` holds only while the publish record it read still stands at a synchronous look beside the looks at both names ({@link recordStillCheck}).
  * @returns
- * - `covers` when the moved record, the file the publish record names, and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names (and that config, when it decided) still show what was read
+ * - `covers` when the moved record, the file the publish record names, and a record that stands there are both records of this config with the same entry hash, or both own the entry the config holds ({@link ownerOfConfigEntry}), and both names (and that config, when it decided) still show what was read; at a later run also when the publish record names no bytes (an older version's) and the moved file is the very file at `receipt.json`, which that version's put-back leaves when it stops between its link and its unlink: dropping that second name loses no bytes
  * - `foreign-unverified` when a record of this config stands there and the moved file is a record of this config other than the one the publish record names; `linked-unverified` when that file is the one at `receipt.json` too (one file at both names, as an unverified put-back's link or a backup leaves it)
  * - `gone` when the moved record's private name is empty, by its first look or by the last: nothing is left there to keep, and nothing there is unlinked
  * - `superseded` when only the record that stands there owns the entry the config holds: the moved one is the one to move
@@ -6294,6 +6294,7 @@ async function standingReceiptOf(
     context,
     records,
     identity,
+    failure === undefined,
   )
   // A later run drops the old record only on the word of its publish record as it read it; a setup's own put-back follows the record it wrote moments earlier.
   const recordStill =
@@ -6340,9 +6341,11 @@ type BoundConfig = FileIdentity | 'absent'
  * @param context - The run.
  * @param records - Both records as read ({@link StandingRecords}).
  * @param identity - What names the file the setup moved there; undefined when nothing does.
+ * @param isLaterRun - Whether a later run settles the put-back (no setup's own `failure`), whose identity is undefined only for a publish record that names no bytes, an older version's; a setup's own undo without proof never drops a name on that word.
  * @returns The answer ({@link StandingComparison}):
  * - `other` when the record at `receipt.json` is a record of another config
  * - `foreign` when the moved file holds no record, or a record of another config
+ * - `covers` at a later run whose publish record names no bytes when the moved file is the very file at `receipt.json` (both names one file): an older version's put-back that stopped between its link and its unlink leaves it so, and dropping the private name, as that version would, loses no bytes
  * - `linked-unverified` when the moved file is a record of this config other than the one the publish record names and the very file at `receipt.json` (both names one file), `foreign-unverified` when it is another file: neither ever drops or names a record of Codebook's to move
  * - `covers` when both hold the same entry hash, bound to no config
  * - what {@link ownerOfConfigEntry} answers for two records of this config with different entry hashes
@@ -6353,6 +6356,7 @@ async function compareStandingReceipt(
   context: Context,
   { standing, standingLook, moved }: StandingRecords,
   identity: MovedIdentity | undefined,
+  isLaterRun: boolean,
 ): Promise<StandingComparison> {
   const { read, look, sha256 } = moved
   // Only what stands there decides while it is no record of this config: moving it away lets the moved file go back.
@@ -6360,6 +6364,9 @@ async function compareStandingReceipt(
   // A moved file read as bytes that are no record, or as a record of another config: that file is the one to move.
   if (read === 'other' || read.targetPath !== context.path)
     return { answer: 'foreign' }
+  // An older version's record names no bytes, and its put-back that stopped after its link leaves one file at both names: only that second name goes.
+  if (isLaterRun && identity === undefined && look.ino === standingLook.ino)
+    return { answer: 'covers' }
   // A record of this config that is not the one the setup moved there decides nothing: one file at both names is unverified at receipt.json too.
   if (!isMovedFile(identity, { sha256, ino: look.ino }))
     return {

@@ -16258,6 +16258,36 @@ test("A later setup never puts back the file an older version's publish record l
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A later setup after an older version's put-back that stopped between its link and its unlink drops only the old record's second name and reads receipt.json as its record again, so the setup goes on", async (context) => {
+  // Value: protects=a put-back of 0.2.142.0, 0.2.143.0 or 0.2.144.0 that stopped right after its link leaves one file at receipt.json and the old record's private name, which an older version's publish record (retiresReceipt true, no bytes named) leads to; dropping that second name loses no bytes, so this version drops only it, as the older version would, and reads receipt.json as an ordinary receipt instead of calling it unverified and refusing every run (Cycle 0149 review round, OCR L2 P2 on devinMcpConfig.ts:6360); fails_when=the setup refuses or answers anything but current, the private name stays, receipt.json is gone or holds other bytes, or a publish record stays; no_claim=0.2.143.0 itself (the test writes its record by hand: this version's record with retiresReceipt true and the mark that nothing was linked, as that build's put-back failure leaves it, and links the private file to receipt.json by hand for its put-back that stopped after the link), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const { home, storage, receiptPath, pendingPath, retiredPath, retiredText } =
+    await arrangeFailedPutBack(context)
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...(await readRecordFile(storage, 'pending.json')),
+      retiresReceipt: true,
+    }),
+  )
+  linkSync(retiredPath, receiptPath)
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(setupAnswer, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+})
+
 test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads to rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, so no window of those versions puts that file back", async (context) => {
   // Value: protects=a publish record 0.2.144.0 kept as foreign (no bytes of the old record named, and 0.2.144.0 itself puts back whatever record of this config stands at the private name on its word) is rewritten by this version, which keeps that file, in a shape all three released readers refuse, so a window of 0.2.144.0 not reloaded after the update never links that file into receipt.json (Cycle 0149 task 4); fails_when=the record left passes the fields of any of the three releases, it changes in any other way than that shape, a file appears at receipt.json, the file at the private name changes or is gone, or the refusal is another sentence; no_claim=running those releases (the test checks the record against their field rules, RELEASED_RECORD_FIELDS), 0.2.144.0's record (the test writes it by hand: this version's record with retiresReceipt foreign and the mark that nothing was linked), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
   // Arrange
