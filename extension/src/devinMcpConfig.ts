@@ -1899,21 +1899,23 @@ async function createConfig(
 
 /**
  * Moves the config aside to its private name as the first step of a replacement: whatever file stands at the config name at that instant is the file that moves, so it is the one that gets compared; called by {@link replaceConfig}.
+ * The hard-link probe runs first, so the last looks (a take-back's at its records, {@link assertTakeBackRecordStill}, then the config's) come after every awaited step and only synchronous looks stand between the last await and the rename.
  * @param context - The run.
  * @param replacement - The staged file, the probe name, the private name and the identity the config had when it was read.
- * @throws A {@link refusal} when the config changed since the read or is gone; or the hard link error of a file system that cannot link; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record no longer stands as its run read it. The staged file and the pending record are removed then, because nothing moved.
+ * @throws A {@link refusal} when the config changed since the read or is gone; or the hard link error of a file system that cannot link; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record or own rollback record no longer stands as its run read or wrote it. The staged file and the pending record are removed then, because nothing moved.
  */
 async function moveConfigAside(
   context: Context,
   { temporary, probePath, displaced, identity }: Replacement,
 ): Promise<void> {
   try {
-    await assertTakeBackRecordStill(context)
-    assertConfigUnchanged(context, identity)
-    context.seam?.afterCheck?.()
     // The config name is empty until the link-in, so a file system that cannot link is found before anything moves; the probe's name is in the record.
     await link(temporary, probePath)
     await unlink(probePath)
+    // The last looks come after the probe's awaited link and unlink, so a record or config moved or replaced meanwhile is seen before the config moves.
+    await assertTakeBackRecordStill(context)
+    assertConfigUnchanged(context, identity)
+    context.seam?.afterCheck?.()
     await rename(context.path, displaced.path).catch((error: unknown) => {
       throw codeOf(error) === 'ENOENT' ? changedWhileWorking(context) : error
     })
@@ -2218,7 +2220,7 @@ function assertWithinSizeLimit(context: Context, serialized: string): void {
  * @param context - The run.
  * @param look - What was read; must be present.
  * @returns The private copy that stays when it could not be deleted or changed since the comparison.
- * @throws A {@link refusal} when the file changed or the copy cannot go back; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record no longer stands as its run read it; nothing is deleted.
+ * @throws A {@link refusal} when the file changed or the copy cannot go back; what {@link assertTakeBackRecordStill} throws for a take-back whose publish record or own rollback record no longer stands as its run read or wrote it; nothing is deleted.
  */
 async function deleteConfig(
   context: Context,
@@ -2555,7 +2557,7 @@ async function writeTrackedJournal(
 /**
  * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file, or, where the storage's file system gives no file a second name, with an exclusive create, which never replaces one either ({@link createJournalInPlace}); called by {@link writeTrackedJournal} when no version is known or the name was found empty.
  * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}). That look after the link reads the journal through its open handle, and the cleanup awaits the file system after it, so the journal is read again after the cleanup and its name looked at once more, synchronously, as the last step ({@link assertTrackedJournalStill}): the version goes back to the caller, whose next step may move the config to the private name that journal names ({@link deleteConfig}, {@link publishRoot}), only while the name still shows that file.
- * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A file put at the journal's name, or a move of the journal, after the last look is not seen. A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A file put at the journal's name, or a move of the journal, after the last look is not seen here; a take-back looks at that name once more right before it moves the config ({@link assertTakeBackRecordStill}). A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
  * @param assertStill - What else must still hold, looked at right after the seam and before the link, after an awaited look at its names ({@link writeRecord}).
@@ -5934,7 +5936,7 @@ function disabledFlagOf(entry: unknown): { disabled?: true } {
 /** What a write reports about the entry it published. */
 type PublishedEntry = { generation: string; cleanupFailure?: string }
 
-/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing), `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out) `journal-taken` (something already stood at the name of the rollback's own journal, which its first write never replaces, so nothing moved and the config was left unchanged), `took-out-record-taken` (the entry is gone, but another file stood at the rollback journal's name as the rollback was about to delete its journal, so that file stays and the run goes no further, {@link dropFinishedRecord}) or `took-out-record-unread` (the entry is gone, but that name could not be read again then, so what stands there stays and the run goes no further); `keptLeft` holds the copies the rollback itself left. */
+/** How a first setup's rollback ended: `took-out` (the entry is gone), `replaced-config` (another file stands at the config path, so it was left alone), `not-ours` (the file is gone, or its `codebook` entry is no longer the one this setup wrote, so nothing was touched and nothing may be removed by hand on Codebook's word) `unreadable` (the file could not be read again, so Codebook never confirmed the entry as its own and touched nothing), `not-taken-out` (Codebook's own entry, confirmed as its own, could not be taken out) `journal-taken` (something already stood at the name of the rollback's own journal, which its first write never replaces, or another file or nothing stood there at the last look right before the config would move, so nothing moved and the config was left unchanged), `took-out-record-taken` (the entry is gone, but another file stood at the rollback journal's name as the rollback was about to delete its journal, so that file stays and the run goes no further, {@link dropFinishedRecord}) or `took-out-record-unread` (the entry is gone, but that name could not be read again then, so what stands there stays and the run goes no further); `keptLeft` holds the copies the rollback itself left. */
 type RollbackResult = {
   outcome:
     | 'took-out'
@@ -5955,7 +5957,7 @@ type RollbackResult = {
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
  * @param context - The run.
  * @param written - The receipt that could not be written; its `config.ino` is the file the setup published.
- * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and a name that could not be read again then is `took-out-record-unread`; what stands there stays.
+ * @returns The {@link RollbackResult}; a config that cannot be read again is `unreadable` and left unchanged; a config that was saved again meanwhile (another inode) is `replaced-config` even when it holds the same entry, and is left unchanged; a missing file or an entry that no longer hashes like this setup's is `not-ours`; something that already stands at the rollback journal's name, or another file or nothing there at the take-back's last look before the config moves ({@link assertTakeBackRecordStill}), is `journal-taken`, and nothing moved; another file at that name once the entry is out, as the journal was to be deleted, is `took-out-record-taken`, and a name that could not be read again then is `took-out-record-unread`; what stands there stays.
  * @throws The refusals of {@link takeEntryOut}, after the entry was confirmed as Codebook's own; the caller turns them into `not-taken-out`, except the {@link RecordConflictError} of a take-back whose publish record no longer stands as its run read it ({@link assertTakeBackRecordStill}), which {@link finishCutShortSetup} rethrows because nothing moved.
  */
 async function rollBackPublishedEntry(
@@ -5994,7 +5996,7 @@ async function rollBackPublishedEntry(
             : 'took-out-record-taken',
         keptLeft: [],
       }
-    // Only the journal's first write, a claim, lets this escape otherwise (every later journal write of the take-back swallows its failure), so nothing moved.
+    // Only the journal's first write, a claim, and the last look at that journal right before the config moves let this escape otherwise (every later journal write of the take-back swallows its failure), so nothing moved.
     if (error instanceof JournalConflictError)
       return { outcome: 'journal-taken', keptLeft: [] }
     throw error
@@ -6033,24 +6035,52 @@ function rollbackContextOf(
 }
 
 /**
- * Stops a take-back right before its first change to the config unless the publish record its run read still stands at `pending.json` as that run read or last wrote it ({@link Context.takeBackRecordRun}), so a record a backup or sync tool moved away, replaced or made unreadable after that read never has the entry or the config Codebook created removed on its word; called by {@link deleteConfig} and {@link moveConfigAside} right before their last look at the config.
- * The awaited look reads the record's bytes through the thread pool ({@link lookAtTrackedJournal}), so a storage that already stalls stalls there; the synchronous look right after it ({@link assertTrackedJournalStill}) and the config's own last look follow with nothing awaited between them.
- * Limit: a record moved or replaced after that synchronous look, while the config is renamed or moved aside, is seen only when the run ends that record ({@link retirePending}), after the config changed; no Node primitive renames one name only while another shows a given inode.
- * @param context - The run that is about to move the config; only a take-back's context ({@link rollbackContextOf}) of a run that tracks its publish record looks at anything.
- * @throws A {@link RecordConflictError} with that record's own sentence ({@link journalConflictError}) when its name shows nothing (`gone`), another file or other bytes (`changed`), or cannot be read again (`unread`); nothing moved then.
+ * Stops a take-back right before its first change to the config unless the records it rests on still stand: the publish record its run read at `pending.json` as that run read or last wrote it ({@link Context.takeBackRecordRun}), which proves the entry is the failed setup's, and the take-back's own rollback record as its claim linked it ({@link claimJournal}), which names the private name the config moves to; so a record a backup or sync tool moved away, replaced or made unreadable after that read or that claim never has the entry or the config Codebook created moved on its word; called by {@link deleteConfig} and {@link moveConfigAside} after every awaited step of theirs and right before their last look at the config.
+ * Both names are read through the thread pool first, the publish record's, then the take-back's own ({@link lookAtTrackedJournal}), so a storage that already stalls stalls there; the synchronous looks follow in that order ({@link assertTrackedJournalStill}), and the config's own last look after them, with nothing awaited between them.
+ * Limit: a record moved or replaced after its synchronous look, while the config is renamed or moved aside, is seen only when the run ends that record ({@link retirePending}, {@link dropFinishedRecord}), after the config changed; no Node primitive renames one name only while another shows a given inode.
+ * @param context - The run that is about to move the config; only a take-back's context ({@link rollbackContextOf} with a generation) looks at anything, at the publish record only when its run tracks one.
+ * @throws A {@link RecordConflictError} with the publish record's own sentence ({@link journalConflictError}) when its name shows nothing (`gone`), another file or other bytes (`changed`), or cannot be read again (`unread`); a {@link JournalConflictError} for the take-back's own record in the same three cases, which {@link rollBackPublishedEntry} answers as it answers its claim's (`journal-taken`); nothing moved then.
  * @example
- * await assertTakeBackRecordStill(rollbackContext) // throws once a sync tool moved pending.json away after the run read it
+ * await assertTakeBackRecordStill(rollbackContext) // throws a RecordConflictError once a sync tool moved pending.json away after the run read it
+ * await assertTakeBackRecordStill(rollbackContext) // throws a JournalConflictError once a sync tool renamed another file over pending.json.rollback after the claim
  */
 async function assertTakeBackRecordStill(context: Context): Promise<void> {
-  const run = context.takeBackRecordRun
-  if (!run) return
-  try {
-    const left = await lookAtTrackedJournal(run)
-    // An empty name: the record the take-back rests on disappeared after the run read it.
-    if (!left) throw journalConflictError(run, 'gone')
-    assertTrackedJournalStill(run, left)
-  } catch (error) {
+  // Only a take-back's context tracks its own rollback record, from its claim on.
+  if (context.rollbackOf === undefined) return
+  const assertRecordStill = await takeBackRecordLook(context.takeBackRecordRun)
+  const ownRecord = await lookAtTrackedJournal(context)
+  // An empty name: the record that names the private name the config moves to disappeared after the claim.
+  if (!ownRecord) throw journalConflictError(context, 'gone')
+  assertRecordStill?.()
+  assertTrackedJournalStill(context, ownRecord)
+}
+
+/**
+ * Reads the publish record a take-back rests on through the thread pool and gives back its synchronous last look; called by {@link assertTakeBackRecordStill}, which runs that look only after its awaited look at the take-back's own record, so nothing awaited stands between the synchronous looks and the move of the config.
+ * @param run - The run that tracks the `pending.json` it read ({@link Context.takeBackRecordRun}); undefined when it tracks none.
+ * @returns
+ * - undefined without a run
+ * - otherwise the synchronous look at that name ({@link assertTrackedJournalStill}), which throws as below
+ * @throws A {@link RecordConflictError} with that record's own sentence ({@link journalConflictError}) when its name shows nothing (`gone`), another file or other bytes (`changed`), or cannot be read again (`unread`), from the read or from the look it gives back; nothing moved then.
+ * @example
+ * const assertRecordStill = await takeBackRecordLook(rollbackContext.takeBackRecordRun)
+ * assertRecordStill?.() // throws once a sync tool moved pending.json away after that read
+ */
+async function takeBackRecordLook(
+  run: Context | undefined,
+): Promise<StillLook['assert'] | undefined> {
+  if (!run) return undefined
+  const recordLook = await lookAtTrackedJournal(run).catch((error: unknown) => {
     throw asRecordConflict(error)
+  })
+  // An empty name: the record the take-back rests on disappeared after the run read it.
+  if (!recordLook) throw asRecordConflict(journalConflictError(run, 'gone'))
+  return (): void => {
+    try {
+      assertTrackedJournalStill(run, recordLook)
+    } catch (error) {
+      throw asRecordConflict(error)
+    }
   }
 }
 
@@ -6864,7 +6894,7 @@ function publishRecordConflict(
 }
 
 /**
- * Turns a conflict at the name of a run's own `pending.json` into a refusal about that record ({@link RecordConflictError}) with the conflict's own sentence ({@link journalConflictError}), so the private file recovery could not settle is named after it ({@link mergeWithLeftover}): the record that named that file changed or disappeared under the run; called by {@link settleAfterRecovery} for a run that holds no legacy journal, and by {@link assertTakeBackRecordStill} before a take-back moves the config.
+ * Turns a conflict at the name of a run's own `pending.json` into a refusal about that record ({@link RecordConflictError}) with the conflict's own sentence ({@link journalConflictError}), so the private file recovery could not settle is named after it ({@link mergeWithLeftover}): the record that named that file changed or disappeared under the run; called by {@link settleAfterRecovery} for a run that holds no legacy journal, and by {@link takeBackRecordLook} before a take-back moves the config.
  * @param error - What settling the record threw.
  * @returns
  * - a {@link RecordConflictError} with the same message, the conflict as its cause, for a {@link JournalConflictError}

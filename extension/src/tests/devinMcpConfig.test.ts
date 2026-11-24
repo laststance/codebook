@@ -1611,30 +1611,50 @@ test('A removal whose last delete of the displaced copy fails keeps the record c
 })
 
 test('Set Up AI Chat gives the hard-link probe a name that is in the pending record before the probe is created', async (context) => {
-  // Value: protects=a crash between the probe's creation and its removal leaves a named file that recovery can delete; fails_when=the record holds no probe name when the probe is about to be linked; why_new=the probe name was random and unrecorded; seam=seam.afterCheck reads pending.json and the folder right before the probe link
+  // Value: protects=a crash between the probe's creation and its removal leaves a named file that recovery can delete; fails_when=the record holds no probe name when the probe is about to be linked, or the probe is linked at another name; why_new=the probe name was random and unrecorded; seam=the config module is loaded with a link that reads pending.json and the folder right before it links the probe (seam.afterCheck comes after the probe since Cycle 0148 task 42, so it cannot stand for that moment)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"theme":"dark"}\n')
   let journal: { generation: string; probeName: string } | undefined
+  let linkedProbePath = ''
   let didProbeExist = true
+  const readingAtProbe = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // Right before the probe is linked: what the record and the folder hold then.
+          if (to.endsWith('.probe') && journal === undefined) {
+            journal = JSON.parse(
+              readFileSync(join(storage, 'devin-mcp', 'pending.json'), 'utf8'),
+            )
+            linkedProbePath = to
+            didProbeExist = existsSync(
+              join(dirname(configPath), journal?.probeName ?? 'missing'),
+            )
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
 
   // Act
-  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
-    afterCheck: () => {
-      journal = JSON.parse(
-        readFileSync(join(storage, 'devin-mcp', 'pending.json'), 'utf8'),
-      )
-      didProbeExist = existsSync(
-        join(dirname(configPath), journal?.probeName ?? 'missing'),
-      )
-    },
-  })
+  await readingAtProbe.writeManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
   assert.equal(
     journal?.probeName,
     `mcp_config.json.${journal?.generation}.probe`,
   )
+  assert.equal(basename(linkedProbePath), journal?.probeName)
   assert.equal(didProbeExist, false)
   assert.deepEqual(await leftoversBeside(configPath), [])
 })
@@ -9863,6 +9883,237 @@ test("A file another program renames over a take-back's first rollback record wh
     mcpServers: { alpha: { command: 'a' } },
   })
   assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A file another program renames over a take-back's first rollback record while the take-back checks that the config's folder can hard-link stops the take-back before the config moves, and the next refresh takes the entry back", async (context) => {
+  // Value: protects=a take-back moves the config aside only while its own rollback record, looked at once more after the hard-link check of the config's folder with nothing awaited between that look and the move, still shows the file its claim linked there, so the config never moves to a private name while another file stands where the record that names that private name was (Cycle 0148 task 42); fails_when=the first refresh says anything but the journal-taken refusal, the config moves aside or changes, the file renamed in is gone from the journal name or changes, a private name stays beside the config, or the second refresh leaves the entry, the journal or the setup record; no_claim=a real sync tool (the config module is loaded with a link that renames another journal over the journal name once, right before it links the take-back's probe), a swap after that last look (stated limit), what a process end after the move would leave
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const foreignJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000172',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000173',
+  })}\n`
+  let isSwapped = false
+  const replacingAtProbe = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // A sync tool renames its file over the journal name while the take-back links its probe beside the config.
+          if (to.endsWith('.probe') && !isSwapped) {
+            isSwapped = true
+            swapFile(journalPath, foreignJournalText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let moveAsideCountInFirst = 0
+
+  // Act
+  const firstError = await replacingAtProbe
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: () => {
+        moveAsideCountInFirst += 1
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the first refresh left empty reads as 'absent', so the assertion below names it.
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = JSON.parse(readFileSync(configPath, 'utf8'))
+  const besideConfigAfterFirst = readdirSync(dirname(configPath))
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, but something already stands at ${journalPath}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${configPath} unchanged; the next run reads ${journalPath} before it takes the entry out (if what stands there is not Codebook's for ${configPath}, move it to another folder first); then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(isSwapped, true)
+  assert.equal(moveAsideCountInFirst, 0)
+  assert.equal(journalAfterFirst, foreignJournalText)
+  assert.deepEqual(configAfterFirst, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.deepEqual(besideConfigAfterFirst, ['mcp_config.json'])
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A setup record a sync tool moves away while a refresh's take-back checks that the config's folder can hard-link keeps the entry and the learner's other server in the config, and the next refresh takes that setup back once the record is back", async (context) => {
+  // Value: protects=a take-back moves the config aside only while the setup record it rests on, looked at once more after the hard-link check of the config's folder with nothing awaited between that look and the move, still stands at pending.json as the run read it, so a record moved away during that check leaves the config as it was, the refusal says that record disappeared and Codebook went no further, and the record put back lets the next refresh take the setup back (Cycle 0148 task 36); fails_when=the first refresh resolves or says anything but the disappearance sentence of pending.json, the config moves aside, loses the entry or the other server, a private name, rollback record or receipt is left, the moved record changes, or the second refresh does not take the entry out; no_claim=a real sync tool (the config module is loaded with a link that moves pending.json away once, right before it links the take-back's probe), a move after that last look (stated limit), a record replaced or made unreadable instead
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const movedPath = join(home, 'pending-moved-away.json')
+  let movedPendingText = ''
+  const movingAtProbe = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // A sync tool moves the setup record away while the take-back links its probe beside the config.
+          if (to.endsWith('.probe') && !movedPendingText) {
+            movedPendingText = readFileSync(pendingPath, 'utf8')
+            renameSync(pendingPath, movedPath)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let moveAsideCountInFirst = 0
+
+  // Act
+  const firstRefresh = movingAtProbe.refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      afterMoveAside: () => {
+        moveAsideCountInFirst += 1
+      },
+    },
+  )
+
+  // Assert
+  await assert.rejects(firstRefresh, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program moved it away or deleted it (a backup or sync tool may be moving it), so Codebook did not write it back and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.notEqual(movedPendingText, '')
+  assert.equal(moveAsideCountInFirst, 0)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.deepEqual(readdirSync(dirname(configPath)), ['mcp_config.json'])
+  assert.equal(readFileSync(movedPath, 'utf8'), movedPendingText)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+
+  // Act
+  renameSync(movedPath, pendingPath)
+  const secondRefresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(secondRefresh.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A file another program renames over a take-back's first rollback record while the take-back looks at the setup record keeps the config a cut-short first setup created, and the next refresh removes it", async (context) => {
+  // Value: protects=a take-back renames the config a failed first setup created away only while its own rollback record, looked at after the take-back's last look at the setup record with nothing awaited between that look and the rename, still shows the file its claim linked there, so that config is never renamed to a private name while another file stands where the record that names that private name was (Cycle 0148 task 42); fails_when=the first refresh says anything but the journal-taken refusal, the config is gone or changes, the file renamed in is gone from the journal name or changes, a private name stays beside the config, or the second refresh leaves the config, the journal or the setup record; no_claim=a real sync tool (seam.afterLeftoverCheck renames another journal over the journal name once, at the take-back's synchronous last look at pending.json, which comes after its claim; it stands for a swap anywhere between that claim's last look and the rename), a swap after the last look at the journal (stated limit), the same order on a take-back that rewrites the config (its own test drives the probe)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const foreignJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000174',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000175',
+  })}\n`
+  let isSwapped = false
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      // Only the take-back's look at the setup record after its claim: the journal stands by then.
+      if (path !== pendingPath || isSwapped || !existsSync(journalPath)) return
+      isSwapped = true
+      swapFile(journalPath, foreignJournalText)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A name the first refresh left empty reads as 'absent', so the assertions below name it.
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, 'utf8'))
+    : 'absent'
+  const besideConfigAfterFirst = readdirSync(dirname(configPath))
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, but something already stands at ${journalPath}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${configPath} unchanged; the next run reads ${journalPath} before it takes the entry out (if what stands there is not Codebook's for ${configPath}, move it to another folder first); then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(isSwapped, true)
+  assert.equal(journalAfterFirst, foreignJournalText)
+  assert.deepEqual(configAfterFirst, { mcpServers: { codebook: ENTRY } })
+  assert.deepEqual(besideConfigAfterFirst, ['mcp_config.json'])
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
   assert.equal(existsSync(receiptPath), false)
 })
 
