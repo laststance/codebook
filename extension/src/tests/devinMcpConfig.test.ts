@@ -8764,6 +8764,80 @@ test("Another rollback journal a backup restores at the journal name after a set
   assert.equal(existsSync(pendingPath), false)
 })
 
+test("A take-back that took a failed first setup's entry out and then cannot read its own rollback record again says it could not read that record, not that another file stands there, and the next setup installs the entry", async (context) => {
+  // Value: protects=a take-back whose entry is out and whose look at its own rollback record's name fails as it is about to delete that record (a read refused, not another file found) says that it could not read that name again and asks to make it readable, instead of saying it found another file there and asking to move Codebook's own record away, and it still goes no further (Cycle 0148 ship review); fails_when=the first setup resolves or says anything but the took-out-then-could-not-read refusal, the record at that name is not the take-back's completed record, the config holds the entry after it, the failed setup's record loses its take-back mark, a receipt appears, or the second setup does not install the entry beside the other server with no record left; no_claim=a real read failure such as a lack of file handles (seam.afterLeftoverCheck makes the record mode 000 once, at the take-back's look at its displaced copy after its completed record was written), the wording of another file or an emptied name at that look
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('mode 000 does not stop root or Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  let isUnreadable = false
+
+  // Act
+  const firstError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path === journalPath || isUnreadable) return
+      // Only once the take-back's completed record stands: its entry is out, and only its own record is still to go.
+      if (
+        !existsSync(journalPath) ||
+        JSON.parse(readFileSync(journalPath, 'utf8')).phase !== 'completed'
+      )
+        return
+      isUnreadable = true
+      chmodSync(journalPath, 0o000)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // The record the first setup could not read is made readable again, so the assertions below read it and the second setup reads it first.
+  const isJournalAfterFirst = existsSync(journalPath)
+  if (isJournalAfterFirst) chmodSync(journalPath, 0o600)
+  const journalPhaseAfterFirst = isJournalAfterFirst
+    ? JSON.parse(readFileSync(journalPath, 'utf8')).phase
+    : 'absent'
+  const configAfterFirst = JSON.parse(readFileSync(configPath, 'utf8'))
+  const isTakeBackMarkedAfterFirst =
+    existsSync(pendingPath) &&
+    JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack === true
+  const isReceiptAfterFirst = existsSync(receiptPath)
+  const second = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(isUnreadable, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, so it took that entry out again and changed nothing else, but then could not read ${journalPath} again, where it keeps the record of that take-back, to check that it still holds that record, so it left that name as it is and went no further; make that file readable by you if it is not, and the next run reads ${journalPath} first; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(journalPhaseAfterFirst, 'completed')
+  assert.deepEqual(configAfterFirst, {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(isTakeBackMarkedAfterFirst, true)
+  assert.equal(isReceiptAfterFirst, false)
+  assert.equal(second.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+})
+
 test("A first setup that cannot write its completed record or its receipt and whose take-back took the entry out before it found another rollback record at its record's name leaves the moved-aside copy to you, which the next setup hands over instead of deleting", async (context) => {
   // Value: protects=once a take-back took the entry out it replaced the published file, so the next run hands the moved-aside copy of the learner's previous config over instead of deleting it, also when that take-back then found another program's file at its rollback record's name, and the notice leaves that copy to the learner instead of warning that Codebook still tracks it (Cycle 0148 ship review); fails_when=the setup says anything but the took-out-then-found-another-file refusal followed by the copy left to the learner, the next setup does not name that copy as handed over, the copy is gone or changes after either setup, the restored journal changes, or the config holds the entry after the first setup; no_claim=a real ENOSPC (seam.beforeRecordWrite fails only the setup's completed record and its receipt; the take-back mark is written), a real backup tool (seam.afterLeftoverCheck renames another installation's journal over the journal's name once, at the take-back's look at its displaced copy after its completed rollback record was written)
   // Arrange
