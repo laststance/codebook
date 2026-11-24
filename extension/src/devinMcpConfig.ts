@@ -5344,7 +5344,7 @@ function rollbackOutcomeClause(
 
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
- * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy.
+ * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link PublishDecision.markVersion}), so another generation's record a backup or sync tool put there before the mark, or a record it put over the mark, stays for the next run, and so does the setup's own record when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
  * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out, which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
@@ -5360,13 +5360,10 @@ async function takeOutUnrecordedEntry(
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
-  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. A failure to write the intent changes nothing: the run rejects as it does without it, except that a record another program put at that name meanwhile (the mark refused as a record conflict) stays for the next run.
-  const isOtherRecordStanding = await markTakeBackOwed(
-    context,
-    written.generation,
-  ).then(
-    () => false,
-    (error: unknown) => error instanceof RecordConflictError,
+  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. Only a mark this call wrote has a version; a mark that failed, or a record that needed none (another generation's a backup put there), leaves the record at that name for the next run.
+  const markVersion = await markTakeBackOwed(context, written.generation).then(
+    (decision) => decision?.markVersion,
+    () => undefined,
   )
   try {
     result = await rollBackPublishedEntry(context, written)
@@ -5380,13 +5377,16 @@ async function takeOutUnrecordedEntry(
     ...(isHandedNext ? asLeft : asTracked),
     ...result.keptLeft,
   ]
-  // Nothing stays that the setup's record must prove: drop it only after a complete rollback with no copy left, and never another program's record.
+  // Nothing stays that the setup's record must prove: after a complete rollback with no copy left, only the mark this call wrote goes, while that name still shows it ({@link dropTrackedJournal}); a record another program put there meanwhile stays.
   if (
     outcome === 'took-out' &&
     keptCopies.length === 0 &&
-    !isOtherRecordStanding
+    markVersion !== undefined
   )
-    await dropPending(context)
+    await dropPending({
+      ...context,
+      journalVersion: { current: markVersion, refusesEmptyName: true },
+    })
   const sentence = rollbackOutcomeClause(outcome, context)
   return new Error(
     `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}; make room for that record, ${retry}.${keptCopiesSentence(keptCopies)}`,
