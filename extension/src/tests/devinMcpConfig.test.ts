@@ -10487,6 +10487,7 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
     { Error, TextDecoder },
   )
   let isSettled = false
+  let refreshRejection: Error | undefined
 
   // Act
   const refresh = stalled
@@ -10494,14 +10495,27 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
     .finally(() => {
       isSettled = true
     })
+  // The refresh's outcome is caught as it starts: a rejection before the held look fails the wait below at once with its own error, instead of an unhandled rejection while the wait polls on to its timeout.
+  refresh.catch((error: Error) => {
+    refreshRejection = error
+  })
   await waitUntil(
-    () => heldLooks > 0,
+    () => {
+      if (refreshRejection) throw refreshRejection
+      return heldLooks > 0
+    },
     "the held look at the rollback record's name",
     10_000,
   )
   const isSettledWhileHeld = isSettled
-  const phaseWhileHeld = JSON.parse(readFileSync(journalPath, 'utf8')).phase
-  release.resolve()
+  let phaseWhileHeld: unknown
+  try {
+    phaseWhileHeld = JSON.parse(readFileSync(journalPath, 'utf8')).phase
+  } finally {
+    // The held look is released and the refresh's end awaited whether the record's read answered or threw, so a read error fails the test with its own error and leaves no refresh held while the test's folder goes.
+    release.resolve()
+    await refresh.catch(() => undefined)
+  }
   const result = await refresh
 
   // Assert
@@ -10555,6 +10569,7 @@ test("A held legacy rollback journal's deletion waits for an asynchronous look a
   )
   let hasEmptied = false
   let isSettled = false
+  let refreshRejection: Error | undefined
 
   // Act
   const refresh = stalled
@@ -10569,8 +10584,15 @@ test("A held legacy rollback journal's deletion waits for an asynchronous look a
     .finally(() => {
       isSettled = true
     })
+  // The refresh's outcome is caught as it starts: a rejection before the held look fails the wait below at once with its own error, instead of an unhandled rejection while the wait polls on to its timeout.
+  refresh.catch((error: Error) => {
+    refreshRejection = error
+  })
   await waitUntil(
-    () => heldLooks > 0,
+    () => {
+      if (refreshRejection) throw refreshRejection
+      return heldLooks > 0
+    },
     "the held look at the setup record's name",
     10_000,
   )
@@ -10633,6 +10655,7 @@ test("Recovery's delete of a finished change's leftover waits for an asynchronou
     { Error, TextDecoder },
   )
   let isSettled = false
+  let refreshRejection: Error | undefined
 
   // Act
   const refresh = stalled
@@ -10640,8 +10663,15 @@ test("Recovery's delete of a finished change's leftover waits for an asynchronou
     .finally(() => {
       isSettled = true
     })
+  // The refresh's outcome is caught as it starts: a rejection before the held look fails the wait below at once with its own error, instead of an unhandled rejection while the wait polls on to its timeout.
+  refresh.catch((error: Error) => {
+    refreshRejection = error
+  })
   await waitUntil(
-    () => heldLooks > 0,
+    () => {
+      if (refreshRejection) throw refreshRejection
+      return heldLooks > 0
+    },
     "the held look at the leftover's name",
     10_000,
   )
@@ -10692,6 +10722,7 @@ test("A setup's delete of the copy of the previous config it moved aside waits f
     { Error, TextDecoder },
   )
   let isSettled = false
+  let setupRejection: Error | undefined
 
   // Act
   const setup = stalled
@@ -10699,8 +10730,15 @@ test("A setup's delete of the copy of the previous config it moved aside waits f
     .finally(() => {
       isSettled = true
     })
+  // The setup's outcome is caught as it starts: a rejection before the held look fails the wait below at once with its own error, instead of an unhandled rejection while the wait polls on to its timeout.
+  setup.catch((error: Error) => {
+    setupRejection = error
+  })
   await waitUntil(
-    () => heldDisplacedPath !== '',
+    () => {
+      if (setupRejection) throw setupRejection
+      return heldDisplacedPath !== ''
+    },
     "the held look at the displaced copy's name",
     10_000,
   )

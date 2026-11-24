@@ -6143,7 +6143,7 @@ test('a late Devin mark whose fresh read gets no answer for its whole budget whi
   }
 })
 
-// Value: protects=a late mark whose fresh read has no answer for its whole budget while this window's setup runs gives way and marks once that setup failed before writing (Cycle 0148 task 6); fails_when=the turn ends unmarked on the empty answer, leaving 403 for a standing setup; no_claim=the bound exit (the next test), a run starting and ending inside the budget, a setup that succeeds; the server start's read reads the real records and waits at its gate until the test saw the unmarked descriptor, every later read gives no answer at once until the test sets their counter to 0, the setup's look for an owed take-back waits at its gate, the Node stand-in fails, the server is the real one
+// Value: protects=a late mark whose fresh read has no answer for its whole budget while this window's setup runs gives way and marks once that setup failed before writing (Cycle 0148 task 6), reading no records while it waits for that setup (Cycle 0148 ship review); fails_when=the turn ends unmarked on the empty answer, leaving 403 for a standing setup, or a records read starts within 2 s while the late mark waits for the setup after its fresh read's budget ended; no_claim=the bound exit (the next test), a run starting and ending inside the budget, a setup that succeeds; the server start's read reads the real records and waits at its gate until the test saw the unmarked descriptor, every later read gives no answer at once until the test sets their counter to 0, the setup's look for an owed take-back waits at its gate, the Node stand-in fails, the server is the real one
 test("a late Devin mark whose fresh read gets no answer for its whole budget while this window's Set Up AI Chat runs waits for that setup and, once it failed at its Node check, serves the Devin bridge again and offers Reload Window once", async (context) => {
   // Arrange
   const options: Parameters<typeof devinWindow>[1] = {
@@ -6193,6 +6193,16 @@ test("a late Devin mark whose fresh read gets no answer for its whole budget whi
     // A request takes I/O, so the late mark's step after its empty answer has run by the time it is answered.
     const statusWhileSetupRuns = await postInitialize(descriptorFile, true)
     const decisionsWhileSetupRuns = [...window.lateMarkDecisions]
+    // A late mark that waits for the setup reads no records; a fresh read asks again every 500 ms, so a read the late mark still started while it waits would come within this wait.
+    const readsWhileSetupWaits = window.receiptReadCount()
+    const quietWhileSetupRuns = await waitUntil(
+      () => window.receiptReadCount() > readsWhileSetupWaits,
+      'a records read while the late mark waits for the setup',
+      2_000,
+    ).then(
+      () => 'a read started',
+      (error: Error) => error.message,
+    )
     // Storage answers again; the setup goes on and fails at its Node check.
     options.receiptReadsWithoutAnswer = 0
     window.holds.owedTakeBackLook.release()
@@ -6228,6 +6238,10 @@ test("a late Devin mark whose fresh read gets no answer for its whole budget whi
     )
     assert.deepEqual(decisionsWhileSetupRuns, [])
     assert.equal(statusWhileSetupRuns, 403)
+    assert.equal(
+      quietWhileSetupRuns,
+      'Timed out waiting for a records read while the late mark waits for the setup',
+    )
     assert.equal(
       setupOutcome,
       'Codebook could not use the Node.js named by codebook.nodeExecutable, so it did not set up Devin Desktop. Check that setting, then run Codebook: Set Up AI Chat again.',
