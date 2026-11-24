@@ -3351,7 +3351,7 @@ function isLeftoverStill(
 }
 
 /**
- * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed, by {@link settleDroppingName}, whose dropping name holds only a file the private name also reaches once its looks passed, and by {@link isStillSecondName}.
+ * Tells whether a name still shows the file that was checked, like {@link isLeftoverStill}, without holding the extension host's thread; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName}, whose name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again, so no synchronous look right before that step is needed, by {@link settleDroppingName}, whose dropping name holds only a file the private name also reaches once its looks passed, and by {@link dropDroppingSecondName}.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -4044,7 +4044,7 @@ async function deleteRecordedLeftover(
 }
 
 /**
- * Looks at the record recovery acts on (`pending.json` or a rollback journal, {@link Context.journalVersion}) right before recovery deletes a copy of the previous config on that record's word, or puts it back by its inode, and gives the synchronous look that must still find it right before the unlink or link; called by {@link deleteRecordedLeftover}, {@link dropSecondName} and {@link putBackDisplaced}, because a backup or sync tool may put back a record of the same change that hands that copy to the learner (`handed`) after recovery read it as finished or in progress, and by {@link assertPutBackRecordStill} right before a later run links a first setup's old record into `receipt.json` on the word of the publish record it read.
+ * Looks at the record recovery acts on (`pending.json` or a rollback journal, {@link Context.journalVersion}) right before recovery deletes a copy of the previous config on that record's word, drops a private name of it, or puts it back, and gives the synchronous look that must still find it right before the unlink or link; called by {@link deleteRecordedLeftover}, {@link dropSecondName}, {@link putBackDisplaced} and {@link isStillSecondName} (a drop through the dropping name, {@link dropCheckedName}), because a backup or sync tool may put back a record of the same change that hands that copy to the learner (`handed`) after recovery read it as finished or in progress, and by {@link assertPutBackRecordStill} right before a later run links a first setup's old record into `receipt.json` on the word of the publish record it read.
  * @param context - The run; its pending path is the record it tracks.
  * @returns The synchronous look at the record's name ({@link assertTrackedJournalStill}), whose name the caller looks at through the thread pool right before ({@link StillLook}); undefined when the run tracks no version of its record.
  * @throws A {@link JournalConflictError}: `changed` when the record's name shows another file or other bytes than the version recovery read or last wrote, `gone` when it shows nothing, `unread` when it cannot be read; the copy stays then, and the run goes no further once it settles that record.
@@ -4081,7 +4081,7 @@ function leftoverPhaseOf(pending: Pending): Pending['phase'] {
  * Drops a staged or displaced name that is only another name of the config (the same inode): a put-back whose unlink failed, a published staged file, or a put-back that only the bytes proved and that stopped after its link, whose shared bytes are checked first; called by {@link tidyLeftover}.
  * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The displaced name of a change in progress first has a dropping name beside it dropped when that is a third name of the same file ({@link dropDroppingSecondName}), as a return of a cut-short drop leaves it when it stops right after its link: otherwise that name would stay a second name of the config that no record holds.
- * The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass. A displaced name goes only on the word of the record as recovery read it, which is looked at between the two ({@link recordStillCheck}).
+ * The config name is checked first and the leftover name last, right before the unlink: only the syscall gap after that last look remains, and no check after the leftover's own can let a swap of that name pass. A displaced name goes only on the word of the record as recovery read it, which is looked at between the two ({@link recordStillCheck}); one that only the bytes proved goes through {@link dropCheckedName}, which looks at that record right before its own unlink.
  * @param context - The run.
  * @param leftover - The accepted leftover.
  * @param copy - What {@link lookAtLeftover} found at its name.
@@ -4139,7 +4139,7 @@ function isSharedBytesPutBack(
 
 /**
  * Checks, before it deletes the private name, the bytes of a put-back by bytes alone that stopped after its link; called by {@link dropSecondName}.
- * Both names show one inode, so the unlink loses no data; what must never happen is that the config keeps bytes Codebook did not verify while the private name, the only sign of that, goes. The first look's hash must be the recorded one, a read of the config name and then of the private name must both show that inode and hash, and looks at both names, the config name first and the private name last, must still see the size and times of those reads. The looks wait for the file system without holding the extension host's thread ({@link isNameStill}); the private name then goes only through {@link dropCheckedName}, which moves it aside and checks the moved file again.
+ * Both names show one inode, so the unlink loses no data; what must never happen is that the config keeps bytes Codebook did not verify while the private name, the only sign of that, goes. The first look's hash must be the recorded one, a read of the config name and then of the private name must both show that inode and hash, and looks at both names, the config name first and the private name last, must still see the size and times of those reads. The looks wait for the file system without holding the extension host's thread ({@link isNameStill}); the private name then goes only through {@link dropCheckedName}, which moves it aside, checks the moved file again and drops it only while the record recovery read still stands.
  * Limit: a write into the shared file after the drop's last read is not seen; no Node primitive unlinks by inode or content.
  * @param context - The run.
  * @param path - The private name.
@@ -4185,14 +4185,14 @@ async function assertSharedPutBackBytes(
 const DROPPING_SUFFIX = 'codebook-dropping'
 
 /**
- * Deletes a private name that is a second name of the config only while it still names the file Codebook checked; called by {@link assertSharedPutBackBytes} and {@link putBackDisplaced} right after their last looks.
- * The name is renamed first to `<private name>.codebook-dropping` ({@link DROPPING_SUFFIX}), so a file another program swaps in at the private name after the last look moves with the rename instead of being deleted. The rename runs only while nothing stands at the dropping name: a rename would replace a file there, or do nothing when that is another name of the same file and leave the private name standing. The moved file is read again and deleted only while it has the checked inode, the checked bytes when they are given and another name; then the config name and, last, the dropping name are looked at again ({@link isStillSecondName}). Anything else is linked back to the private name, which a link never replaces, and the run refuses.
- * Limits: a file that appears at the dropping name between its look and the rename is replaced (no Node primitive renames without replacing). A save at the config name or a write into the file after the dropping name's last look sampled it, and before the unlink takes effect, is not seen (no Node primitive unlinks by inode, link count or content). A stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds; the record still holds the private name, so the next run puts the file back there and settles it again ({@link settleDroppingName}).
- * @param context - The run; its seam is called when the moved file is read and around the last looks.
+ * Deletes a private name that is a second name of the config only while it still names the file Codebook checked and the record recovery acts on still stands; called by {@link assertSharedPutBackBytes} and {@link dropPutBackName} right after their last looks, only for the displaced copy of the previous config, which goes only on that record's word.
+ * The name is renamed first to `<private name>.codebook-dropping` ({@link DROPPING_SUFFIX}), so a file another program swaps in at the private name after the last look moves with the rename instead of being deleted. The rename runs only while nothing stands at the dropping name: a rename would replace a file there, or do nothing when that is another name of the same file and leave the private name standing. The moved file is read again and deleted only while it has the checked inode, the checked bytes when they are given and another name; then the record is read once more and the config name, the record's name and, last, the dropping name are looked at synchronously right before the unlink ({@link isStillSecondName}), so a record of that change that a backup puts back handing the copy to the learner at any step of the drop keeps the name. Anything else is linked back to the private name, which a link never replaces, and the run refuses.
+ * Limits: a file that appears at the dropping name between its look and the rename is replaced (no Node primitive renames without replacing). A save at the config name, a write into the file or a record put at its name after the last looks, and before the unlink takes effect, is not seen (no Node primitive unlinks by inode, link count or content). A stop between the rename and the unlink leaves the moved name, a second name of the config that no record holds; the record still holds the private name, so the next run puts the file back there and settles it again ({@link settleDroppingName}).
+ * @param context - The run; its seam is called when the moved file is read and around the last looks, and its pending path is the record the drop rests on ({@link recordStillCheck}).
  * @param path - The private name to drop.
  * @param checked - The inode the moved file must have, and the hash of the bytes it must hold when a check read them (a put-back by inode accepts any bytes).
  * @param refuse - Builds the error thrown once the moved file stands at the private name again.
- * @throws The {@link droppingNameTakenError} when a file already stands at the dropping name, and what that look throws; nothing moved then. `refuse()` when the moved file is not the checked one, holds other bytes, cannot be read or is the only name of its file, or when a last look finds a name changed or fails; a {@link PutBackCheckError} naming the moved name when that file cannot go back; what the rename throws (nothing moved then) and what the unlink throws (the file went back first).
+ * @throws The {@link droppingNameTakenError} when a file already stands at the dropping name, and what that look throws; nothing moved then. `refuse()` when the moved file is not the checked one, holds other bytes, cannot be read or is the only name of its file, or when a last look finds a name changed or fails; a {@link JournalConflictError} when the record changed, disappeared or cannot be read again, once the moved file stands at the private name again; a {@link PutBackCheckError} naming the moved name when that file cannot go back; what the rename throws (nothing moved then) and what the unlink throws (the file went back first).
  * @example
  * await dropCheckedName(context, keptPath, { ino: copy.ino, sha256: pending.keptSha256 }, () => sharedBytesError(context, keptPath))
  */
@@ -4210,17 +4210,24 @@ async function dropCheckedName(
   const moved = await inspectCopy(droppingPath, context.seam).catch(
     () => undefined,
   )
-  // The checked file with the checked bytes and another name at its read, which the config name and, last, the dropping name still show: dropping this name loses nothing. Nothing async runs between the last look and the unlink.
-  const isChecked =
-    moved?.ino === checked.ino &&
-    (checked.sha256 === undefined || moved.sha256 === checked.sha256) &&
-    moved.nlink > 1n &&
-    (await isStillSecondName(
-      context,
-      droppingPath,
-      moved,
-      checked.sha256 !== undefined,
-    ))
+  let isChecked: boolean
+  try {
+    // The checked file with the checked bytes and another name at its read, which the config name, the record and, last, the dropping name still show: dropping this name loses nothing. Nothing async runs between the last look and the unlink.
+    isChecked =
+      moved?.ino === checked.ino &&
+      (checked.sha256 === undefined || moved.sha256 === checked.sha256) &&
+      moved.nlink > 1n &&
+      (await isStillSecondName(
+        context,
+        droppingPath,
+        moved,
+        checked.sha256 !== undefined,
+      ))
+  } catch (conflict) {
+    // The record changed, disappeared or could not be read again: the copy goes back to its private name, and the run goes no further.
+    await moveBackFromDropping(context, path, droppingPath)
+    throw conflict
+  }
   if (!isChecked) {
     await moveBackFromDropping(context, path, droppingPath)
     throw refuse()
@@ -4234,13 +4241,14 @@ async function dropCheckedName(
 }
 
 /**
- * Looks at the config name and then, last, at the dropping name right before {@link dropCheckedName} unlinks the dropping name, without holding the extension host's thread ({@link isNameStill}): the config name must still show the moved file, and the dropping name must show it with another name still reaching it at that very look, so a save by rename at the config name while either look waited is seen; for a drop whose bytes were checked it must also show the size and times of the moved file's read, so an in-place write after that read is seen.
- * Limit: a save at the config name, or a write into the file, after the dropping name's look sampled it and before the unlink takes effect is not seen, also while the unlink request waits for the file system; no Node primitive unlinks by inode, link count or content.
- * @param context - The run; its seam is called around both looks.
+ * Reads the record recovery acts on once more ({@link recordStillCheck}), then looks synchronously at the config name, that record's name and, last, the dropping name right before {@link dropCheckedName} unlinks the dropping name, after one awaited look at each ({@link lookAheadAt}), so nothing is awaited between those looks and the unlink: the config name must still show the moved file, the record's name the version recovery read or last wrote, so a record of that change that a backup puts back handing the copy to the learner keeps the name, and the dropping name must show the moved file with another name still reaching it at that very look, so a save by rename at the config name is seen; for a drop whose bytes were checked it must also show the size and times of the moved file's read, so an in-place write after that read is seen.
+ * Limits: a save at the config name, a write into the file or a record put at its name after these looks and before the unlink takes effect is not seen, also while the unlink request waits for the file system; no Node primitive unlinks by inode, link count or content. A stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run; its seam is called around the looks, and its pending path is the record.
  * @param droppingPath - The dropping name about to be unlinked.
  * @param moved - The moved file as {@link inspectCopy} read it after the rename.
  * @param isByBytes - Whether the drop checked the moved file's bytes.
- * @returns `true` only when both looks passed; `false` when a name changed or a look threw.
+ * @returns `true` only when every look passed; `false` when the config name or the dropping name changed, or a look at either failed.
+ * @throws A {@link JournalConflictError} when the record's name shows another file or nothing, or cannot be read again ({@link recordStillCheck}).
  * @example
  * await isStillSecondName(context, `${keptPath}.codebook-dropping`, moved, false) // => false once a save replaced the config
  */
@@ -4251,15 +4259,35 @@ async function isStillSecondName(
   isByBytes: boolean,
 ): Promise<boolean> {
   const { ino, size, mtimeNs, ctimeNs } = moved
+  // A copy of the previous config goes only on the word of the record as recovery read it or last wrote it: a record a backup put back meanwhile may hand that copy to the learner.
+  const recordStill = await recordStillCheck(context)
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([context.path, ...(recordStill?.names ?? []), droppingPath])
+  if (!isNameStillNow(context, context.path, { ino })) return false
+  recordStill?.assert()
+  return isNameStillNow(context, droppingPath, {
+    ino,
+    isShared: true,
+    ...(isByBytes && { size, mtimeNs, ctimeNs }),
+  })
+}
+
+/**
+ * Tells, by one synchronous look, whether a name still shows the checked file ({@link isLeftoverStill}), answering `false` when the look itself fails; called by {@link isStillSecondName} for its looks at the config name and the dropping name, because a look that fails proves nothing and the drop then puts the file back.
+ * @param context - The run; its seam is called around the look.
+ * @param path - The name to look at.
+ * @param checked - What the name must still show ({@link LeftoverLookback}).
+ * @returns `true` when the name shows the checked file; `false` when it is gone, shows another file or the look failed.
+ * @example
+ * isNameStillNow(context, droppingPath, { ino: 42n, isShared: true }) // => false once a save by rename left the file with one name
+ */
+function isNameStillNow(
+  context: Context,
+  path: string,
+  checked: LeftoverLookback,
+): boolean {
   try {
-    return (
-      (await isNameStill(context, context.path, { ino })) &&
-      (await isNameStill(context, droppingPath, {
-        ino,
-        isShared: true,
-        ...(isByBytes && { size, mtimeNs, ctimeNs }),
-      }))
-    )
+    return isLeftoverStill(context, path, checked)
   } catch {
     // A look that fails proves nothing: the file goes back to its private name and the run refuses.
     return false
@@ -4475,8 +4503,8 @@ async function keepOriginalUnlessPublished(
 /**
  * Puts the displaced config of an interrupted move-aside back at the config name, even if it is not the bytes that were read; called by {@link tidyLeftover}.
  * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
- * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted. A put-back by inode links only while the record still shows the version recovery read, looked at right before the name's last look ({@link recordStillCheck}); a put-back by bytes checks it with its own record write.
- * Limits: a swap between the look before the link and the link is not seen; a record a sync tool puts back after the link is not seen before the displaced name goes, and the file then stands at the config name.
+ * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted. The put-back links only while the record still shows the version recovery read, or for a put-back by bytes the unchecked record it just wrote, looked at right before the name's last look ({@link recordStillCheck}), and the displaced name goes only while that version still stands at a look right before its unlink ({@link dropCheckedName}).
+ * Limits: a swap between the look before the link and the link is not seen; a record a sync tool puts back after the link keeps the displaced name, which then stays a second name of the config that stands.
  * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}).
  * @param context - The run.
  * @param leftover - The displaced name and the hash the record holds for it.
@@ -4485,7 +4513,7 @@ async function keepOriginalUnlessPublished(
  * @param proof - What shows the displaced file is the recorded one: `inode` (the recorded inode) or `bytes` (another inode whose bytes equal the recorded hash); undefined when neither, and such a file is never published. When only the bytes prove it, the file is hashed again right before the link, its name is looked at synchronously with the size and times of that hash, and the file at the config name is hashed once more after the link: an in-place write in between is refused and nothing stays published from it.
  * @param copy - What {@link lookAtLeftover} found; its inode is the one that may be linked.
  * @returns `true` when the file went back (a link never replaces, and the displaced name is unlinked); `false` when the change was finished, the config name is taken or the file is not the recorded one.
- * @throws When the unverified record cannot be written, the link or unlink fails, the name no longer shows the checked file, or the link produced another file; a {@link JournalConflictError} when the record changed before a put-back by inode linked anything ({@link recordStillCheck}).
+ * @throws When the unverified record cannot be written, the link or unlink fails, the name no longer shows the checked file, or the link produced another file; a {@link JournalConflictError} when the record changed, disappeared or cannot be read again before the link ({@link recordStillCheck}), when nothing is linked, or before the displaced name goes ({@link dropCheckedName}), when that name stays.
  */
 async function putBackDisplaced(
   context: Context,
@@ -4515,9 +4543,8 @@ async function putBackDisplaced(
       bytesUnverified: true,
     } satisfies Pending)
   try {
-    // A copy goes back by its inode only on the word of the record as recovery read it: a record a sync tool put back meanwhile may hand that copy to the learner. A put-back by bytes checked the record with its own write right before.
-    const recordStill =
-      proof === 'inode' ? await recordStillCheck(context) : undefined
+    // A copy goes back only on the word of the record as recovery read it, or as a put-back by bytes just wrote it: a record a sync tool put back meanwhile may hand that copy to the learner.
+    const recordStill = await recordStillCheck(context)
     // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
     await lookAheadAt([...(recordStill?.names ?? []), path])
     recordStill?.assert()
