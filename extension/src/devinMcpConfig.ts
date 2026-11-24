@@ -6171,21 +6171,25 @@ function isOtherFileCause(cause: unknown): boolean {
 /**
  * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
  * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
- * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it.
- * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode.
+ * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}).
+ * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode. Moving the journal to another name first and deleting it there only once it proves to be this run's would leave a journal a backup put there in that moment only at a name no build reads, should the process end before it goes back, so that journal's rollback would be lost all the same.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
  * @param assertStill - A synchronous look at another name that must still hold, called right after the last look and before the unlink ({@link removeRecord}); throwing keeps the journal.
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then); what `assertStill` throws; what the unlink throws other than for a name that is gone.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then), or (`gone`) when a publish record's name is found empty while this run knows a version of it; what `assertStill` throws; what the unlink throws other than for a name that is gone.
  * @example
  * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
+ * await dropTrackedJournal(heldRun) // throws a `gone` JournalConflictError once a sync tool moved pending.json away right before the unlink
  */
 async function dropTrackedJournal(
   context: Context,
   assertStill?: () => void,
 ): Promise<void> {
   const look = await lookAtTrackedJournal(context)
-  // Nothing stands at the name: nothing is deleted.
-  if (!look) return
+  // Nothing stands at the name: nothing is deleted, and a publish record that disappeared ends the run.
+  if (!look) {
+    if (isEmptiedByAnother(context)) throw journalConflictError(context, 'gone')
+    return
+  }
   assertTrackedJournalStill(context, look)
   assertStill?.()
   const isUnlinked = await unlink(context.pendingPath).then(
@@ -6199,6 +6203,24 @@ async function dropTrackedJournal(
   // Only this run's own unlink clears the version: nothing of it stands there any more.
   if (isUnlinked && context.journalVersion)
     context.journalVersion.current = undefined
+  // Moved away right before the unlink: a publish record that may come back right after ends the run here.
+  if (!isUnlinked && isEmptiedByAnother(context))
+    throw journalConflictError(context, 'gone')
+}
+
+/**
+ * Tells whether an empty tracked name is a publish record another program moved away, not one this run deleted itself; called by {@link dropTrackedJournal} when its look or its unlink finds the name empty.
+ * @param context - The run; its tracker says whether the record is a publish record a decision read (`refusesEmptyName`) and whether this run still knows a version of it.
+ * @returns `true` for such a record while a version is known; `false` for a rollback journal, and once this run deleted the record itself.
+ * @example
+ * isEmptiedByAnother({ ...context, journalVersion: { current: version, refusesEmptyName: true } }) // => true
+ * isEmptiedByAnother(rollbackContext) // => false
+ */
+function isEmptiedByAnother(context: Context): boolean {
+  return (
+    context.journalVersion?.refusesEmptyName === true &&
+    context.journalVersion.current !== undefined
+  )
 }
 
 /**

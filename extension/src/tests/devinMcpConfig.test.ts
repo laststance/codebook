@@ -6913,6 +6913,89 @@ test('A setup record a sync tool moves away right as a refresh beside a held leg
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A setup record a sync tool moves away right as a refresh beside a held legacy rollback journal deletes it and puts back right after keeps that journal, so the setup is taken back once its config is back', async (context) => {
+  // Value: protects=a held run whose delete of the setup record finds that name empty, because another program moved the record away, stops at once and keeps the held journal, so the same record put back right after is never taken for one this run settled (Cycle 0148 ship review); fails_when=the first refresh resolves or says anything but the disappearance sentence, deletes or changes the journal, leaves anything but the moved record at pending.json, writes a receipt, or the second refresh leaves the entry; no_claim=a real sync tool (the config module is loaded with an unlink that, for pending.json, moves that record away once, then unlinks the empty name and moves the record back; seam.afterStat rewrites the config in place once, at the read that decides the journal; the test writes the config's bytes back before the second refresh), a record moved away by the first look of that delete (the same branch)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const journalText = readFileSync(journalPath, 'utf8')
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const movedPath = join(home, 'pending-moved-away.json')
+  let hasMovedPending = false
+  const movingAroundUnlink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (...args: Parameters<typeof unlink>) => {
+          if (args[0] !== pendingPath || hasMovedPending) return unlink(...args)
+          // A sync tool moves the setup record away right before the run's unlink of it and puts it back right after.
+          hasMovedPending = true
+          renameSync(pendingPath, movedPath)
+          try {
+            return await unlink(...args)
+          } finally {
+            renameSync(movedPath, pendingPath)
+          }
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let savedText = ''
+  let hasEmptied = false
+
+  // Act
+  const firstError = await movingAroundUnlink
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterStat: (path) => {
+        // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+        if (path !== configPath || hasEmptied) return
+        hasEmptied = true
+        savedText = readFileSync(configPath, 'utf8')
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A record the first refresh retired reads as 'absent', so the assertions below name it.
+  const pendingAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const isReceiptAfterFirst = existsSync(receiptPath)
+  // The original config comes back in place.
+  writeFileSync(configPath, savedText)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMovedPending, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} disappeared while Codebook was settling it (a backup or sync tool may be moving it), so Codebook stopped before it deleted the record of its rollback and kept that record at ${journalPath}; the next run decides on it again, so wait until that tool is done, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(pendingAfterFirst, pendingText)
+  assert.equal(journalAfterFirst, journalText)
+  assert.equal(isReceiptAfterFirst, false)
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test('A first setup whose receipt cannot be written keeps another setup record a backup restores while it marks its take-back, instead of deleting it after the take-back', async (context) => {
   // Value: protects=a first setup that cannot write its receipt deletes its publish record after the take-back only when its own mark stood, so another record a backup put at pending.json while the mark was written stays for the next run (Cycle 0148 review round); fails_when=the restored record is deleted or changed, the setup answers anything but the took-out refusal, or the entry stays in the config; no_claim=a real backup tool (seam.beforeRecordWrite renames the same record in other bytes over pending.json once, at the mark's write after its bytes were flushed), what the next run does with that record; seam=seam.afterPublish blocks the receipt
   // Arrange
