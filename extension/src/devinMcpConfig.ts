@@ -170,7 +170,7 @@ type Context = {
   retry: string
   /** Set only on a rollback's context ({@link rollbackContextOf}): the generation of the publish being rolled back, recorded in every journal that context writes ({@link Pending.publishGeneration}). */
   rollbackOf?: string
-  /** Set only on a take-back's context ({@link rollbackContextOf} with a generation) whose run tracks the `pending.json` it read ({@link trackedPublishContext}), or the version a first setup last wrote there when its take-back mark could not be written ({@link markBeforeTakeBack}): that run, so the take-back moves the config aside or away only while that record, which proves the entry is the failed setup's, still stands as the run read or last wrote it ({@link assertTakeBackRecordStill}). */
+  /** Set only on a take-back's context ({@link rollbackContextOf} with a generation) whose run tracks the `pending.json` it read ({@link trackedPublishContext}), or, for a first setup's take-back, the mark it wrote there or, when that mark could not be written, the version it last wrote there ({@link markBeforeTakeBack}): that run, so the take-back moves the config aside or away only while that record, which proves the entry is the failed setup's, still stands as the run read or last wrote it ({@link assertTakeBackRecordStill}). */
   takeBackRecordRun?: Context
   /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal, and for the rest of {@link inspect} on every run that read a `pending.json`, which tracks that record the same way: a run that holds a legacy journal the version that journal's decision read ({@link heldPublishContext}), any other the version its own read saw ({@link trackedPublishContext}): the version of the record that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}) and cleared once it deleted that record itself ({@link dropTrackedJournal}). After {@link inspect}, the setup's publish, the removal and the removal retry track their own `pending.json` the same way, from the version inspect left there ({@link ownRecordContext}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}), and so does a write at a rollback journal's name found empty; a publish record's name found empty is refused instead (`refusesEmptyName`). */
   journalVersion?: {
@@ -3597,7 +3597,7 @@ class TakenOutConflictError extends Error {
   }
 }
 
-/** The `record-reread` and `record-gone` refusals ({@link unmatchedJournalRefusal}): the publish record a decision read changed or disappeared before the run was done with it, so the record the run read no longer leads to the private files it names; {@link mergeWithLeftover} and {@link settleRollbackJournal} name a leftover after it, and {@link takeOutUnrecordedEntry} stops before its take-back changes the config and leaves what stands at that name ({@link markBeforeTakeBack}). */
+/** The `record-reread` and `record-gone` refusals ({@link unmatchedJournalRefusal}): the publish record a decision read changed or disappeared before the run was done with it, so the record the run read no longer leads to the private files it names; {@link mergeWithLeftover} and {@link settleRollbackJournal} name a leftover after it, and {@link takeOutUnrecordedEntry} stops before its take-back changes the config and leaves what stands at that name ({@link assertTakeBackRecordStill}). */
 class RecordConflictError extends Error {}
 
 /**
@@ -6682,14 +6682,14 @@ function rollbackOutcomeClause(
 
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
- * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy, and for good while the old record's private name stayed after the link (`isRetiredKept`), because it is the only way to that name; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link PublishDecision.markVersion}), so another generation's record a backup or sync tool put there before the mark, or a record it put over the mark, stays for the next run, and so does the setup's own record when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
- * The take-back rests on the setup's record as this run wrote it ({@link markBeforeTakeBack}): when another program changed, moved away or made unreadable that record while the mark was written, or, after a mark that could not be written, before the take-back's last look right before the config moves ({@link assertTakeBackRecordStill}), the config stays as it is, and so does what stands at that name (`record-changed`). Limit: a record another program put there before the mark read it (the mark writes over it only when it is this setup's), or one it puts over the mark this call wrote, is not looked at again before the config moves; it stays for the next run, as said above.
+ * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy, and for good while the old record's private name stayed after the link (`isRetiredKept`), because it is the only way to that name; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link MarkedTakeBack.markVersion}); the setup's own record stays when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
+ * The take-back rests on the setup's record exactly as this run last wrote it ({@link markBeforeTakeBack}): when another program changed, moved away or made unreadable that record before the mark read it or while the mark was written, or changed or moved away the mark (or, after a mark that could not be written, that record) before the take-back's last look right before the config moves ({@link assertTakeBackRecordStill}), the config stays as it is, and so does what stands at that name (`record-changed`); a record put back as this run wrote it after the mark found it gone or changed does not undo that. Limit: a record moved or replaced after that last look, while the config moves, is not seen before the config changed (the stated limit of {@link assertTakeBackRecordStill}); it stays, since the mark goes only while its name still shows it.
  * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out (also one that then found another file at its own record's name, `took-out-record-taken`, or could not read that name again, `took-out-record-unread`), which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
- * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link markTakeBackOwed}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
+ * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
  * @returns The error to reject with: whether the entry was taken out again, and the way out.
  */
 async function takeOutUnrecordedEntry(
@@ -6705,12 +6705,9 @@ async function takeOutUnrecordedEntry(
     keptLeft: [],
   }
   // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry.
-  const { run, markVersion } = await markBeforeTakeBack(
-    context,
-    written.generation,
-  )
+  const { run, markVersion } = await markBeforeTakeBack(context)
   let result = recordChanged
-  // No run: the setup's record changed, moved away or could not be read again as the mark was written, so the config is never changed on this run's word alone.
+  // No run: the setup's record changed, moved away or could not be read again as the mark read or wrote it, so the config is never changed on this run's word alone.
   if (run)
     result = await rollBackPublishedEntry(run, written).catch(
       (error: unknown): RollbackResult =>
@@ -6751,45 +6748,44 @@ async function takeOutUnrecordedEntry(
 type MarkedTakeBack = { run?: Context; markVersion?: RecordVersion }
 
 /**
- * Writes a failed first setup's take-back mark ({@link markTakeBackOwed}) and decides what its take-back rests on; called by {@link takeOutUnrecordedEntry} before its rollback, so the entry is never taken out on the run's word alone once the setup record that proves it is this setup's changed, moved away or could not be read again.
+ * Writes a failed first setup's take-back mark over the setup record exactly as this run last wrote it ({@link writeTakeBackMark}) and decides what its take-back rests on; called by {@link takeOutUnrecordedEntry} before its rollback, so the entry is never taken out on the run's word alone once the setup record that proves it is this setup's changed, moved away or could not be read again.
+ * The read decides at once: a name found empty, another inode or other bytes (an older copy of this setup's record, another setup's record, a record that carries the mark already, which this run never wrote) or a read that fails is a change another program made, so nothing is marked and the take-back stops, even when that record is back as this run wrote it before a later look. Only a mark that could not be written over the record this read verified (a full disk) lets the take-back go on unmarked, guarded by the take-back's last look.
  * @param context - The run; it tracks the version of `pending.json` it last wrote ({@link ownRecordContext}).
- * @param publishGeneration - The generation of the setup being taken back.
  * @returns
- * - the run and the version of the mark once this call wrote it; the run alone when the record needed no mark (another generation's, or none at that name) or carried it already (a backup's, since this setup's record was just written without the mark), so that record stays for the next run
- * - no run when the mark found the record changed, moved away or unreadable as it wrote it ({@link RecordConflictError}, {@link JournalConflictError}): the take-back stops before it changes the config
- * - otherwise, after a read or write that failed (for example on a full disk), the run tracking the version it last wrote there, refusing an empty name, so the take-back moves the config only while that record still stands ({@link Context.takeBackRecordRun}, {@link assertTakeBackRecordStill})
+ * - the run tracking the mark, refusing an empty name, and the version of that mark once this call wrote it, so the take-back moves the config only while that mark still stands ({@link Context.takeBackRecordRun}, {@link assertTakeBackRecordStill})
+ * - no run when the read found the record gone, changed or unreadable, or the mark's write found it so ({@link JournalConflictError}): the take-back stops before it changes the config, and that name stays as it is
+ * - otherwise, after a mark's write that failed (for example on a full disk), the run tracking the record this run last wrote, refusing an empty name, so the take-back moves the config only while that record still stands
  * @example
- * await markBeforeTakeBack(context, generation) // => { run: context, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
- * await markBeforeTakeBack(context, generation) // => {} once a backup renamed another record over pending.json while the mark was written
+ * await markBeforeTakeBack(context) // => { run: { ...context, journalVersion: { current: { ino: 43n, sha256: 'cd…' }, refusesEmptyName: true } }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
+ * await markBeforeTakeBack(context) // => {} once a sync tool moved pending.json away before the mark read it, also when it brings that record back later
  */
-async function markBeforeTakeBack(
-  context: Context,
-  publishGeneration: string,
-): Promise<MarkedTakeBack> {
+async function markBeforeTakeBack(context: Context): Promise<MarkedTakeBack> {
+  const lastWritten = context.journalVersion?.current
+  const read = await readVersionedRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+    context.seam,
+  ).catch(() => undefined)
+  // An empty name, a read that failed (even once) or another inode or other bytes than this run last wrote there: another program changed that record, so nothing rests on it, whatever a later read finds.
+  if (
+    !read ||
+    read.version.ino !== lastWritten?.ino ||
+    read.version.sha256 !== lastWritten.sha256
+  )
+    return {}
+  const runTracking = (current: RecordVersion): Context => ({
+    ...context,
+    journalVersion: { current, refusesEmptyName: true },
+  })
   try {
-    const decision = await markTakeBackOwed(context, publishGeneration)
-    // Only a mark this call wrote may go after the take-back; a mark found already is another program's.
-    return {
-      run: context,
-      markVersion: decision?.isMarkFound ? undefined : decision?.markVersion,
-    }
+    const markVersion = await writeTakeBackMark(context, read)
+    return { run: runTracking(markVersion), markVersion }
   } catch (error) {
     // The record changed, moved away or could not be read again under the mark's write: nothing is taken out on its word.
-    if (
-      error instanceof RecordConflictError ||
-      error instanceof JournalConflictError
-    )
-      return {}
-    // The mark could not be written: the take-back still runs, but moves the config only while the record this run last wrote still stands.
-    return {
-      run: {
-        ...context,
-        journalVersion: {
-          current: context.journalVersion?.current,
-          refusesEmptyName: true,
-        },
-      },
-    }
+    if (error instanceof JournalConflictError) return {}
+    // The mark could not be written over the record this read verified: the take-back still runs, but moves the config only while that record still stands.
+    return { run: runTracking(read.version) }
   }
 }
 
@@ -7899,14 +7895,14 @@ function unmatchedLeftoverSentence(
 }
 
 /**
- * Records in this config's publish record that its entry must be taken back; called by {@link markBeforeTakeBack} before a first setup's rollback takes its first step, and by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent.
- * Only the publish of the given generation is marked: another installation's pending publish stays as it is. The mark replaces only the version of the record this call read ({@link Context.journalVersion}): a record a backup or sync tool put at that name meanwhile stays, one it moved away is not written back at the empty name, and the run stops.
+ * Records in this config's publish record that its entry must be taken back; called by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent (a first setup's own take-back marks through {@link markBeforeTakeBack}, which rests on the version that run wrote instead).
+ * Only the publish of the given generation is marked: another installation's pending publish stays as it is. The mark replaces only the version of the record this call read ({@link writeTakeBackMark}): a record a backup or sync tool put at that name meanwhile stays, one it moved away is not written back at the empty name, and the run stops.
  * @param context - The run.
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
  * @returns
  * - The decision ({@link PublishDecision}): the belonging it decided ({@link JournalBelonging}), `belongs` once the mark is written, with the version of that mark, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`), with the version of the record it was decided on; `another` also for a record of another config
- * - `belongs` with the version this call read as the mark's ({@link PublishDecision.isMarkFound}) when the record carries the mark already (an earlier run wrote it and stopped before its journal went), so that journal too ends only while the record's name still shows that mark; nothing is written then
+ * - `belongs` with the version this call read as the mark's ({@link PublishDecision.markVersion}) when the record carries the mark already (an earlier run wrote it and stopped before its journal went), so that journal too ends only while the record's name still shows that mark; nothing is written then
  * - undefined when the publish record's name is empty
  * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written, and its `record-gone` sentence when that name is found empty then ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
  * @example
@@ -7935,7 +7931,6 @@ async function markTakeBackOwed(
       belonging: 'belongs',
       publishVersion: version,
       markVersion: version,
-      isMarkFound: true,
     }
   // A journal of this build names the publish it rolled back (another generation is another installation's publish); one of an older build names none, so its displaced file and the restored config decide.
   const belonging: JournalBelonging =
@@ -7950,31 +7945,52 @@ async function markTakeBackOwed(
   if (belonging !== 'belongs')
     throw unmatchedJournalRefusal(context, belonging, legacy)
   // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, one it moved away is not written back, and the run stops.
-  const marking: Context = {
-    ...context,
-    journalVersion: { current: version, refusesEmptyName: true },
+  const markVersion = await writeTakeBackMark(context, read).catch(
+    (error: unknown) => {
+      throw publishRecordConflict(context, legacy, error)
+    },
+  )
+  return { ...decision, markVersion }
+}
+
+/**
+ * Writes the take-back mark over the one version of the publish record a caller read, and over nothing else; called by {@link markTakeBackOwed} and {@link markBeforeTakeBack}, so neither writes a mark over a record a backup or sync tool put at `pending.json` after that read, nor back at a name it emptied.
+ * The write tracks that version and refuses an empty name ({@link Context.journalVersion}, `refusesEmptyName`), so it goes through only while the name still shows that version ({@link writeTrackedJournal}). The mark is that record with `takeBack: true` and every other field as read, so a shape older builds refuse stays in it ({@link LinkedRecord}).
+ * @param context - The run; its pending path is the publish record.
+ * @param read - The record and the version of it the caller read ({@link readVersionedRecord}).
+ * @returns The version of the mark this call wrote: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
+ * @throws A {@link JournalConflictError} when the name no longer shows that version (`changed`), shows nothing (`gone`) or cannot be read again (`unread`), before the rename or right after it; what staging or renaming the mark throws otherwise (a full disk). Nothing is written then, unless another program changed the name right after the rename.
+ * @example
+ * await writeTakeBackMark(context, { record: publish, version: { ino: 42n, sha256: 'ab…' } }) // => { ino: 43n, sha256: 'cd…' }; pending.json now holds { ...publish, takeBack: true }
+ */
+async function writeTakeBackMark(
+  context: Context,
+  { record, version }: { record: Pending; version: RecordVersion },
+): Promise<RecordVersion> {
+  const markTracker: { current: RecordVersion; refusesEmptyName: true } = {
+    current: version,
+    refusesEmptyName: true,
   }
-  await writeRecord(marking, context.pendingPath, {
-    ...publish,
-    takeBack: true,
-  }).catch((error: unknown) => {
-    throw publishRecordConflict(context, legacy, error)
-  })
-  return { ...decision, markVersion: marking.journalVersion?.current }
+  const mark: Pending = { ...record, takeBack: true }
+  // The write moves the tracked version to the mark it published ({@link writeRecord}).
+  await writeRecord(
+    { ...context, journalVersion: markTracker },
+    context.pendingPath,
+    mark,
+  )
+  return markTracker.current
 }
 
 /** What {@link markTakeBackOwed} decided on one read of the publish record: how the rollback journal relates to it, and the version of the record it read ({@link RecordVersion}), which a held journal binds the rest of its run to ({@link heldPublishContext}) and a journal retired on this decision must still find at that name when nothing is marked ({@link markLeftCheck}). */
 type PublishDecision = {
   belonging: JournalBelonging
   publishVersion: RecordVersion
-  /** The version of the take-back mark that stands: the one this call wrote ({@link stageRecord}), or the one it read when the record carried the mark already ({@link PublishDecision.isMarkFound}); undefined when nothing is marked. The journal that proves that take-back is ended only while the record's name still shows it ({@link markLeftCheck}). */
+  /** The version of the take-back mark that stands: the one this call wrote ({@link writeTakeBackMark}), or the one it read when the record carried the mark already (an earlier run wrote it and stopped before its journal went); undefined when nothing is marked. The journal that proves that take-back is ended only while the record's name still shows it ({@link markLeftCheck}). */
   markVersion?: RecordVersion
-  /** Set when the record carried the mark already, written by an earlier run that stopped before its journal went: this call wrote nothing, so that record is never deleted as this call's own mark ({@link takeOutUnrecordedEntry}). */
-  isMarkFound?: true
 }
 
 /**
- * Gives the synchronous look that must still find at the publish record's name what the decision on the rollback journal left there, right before that journal is ended: the take-back mark this run wrote, or found as an earlier run left it ({@link PublishDecision.isMarkFound}), else the record the decision read, or the empty name it found; called by {@link settleRollbackJournal}, so a setup record a backup puts back without that mark, or where the decision found another setup's record or none, keeps the journal, and the next run decides on both again instead of adopting that record.
+ * Gives the synchronous look that must still find at the publish record's name what the decision on the rollback journal left there, right before that journal is ended: the take-back mark this run wrote, or found as an earlier run left it ({@link PublishDecision.markVersion}), else the record the decision read, or the empty name it found; called by {@link settleRollbackJournal}, so a setup record a backup puts back without that mark, or where the decision found another setup's record or none, keeps the journal, and the next run decides on both again instead of adopting that record.
  * @param context - The run; its pending path is the publish record.
  * @param decision - What {@link markTakeBackOwed} decided; undefined when it found the name empty.
  * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
