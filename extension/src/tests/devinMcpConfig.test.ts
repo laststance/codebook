@@ -16863,28 +16863,26 @@ test("A setup whose link fails while a newer record appeared at the old record's
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
-test("A setup whose put-back finds receipt.json taken never deletes its old record beside a record of the same entry when the old record's private name showed another file at the open of its read than at its look: it keeps the old record and names it", async (context) => {
-  // Value: protects=a record's look and its bytes come from one open file (Cycle 0149 task 14), so the drop of a first setup's old record beside a record that covers it deletes only the file whose bytes the comparison read: a records folder swapped away between the look at the old record's private name and the open of its read, and back, never leaves the old record, which the comparison never read, deleted beside a record of another entry; fails_when=the old record's private file is gone or changed, receipt.json holds anything but the newer record, the publish record is gone, or the refusal is another sentence than the changed-file refusal followed by the moved-changed sentence; no_claim=a real folder swap (the config module is loaded with an openWithoutFollowing that, once the put-back's link to receipt.json was tried, opens a record of the newer record's entry kept outside the records folder for the first open of the private name in its place), why the setup's link failed (the link stub saves the newer record at receipt.json and moves the old config back before the config's link), and a swap after the last looks (no Node primitive unlinks by inode)
+test("A setup whose put-back finds receipt.json taken never deletes another installation's record that took the old record's private name when the open of that name's read finds the old record's bytes: it keeps that file and the publish record and says the file at that name changed", async (context) => {
+  // Value: protects=a record's look and its bytes come from one open file (Cycle 0149 tasks 14 and 21), so the drop of a first setup's old record beside a record of the same entry deletes only the file whose bytes the comparison read: a file that stands at the old record's private name at the look before the read and at the last looks, while the open of that read finds the old record's bytes (a records folder swapped away and back between the look and the open), is never deleted unread; fails_when=that file is gone or changed, the open of the comparison's read was not redirected, receipt.json holds anything but the newer record, the publish record is gone, or the refusal is another sentence than the changed-file refusal followed by the moved-changed sentence; no_claim=a real folder swap (the config module is loaded with a link that, right after the put-back's link to receipt.json was tried, copies the old record's bytes outside the records folder and puts another installation's record at the private name at another inode, and with an openWithoutFollowing that opens that copy for the first open of the private name after that), why the setup's link failed (the link stub saves the newer record at receipt.json and moves the old config back before the config's link), and a swap after the last looks (no Node primitive unlinks by inode)
   // Arrange
   const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
     await arrangeMovedAwayConfig(context)
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  // A newer record of the same entry, which covers the old record.
   const newerReceipt = {
     ...receiptBefore,
-    entrySha256: sha256('another entry'),
     generation: 'c0ffee00-0000-4000-8000-000000149141',
   }
-  // The file the open finds in place of the old record: a record of the newer record's entry, which covers it.
-  const openedInsteadPath = join(home, 'record-of-the-swapped-folder.json')
-  writeFileSync(
-    openedInsteadPath,
-    JSON.stringify({
-      ...newerReceipt,
-      generation: 'c0ffee00-0000-4000-8000-000000149142',
-    }),
-  )
-  let isPutBackTried = false
-  let openedInsteadOf: string | undefined
+  const otherInstallationText = JSON.stringify({
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000149142',
+    installationId: 'c0ffee00-0000-4000-8000-000000149143',
+  })
+  // The old record's bytes, which the open of the comparison's read finds in place of the file at the private name.
+  const oldRecordCopyPath = join(home, 'old-record-of-the-swapped-folder.json')
+  let retiredPath = 'no put-back link'
+  let openedCopyInsteadOf = 'no redirected open'
   const swappingAtOpen = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
@@ -16894,9 +16892,14 @@ test("A setup whose put-back finds receipt.json taken never deletes its old reco
             writeFileSync(receiptPath, JSON.stringify(newerReceipt))
             moveBack()
           }
-          // The put-back's link finds the newer record there, and the comparison reads both records next.
-          if (to === receiptPath) isPutBackTried = true
-          return link(from, to)
+          if (to !== receiptPath || retiredPath !== 'no put-back link')
+            return link(from, to)
+          // The put-back's link finds the newer record there; right after it, another installation's record takes the old record's private name.
+          return link(from, to).finally(() => {
+            retiredPath = from
+            writeFileSync(oldRecordCopyPath, readFileSync(from))
+            swapFile(from, otherInstallationText)
+          })
         },
         lstat,
         mkdir,
@@ -16910,14 +16913,13 @@ test("A setup whose put-back finds receipt.json taken never deletes its old reco
           ...openInputs: Parameters<typeof openWithoutFollowing>
         ) => {
           const [path] = openInputs
-          // The comparison's open of the private name finds the swapped folder's record once.
+          // The comparison's open of the private name finds the old record's bytes once, though its look found the other installation's record.
           if (
-            isPutBackTried &&
-            openedInsteadOf === undefined &&
-            path.endsWith('.retired')
+            path === retiredPath &&
+            openedCopyInsteadOf === 'no redirected open'
           ) {
-            openedInsteadOf = path
-            return openWithoutFollowing(openedInsteadPath)
+            openedCopyInsteadOf = path
+            return openWithoutFollowing(oldRecordCopyPath)
           }
           return openWithoutFollowing(...openInputs)
         },
@@ -16933,12 +16935,14 @@ test("A setup whose put-back finds receipt.json taken never deletes its old reco
       () => undefined,
       (error: unknown) => error,
     )
-  const retiredPath = openedInsteadOf ?? 'no swapped open'
+  // A file the setup deleted reads as 'absent', so the assertion names it.
   const privateFileAfterRefusal = existsSync(retiredPath)
-    ? JSON.parse(readFileSync(retiredPath, 'utf8'))
+    ? readFileSync(retiredPath, 'utf8')
     : 'absent'
 
   // Assert
+  assert.equal(privateFileAfterRefusal, otherInstallationText)
+  assert.equal(openedCopyInsteadOf, retiredPath)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath} and could not put it back, because the file at ${retiredPath} changed while Codebook read it. Codebook kept both files, so the next run looks again; then run Codebook: Set Up AI Chat again.`,
@@ -16948,7 +16952,6 @@ test("A setup whose put-back finds receipt.json taken never deletes its old reco
     'receipt.json',
     basename(retiredPath),
   ])
-  assert.deepEqual(privateFileAfterRefusal, receiptBefore)
   assert.deepEqual(await readRecordFile(storage, 'receipt.json'), newerReceipt)
   assert.equal(existsSync(pendingPath), true)
 })
