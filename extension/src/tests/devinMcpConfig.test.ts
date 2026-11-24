@@ -9411,7 +9411,7 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
 })
 
 test("A held legacy rollback journal's deletion waits for an asynchronous look at the setup record's name before its synchronous last look at that name, so a stalled disk holds the refresh instead of the window", async (context) => {
-  // Value: protects=the last synchronous look at the setup record's name, made inside the held journal's deletion right before its unlink, comes right after an awaited look at that name, so storage that already stalls holds that step in the thread pool, not the extension host's thread, and the journal goes once storage answers (Cycle 0148 ship review); fails_when=no asynchronous look at the setup record's name is held while the refresh runs, the refresh settles or the journal is gone while that look is held, or the journal stays after the release; no_claim=a real stalled disk (an lstat of pending.json held until the test releases it stands for it), a stall that starts between the asynchronous and the synchronous look; seam=seam.afterStat rewrites the config in place once, at the read that decides the journal, so the journal is held as another setup's
+  // Value: protects=the last synchronous look at the setup record's name, made inside the held journal's deletion right before its unlink, comes right after an awaited look at that name, so storage that already stalls holds that step in the thread pool, not the extension host's thread, and the journal goes once storage answers (Cycle 0148 ship review, and structured P2 at this test: the gate arms only once the setup record's own unlink went through, so the look held is the one before the journal's unlink, not the setup record's delete's); fails_when=no asynchronous look at the setup record's name is held after that record was deleted while the refresh runs, the refresh settles, the setup record stands again or the journal is gone while that look is held, or the journal stays after the release; no_claim=a real stalled disk (an lstat of pending.json held until the test releases it stands for it), a stall that starts between the asynchronous and the synchronous look; seam=seam.afterStat rewrites the config in place once, at the read that decides the journal, so the journal is held as another setup's
   // Arrange
   const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
     await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
@@ -9420,14 +9420,15 @@ test("A held legacy rollback journal's deletion waits for an asynchronous look a
     })
   const release = defer<void>()
   let heldLooks = 0
+  let isSetupRecordUnlinked = false
   const stalled = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
         link,
         lstat: async (...args: Parameters<typeof lstat>) => {
-          // Storage stops answering for the setup record's name until the test releases it.
-          if (args[0] === pendingPath) {
+          // Once the setup record is gone, storage stops answering for its name until the test releases it.
+          if (args[0] === pendingPath && isSetupRecordUnlinked) {
             heldLooks += 1
             await release.promise
           }
@@ -9437,7 +9438,11 @@ test("A held legacy rollback journal's deletion waits for an asynchronous look a
         open,
         rename,
         rm,
-        unlink,
+        unlink: async (...args: Parameters<typeof unlink>) => {
+          await unlink(...args)
+          // The gate arms only after the setup record's own unlink, so the looks of that record's delete pass.
+          if (args[0] === pendingPath) isSetupRecordUnlinked = true
+        },
       },
     },
     { Error, TextDecoder },
@@ -9464,12 +9469,14 @@ test("A held legacy rollback journal's deletion waits for an asynchronous look a
     10_000,
   )
   const isSettledWhileHeld = isSettled
+  const isSetupRecordWhileHeld = existsSync(pendingPath)
   const isJournalWhileHeld = existsSync(journalPath)
   release.resolve()
   const result = await refresh
 
   // Assert
   assert.equal(isSettledWhileHeld, false)
+  assert.equal(isSetupRecordWhileHeld, false)
   assert.equal(isJournalWhileHeld, true)
   assert.equal(result.status, 'not-managed')
   assert.equal(existsSync(journalPath), false)
@@ -15500,11 +15507,10 @@ test("A refresh that decided to delete the old record on the entry a stopped fir
   assert.equal(readFileSync(configPath, 'utf8'), configText)
 })
 
-test("A first setup with another bridge path that wrote its own record but could not delete its publish record or the old record's private file leaves its record standing, and the old record never comes back", async (context) => {
-  // Value: protects=a first setup that wrote its own record finished, so the next run deletes the old record's private file whatever the config shows, never asks to move that setup's own record away and never puts the old record back; fails_when=the refresh rejects or answers anything but not-managed, receipt.json holds anything but that setup's record, or any other record stays; no_claim=why the unlinks fail (the config module is loaded with an unlink that fails with EBUSY for the old record's private name and an rm that fails with EBUSY for pending.json), a learner deleting mcp_config.json again (rmSync)
+test("A first setup with another bridge path that wrote its own record but could not delete the old record's private file, and so kept its publish record, leaves its record standing, and the old record never comes back", async (context) => {
+  // Value: protects=a first setup that wrote its own record but could not delete the old record's private file keeps its publish record, which names that file, and so finished: the next run deletes that file whatever the config shows, never asks to move that setup's own record away and never puts the old record back (Cycle 0148 ship review: the publish record stays because that file does, not because its own delete failed); fails_when=the setup leaves anything but its publish record, its own record and the old record's private file (a publish record deleted while that file stays included), the refresh rejects or answers anything but not-managed, receipt.json holds anything but that setup's record, or any other record stays; no_claim=why the unlink fails (the config module is loaded with an unlink that fails with EBUSY for the old record's private name; every other delete is the real one), a learner deleting mcp_config.json again (rmSync)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
-  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
   rmSync(configPath)
   const busyNames = await loadModule<typeof DevinMcpConfigModule>(
@@ -15516,11 +15522,7 @@ test("A first setup with another bridge path that wrote its own record but could
         mkdir,
         open,
         rename,
-        rm: async (...args: Parameters<typeof rm>) => {
-          if (args[0] === pendingPath)
-            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
-          return rm(...args)
-        },
+        rm,
         unlink: async (path: string) => {
           if (path.endsWith('.retired'))
             throw Object.assign(new Error('busy'), { code: 'EBUSY' })
@@ -15564,7 +15566,7 @@ test("A first setup with another bridge path that wrote its own record but could
 })
 
 /**
- * Leaves what a first setup with another bridge path leaves when it finished, writing its own record, but could neither delete its publish record nor the old record it moved aside: `pending.json`, `receipt.json` and the old record under its private name.
+ * Leaves what a first setup with another bridge path leaves when it finished, writing its own record, but could not delete the old record it moved aside, and so kept its publish record, which names that record: `pending.json`, `receipt.json` and the old record under its private name.
  * @param context - The test context.
  * @returns The home, storage, config, receipt and publish record paths, the setup's own record, and the private name of the old record (bare and as a path).
  * @example
@@ -15586,11 +15588,7 @@ async function arrangeFinishedSetupWithOldRecordLeft(context: TestContext) {
         mkdir,
         open,
         rename,
-        rm: async (...args: Parameters<typeof rm>) => {
-          if (args[0] === pendingPath)
-            throw Object.assign(new Error('busy'), { code: 'EBUSY' })
-          return rm(...args)
-        },
+        rm,
         unlink: async (path: string) => {
           if (path.endsWith('.retired'))
             throw Object.assign(new Error('busy'), { code: 'EBUSY' })
@@ -15622,7 +15620,7 @@ async function arrangeFinishedSetupWithOldRecordLeft(context: TestContext) {
 }
 
 test("A refresh whose read of a finished first setup's own record fails once keeps both records and never asks to move that record away, and the next refresh deletes the old record", async (context) => {
-  // Value: protects=a failed read of the record a finished first setup wrote decides nothing: both records stay, the refusal advises no move or removal and the next run settles them, so the learner is never told to move the record of the entry that stands; fails_when=the first refresh asks to move a file to another folder, answers without a refusal, changes or deletes a record, or the next refresh answers anything but not-managed or leaves anything but that setup's record; no_claim=a real I/O error (seam.afterStat throws once for receipt.json), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json), a learner deleting mcp_config.json (rmSync)
+  // Value: protects=a failed read of the record a finished first setup wrote decides nothing: both records stay, the refusal advises no move or removal and the next run settles them, so the learner is never told to move the record of the entry that stands; fails_when=the first refresh asks to move a file to another folder, answers without a refusal, changes or deletes a record, or the next refresh answers anything but not-managed or leaves anything but that setup's record; no_claim=a real I/O error (seam.afterStat throws once for receipt.json), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays), a learner deleting mcp_config.json (rmSync)
   // Arrange
   const {
     home,
@@ -15682,7 +15680,7 @@ test("A refresh whose read of a finished first setup's own record fails once kee
 })
 
 test('A refresh after a finished first setup that finds a link at receipt.json asks to move that link to another folder, never to make it readable, and the refresh after the link is moved away settles the old record', async (context) => {
-  // Value: protects=a link at receipt.json is no failed read: the refusal names receipt.json as something to move to another folder, the way out the learner can act on, keeps every record and follows no link, and, since that setup finished and its publish record lacks the mark that nothing was linked only because it was never needed, says that Codebook cannot tell from the remaining records whether the old record may go back, never that it could not note that mark, and once the learner moves the link away the next refresh settles the old record; fails_when=the first refresh says Codebook could not tell what stands at receipt.json, asks to make a file readable or says it could not note in its publish record that nothing of this setup was linked, answers without a refusal, changes a record, the link or the file it points to, or the next refresh refuses, answers anything but not-managed or leaves anything but the old record put back at receipt.json; no_claim=a real sync tool (renameSync and symlinkSync put the setup's own record elsewhere and a link to it at receipt.json), a learner deleting mcp_config.json (rmSync), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  // Value: protects=a link at receipt.json is no failed read: the refusal names receipt.json as something to move to another folder, the way out the learner can act on, keeps every record and follows no link, and, since that setup finished and its publish record lacks the mark that nothing was linked only because it was never needed, says that Codebook cannot tell from the remaining records whether the old record may go back, never that it could not note that mark, and once the learner moves the link away the next refresh settles the old record; fails_when=the first refresh says Codebook could not tell what stands at receipt.json, asks to make a file readable or says it could not note in its publish record that nothing of this setup was linked, answers without a refusal, changes a record, the link or the file it points to, or the next refresh refuses, answers anything but not-managed or leaves anything but the old record put back at receipt.json; no_claim=a real sync tool (renameSync and symlinkSync put the setup's own record elsewhere and a link to it at receipt.json), a learner deleting mcp_config.json (rmSync), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays)
   if (process.platform === 'win32') {
     context.skip('symlinks need privileges on Windows')
     return
@@ -15739,7 +15737,7 @@ test('A refresh after a finished first setup that finds a link at receipt.json a
 })
 
 test("A refresh after a finished first setup never deletes a file that a backup put at the old record's private name when that file is no record of this config", async (context) => {
-  // Value: protects=a finished first setup's proof (its own record) says nothing about the file at the old record's private name, so a file there that is no record of this config is never deleted and the refresh still settles that setup; fails_when=that file is gone or changed, the refresh answers anything but current, the setup's own record changes, or the publish record stays; no_claim=a real backup tool (swapFile puts a record of another config at the private name), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  // Value: protects=a finished first setup's proof (its own record) says nothing about the file at the old record's private name, so a file there that is no record of this config is never deleted and the refresh still settles that setup; fails_when=that file is gone or changed, the refresh answers anything but current, the setup's own record changes, or the publish record stays; no_claim=a real backup tool (swapFile puts a record of another config at the private name), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays)
   // Arrange
   const { home, storage, setupReceipt, retiredName, retiredPath } =
     await arrangeFinishedSetupWithOldRecordLeft(context)
@@ -15770,7 +15768,7 @@ test("A refresh after a finished first setup never deletes a file that a backup 
 })
 
 test("A refresh after a finished first setup that finds another file at the old record's private name right after it read the old record there deletes nothing, keeps its publish record and names both", async (context) => {
-  // Value: protects=the old record is deleted only while its private name still shows the file Codebook read, so a file a backup swapped in after that read survives, and the publish record that names that name stays so a later run looks again; fails_when=the swapped-in file is gone or changed, the refresh answers without the refusal that names both files, or a record is gone; no_claim=a real backup tool (seam.beforeLeftoverCheck swaps the file at the private name right before Codebook's last look), why the setup could not delete its records (unlink stub EBUSY for the old record's private name, rm stub EBUSY for pending.json)
+  // Value: protects=the old record is deleted only while its private name still shows the file Codebook read, so a file a backup swapped in after that read survives, and the publish record that names that name stays so a later run looks again; fails_when=the swapped-in file is gone or changed, the refresh answers without the refusal that names both files, or a record is gone; no_claim=a real backup tool (seam.beforeLeftoverCheck swaps the file at the private name right before Codebook's last look), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays)
   // Arrange
   const { home, storage, pendingPath, retiredName, retiredPath } =
     await arrangeFinishedSetupWithOldRecordLeft(context)
@@ -15812,7 +15810,7 @@ test("A refresh after a finished first setup that finds another file at the old 
 })
 
 test("A refresh after a finished first setup whose old record's private file cannot be deleted keeps that file and its publish record, names both, and the next refresh deletes them", async (context) => {
-  // Value: protects=a failed delete of the old record's private file leaves the publish record that names it, so that file never stays behind untracked and the next run deletes it; fails_when=the refresh answers without the refusal that names both files, the publish record or the private file is gone after it, the next refresh answers anything but current, or any record but the setup's own stays after it; no_claim=why a real delete fails (the config module is loaded with an unlink that fails with EIO for the old record's private name), why the setup could not delete its records (unlink stub EBUSY for that name, rm stub EBUSY for pending.json)
+  // Value: protects=a failed delete of the old record's private file leaves the publish record that names it, so that file never stays behind untracked and the next run deletes it; fails_when=the refresh answers without the refusal that names both files, the publish record or the private file is gone after it, the next refresh answers anything but current, or any record but the setup's own stays after it; no_claim=why a real delete fails (the config module is loaded with an unlink that fails with EIO for the old record's private name), why the setup could not delete that file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays)
   // Arrange
   const { home, storage, pendingPath, setupReceipt, retiredName, retiredPath } =
     await arrangeFinishedSetupWithOldRecordLeft(context)
