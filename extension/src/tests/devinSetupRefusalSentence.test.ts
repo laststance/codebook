@@ -101,6 +101,34 @@ for (const reason of ['not-private', 'permission'] as const) {
   })
 }
 
+// Value: protects=a mode problem of the publish record beside the MCP receipt, as the bridge's check and the receipt state name it, gets the mode-600 repair naming that record, not the receipt, so the learner has a way out (Cycle 0149 ship review, native adversarial note 3); fails_when=the sentence says only that the setup changed, or names receipt.json; no_claim=how the record came to be readable by others (readReceiptState's tests)
+for (const reason of ['not-private', 'permission'] as const) {
+  test(`a ${reason} answer on the publish record beside the MCP receipt names that record with the mode-600 repair`, () => {
+    // Arrange
+    const bridgeAnswer = {
+      answer: 'removed',
+      reason,
+      path: '/storage/devin-mcp/pending.json',
+    } as const
+    const receiptState = {
+      state: 'removed',
+      reason,
+      receiptPath: '/storage/devin-mcp/receipt.json',
+      recordPath: '/storage/devin-mcp/pending.json',
+    } as const
+    // Act
+    const sentences = [
+      devinSetupRefusalSentence(bridgeAnswer),
+      devinSetupRefusalSentence(receiptState),
+    ]
+    // Assert
+    assert.deepEqual(sentences, [
+      'Codebook could not use its record at /storage/devin-mcp/pending.json, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.',
+      'Codebook could not use its record at /storage/devin-mcp/pending.json, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.',
+    ])
+  })
+}
+
 // protects=an answer of no answer, and a receipt state of no answer, say that the records could not be read and offer no mode repair; fails_when=a read that only failed to look sends the learner to change a file mode; no_claim=the replaced answer
 test('a no-answer says the records could not be read, without a mode repair', () => {
   // Arrange
@@ -222,6 +250,33 @@ test(
       `Codebook could not read the installation id in ${readable}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`,
       CHANGED_SENTENCE,
     ])
+  },
+)
+
+// Value: protects=the installation id refusal, when others can read the publish record beside the MCP receipt, names that record with the mode-600 repair, so a setup that meets such a record tells the learner which file to repair instead of saying only that the setup changed (Cycle 0149 ship review, native adversarial note 3); fails_when=the refusal is the changed sentence, or names receipt.json; no_claim=Windows modes, a record this user may not read (the config module refuses it first, naming it)
+test(
+  'the installation id refusal names the publish record with the mode-600 repair when others can read that record',
+  { skip: process.platform === 'win32' ? WINDOWS_MODES : false },
+  async (context) => {
+    // Arrange
+    const storage = await arrangeStorage(context)
+    await writeStandingReceipts(storage)
+    const receipt = join(storage, 'devin-mcp', 'receipt.json')
+    const record = join(storage, 'devin-mcp', 'pending.json')
+    await writeFile(record, '{"targetPath":"/x","createdFile":false}', {
+      mode: 0o600,
+    })
+    await chmod(record, 0o644)
+    // Act
+    const sentence = devinInstallationReadRefusal(
+      await readReceiptState(receipt),
+      receipt,
+    )
+    // Assert
+    assert.equal(
+      sentence,
+      `Codebook could not use its record at ${record}, so Devin Local could not connect. Make that file readable only by you (mode 600), then run Codebook: Set Up AI Chat again.`,
+    )
   },
 )
 

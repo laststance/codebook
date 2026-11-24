@@ -32,7 +32,7 @@ export type DevinBridgeRemovedReason =
 /**
  * The answer of {@link checkDevinBridgeReceipts}:
  * - `stands`: the descriptor's mark, the skill receipt and the MCP receipt agree and are installed (and match the binding, when one was given).
- * - `removed`: an observed absence or invalid state, with the `reason` and the `path` of the file it was observed on.
+ * - `removed`: an observed absence or invalid state, with the `reason` and the `path` of the file it was observed on (the publish record beside the MCP receipt, or that record's dropping name, when a mode problem of that record keeps the receipt from standing, {@link ReceiptState}).
  * - `replaced`: only with a binding; the descriptor now names another instance, endpoint or installation than the one the bridge connected for.
  * - `no-answer`: a read failed (descriptor exhaustion, `EIO` and the like), so nothing is known; the caller treats it like a timeout.
  */
@@ -176,7 +176,8 @@ function decideFromSettledReads(
       return {
         answer: 'removed',
         reason: receipt.reason,
-        path: receipt.receiptPath,
+        // The file the reason was seen on: the publish record beside the MCP receipt when it was seen there.
+        path: receipt.recordPath ?? receipt.receiptPath,
       }
   // Nothing definite is known: wait for the reads that are pending.
   if (!descriptor || !skill || !mcp) return undefined

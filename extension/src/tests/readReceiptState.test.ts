@@ -348,6 +348,39 @@ test('an installed MCP receipt answers removed with the reason unverified when i
   })
 })
 
+// Value: protects=a publish record that others can read keeps the MCP receipt from standing with that record's own reason and path, so the setup can name that file with the mode-600 repair instead of saying only that the setup changed (Cycle 0149 ship review, native adversarial note 3); fails_when=the answer is removed with the reason unverified, or names no record, or the receipt answers installed; no_claim=Windows modes, the sentence itself (devinSetupRefusalSentence's tests)
+test(
+  'an installed MCP receipt answers removed with the reason not-private naming its publish record when others can read that record',
+  { skip: process.platform === 'win32' && WINDOWS_MODES },
+  async (context) => {
+    // Arrange
+    const storage = await arrangeStorage(context)
+    const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+    const recordPath = join(storage, 'devin-mcp', 'pending.json')
+    await writePrivate(
+      receiptPath,
+      JSON.stringify({ installed: true, installationId: 'installation-a' }),
+    )
+    await writePrivate(
+      recordPath,
+      JSON.stringify({
+        targetPath: '/home/lume/.config/devin/mcp_config.json',
+        createdFile: false,
+      }),
+    )
+    await chmod(recordPath, 0o644)
+    // Act
+    const state = await readReceiptState(receiptPath)
+    // Assert
+    assert.deepEqual(state, {
+      state: 'removed',
+      reason: 'not-private',
+      receiptPath,
+      recordPath,
+    })
+  },
+)
+
 // Value: protects=only the MCP entry's receipt is weighed against a publish record: the skill's receipt stands on its own whatever file stands beside it (Cycle 0149 ship review, specialist note on the folder guard of unverifiedVerdictOf); fails_when=a pending.json beside the skill receipt makes it answer removed; no_claim=the MCP receipt, and why such a file stands there (the config module writes none in that folder)
 test('an installed skill receipt answers installed although a file beside it notes receipt.json unverified', async (context) => {
   // Arrange
@@ -717,6 +750,34 @@ test('the bridge check answers removed with another-installation when the MCP re
     path: mcpPath,
   })
 })
+
+// Value: protects=the bridge's check names the publish record beside the MCP receipt, with that record's reason, when others can read it, so the setup's final check can offer the mode-600 repair for that file (Cycle 0149 ship review, native adversarial note 3); fails_when=the answer names the receipt or the reason unverified, or the check answers stands; no_claim=Windows modes, the setup's sentence
+test(
+  'the bridge check answers removed with not-private on the publish record when others can read that record',
+  { skip: process.platform === 'win32' && WINDOWS_MODES },
+  async (context) => {
+    // Arrange
+    const storage = await arrangeStorage(context)
+    const descriptorPath = await writeStandingSetup(storage)
+    const recordPath = join(storage, 'devin-mcp', 'pending.json')
+    await writePrivate(
+      recordPath,
+      JSON.stringify({
+        targetPath: '/home/lume/.config/devin/mcp_config.json',
+        createdFile: false,
+      }),
+    )
+    await chmod(recordPath, 0o644)
+    // Act
+    const answer = await realCheckDevinBridgeReceipts(descriptorPath)
+    // Assert
+    assert.deepEqual(answer, {
+      answer: 'removed',
+      reason: 'not-private',
+      path: recordPath,
+    })
+  },
+)
 
 // protects=a descriptor re-marked for another installation being told from a removal when the check is bound; fails_when=the bound check answers stands for installation B while the bridge is connected for A; no_claim=the bridge's line
 test('the bridge check bound to installation A answers replaced when the descriptor and receipt name B', async (context) => {

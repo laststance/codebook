@@ -15,12 +15,17 @@ export type ReceiptRemovedReason =
 /**
  * What one receipt says, as {@link readReceiptState} answers:
  * - `installed`: the receipt says `installed: true`; `receipt` holds its fields.
- * - `removed`: an observed absence or invalid state, with its `reason` and the `receiptPath`.
+ * - `removed`: an observed absence or invalid state, with its `reason` and the `receiptPath`; `recordPath` names the publish record beside the MCP receipt (or its dropping name) when that record's mode keeps the receipt from standing (others can read it, or this user may not), so the setup's repair sentence names that file.
  * - `no-answer`: the read itself failed (descriptor exhaustion, `EIO` and the like), so nothing is known about the receipt.
  */
 export type ReceiptState =
   | { state: 'installed'; receipt: Record<string, unknown> }
-  | { state: 'removed'; reason: ReceiptRemovedReason; receiptPath: string }
+  | {
+      state: 'removed'
+      reason: ReceiptRemovedReason
+      receiptPath: string
+      recordPath?: string
+    }
   | { state: 'no-answer'; receiptPath: string }
 
 /** The folder of the Devin MCP entry's receipt in Codebook's global storage: the only receipt with a publish record beside it. */
@@ -47,25 +52,31 @@ type KeptReceiptState = Exclude<ReceiptState, { state: 'installed' }>
 /**
  * Weighs one read of the publish record, or of its dropping name, against an installed MCP receipt by the rule every setup, refresh and removal follows; called by {@link unverifiedVerdictOf} for each name it reads.
  * @param read - What the bounded read found at that name.
+ * @param recordPath - That name, which a mode problem names.
  * @param receiptPath - The receipt that was read.
  * @param receiptSha256 - The SHA-256 of the receipt's bytes as read.
  * @returns
  * - undefined when nothing there keeps the receipt: the name is empty, or the file there carries no note, or a note that names these very bytes (the old record put back)
  * - `no-answer` when the read failed to look, so nothing is known
- * - removed with `unverified` when the note names other bytes or none, or a file stands there that cannot be read as a record (a link, too large, readable by others, no JSON): Codebook cannot tell that no note stands
+ * - removed with `not-private` or `permission` and that `recordPath` when others can read the file there or this user may not: Codebook cannot tell that no note stands, and the learner can repair that mode
+ * - removed with `unverified` when the note names other bytes or none, or a file stands there that cannot be read as a record otherwise (a link, too large, no JSON): Codebook cannot tell that no note stands
  * @example
- * verdictOfRecordRead({ state: 'removed', reason: 'missing' }, '/storage/devin-mcp/receipt.json', '9f86…') // => undefined
+ * verdictOfRecordRead({ state: 'removed', reason: 'missing' }, '/storage/devin-mcp/pending.json', '/storage/devin-mcp/receipt.json', '9f86…') // => undefined
+ * verdictOfRecordRead({ state: 'removed', reason: 'not-private' }, '/storage/devin-mcp/pending.json', '/storage/devin-mcp/receipt.json', '9f86…') // => { state: 'removed', reason: 'not-private', receiptPath: '/storage/devin-mcp/receipt.json', recordPath: '/storage/devin-mcp/pending.json' }
  */
 function verdictOfRecordRead(
   read: PrivateJsonState,
+  recordPath: string,
   receiptPath: string,
   receiptSha256: string,
 ): KeptReceiptState | undefined {
   if (read.state === 'no-answer') return { state: 'no-answer', receiptPath }
   // An empty name notes nothing; any other file there might.
+  if (read.state === 'removed' && read.reason === 'missing') return undefined
+  // A mode the learner can repair names that record; any other unreadable file there stays unverified.
   if (read.state === 'removed')
-    return read.reason === 'missing'
-      ? undefined
+    return read.reason === 'not-private' || read.reason === 'permission'
+      ? { state: 'removed', reason: read.reason, receiptPath, recordPath }
       : { state: 'removed', reason: 'unverified', receiptPath }
   const note = unverifiedNoteSchema.safeParse(read.value)
   // A note passes only the very bytes it names.
@@ -88,7 +99,7 @@ function isEmptyName(read: PrivateJsonState): boolean {
  * @param platform - The platform whose file modes are judged.
  * @returns
  * - undefined when nothing keeps it: the receipt is no MCP entry's, or no read found a note that keeps it ({@link verdictOfRecordRead})
- * - the state that keeps it: removed (`unverified`) when a read at either name found such a note or a file it cannot read as a record, which outranks `no-answer` when a read failed to look
+ * - the state that keeps it: removed when a read at either name found such a note or a file it cannot read as a record (`unverified`, or that record's mode problem with its `recordPath`), which outranks `no-answer` when a read failed to look
  * @example
  * await unverifiedVerdictOf('/storage/devin-mcp/receipt.json', '9f86…', 'darwin') // => { state: 'removed', reason: 'unverified', receiptPath: '/storage/devin-mcp/receipt.json' } while pending.json, or pending.json.codebook-dropping, notes receipt.json unverified with other bytes
  */
@@ -101,21 +112,21 @@ async function unverifiedVerdictOf(
   // Only the MCP entry's receipt has a publish record beside it.
   if (basename(folder) !== MCP_RECEIPT_FOLDER) return undefined
   const recordPath = join(folder, PUBLISH_RECORD_FILE)
+  const droppingPath = `${recordPath}${DROPPING_NAME_SUFFIX}`
   const atRecord = await readPrivateJsonState(recordPath, platform)
-  const atDropping = await readPrivateJsonState(
-    `${recordPath}${DROPPING_NAME_SUFFIX}`,
-    platform,
-  )
+  const atDropping = await readPrivateJsonState(droppingPath, platform)
   // Both names empty: a rewrite may have put its record back at its name after the first read.
   if (isEmptyName(atRecord) && isEmptyName(atDropping))
     return verdictOfRecordRead(
       await readPrivateJsonState(recordPath, platform),
+      recordPath,
       receiptPath,
       receiptSha256,
     )
-  const verdicts = [atRecord, atDropping].map((read) =>
-    verdictOfRecordRead(read, receiptPath, receiptSha256),
-  )
+  const verdicts = [
+    verdictOfRecordRead(atRecord, recordPath, receiptPath, receiptSha256),
+    verdictOfRecordRead(atDropping, droppingPath, receiptPath, receiptSha256),
+  ]
   // A name that keeps the receipt from standing outranks a read that failed to look.
   return (
     verdicts.find((verdict) => verdict?.state === 'removed') ??
