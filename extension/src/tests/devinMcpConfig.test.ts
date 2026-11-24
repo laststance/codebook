@@ -11097,7 +11097,7 @@ test("A setup record a backup restores with its take-back mark at pending.json w
 })
 
 test("A receipt that a refresh adopting an older build's interrupted setup cannot take back out after a restored rollback record stopped it is named, and the next refresh still takes the failed setup back and deletes that receipt", async (context) => {
-  // Value: protects=a refresh whose adoption a restored rollback record stopped says so when it cannot delete the receipt it had just published (here its unlink fails once with EIO), and that receipt, which an adoption wrote, never keeps the next refresh from taking the failed setup back once the rollback record marks that setup's take-back, so the entry goes and so does that receipt (Cycle 0149 task 47); fails_when=the first refresh says anything but the rollback record's changed sentence followed by the kept-receipt sentence, the receipt is gone after it or is not the adoption's, the second refresh answers anything but not-managed, or the entry, a record or the receipt stays after it; no_claim=a real backup tool or disk fault (the config module is loaded with a link that, once, right after the adoption's link claimed the empty receipt.json resolved, renames the rollback record in, and with an unlink that fails once for receipt.json with EIO), an older build's run between the two refreshes (it reads that receipt as its own and skips the take-back), what a bridge check answers in between (it reads that receipt as installed)
+  // Value: protects=a refresh whose adoption a restored rollback record stopped says so when it cannot delete the receipt it had just published (here its unlink fails once with EIO), and that receipt, which an adoption wrote, never keeps the next refresh from taking the failed setup back once the rollback record marks that setup's take-back, so the entry goes and so does that receipt (Cycle 0149 task 47); fails_when=the first refresh says anything but the rollback record's changed sentence followed by the kept-receipt sentence, the receipt is gone after it or is not the adoption's, the second refresh answers anything but not-managed, or the entry, a record or the receipt stays after it; no_claim=a real backup tool or disk fault (the config module is loaded with a link that, once, right after the adoption's link claimed the empty receipt.json resolved, renames the rollback record in, and with an unlink that fails once with EIO for receipt.json's dropping name, where the withdrawal deletes it), an older build's run between the two refreshes (it reads that receipt as its own and skips the take-back), what a bridge check answers in between (it reads that receipt as installed)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(
@@ -11145,7 +11145,9 @@ test("A receipt that a refresh adopting an older build's interrupted setup canno
         rename,
         rm,
         unlink: async (path: string) => {
-          if (path !== receiptPath || hasFailedUnlink) return unlink(path)
+          // The withdrawal deletes the receipt at its dropping name, where dropReceipt moved it first.
+          if (path !== `${receiptPath}.codebook-dropping` || hasFailedUnlink)
+            return unlink(path)
           hasFailedUnlink = true
           // The disk answers the withdrawal's delete of receipt.json with an I/O error once.
           throw Object.assign(new Error('i/o error'), { code: 'EIO' })
@@ -11713,7 +11715,7 @@ test('A setup whose own record a backup puts back as it stood before the config 
 })
 
 test('A setup whose completed record a sync tool moves away right after its publication says it cannot confirm that a later run will not delete the moved-aside copy, and the next refresh deletes the copy by the record the rewrite left at its dropping name', async (context) => {
-  // Value: protects=a completed record found gone right after its publication (a sync tool moved it away) proves neither that a later run deletes the moved-aside copy nor that the copy stays (recordedCopyFateOf answers unconfirmed, copiesBesideRecord marks that copy), so the notice says Codebook could not confirm its record still tracks that copy and asks to copy it elsewhere to keep it, never that it is the learner's to delete or that a later run surely deletes it; and a later run may indeed delete it: the record the rewrite left at its dropping name names that copy, and the next refresh puts that record back and deletes the copy (Cycle 0149 ship review, the specialist's note on the unconfirmed copy fate in copiesBesideRecord); fails_when=the setup answers anything but installed with the unconfirmed copy sentence and the moved-record sentence, anything but the record at its dropping name and the receipt stands in the records folder after the setup, that record names another copy, the copy is gone or changes after the setup, no receipt of this setup stands, or the next refresh answers anything but current or leaves the copy or any record but the receipt; no_claim=a real sync tool (the config module is loaded with a rename and a link that move pending.json into the home folder once, right after the first publication at that name once seam.afterPublish saw the config linked in: the completed record's), what happens when that tool moves the completed record back (both record names, their own tests), a record that cannot be read for another reason (a folder or a failed read, the same fate)
+  // Value: protects=a completed record found gone right after its publication (a sync tool moved it away) proves neither that a later run deletes the moved-aside copy nor that the copy stays (recordedCopyFateOf answers unconfirmed, copiesBesideRecord marks that copy), so the notice says Codebook could not confirm its record still tracks that copy and asks to copy it elsewhere to keep it, never that it is the learner's to delete or that a later run surely deletes it; and a later run may indeed delete it: the record the rewrite left at its dropping name names that copy, and the next refresh puts that record back and deletes the copy (Cycle 0149 ship review, the specialist's note on the unconfirmed copy fate in copiesBesideRecord); fails_when=the setup answers anything but installed with the unconfirmed copy sentence and the moved-record sentence, anything but the record at its dropping name, the dropping note that proves it (Cycle 0149 task 35) and the receipt stands in the records folder after the setup, that record names another copy, the copy is gone or changes after the setup, no receipt of this setup stands, or the next refresh answers anything but current or leaves the copy or any record but the receipt; no_claim=a real sync tool (the config module is loaded with a rename and a link that move pending.json into the home folder once, right after the first publication at that name once seam.afterPublish saw the config linked in: the completed record's), what happens when that tool moves the completed record back (both record names, their own tests), a record that cannot be read for another reason (a folder or a failed read, the same fate)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
@@ -11764,6 +11766,7 @@ test('A setup whose completed record a sync tool moves away right after its publ
   assert.equal(JSON.parse(movedText).phase, 'completed')
   assert.deepEqual(recordsAfterSetup, [
     'pending.json.codebook-dropping',
+    'pending.json.codebook-dropping-note',
     'receipt.json',
   ])
   assert.equal(droppedRecord.keptName, basename(copyPath))
@@ -19406,15 +19409,15 @@ test('An update never writes its record of the entry over a record a backup rena
 })
 
 test("A refresh after a run that stopped right after it moved Codebook's record of the entry to its private name puts that record back before it reads it, and finds the entry current", async (context) => {
-  // Value: protects=a record of the entry that a stopped rewrite or delete left at receipt.json's private name goes back to receipt.json at the next run's start, before anything reads that name, so the entry stays Codebook's own instead of being taken for one of the learner's (Cycle 0149 task 50, acceptance criterion 13's rule for tracked records); fails_when=the refresh answers anything but current, receipt.json holds anything but the moved record, or its private name stays; no_claim=a real stop inside the move (the test renames receipt.json to receipt.json.codebook-dropping itself), a record at that private name beside another file at receipt.json (the tracked records' both-names refusal covers it)
+  // Value: protects=a record of the entry that a stopped rewrite or delete left at receipt.json's private name goes back to receipt.json at the next run's start, before anything reads that name, so the entry stays Codebook's own instead of being taken for one of the learner's (Cycle 0149 task 50, acceptance criterion 13's rule for tracked records); fails_when=the refresh answers anything but current, receipt.json holds anything but the moved record, or its private name stays; no_claim=a real stop inside the move (the test writes the dropping note and renames receipt.json to receipt.json.codebook-dropping itself, leaveStoppedMove), a record at that private name beside another file at receipt.json (the tracked records' both-names refusal covers it)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
   await writeManagedDevinMcpEntry(storage, ENTRY, home)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
   const receiptText = readFileSync(receiptPath, 'utf8')
-  // A run stopped right after it moved the record to its private name.
-  renameSync(receiptPath, `${receiptPath}.codebook-dropping`)
+  // A run stopped right after it moved the record to its private name, with the dropping note it writes first.
+  leaveStoppedMove(receiptPath)
 
   // Act
   const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
@@ -19454,7 +19457,7 @@ test("A removal that finds a file at its record of the entry's private name keep
   assert.deepEqual(result, {
     status: 'removed',
     path: configPath,
-    cleanupFailure: `Codebook found its record at ${receiptPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${receiptPath} to another folder and keep it, then run Codebook: Remove Devin Desktop Setup again, and that run puts the file at ${droppingPath} back at ${receiptPath}.`,
+    cleanupFailure: `Codebook found its record at ${receiptPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${receiptPath} to another folder and keep it, then run Codebook: Remove Devin Desktop Setup again, and that run puts the file at ${droppingPath} back at ${receiptPath} if it is the record Codebook moved there.`,
   })
   assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
   assert.equal(
@@ -20154,7 +20157,7 @@ test("A later setup never drops the old record's second name when one file stand
   // Assert
   assert.equal(
     setupAnswer,
-    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(await recordsIn(storage), [
     'pending.json',
@@ -20206,7 +20209,7 @@ test("A later setup never drops the old record's second name when one file stand
   // Assert
   assert.equal(
     setupAnswer,
-    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and noted that in its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(await recordsIn(storage), [
     'pending.json',

@@ -6927,7 +6927,12 @@ async function renameRecordBack(
     context.receiptPath,
     {
       staged: retiredPath,
-      version: { ino: linked.look.ino, sha256: linked.sha256 },
+      version: {
+        ino: linked.look.ino,
+        sha256: linked.sha256,
+        size: linked.look.size,
+        mtimeNs: linked.look.mtimeNs,
+      },
     },
     recordStill,
     () =>
