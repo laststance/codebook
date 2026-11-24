@@ -366,6 +366,8 @@ type KeptFile = {
   isUnconfirmed?: true
   /** Set for the private name of a copy of the previous config where another program put another file before Codebook could move the copy out of recovery's reach ({@link keepFromRecovery}), or for the name the move linked such a file to ({@link moveWithoutReplacing}): the sentence that names it says that the file there is no longer that copy ({@link replacedCopySentence}). */
   isReplaced?: true
+  /** Set for the staged name of a config Codebook published that the config name no longer reaches (another file, or none, stands there) and that holds bytes written into that config after the link ({@link dropPublishedStage}): it may hold the only copy of those changes, and the sentence that names it says so ({@link editedApartSentence}). */
+  isEditedApart?: true
 }
 
 /** The words that name a kept copy of the previous config, for a refusal and for {@link cleanupFailureOf}. */
@@ -439,10 +441,22 @@ function replacedCopySentence(path: string): string {
   return `Another program replaced the private copy of your previous Devin MCP config that Codebook kept at ${path}, so the file at that path is no longer that copy; Codebook left that file untouched, so look at it before you use or delete it.`
 }
 
-/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}), one whose record could not be read back that a later run may ({@link UNCONFIRMED_CLAUSE}), instead of leaving it to the learner; a name another program put another file at says so ({@link replacedCopySentence}). */
+/**
+ * Says that the staged name of the config Codebook just published stays because it holds changes written into that config after the link while another file, or none, stands at the config path ({@link KeptFile.isEditedApart}), so it may hold the only copy of those changes; used by {@link keptFileSentence} and {@link alsoKeptSentence}.
+ * @param path - The staged name.
+ * @returns One sentence that names the path and asks the learner to look at the file before deleting it, moving only the settings they need into the config.
+ * @example
+ * editedApartSentence('/h/.config/devin/mcp_config.json.<generation>.tmp') // => 'Codebook kept the Devin MCP config it just wrote at …: changes were written into that config after Codebook put it in place, …'
+ */
+function editedApartSentence(path: string): string {
+  return `Codebook kept the Devin MCP config it just wrote at ${path}: changes were written into that config after Codebook put it in place, and another file, or none, stands at the config path now, so that file may hold the only copy of those changes and of the settings of your other servers; look at it before you delete it, and move only the settings you need from it into the config.`
+}
+
+/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}), one whose record could not be read back that a later run may ({@link UNCONFIRMED_CLAUSE}), instead of leaving it to the learner; a name another program put another file at says so ({@link replacedCopySentence}), and a published config's staged name that holds changes the config name no longer reaches says that ({@link editedApartSentence}). */
 function keptFileSentence(kept: KeptFile): string {
   const { path, holds, isReplaced } = kept
   if (isReplaced) return replacedCopySentence(path)
+  if (kept.isEditedApart) return editedApartSentence(path)
   const what =
     holds === 'previous'
       ? keptCopyPhrase(path)
@@ -1494,7 +1508,7 @@ type Published = {
   recordConflict?: JournalConflictError
 }
 
-/** Everything a replacement of an existing config works with: the staged file with the inode and bytes this run wrote there (every cleanup before the link deletes that name only while it still shows them, {@link dropStagedRecord}; the one after it, only while it shows that inode, {@link dropPublishedStage}), the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
+/** Everything a replacement of an existing config works with: the staged file with the inode and bytes this run wrote there (every cleanup before the link deletes that name only while it still shows them, {@link dropStagedRecord}; the one after it, only while it is a second name of the config or holds just those bytes, {@link dropPublishedStage}), the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
 type Replacement = {
   temporary: string
   stagedVersion: RecordVersion
@@ -2224,7 +2238,7 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * Creates the config from the staged file without replacing anything: a hard link never replaces a file that appeared meanwhile; called by {@link publishRoot} when there was no config.
  * @param context - The run.
  * @param temporary - The staged file.
- * @param stagedVersion - The inode and the bytes' hash of the file this run wrote at the staged name: when nothing was linked, that name goes only while it still shows them ({@link dropStagedRecord}); once the config stands, only while it shows that inode ({@link dropPublishedStage}), so a file another program put there stays.
+ * @param stagedVersion - The inode and the bytes' hash of the file this run wrote at the staged name: when nothing was linked, that name goes only while it still shows them ({@link dropStagedRecord}); once the config stands, only while it is a second name of the config or holds just those bytes ({@link dropPublishedStage}), so a file another program put there stays.
  * @param config - The inode the config will have.
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands, in the shape older builds refuse when the old record's private name showed another file by then ({@link LinkedRecord}).
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
@@ -2269,10 +2283,10 @@ async function createConfig(
   const completion = await markCompleted(context, linked.journal)
   const isRecorded = completion === 'recorded'
   // That second name goes whatever became of the completed record, as after a replacement: a record another program put at pending.json, or none, never names it, so no later run would drop it and every later update or removal would refuse a config with two names; after a full disk this run's own record still names it, and then leaves nothing to settle.
-  const isStagedSettled = await dropPublishedStage(temporary, stagedVersion.ino)
+  const stagedKept = await dropPublishedStage(context, temporary, stagedVersion)
   return {
     config,
-    keptLeft: isStagedSettled ? [] : [{ path: temporary, holds: 'new' }],
+    keptLeft: stagedKept ? [stagedKept] : [],
     isRecorded,
     isRetiredKept: linked.isRetiredKept,
     ...recordConflictOf(completion),
@@ -2384,7 +2398,7 @@ async function linkInStaged(
 }
 
 /**
- * Cleans up after the config was published: the record turns to completed, the displaced copy is deleted unless a writer changed it since the comparison, and the staged name is unlinked while it still shows the published config's inode ({@link dropPublishedStage}); called by {@link replaceConfig}.
+ * Cleans up after the config was published: the record turns to completed, the displaced copy is deleted unless a writer changed it since the comparison, and the staged name is unlinked while it is only a second name of the published config or holds just the bytes this run wrote ({@link dropPublishedStage}); called by {@link replaceConfig}.
  * @param context - The run.
  * @param replacement - The staged file with the inode this run wrote there, the displaced copy and the record.
  * @param held - The displaced copy as it was compared.
@@ -2401,10 +2415,10 @@ async function settlePublished(
     displaced.path,
     held,
   )
-  const isStagedSettled = await dropPublishedStage(temporary, stagedVersion.ino)
+  const stagedKept = await dropPublishedStage(context, temporary, stagedVersion)
   return {
     keptLeft: [
-      ...(isStagedSettled ? [] : [{ path: temporary, holds: 'new' as const }]),
+      ...(stagedKept ? [stagedKept] : []),
       ...(outcome === 'deleted' ? [] : [copy]),
     ],
     isRecorded: outcome !== 'unrecorded',
@@ -2413,33 +2427,82 @@ async function settlePublished(
 }
 
 /**
- * Deletes the staged name of the config this run published while one synchronous look, after an awaited look at that name ({@link lookAheadAt}), still shows the published file's inode; called by {@link createConfig} and {@link settlePublished} once the config stands.
- * From the link on that name is a second name of the config, whose bytes Devin Desktop or the learner may already have changed in place, so the inode alone tells it from a file another program put there (a sync tool's), which stays untouched; before the link the bytes are checked too ({@link dropStagedRecord}).
- * Limits: a file put there between the synchronous look and the unlink is deleted (no Node primitive unlinks by inode); a stall that starts between the two looks holds the extension host's thread.
+ * Deletes the staged name of the config this run published while it is only a second name of the config, or holds nothing but the bytes this run wrote; called by {@link createConfig} and {@link settlePublished} once the config stands.
+ * From the link on that name is a second name of the config, whose bytes Devin Desktop or the learner may already have changed in place. While one synchronous look at the config name, then one at the staged name, after an awaited look at both ({@link lookAheadAt}), show the published inode at both, the staged name goes whatever was written into that file, because the config name keeps it; the inode alone tells it from a file another program put there (a sync tool's), which stays untouched. Once the config name shows another file or nothing (a backup or sync tool put another config there, for example), the staged name may be the published file's last name ({@link dropLastPublishedName}): it goes only while it holds exactly the bytes this run wrote, and bytes written into it since stay with it and are named. Before the link the bytes are checked too ({@link dropStagedRecord}).
+ * Limits: a file put at the staged name, or another config put at the config name, between the last synchronous look and the unlink is not seen (no Node primitive unlinks by inode); a stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run; its config path is looked at.
  * @param temporary - The staged name.
- * @param publishedIno - The inode of the published config, read from the staged file's handle ({@link stageConfigFile}).
+ * @param published - The inode of the published config, read from the staged file's handle ({@link stageConfigFile}), and the SHA-256 of the bytes this run wrote there.
  * @returns
- * - `true` when no name of the published file stays there: deleted now, already gone, or showing another program's file, which stays untouched and is no copy of Codebook's to name
- * - `false` when the name may still show the published file (the look or the unlink failed): the caller names it, and the pending record stays
+ * - undefined when no name of the published file stays there that holds anything of the learner's: deleted now, already gone, or showing another program's file, which stays untouched and is no copy of Codebook's to name
+ * - the staged name as a kept file (`holds: 'new'`) when it may still show the published file (a look, the read or the unlink failed): the caller names it, and the pending record stays
+ * - the same marked {@link KeptFile.isEditedApart} when the config name no longer reaches the published file and that file holds bytes written into it after the link
  * @example
- * await dropPublishedStage('…/mcp_config.json.<generation>.tmp', 42n) // => true once that second name of the config is gone
+ * await dropPublishedStage(context, '…/mcp_config.json.<generation>.tmp', stagedVersion) // => undefined once that second name of the config is gone
  */
 async function dropPublishedStage(
+  context: Context,
   temporary: string,
-  publishedIno: bigint,
-): Promise<boolean> {
-  // A storage that already stalls holds this step here, not at the synchronous look below.
-  await lookAheadAt([temporary])
+  published: RecordVersion,
+): Promise<KeptFile | undefined> {
+  const kept: KeptFile = { path: temporary, holds: 'new' }
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the config name, then the staged name.
+  await lookAheadAt([context.path, temporary])
+  let configIno: bigint | undefined
+  try {
+    configIno = lstatSync(context.path, {
+      bigint: true,
+      throwIfNoEntry: false,
+    })?.ino
+  } catch {
+    // A look that failed proves nothing: the name stays and is named.
+    return kept
+  }
+  // The config name no longer reaches the published file: the staged name may be its last name.
+  if (configIno !== published.ino)
+    return dropLastPublishedName(temporary, published, kept)
   let now: BigIntStats | undefined
   try {
     now = lstatSync(temporary, { bigint: true, throwIfNoEntry: false })
   } catch {
     // A look that failed proves nothing: the name stays and is named.
-    return false
+    return kept
   }
   // Nothing there, or another program's file: nothing of the published config is left at that name, and that file stays untouched.
-  if (now?.ino !== publishedIno) return true
-  return didUnlink(temporary)
+  if (now?.ino !== published.ino) return undefined
+  return (await didUnlink(temporary)) ? undefined : kept
+}
+
+/**
+ * Deletes the staged name of a published config that the config name no longer reaches, only while a read through one open file finds exactly the bytes this run wrote there and one synchronous look still shows that read ({@link unlinkStagedWhileStill}); called only by {@link dropPublishedStage}, once its look at the config name showed another file or nothing.
+ * That name may then be the published file's last name: bytes Devin Desktop or the learner wrote into the config in place after the link, before another config was put at the config path, live only there, so they stay and are named.
+ * @param temporary - The staged name.
+ * @param published - The inode and bytes this run wrote there.
+ * @param kept - The staged name as a kept file, returned when it may still hold the published file.
+ * @returns
+ * - undefined when nothing of the published file stays there: deleted now, already gone, or another program's file, which stays untouched
+ * - `kept` when the read, the look or the unlink failed, or the look found other size or times than the read
+ * - `kept` marked {@link KeptFile.isEditedApart} when the file holds other bytes than this run wrote
+ * @example
+ * await dropLastPublishedName(stagedPath, stagedVersion, kept) // => { ...kept, isEditedApart: true } once an edit lands in the new config before a backup puts an older one back
+ */
+async function dropLastPublishedName(
+  temporary: string,
+  published: RecordVersion,
+  kept: KeptFile,
+): Promise<KeptFile | undefined> {
+  let now: InspectedCopy | undefined
+  try {
+    now = await inspectCopy(temporary)
+  } catch {
+    // A read that failed proves nothing: the name stays and is named.
+    return kept
+  }
+  // Nothing there, or another program's file: that file stays untouched.
+  if (now?.ino !== published.ino) return undefined
+  // Bytes written into the published file after the link, which no config name reaches now: maybe the only copy of those changes.
+  if (now.sha256 !== published.sha256) return { ...kept, isEditedApart: true }
+  return (await unlinkStagedWhileStill(temporary, now)) ? undefined : kept
 }
 
 /**
@@ -2553,7 +2616,7 @@ function journalOf(
  * Publishes the config. The new bytes are staged first and their inode read from the open handle; the pending record then names the staged file, its inode, the probe name and the private name for the displaced file before anything is moved; the record stays from the first move on, because only the next run can tell how far a crash got.
  * A create links the staged file in ({@link createConfig}). A replacement moves the config aside, compares it and links the new file in ({@link replaceConfig}), so no file is replaced without being compared. Either link goes only while the staged name still shows the file and bytes this run wrote there ({@link assertStagedConfigStill}), and nothing rests on it until a read right after it finds that file with those bytes at the config name ({@link isLinkedStaged}). The new file keeps the owner's permission bits only (`mode & 0o600`), so a rewrite never widens access.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
- * Every cleanup of the staged name in this run deletes it only while it still shows the file this run wrote there: before the link its inode and bytes ({@link dropStagedRecord}), after the link its inode, whatever was written into the published config in place since ({@link dropPublishedStage}); a file another program put there stays untouched.
+ * Every cleanup of the staged name in this run deletes it only while it still shows the file this run wrote there: before the link its inode and bytes ({@link dropStagedRecord}), after the link its inode while the config name still shows that inode, whatever was written into the published config in place since, and otherwise its inode and bytes, so changes written into the published config that only that name still reaches stay and are named ({@link dropPublishedStage}); a file another program put there stays untouched.
  * Other limits: a writer that still holds the old file open may write into the displaced file after the comparison, which is then kept and reported, never deleted; a crash leaves the staged, probe and displaced names, which the next run settles only when each is a name Codebook made with the inode it recorded ({@link recoverLeftovers}).
  * @param context - The run.
  * @param root - The complete new top-level object.
@@ -3869,22 +3932,34 @@ async function dropStagedRecord({
 }
 
 /**
- * Deletes a staged name only while one synchronous look still shows the file a read of it found, after an awaited look at that name ({@link lookAheadAt}); the shared end of {@link dropStagedRecord} and {@link dropFailedStage}, once their read found the file and bytes this run wrote there.
+ * Deletes a staged name only while one synchronous look still shows the file a read of it found, after an awaited look at that name ({@link lookAheadAt}); the shared end of {@link dropStagedRecord}, {@link dropFailedStage} and {@link dropLastPublishedName}, once their read found the file and bytes this run wrote there.
  * Limits: a file put there, or a write into it, between that look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
  * @param staged - The staged name.
  * @param read - That file as {@link inspectCopy} read it.
- * @returns Nothing; best effort: a name that shows another file, size or times, or that cannot be looked at or deleted, stays.
+ * @returns Best effort, never throwing:
+ * - `true` once the name no longer shows that file: deleted now, already gone, or showing another inode, which stays untouched
+ * - `false` when it may still show it: the look failed, it shows that inode with other size or times, or the unlink failed; the name stays
  * @example
- * await unlinkStagedWhileStill(staged, read) // the name is gone unless a sync tool wrote into that file after the read
+ * await unlinkStagedWhileStill(staged, read) // => true: the name is gone, since no sync tool wrote into that file after the read
  */
 async function unlinkStagedWhileStill(
   staged: string,
   read: InspectedCopy,
-): Promise<void> {
+): Promise<boolean> {
   // A storage that already stalls holds this step here, not at the synchronous look below.
   await lookAheadAt([staged])
-  if (!isStagedNameStill(staged, read)) return
-  await unlink(staged).catch(() => undefined)
+  let now: BigIntStats | undefined
+  try {
+    now = lstatSync(staged, { bigint: true, throwIfNoEntry: false })
+  } catch {
+    // A look that failed proves nothing: the name stays.
+    return false
+  }
+  // Nothing there, or another file: nothing of that read is left at the name.
+  if (now?.ino !== read.ino) return true
+  // That file with other size or times (written into since the read): it stays.
+  if (!showsChecked(now, read)) return false
+  return didUnlink(staged)
 }
 
 /**
@@ -8658,7 +8733,7 @@ async function takeBackRecordLook(
 }
 
 /**
- * Builds the sentence about the copies of the learner's previous config that stay after a failed first setup.
+ * Builds the sentence about the copies of the learner's previous config that stay after a failed first setup, and about a published config's staged name that holds changes the config name no longer reaches ({@link KeptFile.isEditedApart}).
  * @param keptLeft - The files the publish left, with what they hold.
  * @returns An empty string when nothing stays, else a sentence naming each copy.
  * @example
@@ -8666,7 +8741,10 @@ async function takeBackRecordLook(
  */
 function keptCopiesSentence(keptLeft: KeptFile[]): string {
   return keptLeft
-    .filter(({ holds }) => holds === 'previous')
+    .filter(
+      ({ holds, isEditedApart }) =>
+        holds === 'previous' || isEditedApart === true,
+    )
     .map((kept) => ` ${alsoKeptSentence(kept)}`)
     .join('')
 }
@@ -8676,6 +8754,7 @@ function keptCopiesSentence(keptLeft: KeptFile[]): string {
  * @param kept - The copy, with what the record on disk still does with it.
  * @returns
  * - the {@link replacedCopySentence} when another program put another file at its name ({@link KeptFile.isReplaced})
+ * - the {@link editedApartSentence} for a published config's staged name that holds changes the config name no longer reaches ({@link KeptFile.isEditedApart})
  * - a sentence with the {@link LEFTOVER_CLAUSE} for a copy a record still lets a later run delete ({@link KeptFile.isLeftover})
  * - a sentence with the {@link UNCONFIRMED_CLAUSE} for a copy whose record could not be read back ({@link KeptFile.isUnconfirmed})
  * - a sentence that leaves the copy to the learner otherwise
@@ -8684,6 +8763,7 @@ function keptCopiesSentence(keptLeft: KeptFile[]): string {
  */
 function alsoKeptSentence(kept: KeptFile): string {
   if (kept.isReplaced) return replacedCopySentence(kept.path)
+  if (kept.isEditedApart) return editedApartSentence(kept.path)
   const next = copyFateClause(
     kept,
     '; delete that copy when you no longer need it',

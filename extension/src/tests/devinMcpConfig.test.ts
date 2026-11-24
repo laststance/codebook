@@ -14142,6 +14142,108 @@ test('A file another program swaps in at the staged name of a setup’s new conf
   assert.equal(recordAfter.phase, undefined)
 })
 
+/**
+ * Gives the sentence that names the staged name of a setup's new config which the setup kept because it holds changes written into that config after its link while another file, or none, stands at the config path ({@link writeManagedDevinMcpEntry}'s `cleanupFailure`).
+ * @param stagedPath - The staged name.
+ * @returns The sentence.
+ * @example
+ * editedApartSentence('/h/.config/devin/mcp_config.json.<generation>.tmp') // => 'Codebook kept the Devin MCP config it just wrote at …'
+ */
+function editedApartSentence(stagedPath: string): string {
+  return `Codebook kept the Devin MCP config it just wrote at ${stagedPath}: changes were written into that config after Codebook put it in place, and another file, or none, stands at the config path now, so that file may hold the only copy of those changes and of the settings of your other servers; look at it before you delete it, and move only the settings you need from it into the config.`
+}
+
+test('An edit written in place into a setup’s new config right before a backup puts an older config back stays at the staged name instead of being deleted with it, and the notice names that file', async (context) => {
+  // Value: protects=the cleanup after a replacement's link deletes the staged name of its new config only while the config name still reaches that file or the file holds exactly the bytes the setup wrote, so an edit written into the new config in place right before a backup or sync tool put another config at the config path, which only the staged name still reaches, stays and is named, and the next run does not delete it either (Cycle 0149 task 52); fails_when=the staged name is gone or no longer holds the edit, the config is not the restored file, the setup is not installed or names anything but that file, the setup's completed record does not name that staged name, or the next run deletes it or changes it; no_claim=a real Devin Desktop write and a real backup tool (seam.afterPublish writes the edit into the new config in place and then renames an older config over the config path, once, right after the link), a config put back between the cleanup's last look and its unlink (no Node primitive unlinks by inode), the wording of the next run's answer
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const editedText = `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY }, theme: 'edited in place' })}\n`
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  let stagedPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      if (stagedPath !== '') return
+      stagedPath = stagedConfigPathBeside(configPath)
+      // The new config stands: an edit lands in it in place, and then a backup puts an older config back at the config path.
+      writeFileSync(configPath, editedText)
+      swapFile(configPath, restoredText)
+    },
+  })
+  const recordAfterSetup = JSON.parse(readFileSync(pendingPath, 'utf8'))
+  await writeManagedDevinMcpEntry(storage, ENTRY, home).catch(() => undefined)
+  // A name a run left empty reads as 'absent', so the assertions below name it.
+  const stagedAfterNextRun = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, editedApartSentence(stagedPath))
+  assert.equal(recordAfterSetup.phase, 'completed')
+  assert.equal(recordAfterSetup.stagedName, basename(stagedPath))
+  assert.equal(stagedAfterNextRun, editedText)
+})
+
+test('An edit written in place into the config a setup creates right before a backup puts another config there stays at the staged name instead of being deleted with it, and the notice names that file', async (context) => {
+  // Value: protects=the cleanup after a create's link deletes the staged name of its new config only while the config name still reaches that file or the file holds exactly the bytes the setup wrote, so an edit written into the new config in place right before another config was put at the config path, which only the staged name still reaches, stays and is named (Cycle 0149 task 52, the create route); fails_when=the staged name is gone or no longer holds the edit, the setup is not installed or names anything but that file; no_claim=a real Devin Desktop write and a real backup tool (seam.afterPublish writes the edit into the new config in place and then renames another config over the config path, once, right after the link), a config put back between the cleanup's last look and its unlink (no Node primitive unlinks by inode), what the next run does with that file
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const editedText = `${JSON.stringify({ mcpServers: { codebook: ENTRY }, theme: 'edited in place' })}\n`
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  let stagedPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      if (stagedPath !== '') return
+      stagedPath = stagedConfigPathBeside(configPath)
+      // The new config stands: an edit lands in it in place, and then a backup puts another config at the config path.
+      writeFileSync(configPath, editedText)
+      swapFile(configPath, restoredText)
+    },
+  })
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const stagedAfterSetup = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, editedApartSentence(stagedPath))
+  assert.equal(stagedAfterSetup, editedText)
+  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+})
+
+test('A backup that puts an older config back right after a setup linked its new config in, with no edit in between, still lets the setup delete the staged name that holds only the bytes it wrote', async (context) => {
+  // Value: protects=the cleanup after a replacement's link deletes the staged name of its new config, once the config name no longer reaches that file, while that file holds exactly the bytes the setup wrote (no change of the learner's lives only there), so no copy is kept or named for nothing (Cycle 0149 task 52: only a changed last name stays); fails_when=the staged name stays, the config is not the restored file, or the setup is not installed or names a kept file; no_claim=a real backup tool (seam.afterPublish renames an older config over the config path once, right after the link), a write into the staged file between the cleanup's read and its unlink (its last look sees its size and times; a same-size write within one timestamp tick passes it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const restoredText = '{"mcpServers":{"alpha":{"command":"restored"}}}\n'
+  let hasRestored = false
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      if (hasRestored) return
+      hasRestored = true
+      // The new config stands: a backup puts an older config back at the config path, and nothing was written into the new one.
+      swapFile(configPath, restoredText)
+    },
+  })
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, undefined)
+  assert.equal(readFileSync(configPath, 'utf8'), restoredText)
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
 test("A file another program swaps in at the staged name of a take-back's first rollback record right as it is linked is never taken for that record, so the take-back moves nothing and keeps both names of that file", async (context) => {
   // Value: protects=a take-back's first rollback-record write goes on only once the journal name shows the inode and bytes it wrote after the link, and its cleanup deletes the staged name only while that name shows that file, so a file swapped in after the last look before the link is neither followed by a move of the config nor deleted (Cycle 0148 ship review); fails_when=the first refresh says anything but the journal-taken refusal, the config changes, the file swapped in is gone from the journal name or the staged name or changes, the setup's record loses its take-back mark, or the second refresh leaves the entry or the journal; no_claim=a real sync tool (the config module is loaded with a link that, for the journal name, renames another journal over the staged name once right before it links), a swap of the journal name after the check that follows the link, what a later run does with the file at the staged name
   // Arrange
