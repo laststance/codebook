@@ -9699,7 +9699,7 @@ test('A setup leaves a record a backup restores at pending.json after the setup 
 })
 
 test("A setup never writes its finished record over a record a backup restores at pending.json after the setup's own record was written, and names the second name of its config it then keeps", async (context) => {
-  // Value: protects=a setup rewrites its own record of the change only while that name still shows the version it wrote, so a record a backup or sync tool put at pending.json in between stays for the next run, and the staged name its unwritten completed record no longer lets it delete is kept and named (Cycle 0148 task 33); fails_when=the record put at pending.json is gone or changes, the setup does not answer installed with the staged name's sentence, the staged name is gone, or the config or the receipt is not the setup's; no_claim=a real backup tool (seam.afterPublish renames another record over pending.json once, right after the config was linked in and before the completed record), a restore between the last look and the rename (no Node primitive renames over a name only while it shows an inode), what the next run does with that record
+  // Value: protects=a setup rewrites its own record of the change only while that name still shows the version it wrote, so a record a backup or sync tool put at pending.json in between stays for the next run, and the staged name its unwritten completed record no longer lets it delete is kept and named, followed by the sentence that its record changed (Cycle 0148 task 33, Cycle 0149 task 6); fails_when=the record put at pending.json is gone or changes, the setup does not answer installed with the staged name's sentence and the changed-record sentence, the staged name is gone, or the config or the receipt is not the setup's; no_claim=a real backup tool (seam.afterPublish renames another record over pending.json once, right after the config was linked in and before the completed record), a restore between the last look and the rename (no Node primitive renames over a name only while it shows an inode), what the next run does with that record
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
@@ -9735,13 +9735,212 @@ test("A setup never writes its finished record over a record a backup restores a
   assert.equal(result.status, 'installed')
   assert.equal(
     result.cleanupFailure,
-    `Codebook kept a private copy of the Devin MCP config it just wrote at ${stagedPath} (it holds the settings of your other servers) because it could not delete that file safely; delete it when you no longer need it.`,
+    `Codebook kept a private copy of the Devin MCP config it just wrote at ${stagedPath} (it holds the settings of your other servers) because it could not delete that file safely; delete it when you no longer need it. Codebook wrote its record of the entry but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), so it left that name as it is; the next run reads that name first.`,
   )
   assert.equal(existsSync(stagedPath), true)
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { codebook: ENTRY },
   })
   assert.equal(receipt.generation, result.generation)
+})
+
+test("A setup whose own record a backup replaces with another setup's take-back mark once its config is in place keeps its entry, leaves that record and the moved-aside copy to the learner and says so, and the next refresh keeps the entry", async (context) => {
+  // Value: protects=a setup whose completed record meets another program's record at pending.json writes its receipt only while the config is still the file it published with its entry, leaves that record as it is, words a moved-aside copy that record does not name as the learner's and says that its record changed, and the next refresh settles the restored mark without losing the entry or the copy (Cycle 0149 task 6); fails_when=the setup answers anything but installed with the copy's and the changed record's sentences, the restored record changes or is gone after the setup, no receipt of this setup stands, the copy is gone or changed, or the next refresh answers anything but current, keeps the restored record or loses the entry or the other server; no_claim=a real backup tool (seam.afterPublish renames a marked record of another generation over pending.json once, after the config is in place and before the completed record), a record that keeps the published file's inode (inode reuse), a restore after the completed record (Cycle 0148 task 33's test)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const restoredPendingText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000150',
+    takeBack: true,
+  })}\n`
+  const backupPath = join(home, 'pending-from-backup.json')
+  let copyPath = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      if (copyPath || displacedPath === undefined) return
+      copyPath = displacedPath
+      // A backup restores another setup's marked record at pending.json once the config is in place.
+      writeFileSync(backupPath, restoredPendingText)
+      renameSync(backupPath, pendingPath)
+    },
+  })
+  const pendingAfterSetup = readFileSync(pendingPath, 'utf8')
+  const receiptAfterSetup = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const refreshed = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely; delete it when you no longer need it. Codebook wrote its record of the entry but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), so it left that name as it is; the next run reads that name first.`,
+  )
+  assert.equal(pendingAfterSetup, restoredPendingText)
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.equal(refreshed.status, 'current')
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(readFileSync(copyPath, 'utf8'), configText)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+})
+
+test('A setup whose own record and config a backup both put back once its config is in place writes no receipt, leaves that record, that config and the moved-aside copy as they are and says so, and the next refresh settles that record', async (context) => {
+  // Value: protects=a setup whose completed record meets another program's record records its entry only while the config is still the file it published with that entry, so a backup that put an older config back together with the record leaves no receipt that claims that config, the record, the config and the moved-aside copy stay as they are, and the refusal says so (Cycle 0149 task 6, D5's paired restore); fails_when=the setup resolves or says anything but the coverage-lost refusal with the copy's sentence, a receipt appears, the restored record or config changes, the copy is gone or changed, or the next refresh answers anything but not-managed, keeps the restored record or writes a receipt; no_claim=a real backup tool (seam.afterPublish renames a marked record of another generation over pending.json and the config as it was before the setup over the config path, once, after the config is in place and before the completed record), a config put back after the receipt's last look (no Node primitive links only while another name shows an inode)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const restoredPendingText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000151',
+    takeBack: true,
+  })}\n`
+  const backupPath = join(home, 'pending-from-backup.json')
+  let copyPath = ''
+
+  // Act
+  const setupOutcome = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      if (copyPath || displacedPath === undefined) return
+      copyPath = displacedPath
+      // A backup restores another setup's marked record at pending.json and the config as it was before this setup.
+      writeFileSync(backupPath, restoredPendingText)
+      renameSync(backupPath, pendingPath)
+      swapFile(configPath, configText)
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const pendingAfterSetup = readFileSync(pendingPath, 'utf8')
+  const isReceiptWritten = existsSync(receiptPath)
+  const refreshed = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    setupOutcome,
+    `Codebook put its entry in Devin Desktop's MCP config at ${configPath}, but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), and that config is no longer the file it wrote, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, then run Codebook: Set Up AI Chat again, and that run reads ${pendingPath} first. Codebook also kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers); delete that copy when you no longer need it.`,
+  )
+  assert.equal(pendingAfterSetup, restoredPendingText)
+  assert.equal(isReceiptWritten, false)
+  assert.equal(refreshed.status, 'not-managed')
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.equal(readFileSync(copyPath, 'utf8'), configText)
+})
+
+test('A setup whose look at its own record fails once as it records its finish keeps the warning that a later run deletes the moved-aside copy, says it could not read that record again, and the next refresh settles the copy', async (context) => {
+  // Value: protects=a completed record whose name could not be read once (a lack of file handles) is no proof that another program took that record, so the copy the record on disk still names keeps the warning that a later run deletes it, the notice says that Codebook could not read that record again, the record stays byte for byte, and the next refresh settles the copy (Cycle 0149 task 6, D5's transient read); fails_when=the setup answers anything but installed with the leftover warning and the could-not-read sentence, the record changes, no receipt of this setup stands, or the next refresh answers anything but current or leaves the copy or the record; no_claim=a real lack of file handles (the config module is loaded with an openWithoutFollowing that answers EMFILE once for pending.json, armed at seam.afterPublish), a read that keeps failing
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let isReadRefusalArmed = false
+  const outOfFileHandles = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      './utils/openWithoutFollowing': {
+        openWithoutFollowing: (
+          ...args: Parameters<typeof openWithoutFollowing>
+        ) => {
+          // The first open of the record after the config was linked in finds no file handle free.
+          if (isReadRefusalArmed && args[0] === pendingPath) {
+            isReadRefusalArmed = false
+            return Promise.reject(
+              Object.assign(new Error('EMFILE: too many open files'), {
+                code: 'EMFILE',
+              }),
+            )
+          }
+          return openWithoutFollowing(...args)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let copyPath = ''
+  let pendingAtPublish = ''
+
+  // Act
+  const result = await outOfFileHandles.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      afterPublish: (displacedPath) => {
+        if (copyPath || displacedPath === undefined) return
+        copyPath = displacedPath
+        pendingAtPublish = readFileSync(pendingPath, 'utf8')
+        isReadRefusalArmed = true
+      },
+    },
+  )
+  const pendingAfterSetup = readFileSync(pendingPath, 'utf8')
+  const receiptAfterSetup = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const refreshed = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it. Codebook wrote its record of the entry but could not record that this setup finished, because it could not read its record of this setup at ${pendingPath} again, so it left that name as it is; the next run reads that name first.`,
+  )
+  assert.equal(pendingAfterSetup, pendingAtPublish)
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.equal(refreshed.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+  assert.equal(existsSync(pendingPath), false)
+})
+
+test('A setup whose own record a backup puts back as it stood before the config was linked in keeps the warning that a later run deletes the moved-aside copy, says that record changed, and the next refresh settles the copy', async (context) => {
+  // Value: protects=a record another program put back at pending.json that still names the moved-aside copy (the setup's own record as it stood before the link, at another inode) keeps the warning that a later run deletes that copy, because that record's contents still lead a later run to it, and the notice says that the record changed; the next refresh settles the copy by that record (Cycle 0149 task 6, D5's same-generation restore); fails_when=the setup answers anything but installed with the leftover warning and the changed sentence, the copy is called the learner's to delete at will, the restored record changes, no receipt of this setup stands, or the next refresh answers anything but current or leaves the copy or the record; no_claim=a real backup tool (seam.afterPublish renames a copy of pending.json's own bytes over it once, after the config is in place and before the completed record)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const backupPath = join(home, 'pending-from-backup.json')
+  let copyPath = ''
+  let restoredPendingText = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      if (copyPath || displacedPath === undefined) return
+      copyPath = displacedPath
+      // A backup restores the setup's own record as it stood before the link, at another inode.
+      restoredPendingText = readFileSync(pendingPath, 'utf8')
+      writeFileSync(backupPath, restoredPendingText)
+      renameSync(backupPath, pendingPath)
+    },
+  })
+  const pendingAfterSetup = readFileSync(pendingPath, 'utf8')
+  const receiptAfterSetup = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const refreshed = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it. Codebook wrote its record of the entry but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), so it left that name as it is; the next run reads that name first.`,
+  )
+  assert.equal(pendingAfterSetup, restoredPendingText)
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.equal(refreshed.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+  assert.equal(existsSync(pendingPath), false)
 })
 
 test('A setup that finds a record a backup restored at pending.json after its recovery left that name empty writes no record over it, publishes nothing and says that record changed', async (context) => {

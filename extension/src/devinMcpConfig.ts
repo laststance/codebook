@@ -327,6 +327,8 @@ type KeptFile = {
   holds: 'previous' | 'new'
   /** Set for a copy of the previous config that stays under a name a record on disk still holds ({@link discardDisplaced}, {@link keepFromRecovery}, {@link publishEntry}): a later run deletes it while it still holds exactly the bytes Codebook moved aside, and the sentence that names it says so ({@link LEFTOVER_CLAUSE}). */
   isLeftover?: true
+  /** Set for a copy of the previous config whose record Codebook could not read back after another program changed, moved away or made unreadable that record ({@link recordedCopyFateOf}): a later run may still delete it, and the sentence that names it says so ({@link UNCONFIRMED_CLAUSE}). */
+  isUnconfirmed?: true
   /** Set for the private name of a copy of the previous config where another program put another file before Codebook could move the copy out of recovery's reach ({@link keepFromRecovery}), or for the name the move linked such a file to ({@link moveWithoutReplacing}): the sentence that names it says that the file there is no longer that copy ({@link replacedCopySentence}). */
   isReplaced?: true
 }
@@ -402,22 +404,35 @@ function replacedCopySentence(path: string): string {
   return `Another program replaced the private copy of your previous Devin MCP config that Codebook kept at ${path}, so the file at that path is no longer that copy; Codebook left that file untouched, so look at it before you use or delete it.`
 }
 
-/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}) instead of leaving it to the learner; a name another program put another file at says so ({@link replacedCopySentence}). */
-function keptFileSentence({
-  path,
-  holds,
-  isLeftover,
-  isReplaced,
-}: KeptFile): string {
+/** One sentence for a kept file that could not be deleted; the work itself is done. A copy a record on disk still holds says that a later run deletes it ({@link LEFTOVER_CLAUSE}), one whose record could not be read back that a later run may ({@link UNCONFIRMED_CLAUSE}), instead of leaving it to the learner; a name another program put another file at says so ({@link replacedCopySentence}). */
+function keptFileSentence(kept: KeptFile): string {
+  const { path, holds, isReplaced } = kept
   if (isReplaced) return replacedCopySentence(path)
   const what =
     holds === 'previous'
       ? keptCopyPhrase(path)
       : `a private copy of the Devin MCP config it just wrote at ${path} (it holds the settings of your other servers)`
-  const next = isLeftover
-    ? `, ${LEFTOVER_CLAUSE}`
-    : '; delete it when you no longer need it'
+  const next = copyFateClause(kept, '; delete it when you no longer need it')
   return `Codebook kept ${what} because it could not delete that file safely${next}.`
+}
+
+/**
+ * Words what happens next to a kept copy of the previous config, as the record on disk leaves it; the shared end of {@link keptFileSentence} and {@link alsoKeptSentence}.
+ * @param kept - The copy, with what the record on disk still does with it.
+ * @param otherwise - The ending for a copy no record lets a later run delete.
+ * @returns
+ * - `, ` and the {@link LEFTOVER_CLAUSE} for a copy a record on disk still holds ({@link KeptFile.isLeftover})
+ * - `, ` and the {@link UNCONFIRMED_CLAUSE} for a copy whose record could not be read back ({@link KeptFile.isUnconfirmed})
+ * - `otherwise` for every other copy
+ * @example
+ * copyFateClause({ path, holds: 'previous', isUnconfirmed: true }, '; delete it when you no longer need it') // => ', but Codebook could not confirm that its record still tracks that copy, …'
+ */
+function copyFateClause(
+  { isLeftover, isUnconfirmed }: KeptFile,
+  otherwise: string,
+): string {
+  if (isLeftover) return `, ${LEFTOVER_CLAUSE}`
+  return isUnconfirmed ? `, ${UNCONFIRMED_CLAUSE}` : otherwise
 }
 
 /**
@@ -813,25 +828,47 @@ async function removeRecord(
   await rm(context.pendingPath, { force: true })
 }
 
+/** How a run's completed record went ({@link markCompleted}): `recorded`; `unrecorded` when its write failed (a full disk), so the record written before the first move stays byte for byte; or the kind of {@link JournalConflictError} when that record's name showed another file, nothing or a name that could not be read again (`changed`, `gone`, `unread`), so what stands there is not provably this run's record and stays as it is. */
+type Completion = 'recorded' | 'unrecorded' | JournalConflictError['kind']
+
 /**
- * Rewrites the pending record as completed: the config was already published or removed, so a copy that stays is a leftover and never goes back to the config name ({@link recoverLeftovers}).
+ * Rewrites the pending record as completed: the config was already published or removed, so a copy that stays is a leftover and never goes back to the config name ({@link recoverLeftovers}); called by {@link createConfig} and {@link discardDisplaced}.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
- * @returns `true` when the record says completed; `false` when it could not be written (a full disk): the record stays as it was, and the caller must not rely on it.
+ * @returns The {@link Completion}: `recorded` when the record says completed; otherwise nothing was written there, the caller must not rely on that record, and a conflict's kind says what stood at its name.
+ * @example
+ * await markCompleted(context, journal) // => 'changed' once a backup renamed another record over pending.json after the config was linked in
  */
 async function markCompleted(
   context: Context,
   journal: Pending,
-): Promise<boolean> {
+): Promise<Completion> {
   try {
     await writeRecord(context, context.pendingPath, {
       ...journal,
       phase: 'completed',
     } satisfies Pending)
-    return true
-  } catch {
-    return false
+    return 'recorded'
+  } catch (error) {
+    // Another program's record, an emptied name or a failed read is told apart from a full disk, which leaves this run's own record.
+    return error instanceof JournalConflictError ? error.kind : 'unrecorded'
   }
+}
+
+/**
+ * Gives the {@link Published.recordConflict} a {@link Completion} carries; called by {@link createConfig} and {@link discardDisplaced}.
+ * @param completion - How the completed record went.
+ * @returns `{ recordConflict }` for a conflict's kind; an empty object for `recorded` and `unrecorded`.
+ * @example
+ * recordConflictOf('unread') // => { recordConflict: 'unread' }
+ * recordConflictOf('unrecorded') // => {}
+ */
+function recordConflictOf(
+  completion: Completion,
+): Pick<Published, 'recordConflict'> {
+  return completion === 'recorded' || completion === 'unrecorded'
+    ? {}
+    : { recordConflict: completion }
 }
 
 /**
@@ -1054,8 +1091,11 @@ export async function didCopyChange(held: HeldCopy): Promise<boolean> {
 /** What {@link discardDisplaced} did with the displaced copy: `deleted` (also when a copy that changed is gone from its private name by the time it would be kept, so nothing stays to name); `kept` (it changed or could not be deleted, so it stays and is reported); `unrecorded` (the completed record could not be written, so nothing was deleted). */
 type DiscardOutcome = 'deleted' | 'kept' | 'unrecorded'
 
-/** The outcome of {@link discardDisplaced} and the displaced copy as it stays: its path (another one when it was moved out of recovery's reach, {@link keepFromRecovery}) and what it holds; the copy is ignored for `deleted`. */
-type Discarded = { outcome: DiscardOutcome; copy: KeptFile }
+/** The outcome of {@link discardDisplaced} and the displaced copy as it stays: its path (another one when it was moved out of recovery's reach, {@link keepFromRecovery}) and what it holds; the copy is ignored for `deleted`. With `unrecorded`, `recordConflict` says what stood at the record's name when that came from another program, not from a full disk ({@link Completion}). */
+type Discarded = { outcome: DiscardOutcome; copy: KeptFile } & Pick<
+  Published,
+  'recordConflict'
+>
 
 /** The end of the name a changed displaced copy moves to when its handover cannot be recorded ({@link keepFromRecovery}); no record names it, so no recovery of any build deletes it. */
 const KEPT_COPY_SUFFIX = 'codebook-kept'
@@ -1077,8 +1117,9 @@ async function discardDisplaced(
   held: HeldCopy,
 ): Promise<Discarded> {
   const copy: KeptFile = { path: displacedPath, holds: 'previous' }
-  if (!(await markCompleted(context, journal)))
-    return { outcome: 'unrecorded', copy }
+  const completion = await markCompleted(context, journal)
+  if (completion !== 'recorded')
+    return { outcome: 'unrecorded', copy, ...recordConflictOf(completion) }
   // A copy a writer changed since the comparison, or a name that shows another file now, is handed to the learner.
   const isChanged = await didCopyChange(held)
   // A storage that already stalls holds this step here, not at the synchronous look at that name below.
@@ -1413,6 +1454,8 @@ type Published = {
   keptLeft: KeptFile[]
   isRecorded: boolean
   isRetiredKept: boolean
+  /** Set when the completed record was not written because its name showed another file (`changed`), nothing (`gone`) or could not be read again (`unread`) ({@link Completion}): what stands there is not provably this run's record, so {@link publishEntry} records its entry only while the config is still the file it published ({@link settleRecordConflict}). Absent for a full disk, whose record stays this run's own. */
+  recordConflict?: JournalConflictError['kind']
 }
 
 /** Everything a replacement of an existing config works with: the staged file, the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
@@ -1855,7 +1898,7 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * @param config - The inode the config will have.
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands, in the shape older builds refuse when the old record's private name showed another file by then ({@link LinkedRecord}).
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
- * @returns The inode, the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), and whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too).
+ * @returns The inode, the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too), and what stood at the record's name when another program kept the completed record from being written ({@link Published.recordConflict}).
  * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back.
  */
 async function createConfig(
@@ -1887,13 +1930,15 @@ async function createConfig(
   }
   context.seam?.afterPublish?.(undefined)
   // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
-  const didRecord = await markCompleted(context, linked.journal)
-  const isStagedGone = didRecord && (await didUnlink(temporary))
+  const completion = await markCompleted(context, linked.journal)
+  const isRecorded = completion === 'recorded'
+  const isStagedGone = isRecorded && (await didUnlink(temporary))
   return {
     config,
     keptLeft: isStagedGone ? [] : [{ path: temporary, holds: 'new' }],
-    isRecorded: didRecord,
+    isRecorded,
     isRetiredKept: linked.isRetiredKept,
+    ...recordConflictOf(completion),
   }
 }
 
@@ -2008,14 +2053,14 @@ async function linkInStaged(
  * @param context - The run.
  * @param replacement - The staged file, the displaced copy and the record.
  * @param held - The displaced copy as it was compared.
- * @returns The files that stay, each with what it holds (empty when everything was deleted), and whether the completed record was written; `false` means nothing was deleted, and a caller that must not report success without that record ({@link takeEntryOut}) refuses.
+ * @returns The files that stay, each with what it holds (empty when everything was deleted), whether the completed record was written (`false` means nothing was deleted, and a caller that must not report success without that record, {@link takeEntryOut}, refuses), and what stood at that record's name when another program kept it from being written ({@link Published.recordConflict}).
  */
 async function settlePublished(
   context: Context,
   { temporary, displaced, journal }: Replacement,
   held: HeldCopy,
-): Promise<Pick<Published, 'keptLeft' | 'isRecorded'>> {
-  const { outcome, copy } = await discardDisplaced(
+): Promise<Pick<Published, 'keptLeft' | 'isRecorded' | 'recordConflict'>> {
+  const { outcome, copy, recordConflict } = await discardDisplaced(
     context,
     journal,
     displaced.path,
@@ -2028,6 +2073,7 @@ async function settlePublished(
       ...(outcome === 'deleted' ? [] : [copy]),
     ],
     isRecorded: outcome !== 'unrecorded',
+    ...(recordConflict && { recordConflict }),
   }
 }
 
@@ -5886,7 +5932,7 @@ function stillnessOf(
 }
 
 /**
- * Tells whether the config is still the file whose look decided a drop or a move advice, or still absent, with a failed look as a change; called only by {@link stillnessOf}.
+ * Tells whether the config is still the file whose look decided a drop or a move advice, or still absent, with a failed look as a change; called by {@link stillnessOf}, and by the look {@link settleRecordConflict} gives right before a receipt's rename.
  * @param context - The run.
  * @param boundConfig - The config that decided ({@link BoundConfig}).
  * @returns `true` when {@link isConfigUnchanged} finds that file, or still no file for `absent`; `false` when it changed or the look failed.
@@ -6488,6 +6534,51 @@ type RollbackResult = {
   removal?: 'file-removed' | 'removed'
 }
 
+/** What {@link confirmPublishedConfig} found: the config while it is the file a setup published, with that setup's entry, or why it is not. */
+type PublishedConfigLook =
+  | { look: Extract<ConfigLook, { kind: 'present' }> }
+  | {
+      outcome: Extract<
+        RollbackResult['outcome'],
+        'unreadable' | 'not-ours' | 'replaced-config'
+      >
+    }
+
+/**
+ * Reads the config again and tells whether it is still the file a setup published with that setup's entry; called by {@link rollBackPublishedEntry} before it takes that entry out and by {@link settleRecordConflict} before a setup whose completed record met another program's record writes its receipt.
+ * @param context - The run.
+ * @param written - The receipt of that setup; its `config.ino` is the file it published, its entry hash the entry it wrote.
+ * @returns
+ * - the config as read while it is present, holds that entry ({@link ownsEntry}) and has the published inode
+ * - `unreadable` when the read failed (a link swapped in, no permission), so the entry was never confirmed
+ * - `not-ours` when the file is gone or its entry is no longer the one that setup wrote
+ * - `replaced-config` when another file (another inode) stands there, even with the same entry
+ * @example
+ * await confirmPublishedConfig(context, written) // => { outcome: 'replaced-config' } once a backup put the old config back
+ */
+async function confirmPublishedConfig(
+  context: Context,
+  written: Receipt,
+): Promise<PublishedConfigLook> {
+  let look: ConfigLook
+  try {
+    look = await lookAtConfig(context)
+  } catch {
+    // The re-read failed (a link swapped in, no permission): the entry was never confirmed as Codebook's.
+    return { outcome: 'unreadable' }
+  }
+  // The file is gone or its entry is no longer the one this setup wrote (an editor saved another one): the learner's entry is never Codebook's.
+  if (
+    look.kind !== 'present' ||
+    !ownsEntry(look.servers?.[SERVER_NAME], written)
+  )
+    return { outcome: 'not-ours' }
+  // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published.
+  if (!isSameFileId(written.config.ino, look.identity.ino))
+    return { outcome: 'replaced-config' }
+  return { look }
+}
+
 /**
  * Takes the entry out of the config file a first setup published, never of another file; called by {@link takeOutUnrecordedEntry}.
  * The rollback writes its own journal beside the setup's pending record ({@link rollbackContextOf}), so a crash or failure during it leaves the setup's record, the proof that the entry is Codebook's, intact.
@@ -6500,22 +6591,11 @@ async function rollBackPublishedEntry(
   context: Context,
   written: Receipt,
 ): Promise<RollbackResult> {
-  let look: ConfigLook
-  try {
-    look = await lookAtConfig(context)
-  } catch {
-    // The re-read failed (a link swapped in, no permission): the entry was never confirmed as Codebook's, so nothing is touched.
-    return { outcome: 'unreadable', keptLeft: [] }
-  }
-  // The file is gone or its entry is no longer the one this setup wrote (an editor saved another one): the learner's entry is never Codebook's to remove.
-  if (
-    look.kind !== 'present' ||
-    !ownsEntry(look.servers?.[SERVER_NAME], written)
-  )
-    return { outcome: 'not-ours', keptLeft: [] }
-  // An editor saved a new file (a new inode) with the same entry: that file is not the one Codebook published, so it stays untouched.
-  if (!isSameFileId(written.config.ino, look.identity.ino))
-    return { outcome: 'replaced-config', keptLeft: [] }
+  const confirmed = await confirmPublishedConfig(context, written)
+  // Not the file this setup published with its entry, or one that cannot be read again: nothing is touched.
+  if (!('look' in confirmed))
+    return { outcome: confirmed.outcome, keptLeft: [] }
+  const { look } = confirmed
   try {
     const { keptLeft, status } = await takeEntryOut(
       rollbackContextOf(context, written.generation),
@@ -6640,16 +6720,18 @@ function keptCopiesSentence(keptLeft: KeptFile[]): string {
  * @returns
  * - the {@link replacedCopySentence} when another program put another file at its name ({@link KeptFile.isReplaced})
  * - a sentence with the {@link LEFTOVER_CLAUSE} for a copy a record still lets a later run delete ({@link KeptFile.isLeftover})
+ * - a sentence with the {@link UNCONFIRMED_CLAUSE} for a copy whose record could not be read back ({@link KeptFile.isUnconfirmed})
  * - a sentence that leaves the copy to the learner otherwise
  * @example
  * alsoKeptSentence({ path, holds: 'previous' }) // => 'Codebook also kept a private copy of your previous Devin MCP config at … ; delete that copy when you no longer need it.'
  */
-function alsoKeptSentence({ path, isLeftover, isReplaced }: KeptFile): string {
-  if (isReplaced) return replacedCopySentence(path)
-  const next = isLeftover
-    ? `, ${LEFTOVER_CLAUSE}`
-    : '; delete that copy when you no longer need it'
-  return `Codebook also kept ${keptCopyPhrase(path)}${next}.`
+function alsoKeptSentence(kept: KeptFile): string {
+  if (kept.isReplaced) return replacedCopySentence(kept.path)
+  const next = copyFateClause(
+    kept,
+    '; delete that copy when you no longer need it',
+  )
+  return `Codebook also kept ${keptCopyPhrase(kept.path)}${next}.`
 }
 
 /**
@@ -6796,8 +6878,8 @@ async function markBeforeTakeBack(context: Context): Promise<MarkedTakeBack> {
  * @param context - The run; its entry must be set, and it tracks its own record from the version {@link inspect} left there ({@link ownRecordContext}), so a record another program puts at `pending.json` meanwhile is neither written over nor deleted, up to the limit of the last look before a rename or unlink ({@link writeTrackedJournal}, {@link dropTrackedJournal}).
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
- * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted; an empty generation when the run has no entry.
- * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published.
+ * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted (and, when another program kept the completed record from being written, the sentence that says so); an empty generation when the run has no entry.
+ * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published. A {@link PublishUncoveredError} when another program kept the completed record from being written and the config is no longer the file this setup published with its entry ({@link settleRecordConflict}): no receipt is written, and that record, the config and the copies stay.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -6817,7 +6899,7 @@ async function publishEntry(
   const installationId = installationIdOf(isFirst ? undefined : receipt)
   const root = rootWithEntry(look, entry)
   await context.seam?.afterRead?.()
-  const { config, keptLeft, isRecorded, isRetiredKept } = await publishRoot(
+  const published = await publishRoot(
     context,
     root,
     look,
@@ -6843,33 +6925,206 @@ async function publishEntry(
     installed: true,
     generation,
     installationId,
-    config,
+    config: published.config,
   }
-  // Decided once for both notices: without the completed record, the record written before the move-aside still lets the next run delete the copy.
-  const copies: LeftCopies = {
-    asLeft: keptLeft,
-    asTracked: isRecorded ? keptLeft : keptLeft.map(stillTracked),
-  }
+  return recordPublishedEntry(context, written, published, isFirst)
+}
+
+/**
+ * Writes the receipt of a publish and words what the publish left; the last steps of {@link publishEntry}, once the config stands.
+ * A first setup never leaves an entry without a receipt: when that receipt cannot be written its entry is taken out again ({@link takeOutUnrecordedEntry}); an update keeps the old receipt and rejects. When another program kept the completed record from being written ({@link Published.recordConflict}), the receipt is written only while the config is still the file this setup published with its entry, and the copies are worded as the record that stands leaves them ({@link settleRecordConflict}).
+ * @param context - The run.
+ * @param written - The receipt this publish writes.
+ * @param published - What the publish reported ({@link Published}).
+ * @param isFirst - Whether the publish is a first setup ({@link isFirstSetup}).
+ * @returns The generation recorded in the receipt and, when something stays, the sentences that name it.
+ * @throws The {@link PublishUncoveredError} of {@link settleRecordConflict}; the take-out's refusal for a first setup whose receipt could not be written; the receipt write's failure for an update.
+ * @example
+ * await recordPublishedEntry(context, written, published, true) // => { generation: written.generation }
+ */
+async function recordPublishedEntry(
+  context: Context,
+  written: Receipt,
+  published: Published,
+  isFirst: boolean,
+): Promise<PublishedEntry> {
+  const { keptLeft, isRetiredKept, recordConflict } = published
+  // Another program's file at the record's name, an emptied name or a failed read: success is recorded only on the config's own word, and the copies as the record that stands leaves them.
+  const settled: RecordConflictSettlement = recordConflict
+    ? await settleRecordConflict(context, written, keptLeft, recordConflict)
+    : { copies: leftCopiesOf(published) }
   try {
-    await writeRecord(context, context.receiptPath, written)
+    await writeRecord(
+      context,
+      context.receiptPath,
+      written,
+      settled.configStill,
+    )
   } catch (cause) {
-    // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
-    if (!isFirst) throw cause
+    // A config that is no longer the published file is not this setup's to take anything out of; an update keeps the old receipt and rejects as before.
+    if (cause instanceof PublishUncoveredError || !isFirst) throw cause
     throw await takeOutUnrecordedEntry(
       context,
       written,
       cause,
-      copies,
+      settled.copies,
       isRetiredKept,
     )
   }
   // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it.
   if (keptLeft.length === 0 && !isRetiredKept) await dropPending(context)
-  const cleanupFailure = cleanupFailureOf(copies.asTracked)
+  const cleanupFailure = [
+    cleanupFailureOf(settled.copies.asTracked),
+    settled.sentence,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const { generation } = written
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
 }
 
-/** The copies a publish left, worded two ways ({@link publishEntry}): `asLeft` as the publish reported them, `asTracked` with every copy of the previous config that the record on disk still lets a later run delete marked {@link KeptFile.isLeftover}; the two differ only when the completed record could not be written. */
+/**
+ * Words the copies a publish left when its completed record was either written or kept from being written by a full disk; called by {@link recordPublishedEntry}.
+ * @param published - What the publish reported.
+ * @returns The {@link LeftCopies}: without the completed record, the record written before the move-aside still lets the next run delete a copy of the previous config ({@link stillTracked}).
+ * @example
+ * leftCopiesOf({ ...published, isRecorded: false }).asTracked // => [{ path, holds: 'previous', isLeftover: true }]
+ */
+function leftCopiesOf({ keptLeft, isRecorded }: Published): LeftCopies {
+  return {
+    asLeft: keptLeft,
+    asTracked: isRecorded ? keptLeft : keptLeft.map(stillTracked),
+  }
+}
+
+/** Thrown by {@link settleRecordConflict} when another program kept a setup's completed record from being written and the config is no longer the file that setup published with its entry: the setup writes no receipt, takes nothing out of that file and goes no further; {@link recordPublishedEntry} rethrows it as it is. */
+class PublishUncoveredError extends Error {}
+
+/** What a publish whose completed record another program kept from being written goes on with ({@link settleRecordConflict}): the copies as the record that stands leaves them, the sentence that says what happened to that record, and the look at the config the receipt's write must still pass right before its rename. */
+type RecordConflictSettlement = {
+  copies: LeftCopies
+  sentence?: string
+  configStill?: StillLook
+}
+
+/**
+ * Decides whether a setup whose completed record another program kept from being written ({@link Published.recordConflict}) may still record its entry, and words its copies as the record that stands leaves them; called by {@link recordPublishedEntry} before the receipt is written.
+ * The config is read again ({@link confirmPublishedConfig}): only while it is the file this setup published with its entry is the receipt written, and the config name is looked at once more, synchronously, right before the receipt's rename. Otherwise nothing is recorded: a backup that put an older config back together with an older record leaves both as they are, and the run says so. The record that stands is read once more ({@link recordedCopyFateOf}), so a copy is left to the learner only when that record's contents show it does not lead a later run to the copy.
+ * @param context - The run.
+ * @param written - The receipt this setup writes.
+ * @param keptLeft - The files the publish left.
+ * @param conflict - What stood at the record's name.
+ * @returns The copies, the sentence for the notice and the look at the config ({@link RecordConflictSettlement}).
+ * @throws A {@link PublishUncoveredError} naming the record, the config and the copies when the config is gone, no longer holds this setup's entry, has another inode or cannot be read again; the returned look throws it too once the config name changes before the receipt's rename.
+ * @example
+ * await settleRecordConflict(context, written, keptLeft, 'changed') // => { copies, sentence: 'Codebook wrote its record of the entry but could not record that this setup finished, …', configStill }
+ */
+async function settleRecordConflict(
+  context: Context,
+  written: Receipt,
+  keptLeft: KeptFile[],
+  conflict: JournalConflictError['kind'],
+): Promise<RecordConflictSettlement> {
+  const { path, pendingPath, retry } = context
+  const cause = recordConflictCause(context, conflict)
+  const copies = await copiesBesideRecord(context, keptLeft)
+  const uncovered = (): PublishUncoveredError =>
+    new PublishUncoveredError(
+      `Codebook put its entry in Devin Desktop's MCP config at ${path}, but could not record that this setup finished, because ${cause}, and that config is no longer the file it wrote, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it, ${retry}, and that run reads ${pendingPath} first.${keptCopiesSentence(copies.asTracked)}`,
+    )
+  const confirmed = await confirmPublishedConfig(context, written)
+  if (!('look' in confirmed)) throw uncovered()
+  const { identity } = confirmed.look
+  return {
+    copies,
+    sentence: `Codebook wrote its record of the entry but could not record that this setup finished, because ${cause}, so it left that name as it is; the next run reads that name first.`,
+    configStill: {
+      names: [path],
+      assert: (): void => {
+        // A look that fails proves nothing: the config counts as changed.
+        if (!isConfigStill(context, identity)) throw uncovered()
+      },
+    },
+  }
+}
+
+/**
+ * Words what another program did to a setup's record of its change as it was to be recorded as completed ({@link Published.recordConflict}); used by {@link settleRecordConflict}.
+ * @param context - The run; its pending path is named.
+ * @param conflict - What stood at the record's name.
+ * @returns A clause that follows "because".
+ * @example
+ * recordConflictCause(context, 'unread') // => 'it could not read its record of this setup at …/pending.json again'
+ */
+function recordConflictCause(
+  { pendingPath }: Context,
+  conflict: JournalConflictError['kind'],
+): string {
+  return {
+    changed: `another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back)`,
+    gone: `another program moved its record of this setup at ${pendingPath} away (a backup or sync tool may be moving it)`,
+    unread: `it could not read its record of this setup at ${pendingPath} again`,
+  }[conflict]
+}
+
+/**
+ * Words the copies a publish left as the record that stands at `pending.json` leaves them, once another program kept the completed record from being written; called by {@link settleRecordConflict}.
+ * @param context - The run.
+ * @param keptLeft - The files the publish left.
+ * @returns The {@link LeftCopies}: `asTracked` marks a copy of the previous config {@link KeptFile.isLeftover} while that record still names it and {@link KeptFile.isUnconfirmed} while that record cannot be read back ({@link recordedCopyFateOf}); `asLeft`, for the notice after a rollback that took the entry out (the next run then hands a named copy over, {@link keepOriginalUnlessPublished}), keeps only the second mark.
+ * @example
+ * await copiesBesideRecord(context, [{ path: copyPath, holds: 'previous' }]) // => { asLeft: [{ path: copyPath, holds: 'previous' }], asTracked: [{ path: copyPath, holds: 'previous', isLeftover: true }] } while the record names that copy
+ */
+async function copiesBesideRecord(
+  context: Context,
+  keptLeft: KeptFile[],
+): Promise<LeftCopies> {
+  const previous = keptLeft.find(({ holds }) => holds === 'previous')
+  const fate = previous
+    ? await recordedCopyFateOf(context, previous.path)
+    : 'untracked'
+  const asTracked = keptLeft.map((kept): KeptFile => {
+    // Only a copy of the previous config has a fate; the staged copy of the new config is named as it is.
+    if (kept.holds !== 'previous' || fate === 'untracked') return kept
+    return fate === 'tracked'
+      ? stillTracked(kept)
+      : { ...kept, isUnconfirmed: true }
+  })
+  // After a rollback that took the entry out, the next run hands a copy the record names over instead of deleting it; one whose record could not be read back stays unconfirmed.
+  return { asLeft: fate === 'tracked' ? keptLeft : asTracked, asTracked }
+}
+
+/**
+ * Tells what the record that stands at `pending.json` does with a kept copy of the previous config, read back after Codebook's own write of it failed or was refused; called by {@link copiesBesideRecord} and {@link unrecordedRemovalRefusal}, because another program may have replaced, removed or restored that record, and only a record of this config that recovery deletes from ({@link recoverOwnLeftovers}, {@link tidyLeftover}) and that names the copy lets a later run delete it.
+ * @param context - The run; gives the pending record's path and the config path.
+ * @param copyPath - The copy's private name.
+ * @returns
+ * - `tracked` when the record reads back as one of this config that names that copy and is not handed over as recovery reads it ({@link leftoverPhaseOf})
+ * - `untracked` when it reads back as a record that does not lead a later run to the copy: one of another config, one that hands the copy over, or one that names another copy or none
+ * - `unconfirmed` when nothing stands there or it cannot be read as a record (a folder, a link, a read that failed), so the record may still come back and lead there
+ * @example
+ * await recordedCopyFateOf(context, copyPath) // => 'unconfirmed' once another program put a folder where pending.json was
+ * await recordedCopyFateOf(context, copyPath) // => 'untracked' once a backup put back a handed record that names the same copy
+ */
+async function recordedCopyFateOf(
+  context: Context,
+  copyPath: string,
+): Promise<'tracked' | 'untracked' | 'unconfirmed'> {
+  const pending = await readRecord(
+    context.pendingPath,
+    pendingSchema,
+    context.retry,
+  ).catch(() => undefined)
+  if (!pending) return 'unconfirmed'
+  // Recovery settles only a record of this config, and never deletes a copy its handed record holds.
+  return pending.targetPath === context.path &&
+    leftoverPhaseOf(pending) !== 'handed' &&
+    pending.keptName === basename(copyPath)
+    ? 'tracked'
+    : 'untracked'
+}
+
+/** The copies a publish left, worded two ways ({@link publishEntry}): `asLeft` as the publish reported them, `asTracked` with every copy of the previous config that the record on disk still lets a later run delete marked {@link KeptFile.isLeftover} (or, when that record could not be read back, {@link KeptFile.isUnconfirmed}); the two differ only when the completed record could not be written. */
 type LeftCopies = { asLeft: KeptFile[]; asTracked: KeptFile[] }
 
 /**
@@ -8680,7 +8935,7 @@ export class DevinMcpUnrecordedRemovalError extends Error {}
 
 /**
  * Words {@link DevinMcpUnrecordedRemovalError}: the config change, the record failure and the next step in separate clauses; called by {@link takeEntryOut}.
- * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link isNamedByRecord}), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record.
+ * The record written before the move-aside names the previous config's copy, so the retry deletes it while it holds exactly that config: its phrase carries the {@link LEFTOVER_CLAUSE} while that record reads back as one of this config that names the copy and is not handed over ({@link recordedCopyFateOf} answers `tracked`), and the {@link UNCONFIRMED_CLAUSE} when another program replaced, removed or restored the record.
  * @param context - The run; gives the paths and the command to run again.
  * @param keptLeft - The files the publish left.
  * @returns The error, not thrown yet.
@@ -8695,38 +8950,12 @@ async function unrecordedRemovalRefusal(
   const previous = keptLeft.find(({ holds }) => holds === 'previous')
   // Only a record that still names the copy lets a later run delete it.
   const fate =
-    previous && (await isNamedByRecord(context, previous.path))
+    previous && (await recordedCopyFateOf(context, previous.path)) === 'tracked'
       ? LEFTOVER_CLAUSE
       : UNCONFIRMED_CLAUSE
   const copy = previous ? ` and ${keptCopyPhrase(previous.path)}, ${fate}` : ''
   return new DevinMcpUnrecordedRemovalError(
     `Codebook took its entry out of Devin Desktop's MCP config at ${path} but could not write its own record of that step, so it kept its receipt${copy}; make room for that record, ${retry}.`,
-  )
-}
-
-/**
- * Tells whether the pending record on disk still lets a later run delete a kept copy, read back after the completed record could not be written; called by {@link unrecordedRemovalRefusal}, because another program may have replaced, removed or restored that record, and only a record of this config that recovery deletes from ({@link recoverOwnLeftovers}, {@link tidyLeftover}) and that names the copy lets a later run delete it.
- * @param context - The run; gives the pending record's path and the config path.
- * @param copyPath - The copy's private name.
- * @returns `true` when the record reads back as one of this config that names that copy and is not handed over as recovery reads it ({@link leftoverPhaseOf}); `false` when it is gone, cannot be read as a record (a folder, a link), is of another config, hands the copy over or names another copy.
- * @example
- * await isNamedByRecord(context, copyPath) // => false once another program put a folder where pending.json was
- * await isNamedByRecord(context, copyPath) // => false once a backup put back a handed record that names the same copy
- */
-async function isNamedByRecord(
-  context: Context,
-  copyPath: string,
-): Promise<boolean> {
-  const pending = await readRecord(
-    context.pendingPath,
-    pendingSchema,
-    context.retry,
-  ).catch(() => undefined)
-  // Recovery settles only a record of this config, and never deletes a copy its handed record holds.
-  return (
-    pending?.targetPath === context.path &&
-    leftoverPhaseOf(pending) !== 'handed' &&
-    pending.keptName === basename(copyPath)
   )
 }
 
