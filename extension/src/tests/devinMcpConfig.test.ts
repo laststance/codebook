@@ -7206,6 +7206,61 @@ test('A setup record without its take-back mark that a backup restores after a r
   })
 })
 
+test('A setup record without its take-back mark that a backup restores after a refresh marked it, while the same backup moves away the rollback record that proves the take-back, is not installed, so the setup is taken back once that rollback record is back', async (context) => {
+  // Value: protects=a refresh that finds the rollback record proving a take-back already gone when it goes to delete it still looks once more at the setup record's name for the mark this run wrote, so an unmarked setup record a backup restores meanwhile is never adopted in that refresh and is decided together with the rollback record once it is back (Cycle 0148 task 51); fails_when=the first refresh resolves or says anything but the changed-record sentence, the restored record or the moved rollback record is deleted or changed, a receipt is written, or the second refresh installs the setup or leaves the entry; no_claim=a real backup tool (seam.afterLeftoverCheck, once the mark stands, at the refresh's look that finds that mark right before the rollback record's deletion, moves the rollback record away and renames the setup record as it stood before the mark over pending.json; the test puts the rollback record back before the second refresh), a record restored after the setup record's last look, a rollback record that never comes back (nothing then proves the take-back); seam=the legacy fixture's published config was appended to in place, so its rollback record belongs to the setup record and the refresh marks that setup for take-back
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const backupPath = join(home, 'pending-from-backup.json')
+  const journalAwayPath = join(home, 'rollback-moved-away.json')
+  let journalAtMove = ''
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterLeftoverCheck: (path) => {
+      if (path !== pendingPath || journalAtMove !== '') return
+      // Only once the take-back mark stands: a backup moves the rollback record away and restores the setup record as it stood before the mark.
+      if (JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack !== true)
+        return
+      journalAtMove = readFileSync(journalPath, 'utf8')
+      renameSync(journalPath, journalAwayPath)
+      writeFileSync(backupPath, pendingText)
+      renameSync(backupPath, pendingPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A record the first refresh retired reads as 'absent', so the assertion below names it.
+  const pendingAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const journalAwayAfterFirst = readFileSync(journalAwayPath, 'utf8')
+  const isReceiptAfterFirst = existsSync(receiptPath)
+  // The backup puts the rollback record back before the next refresh.
+  renameSync(journalAwayPath, journalPath)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.notEqual(journalAtMove, '')
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${pendingPath}, ${journalPath}), so the next run decides on them again; wait until that tool is done, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(pendingAfterFirst, pendingText)
+  assert.equal(journalAwayAfterFirst, journalAtMove)
+  assert.equal(isReceiptAfterFirst, false)
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test('A setup record without its take-back mark that a backup restores while a refresh deletes the rollback record of a take-back an earlier run marked keeps that rollback record, so the setup is taken back and never installed', async (context) => {
   // Value: protects=the rollback record that proves a take-back an earlier run marked and then stopped is deleted only while the setup record's name still shows the mark this run found, at a look right before that record's unlink, so an unmarked setup record a backup restores meanwhile is decided together with the rollback record and never adopted (Cycle 0148 ship review); fails_when=the restored record or the rollback record is deleted or changed, a receipt is written, the first refresh resolves or says anything but the changed-record sentence, or the second refresh installs the setup or leaves the entry; no_claim=a real backup tool (seam.afterLeftoverCheck renames the setup record as it stood before the mark over pending.json once, at the rollback record's last look before its unlink), a record restored between that look and the unlink or after the rollback record's deletion, a real process end (the test writes the mark into the setup record before the refresh, as an earlier run that stopped right after its mark leaves it); seam=the legacy fixture's published config was appended to in place, so its rollback record belongs to the setup record
   // Arrange

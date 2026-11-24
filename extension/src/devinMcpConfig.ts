@@ -6575,16 +6575,16 @@ function isOtherFileCause(cause: unknown): boolean {
 /**
  * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
  * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
- * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}).
+ * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}). Any other name the first look finds empty still gets `assertStill`, after an awaited look at its names: the caller goes on as after a delete, so a setup record a backup puts back without its take-back mark while it moves the journal away is seen before {@link inspect} reads it.
  * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode. Moving the journal to another name first and deleting it there only once it proves to be this run's would leave a journal a backup put there in that moment only at a name no build reads, should the process end before it goes back, so that journal's rollback would be lost all the same.
- * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
  * The journal's own synchronous look comes right after its awaited one ({@link lookAtTrackedJournal}), and `assertStill`'s right after an awaited look at its names, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds the extension host's thread.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and before the unlink ({@link removeRecord}); throwing keeps the journal.
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then), or (`gone`) when a publish record's name is found empty while this run knows a version of it; what `assertStill` throws; what the unlink throws other than for a name that is gone.
+ * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and before the unlink, or right after the first look when that look finds the name empty ({@link removeRecord}); throwing keeps the journal.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then), or (`gone`) when a publish record's name is found empty while this run knows a version of it; what `assertStill` throws, also for a name found empty; what the unlink throws other than for a name that is gone.
  * @example
  * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
  * await dropTrackedJournal(heldRun) // throws a `gone` JournalConflictError once a sync tool moved pending.json away right before the unlink
+ * await dropTrackedJournal(rollbackContext, await markLeftCheck(context, decision, legacy)) // throws the `record-reread` refusal once a backup moved pending.json.rollback away and put the unmarked setup record back at pending.json
  */
 async function dropTrackedJournal(
   context: Context,
@@ -6594,6 +6594,11 @@ async function dropTrackedJournal(
   // Nothing stands at the name: nothing is deleted, and a publish record that disappeared ends the run.
   if (!look) {
     if (isEmptiedByAnother(context)) throw journalConflictError(context, 'gone')
+    // The caller goes on as after a delete, so the names it rests on must still hold: a setup record a backup put back without its mark while it moved this journal away is never adopted.
+    if (assertStill) {
+      await lookAheadAt(assertStill.names)
+      assertStill.assert()
+    }
     return
   }
   // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, then `assertStill`'s names.
