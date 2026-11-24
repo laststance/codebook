@@ -15505,19 +15505,29 @@ test("A first setup never deletes another installation's record that a sync tool
 })
 
 test('A first setup that moves its old record aside writes its publish record, from its first write on, in a shape Codebook 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, and a full disk at every later write of that record leaves that shape', async (context) => {
-  // Value: protects=no publish record this version writes before or after it moves the old record aside can lead a window of 0.2.142.0, 0.2.143.0 or 0.2.144.0 (one not reloaded after the update) to put the file at the old record's private name back at receipt.json or delete it, also when every later write of that record fails (Cycle 0149 task 4, D5 on devinMcpConfig.ts:119), and this version still reads that record; fails_when=the record on disk at the config's link or after the setup passes the fields of any of the three releases, the setup answers anything but installed, the next setup answers anything but current, or the file another program put at the private name changes or is gone; no_claim=running those releases (the test checks the records against their field rules, RELEASED_RECORD_FIELDS, read from their code), a real full disk (seam.beforeRecordWrite fails every write of pending.json after its first with ENOSPC), and a real sync tool (the config module is loaded with a link that, for the config's link, notes the record on disk and puts another program's file at the private name at another inode, then links)
+  // Value: protects=no publish record this version writes before or after it moves the old record aside can lead a window of 0.2.142.0, 0.2.143.0 or 0.2.144.0 (one not reloaded after the update) to put the file at the old record's private name back at receipt.json or delete it, also when every later write of that record fails (Cycle 0149 tasks 4 and 33, D5 on devinMcpConfig.ts:119), and this version still reads that record; fails_when=the record on disk right after the first publish of pending.json is not this version's form naming the old record's bytes, it or the record at the config's link or after the setup passes the fields of any of the three releases, no write of pending.json after its first met the full disk, the setup answers anything but installed, the next setup answers anything but current, or the file another program put at the private name changes or is gone; no_claim=running those releases (the test checks the records against their field rules, RELEASED_RECORD_FIELDS, read from their code), a real full disk (seam.beforeRecordWrite fails every write of pending.json after its first publish with ENOSPC, before the config's link too), and a real sync tool (the config module is loaded with a link that reads pending.json from disk right after its first link there, and, for the config's link, notes the record on disk and puts another program's file at the private name at another inode, then links)
   // Arrange
-  const { home, storage, configPath } = await arrangeMovedAwayConfig(context)
+  const { home, storage, configPath, receiptBefore } =
+    await arrangeMovedAwayConfig(context)
   const recordsFolder = join(storage, 'devin-mcp')
   const pendingPath = join(recordsFolder, 'pending.json')
   const otherProgramText = '{"note":"a settings file of another program"}'
   let retiredName = 'no private name'
+  let recordAtFirstPublish: { retiresReceipt?: unknown } | undefined
   let recordAtLink: unknown = 'no link'
+  let fullDiskWrites = 0
   const swappingDuringLink = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
         link: async (from: string, to: string) => {
+          if (to === pendingPath && recordAtFirstPublish === undefined)
+            return link(from, to).then(() => {
+              // Right after the first publish of the record: what a window of an older release reads first.
+              recordAtFirstPublish ??= JSON.parse(
+                readFileSync(pendingPath, 'utf8'),
+              )
+            })
           if (to === configPath) {
             // The record on disk is the setup's first write; another program's file takes the old record's private name.
             recordAtLink = JSON.parse(readFileSync(pendingPath, 'utf8'))
@@ -15541,25 +15551,35 @@ test('A first setup that moves its old record aside writes its publish record, f
   )
 
   // Act
-  const result = await swappingDuringLink.writeManagedDevinMcpEntry(
-    storage,
-    ENTRY,
-    home,
-    {
+  const setupStatus = await swappingDuringLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
       beforeRecordWrite: ({ path }) => {
-        // Every write of the publish record after its first meets a full disk.
-        if (path === pendingPath && recordAtLink !== 'no link')
-          throw noSpaceLeft()
+        // Every write of the publish record after its first publish meets a full disk, also before the config's link.
+        if (path !== pendingPath || recordAtFirstPublish === undefined) return
+        fullDiskWrites += 1
+        throw noSpaceLeft()
       },
-    },
-  )
-  const recordAfterSetup = await readRecordFile(storage, 'pending.json')
+    })
+    .then(
+      (result) => result.status,
+      (error: unknown) => error,
+    )
+  // A record the setup deleted reads as 'absent', so the assertions name it.
+  const recordAfterSetup = existsSync(pendingPath)
+    ? await readRecordFile(storage, 'pending.json')
+    : 'absent'
   const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
-  assert.equal(result.status, 'installed')
-  assert.deepEqual(releasesReading(recordAtLink), [])
-  assert.deepEqual(recordAfterSetup, recordAtLink)
+  // The old record's bytes, named in this version's form from the first publish on.
+  assert.deepEqual(recordAtFirstPublish?.retiresReceipt, {
+    sha256: sha256(JSON.stringify(receiptBefore)),
+  })
+  assert.deepEqual(releasesReading(recordAtFirstPublish), [])
+  assert.equal(setupStatus, 'installed')
+  assert.notEqual(fullDiskWrites, 0)
+  assert.deepEqual(recordAtLink, recordAtFirstPublish)
+  assert.deepEqual(recordAfterSetup, recordAtFirstPublish)
   assert.deepEqual(releasesReading(recordAfterSetup), [])
   assert.equal(next.status, 'current')
   assert.equal(
