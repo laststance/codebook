@@ -7262,7 +7262,7 @@ test('A first setup whose receipt cannot be written leaves its entry and the set
   assert.equal(existsSync(receiptPath), false)
 })
 
-test('A first setup that created the config and whose receipt and take-back mark both hit a full disk keeps that config when a backup restores its setup record before the take-back deletes it, and the next refresh removes that config', async (context) => {
+test('A first setup that created the config, whose receipt is blocked by a folder at its name and whose take-back mark hits a full disk, keeps that config when a backup restores its setup record before the take-back deletes it, and the next refresh removes that config', async (context) => {
   // Value: protects=a first setup whose take-back mark could not be written still takes its entry back only while pending.json shows the setup record this run wrote, at the take-back's last look before it deletes the config the setup created, so a record a backup restores meanwhile leaves that config as it is, the refusal says that record changed, and the next refresh takes the setup back from that record (Cycle 0148 task 50); fails_when=the config is gone or changes, a rollback record, private copy or receipt is left, the restored record is deleted or changed, the setup answers anything but the changed-record refusal, or the next refresh answers anything but not-managed or leaves the config, the record or a receipt; no_claim=a real full disk or backup tool (seam.beforeRecordWrite fails the mark's write once with ENOSPC, then renames the same record in other bytes over pending.json once, at the take-back's first write of its own rollback record), a record changed after the take-back's last look before the config moves, a config with other servers (task 36's take-back tests cover the move aside); seam=seam.afterPublish blocks the receipt
   // Arrange
   const { home, storage, configPath } = await arrange(context)
@@ -7326,7 +7326,7 @@ test('A first setup that created the config and whose receipt and take-back mark
   assert.equal(existsSync(receiptPath), false)
 })
 
-test("A first setup whose receipt and take-back mark both hit a full disk still takes its entry out while its setup record stands as it wrote it, keeping the learner's other server", async (context) => {
+test("A first setup whose receipt is blocked by a folder at its name and whose take-back mark hits a full disk still takes its entry out while its setup record stands as it wrote it, keeping the learner's other server", async (context) => {
   // Value: protects=a take-back that runs without its mark looks at pending.json against the setup record this run wrote, so a record no other program touched lets it take the entry out as before, keeps the learner's other server, and keeps that record unchanged for the next run, which then answers not-managed (Cycle 0148 task 50); fails_when=the setup answers anything but the took-out refusal, the entry, a rollback record or a receipt stays, the other server is lost, the setup record is deleted or changed by the first run, or the next refresh answers anything but not-managed or brings the entry back; no_claim=a real full disk (seam.beforeRecordWrite fails the mark's write once with ENOSPC), a record another program changes during that take-back (the test above), what the next refresh does with that record beyond its answer and the config; seam=seam.afterPublish blocks the receipt
   // Arrange
   const { home, storage, configPath } = await arrange(context)
@@ -7377,6 +7377,76 @@ test("A first setup whose receipt and take-back mark both hit a full disk still 
     mcpServers: { alpha: { command: 'a' } },
   })
   assert.equal(existsSync(receiptPath), false)
+})
+
+test("A first setup whose receipt write fails with an I/O error takes its entry out and asks only to run the setup again, never to make room, keeping the learner's other server", async (context) => {
+  // Value: protects=the way out a failed first setup's refusal ends with fits why its receipt could not be written (receiptFailureEnding): a write that fails for another reason than a full disk or quota or a file at receipt.json (here EIO) ends the took-out refusal with the retry alone, so the learner is never told to make room on a disk that has room, and the entry is taken out while the learner's other server stays (Cycle 0149 ship review, the specialist's note on receiptFailureEnding's default ending); fails_when=the refusal is another sentence (one that asks to make room included), the entry stays, the other server is lost, or a receipt or rollback record is left; no_claim=a real I/O error (seam.beforeRecordWrite fails the receipt's write once with EIO, after its bytes were flushed), a write that keeps failing, what the next run does
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  let isReceiptRefused = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== receiptPath || isReceiptRefused) return
+      // The receipt's write fails once with an I/O error.
+      isReceiptRefused = true
+      throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(isReceiptRefused, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(existsSync(journalPath), false)
+})
+
+test("A first setup whose receipt write meets a full disk quota takes its entry out and asks to make room for that record, keeping the learner's other server", async (context) => {
+  // Value: protects=a receipt write refused by a full quota (EDQUOT) is a lack of room like a full disk (FULL_DISK_CODES), so the took-out refusal asks the learner to make room for that record before running the setup again, and the entry is taken out while the learner's other server stays (Cycle 0149 ship review, the specialist's note on receiptFailureEnding's EDQUOT); fails_when=the refusal is another sentence (one that ends with the retry alone included), the entry stays, the other server is lost, or a receipt or rollback record is left; no_claim=a real quota (seam.beforeRecordWrite fails the receipt's write once with EDQUOT, after its bytes were flushed), a full disk (ENOSPC, its own tests), what the next run does
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const journalPath = join(storage, 'devin-mcp', 'pending.json.rollback')
+  let isReceiptRefused = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== receiptPath || isReceiptRefused) return
+      // The receipt's write finds the quota full, once.
+      isReceiptRefused = true
+      throw Object.assign(new Error('disk quota exceeded'), { code: 'EDQUOT' })
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(isReceiptRefused, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(existsSync(journalPath), false)
 })
 
 test("A first setup whose receipt cannot be written and whose take-back mark finds a file at its record's dropping name leaves its entry and names both names in that refusal's own words, instead of saying another program changed its record", async (context) => {
@@ -11417,6 +11487,68 @@ test('A setup whose own record a backup puts back as it stood before the config 
   assert.equal(existsSync(pendingPath), false)
 })
 
+test('A setup whose completed record a sync tool moves away right after its publication says it cannot confirm that a later run will not delete the moved-aside copy, and the next refresh deletes the copy by the record the rewrite left at its dropping name', async (context) => {
+  // Value: protects=a completed record found gone right after its publication (a sync tool moved it away) proves neither that a later run deletes the moved-aside copy nor that the copy stays (recordedCopyFateOf answers unconfirmed, copiesBesideRecord marks that copy), so the notice says Codebook could not confirm its record still tracks that copy and asks to copy it elsewhere to keep it, never that it is the learner's to delete or that a later run surely deletes it; and a later run may indeed delete it: the record the rewrite left at its dropping name names that copy, and the next refresh puts that record back and deletes the copy (Cycle 0149 ship review, the specialist's note on the unconfirmed copy fate in copiesBesideRecord); fails_when=the setup answers anything but installed with the unconfirmed copy sentence and the moved-record sentence, anything but the record at its dropping name and the receipt stands in the records folder after the setup, that record names another copy, the copy is gone or changes after the setup, no receipt of this setup stands, or the next refresh answers anything but current or leaves the copy or any record but the receipt; no_claim=a real sync tool (the config module is loaded with a rename and a link that move pending.json into the home folder once, right after the first publication at that name once seam.afterPublish saw the config linked in: the completed record's), what happens when that tool moves the completed record back (both record names, their own tests), a record that cannot be read for another reason (a folder or a failed read, the same fate)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedPath = join(home, 'pending-moved-by-sync.json')
+  let isConfigLinked = false
+  let copyPath = ''
+  let movedText = ''
+  const movingAfterCompletion = await loadWithAfterRename((_from, to) => {
+    if (to !== pendingPath || !isConfigLinked || movedText) return
+    // A sync tool moves the completed record away right after its publication.
+    movedText = readFileSync(pendingPath, 'utf8')
+    renameSync(pendingPath, movedPath)
+  })
+
+  // Act
+  const result = await movingAfterCompletion.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      afterPublish: (displacedPath) => {
+        if (displacedPath !== undefined && !copyPath) copyPath = displacedPath
+        isConfigLinked = true
+      },
+    },
+  )
+  const recordsAfterSetup = await recordsIn(storage)
+  const droppedRecord = await readRecordFile(
+    storage,
+    'pending.json.codebook-dropping',
+  )
+  // A copy the setup deleted reads as 'absent', so the assertion below names it.
+  const copyAfterSetup = existsSync(copyPath)
+    ? readFileSync(copyPath, 'utf8')
+    : 'absent'
+  const receiptAfterSetup = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const refreshed = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it. Codebook wrote its record of the entry but could not record that this setup finished, because another program moved its record of this setup at ${pendingPath} away (a backup or sync tool may be moving it), so it left that name as it is; the next run reads that name first.`,
+  )
+  assert.equal(JSON.parse(movedText).phase, 'completed')
+  assert.deepEqual(recordsAfterSetup, [
+    'pending.json.codebook-dropping',
+    'receipt.json',
+  ])
+  assert.equal(droppedRecord.keptName, basename(copyPath))
+  assert.equal(copyAfterSetup, configText)
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.equal(refreshed.status, 'current')
+  assert.equal(existsSync(copyPath), false)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A setup whose completed-record write finds a file at that record's dropping name keeps its entry and names both names in that refusal's own words, instead of saying another program changed its record", async (context) => {
   // Value: protects=a completed-record write that Codebook's own step at the record's dropping name refuses (a file already stands at pending.json.codebook-dropping) is reported with that refusal's own sentence, which names both names and its way out, instead of saying another program changed or replaced the setup's record; the setup still records its entry while the config is the file it published, and both names stay as they were (OCR L1 and L3 P2 on markCompleted; Cycle 0149 review round); fails_when=the setup answers anything but installed with the leftover warning followed by the dropping-name sentence, the setup record or the file at the dropping name changes or is gone, or no receipt of this setup stands; no_claim=how such a file got there (seam.afterPublish writes it once, after the config is in place and before the completed record), what the next run does with both names
   // Arrange
@@ -12128,6 +12260,66 @@ test("A copy of the previous config that a finished change left keeps that chang
   const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
 
   // Assert
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+})
+
+test("A copy of the previous config that a finished change left stays when a sync tool moves that change's record away right before recovery deletes the copy, the refresh says it cannot confirm that a later run will not delete that copy, and the refresh after the record is back deletes it", async (context) => {
+  // Value: protects=a record conflict that leaves no record at pending.json (a sync tool moved it away) proves neither that a later run deletes the copy nor that the copy stays, since that tool may put the record back (recordedCopyFateOf answers unconfirmed, unsettledRefusal words it), so the refusal says Codebook could not confirm its record still tracks that copy and asks to copy it elsewhere to keep it, never that the copy is the learner's to delete or that a later run surely deletes it; and once that record is back, the next refresh does delete the copy (Cycle 0149 ship review, the specialist's note on the unconfirmed copy fate in unsettledRefusal); fails_when=the refresh resolves or says anything but the moved-record sentence followed by the unconfirmed copy sentence, the copy is gone or changes after it, a record stands at pending.json after it, or the refresh after the record is back answers anything but not-managed or leaves the copy, the record or a receipt; no_claim=a real sync tool (seam.afterStat renames pending.json into the home folder once, at recovery's second read of the copy, right before its look at the record, and the test renames it back before the next refresh), a record that cannot be read for another reason (a folder or a failed read, the same fate)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const keptPath = privateNameOf(configPath, 'codebook-displaced')
+  const keptText = '{"mcpServers":{"old":{"command":"o"}}}\n'
+  await writeFile(keptPath, keptText)
+  await writeRecordFile(storage, 'pending.json', {
+    targetPath: configPath,
+    createdFile: false,
+    generation: JOURNAL_GENERATION,
+    phase: 'completed',
+    keptName: basename(keptPath),
+    keptIno: (await stat(keptPath)).ino,
+    keptSha256: sha256(keptText),
+  })
+  const syncedPath = join(home, 'pending-in-sync.json')
+  let copyReads = 0
+
+  // Act
+  const firstOutcome = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== keptPath) return
+      copyReads += 1
+      // The second read is the hash right before the record check and the unlink: the sync tool moves the record away then.
+      if (copyReads !== 2) return
+      renameSync(pendingPath, syncedPath)
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const isPendingAfterFirst = existsSync(pendingPath)
+  // A file the refresh deleted reads as 'absent', so the assertion below names it.
+  const keptAfterFirst = existsSync(keptPath)
+    ? readFileSync(keptPath, 'utf8')
+    : 'absent'
+  // The sync tool is done and puts that record back.
+  renameSync(syncedPath, pendingPath)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(copyReads, 2)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its record of an earlier change at ${pendingPath}, another program moved it away or deleted it (a backup or sync tool may be moving it), so Codebook did not write it back and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook kept a private copy of your previous Devin MCP config at ${keptPath} (it holds the settings of your other servers), but Codebook could not confirm that its record still tracks that copy, so a later run of Codebook may delete it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  )
+  assert.equal(isPendingAfterFirst, false)
+  assert.equal(keptAfterFirst, keptText)
   assert.equal(second.status, 'not-managed')
   assert.equal(existsSync(keptPath), false)
   assert.equal(existsSync(pendingPath), false)

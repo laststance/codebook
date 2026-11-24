@@ -5922,7 +5922,7 @@ class JournalBackConflictError extends JournalConflictError {}
  * - otherwise the look at the journal's name, which throws as below right before the rename or unlink ({@link assertNameLeft})
  * @throws A {@link JournalBackConflictError} with the rollback record's sentence ({@link journalConflictError}): `changed` when the name shows a file where settlement left none, or another file or other bytes than the journal it left; `unread` when it cannot be read; nothing is written then.
  * @example
- * await writeRecord(run, run.receiptPath, adopted, bothLooks(await adoptedRecordCheck(run), await journalLeftCheck(run, undefined))) // throws, writing no receipt, once a backup put a rollback record back at pending.json.rollback
+ * await writeReceipt(run, adopted, bothLooks(await adoptedRecordCheck(run), await journalLeftCheck(run, undefined))) // throws, writing no receipt, once a backup put a rollback record back at pending.json.rollback
  */
 async function journalLeftCheck(
   context: Context,
