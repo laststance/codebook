@@ -66,7 +66,7 @@ export type DevinMcpTestSeam = {
   beforeLeftoverCheck?: (path: string) => void
   /** Called right after that second look passed and before the link, unlink or rename it guards, so a test can swap the file in the gap the second look cannot close. */
   afterLeftoverCheck?: (path: string) => void
-  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename publishes them, or for a claim of a rollback journal's empty name before the link publishes them ({@link claimJournal}); a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
+  /** Called for every write of a receipt or pending record ({@link writeRecord}), with the record's path and the value about to be written, after its bytes were flushed to a temporary file and before the rename (a tracked record's rewrite: its move to the dropping name and the link) publishes them, or for a claim of a rollback journal's empty name before the link publishes them ({@link claimJournal}); a throw cancels that write and leaves the previous record byte for byte, as a full disk at the temporary file does. */
   beforeRecordWrite?: (write: { path: string; record: unknown }) => void
 }
 
@@ -2507,14 +2507,14 @@ async function writeRecord(
 
 /**
  * Writes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote, or nothing; called only by {@link writeRecord}.
- * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed under a fresh private name first ({@link stageRecord}), and right before the rename the name is looked at once more, synchronously ({@link assertTrackedJournalStill}), so a file put there while the bytes were flushed is never replaced; the staged name is looked at last, so only the file this call wrote is renamed ({@link lookAtStagedRecord}), and after the rename the name must show that file ({@link assertPublishedRecord}).
+ * A name with no known version, or a journal's name found empty, is claimed ({@link claimJournal}); a publish record's name found empty while a version is known is refused, because that record disappeared after the read a decision rests on and writing it back would undo that move. Otherwise the bytes are staged and flushed under a fresh private name first ({@link stageRecord}); right before the record moves, its name is looked at once more, synchronously ({@link assertTrackedJournalStill}), then the caller's names, then the staged name ({@link lookAtStagedRecord}). The record is then moved to its dropping name ({@link replaceThroughDroppingName}), so a file another program puts at its name after that last look moves with it, goes back to that name and is never replaced; the new bytes are published there without replacing anything, and after that cleanup the name must still show the file this call wrote ({@link confirmPublished}).
  * Each synchronous look comes right after an awaited look at the same name, so a storage that already stalls holds this step in the thread pool, where the step's budget answers, instead of the extension host's thread; a stall that starts between the two looks still holds that thread.
- * Limit: a file put at the name between that last look and the rename is replaced; no Node primitive renames over a name only while it shows an inode. Moving the record aside first and linking the new one in would leave no record at the only name any build reads until that link, so a process that ends there would lose the rollback the record tracks.
+ * Limits: those of {@link replaceThroughDroppingName}.
  * @param context - The run; its pending path is the journal, its seam is called right before the last look.
  * @param value - The complete journal.
- * @param assertStill - What else must still hold, looked at right after the last look, after an awaited look at its names together with the record's own ({@link writeRecord}).
- * @returns The version this write published: the inode of the file it wrote and the hash of its bytes ({@link stageRecord}).
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, before or right after the rename, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); what the write, the look at the staged name ({@link leftoverReplacedError}) or `assertStill` throws. The name then stays as it was, unless another program changed it after the rename.
+ * @param assertStill - What else must still hold, looked at right after the last look, after an awaited look at its names together with the record's own ({@link writeRecord}), and once more after the record moved, right before the new bytes are published.
+ * @returns The version this write published: the inode of the file at the record's name and the hash of its bytes.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again, before the move, at the move (what moved goes back to the name) or right after the publication, or (`gone`) when a publish record's name is found empty ({@link Context.journalVersion}); the refusal naming both names when a file stands at the dropping name or comes to the emptied name ({@link bothRecordNamesError}), or the one naming the dropping name when the record could not go back there ({@link recordNotBackError}); what the write, the look at the staged name ({@link leftoverReplacedError}) or `assertStill` throws. The record then stands at its name as it was, unless one of those two refusals names where it stands.
  * @example
  * await writeTrackedJournal(rollbackContext, retained) // => { ino: 43n, sha256: 'cd…' }; pending.json.rollback holds `retained` while it held this run's version
  * await writeTrackedJournal(heldRun, retained) // throws a `gone` JournalConflictError once a sync tool moved pending.json away after the run read it
@@ -2536,27 +2536,123 @@ async function writeTrackedJournal(
   }
   const path = context.pendingPath
   const staged = await stageRecord(path, value)
+  let version: RecordVersion
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
-    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the record's name, `assertStill`'s names, the staged name.
-    await lookAheadAt([path, ...(assertStill?.names ?? [])])
+    // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the record's name, `assertStill`'s names, the staged name, the dropping name.
+    await lookAheadAt([
+      path,
+      ...(assertStill?.names ?? []),
+      staged.staged,
+      droppingPathOf(context),
+    ])
     const source = await lookAtStagedRecord(staged)
     assertTrackedJournalStill(context, look)
     assertStill?.assert()
     assertStagedRecordStill(staged, source)
-    await rename(staged.staged, path)
-  } catch (error) {
-    // Nothing was published: the staged name goes while it shows the file this call wrote, and the name stays as it was.
+    version = await replaceThroughDroppingName(context, look, {
+      staged,
+      value,
+      assertStill,
+    })
+  } finally {
+    // A linked staged file is only another name of the record; one that published nothing goes while it shows the file this call wrote.
     await dropStagedRecord(staged)
-    throw error
   }
-  await assertPublishedRecord(context, staged.version)
-  return staged.version
+  return confirmPublished(context, version)
+}
+
+/** What a rewrite of a tracked record publishes ({@link replaceThroughDroppingName}): its staged bytes ({@link stageRecord}), the record they hold, and the caller's look that must still hold right before they are published. */
+type TrackedWrite = {
+  staged: StagedRecord
+  value: unknown
+  assertStill: StillLook | undefined
+}
+
+/**
+ * Replaces a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and publishing the new bytes at the emptied name without replacing anything; called by {@link writeTrackedJournal} right after those looks.
+ * After the move the staged name, the caller's names and the dropping name are looked at again ({@link assertAfterMove}), so nothing that changed while the record moved is published; any refusal puts the record back first ({@link putTrackedBack}). The new bytes go in with a link, which never replaces a file; where the storage gives no file a second name ({@link NO_LINK_CODES}) with an exclusive create in place ({@link createJournalInPlace}), which never replaces one either, never with a rename that would. The moved record goes last, while its dropping name still shows it ({@link dropAsideRecord}).
+ * Limits: a file put at the dropping name between its synchronous look and the move is replaced (a name only Codebook uses); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run keeps and names ({@link settleDroppedRecord}); on storage without hard links a stop inside the create in place leaves the moved record beside a file with part of the new bytes, which the next run keeps and names the same way, and a record that must go back cannot ({@link recordNotBackError}).
+ * @param context - The run; its pending path is the record.
+ * @param look - The record as the last look saw it: this run's version.
+ * @param write - The staged bytes, the record and the caller's look ({@link TrackedWrite}).
+ * @returns The version published at the record's name.
+ * @throws What {@link moveTrackedAside}, {@link assertAfterMove}, {@link publishMovedRecord} and {@link dropAsideRecord} throw; a `gone` {@link JournalConflictError} when a publish record's name was empty at the move.
+ * @example
+ * await replaceThroughDroppingName(rollbackContext, look, { staged, value: journal, assertStill: undefined }) // => { ino: 43n, sha256: 'cd…' }
+ */
+async function replaceThroughDroppingName(
+  context: Context,
+  look: InspectedCopy,
+  write: TrackedWrite,
+): Promise<RecordVersion> {
+  const aside = await moveTrackedAside(context, look)
+  // The name went empty right after the last look: a publish record a decision read stays gone, a rollback journal is claimed again at that name.
+  if (!aside) {
+    if (context.journalVersion?.refusesEmptyName)
+      throw journalConflictError(context, 'gone')
+    return publishAtEmptyName(context, write.staged, write.assertStill)
+  }
+  await renewOrPutBack(context, aside, () =>
+    assertAfterMove(context, aside, write.assertStill, write.staged),
+  )
+  const version = await publishMovedRecord(context, aside, write)
+  await dropAsideRecord(context, aside)
+  return version
+}
+
+/**
+ * Publishes a tracked record's staged bytes at its name once the record moved to its dropping name ({@link replaceThroughDroppingName}): a link, which never replaces a file, or, where the storage gives no file a second name ({@link NO_LINK_CODES}), an exclusive create in place ({@link createJournalInPlace}).
+ * @param context - The run; its pending path is the record.
+ * @param aside - The record at its dropping name ({@link moveTrackedAside}).
+ * @param write - The staged bytes and the record ({@link TrackedWrite}).
+ * @returns The version published: the staged file's after a link, the created file's after a create in place.
+ * @throws What {@link refuseMovedPublish} throws: the refusal naming both names when a file came to the emptied name, otherwise what the link or the create threw, once the record went back.
+ * @example
+ * await publishMovedRecord(rollbackContext, aside, write) // => { ino: 43n, sha256: 'cd…' }
+ */
+async function publishMovedRecord(
+  context: Context,
+  aside: AsideRecord,
+  { staged, value }: TrackedWrite,
+): Promise<RecordVersion> {
+  try {
+    await link(staged.staged, context.pendingPath)
+    return staged.version
+  } catch (linkError) {
+    // Only storage that gives no file a second name goes on below; any other failure published nothing.
+    if (!NO_LINK_CODES.has(codeOf(linkError)))
+      return refuseMovedPublish(context, aside, linkError)
+  }
+  return createJournalInPlace(context, value, staged.version.sha256).catch(
+    (error: unknown) => refuseMovedPublish(context, aside, error),
+  )
+}
+
+/**
+ * Ends a rewrite whose publication failed after its record moved to the dropping name; called by {@link publishMovedRecord}.
+ * @param context - The run; its pending path is the record.
+ * @param aside - The record at its dropping name.
+ * @param error - What the link or the create in place threw.
+ * @returns Never.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file came to the emptied name (`EEXIST`): that file stays, and so does the record at the dropping name. Otherwise `error`, once the record went back to its name ({@link putTrackedBack}), or what that put-back throws.
+ * @example
+ * await refuseMovedPublish(rollbackContext, aside, linkError) // throws EIO once pending.json.rollback stands again
+ */
+async function refuseMovedPublish(
+  context: Context,
+  aside: AsideRecord,
+  error: unknown,
+): Promise<never> {
+  if (codeOf(error) === 'EEXIST') throw bothRecordNamesError(context)
+  // Nothing was published: the record goes back to its name.
+  await putTrackedBack(context, aside.droppingPath)
+  throw error
 }
 
 /**
  * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file, or, where the storage's file system gives no file a second name, by renaming the complete flushed bytes there once a last look found that name empty ({@link claimWithoutLinks}); called by {@link writeTrackedJournal} when no version is known or the name was found empty.
- * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}). That look after the link reads the journal through its open handle, and the cleanup awaits the file system after it, so the journal is read again after the cleanup and its name looked at once more, synchronously, as the last step ({@link assertTrackedJournalStill}): the version goes back to the caller, whose next step may move the config to the private name that journal names ({@link deleteConfig}, {@link publishRoot}), only while the name still shows that file.
+ * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}). That look after the link reads the journal through its open handle, and the cleanup awaits the file system after it, so the journal is read again after the cleanup and its name looked at once more, synchronously, as the last step ({@link confirmPublished}): the version goes back to the caller, whose next step may move the config to the private name that journal names ({@link deleteConfig}, {@link publishRoot}), only while the name still shows that file.
  * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A file put at the journal's name, or a move of the journal, after the last look is not seen here; a take-back looks at that name once more right before it moves the config ({@link assertTakeBackRecordStill}). A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread. On storage without hard links, see {@link claimWithoutLinks}.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
@@ -2582,24 +2678,57 @@ async function claimJournal(
     const source = await lookAtStagedRecord(staged)
     assertStill?.assert()
     assertStagedRecordStill(staged, source)
-    version = await link(staged.staged, path).then(
-      () => staged.version,
-      (error: unknown) =>
-        claimWithoutLinks(context, staged, error, assertStill),
-    )
+    version = await publishAtEmptyName(context, staged, assertStill)
     await assertPublishedRecord(context, version)
   } finally {
     // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened, while it shows the file this call wrote.
     await dropStagedRecord(staged)
   }
-  // The look after the link read the journal through its open handle, and the cleanup awaited the file system since: the name is read again and looked at once more, synchronously, so a journal another program moved away or replaced meanwhile never lets the caller move the config. The read comes after the cleanup's unlink, which changes the file's change time. A storage that already stalls holds this step at the awaited looks, not at the synchronous one.
+  return confirmPublished(context, version)
+}
+
+/**
+ * Publishes a tracked record's staged bytes at a name that holds nothing of this run: a link, which never replaces a file, or, where the storage gives no file a second name, {@link claimWithoutLinks}; called by {@link claimJournal}, and by {@link replaceThroughDroppingName} when the name went empty right before its move.
+ * @param context - The run; its pending path is the record.
+ * @param staged - The staged bytes ({@link stageRecord}).
+ * @param assertStill - The caller's look, looked at again on the route without links.
+ * @returns The version published: the staged file's.
+ * @throws What {@link claimWithoutLinks} throws for a failed link.
+ * @example
+ * await publishAtEmptyName(rollbackContext, staged, undefined) // => staged.version
+ */
+function publishAtEmptyName(
+  context: Context,
+  staged: StagedRecord,
+  assertStill: StillLook | undefined,
+): Promise<RecordVersion> {
+  return link(staged.staged, context.pendingPath).then(
+    () => staged.version,
+    (error: unknown) => claimWithoutLinks(context, staged, error, assertStill),
+  )
+}
+
+/**
+ * Reads a tracked record's name again after the cleanup that followed its publication and looks at it once more, synchronously, as the last step of the write; called by {@link claimJournal} and {@link writeTrackedJournal}, because the look right after the publication read the record through its open handle and the cleanup awaited the file system since, so a record another program moved away or replaced meanwhile never lets the caller act on it.
+ * The read comes after the cleanup's unlinks, which change the file's change time. A storage that already stalls holds this step at the awaited looks, not at the synchronous one.
+ * @param context - The run; its pending path is the record.
+ * @param version - The version this write published.
+ * @returns That version.
+ * @throws What {@link assertPublishedRecord} and {@link assertTrackedJournalStill} throw.
+ * @example
+ * await confirmPublished(rollbackContext, version) // => version, once pending.json.rollback still shows it
+ */
+async function confirmPublished(
+  context: Context,
+  version: RecordVersion,
+): Promise<RecordVersion> {
   const published = await assertPublishedRecord(context, version)
-  await lookAheadAt([path])
+  await lookAheadAt([context.pendingPath])
   assertTrackedJournalStill(context, published)
   return version
 }
 
-/** The codes of a link refused because the storage's file system gives no file a second name: `EPERM` on Linux (vfat), `ENOTSUP` on macOS (exFAT) and `ENOSYS` where the file system has no such call, the codes the Cursor skill's refused link names as well ({@link describeRefusedSkillLink}). Only these start a record write's route without links ({@link claimWithoutLinks}); every other failure of a link is thrown as it is, so a failing disk never gets a record published by another route. */
+/** The codes of a link refused because the storage's file system gives no file a second name: `EPERM` on Linux (vfat), `ENOTSUP` on macOS (exFAT) and `ENOSYS` where the file system has no such call, the codes the Cursor skill's refused link names as well ({@link describeRefusedSkillLink}). Only these start a record write's route without links ({@link claimWithoutLinks}, {@link publishMovedRecord}); every other failure of a link is thrown as it is, so a failing disk never gets a record published by another route. */
 const NO_LINK_CODES: ReadonlySet<unknown> = new Set([
   'EPERM',
   'ENOTSUP',
@@ -2607,7 +2736,7 @@ const NO_LINK_CODES: ReadonlySet<unknown> = new Set([
 ])
 
 /**
- * Claims a tracked record's empty name where the storage's file system gives no file a second name: the complete bytes {@link stageRecord} flushed are renamed there, so the name shows nothing or the whole record at every instant and a stop never leaves an empty or partial record that every run would refuse; called by {@link claimJournal} when its link failed.
+ * Claims a tracked record's empty name where the storage's file system gives no file a second name: the complete bytes {@link stageRecord} flushed are renamed there, so the name shows nothing or the whole record at every instant and a stop never leaves an empty or partial record that every run would refuse; called by {@link publishAtEmptyName} when its link failed.
  * The link was awaited, so the staged name is read again, and the caller's names, the staged name and the record's name are looked at through the thread pool and then synchronously right before the rename: the staged name must still show the file this call wrote ({@link assertStagedRecordStill}), the caller's look must hold, and the record's name must be empty.
  * Limit: on such storage a file another program puts at the record's name between that last look and the rename is replaced; no Node primitive publishes complete bytes without replacing where links fail, and an exclusive create in place would leave the name with part of the bytes for the time of one write.
  * @param context - The run; its pending path is the record.
@@ -2638,6 +2767,261 @@ async function claimWithoutLinks(
   if (!isNameEmptyNow(path)) throw journalConflictError(context, 'changed')
   await rename(staged.staged, path)
   return staged.version
+}
+
+/**
+ * Creates a tracked record in place at its emptied name, where the storage's file system gives no file a second name; called by {@link publishMovedRecord} once the record moved to its dropping name, so the record as it stood stays complete there while this create writes.
+ * An exclusive create never replaces a file, and the bytes are flushed before the call returns, so the look after it checks that file's inode and bytes as after a link ({@link confirmPublished}).
+ * Limit: for the time of one write the name shows only part of the bytes, so a process that ends then leaves that file beside the record at the dropping name, which the next run keeps and names ({@link settleDroppedRecord}); a write that fails deletes that name ({@link stageConfigFile}).
+ * @param context - The run; its pending path is the record.
+ * @param value - The complete record, as {@link stageRecord} wrote it at the staged name.
+ * @param sha256 - The hash of those bytes ({@link stageRecord}).
+ * @returns The version the create published: the inode of the file it created and the hash of its bytes.
+ * @throws What the create or its write throws: `EEXIST` when a file stands at the name, which stays as it is.
+ * @example
+ * await createJournalInPlace(rollbackContext, journal, staged.version.sha256) // => { ino: 45n, sha256: 'ef…' } once a link in an exFAT storage folder answered ENOTSUP
+ */
+async function createJournalInPlace(
+  context: Context,
+  value: unknown,
+  sha256: string,
+): Promise<RecordVersion> {
+  const { ino } = await stageConfigFile(
+    context.pendingPath,
+    JSON.stringify(value),
+    PRIVATE_FILE_MODE,
+  )
+  return { ino, sha256 }
+}
+
+/** A tracked record moved to its dropping name ({@link moveTrackedAside}), and that file as the read right after the move found it: this run's version, whose inode, size and times the dropping name must still show before the record is published anew or deleted. */
+type AsideRecord = { droppingPath: string; moved: InspectedCopy }
+
+/**
+ * Gives the dropping name of a tracked record ({@link DROPPING_SUFFIX}): the private name a rewrite or delete moves the record to first ({@link moveTrackedAside}), and that the run start looks at before anything reads the record ({@link settleDroppedRecord}).
+ * @param context - The run; its pending path is the record.
+ * @returns `<record>.codebook-dropping`.
+ * @example
+ * droppingPathOf(rollbackContext) // => '…/devin-mcp/pending.json.rollback.codebook-dropping'
+ */
+function droppingPathOf(context: Context): string {
+  return `${context.pendingPath}.${DROPPING_SUFFIX}`
+}
+
+/**
+ * Moves a tracked record to its dropping name right after the last looks found this run's version at its name, and proves there that it is that version; called by {@link replaceThroughDroppingName} and {@link deleteThroughDroppingName} before they publish new bytes at that name or delete the record.
+ * The rename moves exactly what stands at the name, so a file another program renamed over the record after the last look moves instead, is read at the dropping name, goes back to the record's name ({@link putTrackedBack}) and the run stops; it is never replaced or deleted. The rename runs only while nothing stands at the dropping name, which it would replace.
+ * Limit: a file put at the dropping name between its synchronous look and the rename is replaced (a name only Codebook uses); a stop right after the rename leaves the record there for the next run, which puts it back first ({@link settleDroppedRecord}).
+ * @param context - The run; its pending path is the record.
+ * @param version - The version the last looks found: this run's.
+ * @returns The record at its dropping name ({@link AsideRecord}); undefined when the record's name was empty at the rename (another program removed it after the last look), and nothing moved.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the dropping name; nothing moved then. A `changed` {@link JournalConflictError} once the moved file, not this run's version or not readable as a record, went back to its name, a `gone` one when it disappeared from the dropping name; what {@link putTrackedBack} and the rename throw.
+ * @example
+ * await moveTrackedAside(rollbackContext, look) // => { droppingPath: '…/pending.json.rollback.codebook-dropping', moved: { ino: 43n, … } }
+ */
+async function moveTrackedAside(
+  context: Context,
+  version: RecordVersion,
+): Promise<AsideRecord | undefined> {
+  const droppingPath = droppingPathOf(context)
+  // A file at the dropping name already: the rename would replace it, so nothing moves and both stay.
+  if (!isNameEmptyNow(droppingPath)) throw bothRecordNamesError(context)
+  const isMoved = await rename(context.pendingPath, droppingPath).then(
+    () => true,
+    (error: unknown) => {
+      // Another program emptied the name after the last look: nothing moved.
+      if (codeOf(error) === 'ENOENT') return false
+      throw error
+    },
+  )
+  if (!isMoved) return undefined
+  const moved = await inspectCopy(droppingPath).catch(() => undefined)
+  if (moved?.ino === version.ino && moved.sha256 === version.sha256)
+    return { droppingPath, moved }
+  // What moved is not this run's version (a file a backup renamed over the record after the last look): it goes back to its name, never replacing a file, and the run stops.
+  await putTrackedBack(context, droppingPath)
+  throw journalConflictError(context, 'changed')
+}
+
+/**
+ * Looks again, right before a moved record is published anew or deleted, at what must still hold since the last looks before the move; called by {@link replaceThroughDroppingName} and {@link deleteThroughDroppingName} through {@link renewOrPutBack}, so the record goes back to its name when anything changed while it moved.
+ * The staged name is read again through the thread pool, then the caller's names, the staged name and the dropping name are looked at through it, and then synchronously in that order, with nothing awaited between those looks and the step they guard.
+ * @param context - The run; its pending path is the record.
+ * @param aside - The record at its dropping name ({@link moveTrackedAside}).
+ * @param assertStill - The caller's look; undefined when nothing else must hold.
+ * @param staged - The staged bytes of a rewrite ({@link stageRecord}); undefined for a delete.
+ * @throws What `assertStill` throws; a {@link leftoverReplacedError} naming the staged name when it no longer shows the file this call wrote; a `changed` {@link JournalConflictError} when the dropping name no longer shows the moved file's inode, size and times.
+ * @example
+ * await assertAfterMove(rollbackContext, aside, assertStill, staged) // throws once a backup put the setup record back without its mark while the record moved
+ */
+async function assertAfterMove(
+  context: Context,
+  aside: AsideRecord,
+  assertStill: StillLook | undefined,
+  staged?: StagedRecord,
+): Promise<void> {
+  const source = staged && (await lookAtStagedRecord(staged))
+  await lookAheadAt([
+    ...(assertStill?.names ?? []),
+    ...(staged ? [staged.staged] : []),
+    aside.droppingPath,
+  ])
+  assertStill?.assert()
+  if (staged && source) assertStagedRecordStill(staged, source)
+  if (!isStagedNameStill(aside.droppingPath, aside.moved))
+    throw journalConflictError(context, 'changed')
+}
+
+/**
+ * Runs a look that must hold after a tracked record moved to its dropping name, and puts the record back first when it fails; called by {@link replaceThroughDroppingName} and {@link deleteThroughDroppingName}.
+ * @param context - The run; its pending path is the record.
+ * @param aside - The record at its dropping name.
+ * @param renew - The look ({@link assertAfterMove}).
+ * @throws What `renew` throws, once the record stands at its name again; what {@link putTrackedBack} throws when it cannot.
+ * @example
+ * await renewOrPutBack(rollbackContext, aside, () => assertAfterMove(rollbackContext, aside, assertStill))
+ */
+async function renewOrPutBack(
+  context: Context,
+  aside: AsideRecord,
+  renew: () => Promise<void>,
+): Promise<void> {
+  try {
+    await renew()
+  } catch (error) {
+    await putTrackedBack(context, aside.droppingPath)
+    throw error
+  }
+}
+
+/**
+ * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, while the dropping name still shows the moved file; called by {@link replaceThroughDroppingName}.
+ * Limit: a swap at the dropping name between this look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode).
+ * @param context - The run; its pending path is the record.
+ * @param aside - The record at its dropping name ({@link moveTrackedAside}).
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when the dropping name shows another file or cannot be deleted: both stay, and the next run names them again. A dropping name another program emptied is no failure.
+ * @example
+ * await dropAsideRecord(rollbackContext, aside) // '…/pending.json.rollback.codebook-dropping' is gone
+ */
+async function dropAsideRecord(
+  context: Context,
+  { droppingPath, moved }: AsideRecord,
+): Promise<void> {
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([droppingPath])
+  if (!isStagedNameStill(droppingPath, moved))
+    throw bothRecordNamesError(context)
+  await unlink(droppingPath).catch((error: unknown) => {
+    if (codeOf(error) !== 'ENOENT') throw bothRecordNamesError(context)
+  })
+}
+
+/**
+ * Puts a file at a tracked record's dropping name back at the record's empty name with a link, which never replaces a file that appeared there, and deletes the dropping name only once both names show that file; called by {@link moveTrackedAside} and {@link renewOrPutBack} for a record this run moved, by {@link refuseMovedPublish} after a failed publication, and by {@link settleDroppedRecord} for a record a stopped run left there.
+ * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last.
+ * Limit: on storage without hard links no file can go back this way (no Node primitive moves a name without replacing what stands at the other); the file then stays at the dropping name, which the refusal names.
+ * @param context - The run; its pending path is the record.
+ * @param droppingPath - The dropping name ({@link droppingPathOf}).
+ * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
+ * @example
+ * await putTrackedBack(rollbackContext, `${rollbackContext.pendingPath}.codebook-dropping`) // pending.json.rollback stands again
+ */
+async function putTrackedBack(
+  context: Context,
+  droppingPath: string,
+): Promise<void> {
+  const moved = await lstatOrAbsent(droppingPath)
+  // The moved file is gone from the dropping name too: another program took it, and nothing is left to put back.
+  if (!moved) throw journalConflictError(context, 'gone')
+  try {
+    await link(droppingPath, context.pendingPath)
+  } catch {
+    // A file at the record's name stays, and so does the moved one; where no link can be made, the moved file stays at the dropping name.
+    throw isNameEmptyNow(context.pendingPath)
+      ? recordNotBackError(context)
+      : bothRecordNamesError(context)
+  }
+  // Both names must show the moved file before the dropping name goes.
+  const { ino } = moved
+  if (
+    !(await isNameStill(context, context.pendingPath, { ino })) ||
+    !(await isNameStill(context, droppingPath, { ino, isShared: true }))
+  )
+    throw bothRecordNamesError(context)
+  await unlink(droppingPath).catch(() => undefined)
+}
+
+/**
+ * Settles the dropping names of both tracked records at the start of every locked run, before anything reads either record: the rollback record's, then the setup record's ({@link settleDroppedRecord}); called by {@link inLockedFolder}, so a rollback record's settlement never reads or marks a setup record that a stopped move left at its dropping name ({@link settleRollbackJournal}), and the removal's first read finds its record where it stands ({@link hasUnrecordedRemoval}).
+ * @param context - The locked run; its pending path is the setup record.
+ * @throws What {@link settleDroppedRecord} throws; the run goes no further then.
+ * @example
+ * await settleDroppedRecords(context) // pending.json stands again after a stop inside its move
+ */
+async function settleDroppedRecords(context: Context): Promise<void> {
+  await settleDroppedRecord(rollbackContextOf(context))
+  await settleDroppedRecord(context)
+}
+
+/**
+ * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there ({@link putTrackedBack}); when it is only another name of the file at the record's name, that name goes; beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. Called by {@link settleDroppedRecords}.
+ * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last, right before its unlink.
+ * Limit: a swap at either name between the last look and the unlink is not seen; no Node primitive unlinks by inode.
+ * @param context - The run; its pending path is the record.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when another file stands at the record's name; what {@link putTrackedBack} throws; what a look or the unlink throws other than for a missing name.
+ * @example
+ * await settleDroppedRecord(rollbackContextOf(context)) // pending.json.rollback stands again after a stop right after its move
+ */
+async function settleDroppedRecord(context: Context): Promise<void> {
+  const droppingPath = droppingPathOf(context)
+  const dropping = await lstatOrAbsent(droppingPath)
+  if (!dropping) return
+  const record = await lstatOrAbsent(context.pendingPath)
+  // Nothing at the record's name: the record a stopped move left goes back there first.
+  if (!record) return putTrackedBack(context, droppingPath)
+  // Another name of the record's own file, as a put-back that stopped before its unlink leaves it: only that name goes.
+  const { ino } = dropping
+  if (
+    record.ino === ino &&
+    (await isNameStill(context, context.pendingPath, { ino })) &&
+    (await isNameStill(context, droppingPath, { ino, isShared: true }))
+  ) {
+    await unlink(droppingPath)
+    return
+  }
+  throw bothRecordNamesError(context)
+}
+
+/**
+ * The refusal of a tracked record whose name and dropping name both hold a file ({@link moveTrackedAside}, {@link settleDroppedRecord}): Codebook cannot tell which holds its record, so both stay and the run goes no further. Its way out moves the file at the record's name away, after which the next run puts the file at the dropping name back: that file is the record as Codebook last moved it, or a file another program put there while the name was occupied, and the next run reads it as any record.
+ * @param context - The run; its pending path is the record, its retry ends the sentence.
+ * @returns The `changed` {@link JournalConflictError}, not thrown yet.
+ * @example
+ * throw bothRecordNamesError(rollbackContext) // 'Codebook found its record at …/pending.json.rollback and another file at …/pending.json.rollback.codebook-dropping, …'
+ */
+function bothRecordNamesError(context: Context): JournalConflictError {
+  const { pendingPath, retry } = context
+  const droppingPath = droppingPathOf(context)
+  return new JournalConflictError(
+    `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, ${retry}, and that run puts the file at ${droppingPath} back at ${pendingPath}.`,
+    'changed',
+  )
+}
+
+/**
+ * The refusal of a tracked record that stands at its dropping name and could not go back to its empty name ({@link putTrackedBack}), as on storage without hard links: it stays there, named, and the run goes no further.
+ * @param context - The run; its pending path is the record, its retry ends the sentence.
+ * @returns The `gone` {@link JournalConflictError}, not thrown yet.
+ * @example
+ * throw recordNotBackError(rollbackContext) // 'Codebook moved its record at …/pending.json.rollback to …/pending.json.rollback.codebook-dropping, …'
+ */
+function recordNotBackError(context: Context): JournalConflictError {
+  const { pendingPath, retry } = context
+  const droppingPath = droppingPathOf(context)
+  return new JournalConflictError(
+    `Codebook moved its record at ${pendingPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and could not move it back (the file system refused to give it that name again), so it left it at ${droppingPath} and went no further; move the file at ${droppingPath} back to ${pendingPath} if nothing stands there, ${retry}.`,
+    'gone',
+  )
 }
 
 /** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}). */
@@ -2705,7 +3089,7 @@ function assertStagedRecordStill(
 }
 
 /**
- * Checks right after a tracked record's rename or link that its name shows the file this run wrote, inode and bytes; called by {@link writeTrackedJournal} and {@link claimJournal} before they hand that version back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
+ * Checks right after a tracked record's link, rename or create in place that its name shows the file this run wrote, inode and bytes; called by {@link claimJournal} right after its publication and by {@link confirmPublished} after the cleanup that follows a write, before the version goes back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
  * @param context - The run; its pending path is the record.
  * @param version - The version this run wrote ({@link stageRecord}).
  * @returns The record as this read saw it through its open handle (inode, hash, size and times), which {@link claimJournal}'s last synchronous look at the name compares with after its cleanup.
@@ -2724,7 +3108,7 @@ async function assertPublishedRecord(
 }
 
 /**
- * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} after a write that published nothing and by {@link claimJournal} after its link, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
+ * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} and {@link claimJournal} once their write published its bytes or failed, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
  * The name is read through the thread pool first (inode and hash, {@link inspectCopy}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}), so an in-place write after that read is seen by its size and times.
  * Limits: a file put there, or a write into it, between the last look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
  * @param staged - The staged name and the version written there ({@link stageRecord}).
@@ -3797,7 +4181,7 @@ async function assertSharedPutBackBytes(
   )
 }
 
-/** The end Codebook gives a private name while it drops that name ({@link dropCheckedName}): the name is renamed to `<private name>.codebook-dropping` first, a name no other program uses. */
+/** The end Codebook gives a private name while it drops that name ({@link dropCheckedName}), and a tracked record while it rewrites or deletes it ({@link droppingPathOf}): the name is renamed to `<name>.codebook-dropping` first, a name no other program uses. */
 const DROPPING_SUFFIX = 'codebook-dropping'
 
 /**
@@ -6590,7 +6974,7 @@ async function lookAtTrackedJournal(
 }
 
 /**
- * Looks synchronously, once more, at a tracked rollback journal's name right before the rename or unlink that writes or deletes it; called by {@link writeTrackedJournal} inside its publish step, by {@link dropTrackedJournal}, and by {@link claimJournal} as its last step, right before it hands the version it linked back.
+ * Looks synchronously, once more, at a tracked rollback journal's name right before the move to its dropping name that starts its rewrite or delete ({@link moveTrackedAside}); called by {@link writeTrackedJournal} and {@link dropTrackedJournal} before that move, and by {@link confirmPublished} as the last step of a write, right before it hands the version it published back.
  * Limit: a file put at the name between this look and the syscall that follows is not seen.
  * @param context - The run; its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
  * @param look - The journal as {@link lookAtTrackedJournal} read it: its inode, size and times must still show.
@@ -6640,11 +7024,12 @@ function isOtherFileCause(cause: unknown): boolean {
  * Deletes a tracked rollback journal ({@link Context.journalVersion}) only while its name shows the version this run settled or last wrote; called by {@link removeRecord} and by a held legacy journal's retirement ({@link HeldJournal}), once the publish record can no longer adopt.
  * A backup or sync tool may put another journal at that name after this run read or wrote its own; that journal may hold a rollback this run never settled, so it stays, and the call rejects.
  * Once its own unlink went through, the run knows no version at that name any more, so a later look passes only an empty name ({@link publishLeftCheck}); a name found empty, by the first look or by an unlink that answers it is gone, keeps the version, because this run did not empty it. For a publish record a decision read (`refusesEmptyName`) such a name ends the run at once with a `gone` conflict: another program moved that record away, and the same record put back before a later look must not pass as one this run settled ({@link isEmptiedByAnother}). Any other name the first look finds empty still gets `assertStill`, after an awaited look at its names: the caller goes on as after a delete, so a setup record a backup puts back without its take-back mark while it moves the journal away is seen before {@link inspect} reads it.
- * Limit: a file put at the name between the last look and the unlink is deleted; no Node primitive unlinks by inode. Moving the journal to another name first and deleting it there only once it proves to be this run's would leave a journal a backup put there in that moment only at a name no build reads, should the process end before it goes back, so that journal's rollback would be lost all the same.
+ * The journal is never unlinked at its own name: after the last looks it moves to its dropping name and is deleted there only once it proves to be this run's version and `assertStill` still holds ({@link deleteThroughDroppingName}), so a journal a backup renames over it after the last look goes back to its name instead of being deleted, and a stop in that moment leaves it at the dropping name, where the next run puts it back first ({@link settleDroppedRecord}).
  * The journal's own synchronous look comes right after its awaited one ({@link lookAtTrackedJournal}), and `assertStill`'s right after an awaited look at its names, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds the extension host's thread.
+ * Limits: those of {@link deleteThroughDroppingName}.
  * @param context - The run; its pending path is the journal, its seam is called around the last look ({@link isLeftoverStill}).
- * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and before the unlink, or right after the first look when that look finds the name empty ({@link removeRecord}); throwing keeps the journal.
- * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then), or (`gone`) when a publish record's name is found empty while this run knows a version of it; what `assertStill` throws, also for a name found empty; what the unlink throws other than for a name that is gone.
+ * @param assertStill - A synchronous look at other names that must still hold, called right after the last look and again right before the delete, or right after the first look when that look finds the name empty ({@link removeRecord}); throwing keeps the journal.
+ * @throws A {@link JournalConflictError} when the name shows another file or cannot be read again (nothing is deleted then; a file that moved goes back first), or (`gone`) when a publish record's name is found empty while this run knows a version of it; the refusals naming the dropping name ({@link bothRecordNamesError}, {@link recordNotBackError}); what `assertStill` throws, also for a name found empty; what the delete throws other than for a name that is gone, once the journal went back.
  * @example
  * await dropTrackedJournal(rollbackContext) // pending.json.rollback is gone while it held the version this run settled
  * await dropTrackedJournal(heldRun) // throws a `gone` JournalConflictError once a sync tool moved pending.json away right before the unlink
@@ -6665,25 +7050,56 @@ async function dropTrackedJournal(
     }
     return
   }
-  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, then `assertStill`'s names.
-  if (assertStill)
-    await lookAheadAt([context.pendingPath, ...assertStill.names])
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, `assertStill`'s names, the dropping name.
+  await lookAheadAt([
+    context.pendingPath,
+    ...(assertStill?.names ?? []),
+    droppingPathOf(context),
+  ])
   assertTrackedJournalStill(context, look)
   assertStill?.assert()
-  const isUnlinked = await unlink(context.pendingPath).then(
+  const isDeleted = await deleteThroughDroppingName(context, look, assertStill)
+  // Only this run's own delete clears the version: nothing of it stands there any more.
+  if (isDeleted && context.journalVersion)
+    context.journalVersion.current = undefined
+  // Moved away right before the move: a publish record that may come back right after ends the run here.
+  if (!isDeleted && isEmptiedByAnother(context))
+    throw journalConflictError(context, 'gone')
+}
+
+/**
+ * Deletes a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and deleting it there; called by {@link dropTrackedJournal} right after those looks.
+ * After the move the caller's names and the dropping name are looked at again ({@link assertAfterMove}), right before the delete, and the record goes back to its name when anything changed ({@link renewOrPutBack}), so a record whose companion record changed while it moved is never deleted on the earlier look.
+ * Limits: a file put at the dropping name between its synchronous look and the move is replaced, and a swap there between its last look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode); a stop between the move and the unlink leaves the record at the dropping name, where the next run puts it back and settles it again ({@link settleDroppedRecord}).
+ * @param context - The run; its pending path is the record.
+ * @param look - The record as the last look saw it: this run's version.
+ * @param assertStill - The caller's look; undefined when nothing else must hold.
+ * @returns `true` once this run deleted the record; `false` when its name was empty at the move or the moved file was gone at the delete (another program removed it first), so this run did not empty it.
+ * @throws What {@link moveTrackedAside} and {@link assertAfterMove} throw (the record stands at its name again then, unless a refusal names where it stands); what the unlink throws other than for a missing name, once the record went back.
+ * @example
+ * await deleteThroughDroppingName(rollbackContext, look, undefined) // => true; pending.json.rollback is gone
+ */
+async function deleteThroughDroppingName(
+  context: Context,
+  look: InspectedCopy,
+  assertStill: StillLook | undefined,
+): Promise<boolean> {
+  const aside = await moveTrackedAside(context, look)
+  // Another program removed the record first: the name is empty, as the delete wanted, but this run did not empty it.
+  if (!aside) return false
+  await renewOrPutBack(context, aside, () =>
+    assertAfterMove(context, aside, assertStill),
+  )
+  return unlink(aside.droppingPath).then(
     () => true,
-    (error: unknown) => {
-      // Another program removed it first: the name is empty, as the delete wanted, but this run did not empty it.
-      if (codeOf(error) !== 'ENOENT') throw error
-      return false
+    async (error: unknown) => {
+      // Another program took the moved record first: this run did not delete it.
+      if (codeOf(error) === 'ENOENT') return false
+      // The delete failed: the record goes back to its name, as before the move.
+      await putTrackedBack(context, aside.droppingPath)
+      throw error
     },
   )
-  // Only this run's own unlink clears the version: nothing of it stands there any more.
-  if (isUnlinked && context.journalVersion)
-    context.journalVersion.current = undefined
-  // Moved away right before the unlink: a publish record that may come back right after ends the run here.
-  if (!isUnlinked && isEmptiedByAnother(context))
-    throw journalConflictError(context, 'gone')
 }
 
 /**
@@ -7801,7 +8217,7 @@ function mergeWithLeftover(
 }
 
 /**
- * Runs one operation under the storage lock of the `devin-mcp` folder that every Codebook window of one Devin Desktop install shares.
+ * Runs one operation under the storage lock of the `devin-mcp` folder that every Codebook window of one Devin Desktop install shares, after the dropping names of its two tracked records are settled ({@link settleDroppedRecords}).
  * @param storageRoot - Codebook's global storage folder.
  * @param homeRoot - The home folder.
  * @param entry - The entry the run keeps; undefined for a removal.
@@ -7829,7 +8245,11 @@ function inLockedFolder<Result>(
     // A removal has no entry; its refusals name the removal command.
     retry: entry ? SET_UP_AGAIN : REMOVE_AGAIN,
   }
-  return withStorageLock(folder, () => run(context))
+  return withStorageLock(folder, async () => {
+    // A record a stopped rewrite or delete left at its dropping name goes back, or the run stops, before anything reads either record.
+    await settleDroppedRecords(context)
+    return run(context)
+  })
 }
 
 /**
