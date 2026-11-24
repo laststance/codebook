@@ -10040,6 +10040,52 @@ async function loadEndingAfterStep(
   return { module, hasEnded: () => isEnded }
 }
 
+test("An older build's setup record whose take-back mark was published right before the refresh stopped is finished by the next refresh, which deletes the unmarked version it replaced and takes the failed first setup back", async (context) => {
+  // Value: protects=the run start recognizes a stopped rewrite of the setup record as its own: when pending.json shows, inode and bytes, the marked record the dropping note names and the dropping name shows the unmarked version that note says the rewrite moved there, the old version goes and the marked record is read, so a stop between the mark's publication and the old version's delete never makes every later run refuse (Cycle 0149 task 57, the setup record's cell of task 36's rule); fails_when=the stop is not reached, the stop leaves pending.json holding anything but the marked record or the dropping name anything but the unmarked one, the next refresh answers anything but not-managed, writes a receipt, leaves the entry in the config or the learner's other server out of it, or leaves a record, a dropping name or a dropping note of either record; no_claim=a real process end (the config module is loaded so that the link which publishes the take-back mark at pending.json, and every later link, rename, unlink, removal and write, fail as after the process ended), storage without hard links (the mark is published by a rename there), the stopped run's staged and vacated names (they stay under their fresh private names, as after any stop; no build reads such a name)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, () => undefined)
+  const recordsPath = dirname(pendingPath)
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const unmarkedText = readFileSync(pendingPath, 'utf8')
+  const endingAfterMark = await loadEndingAfterStep(
+    // The link that publishes the take-back mark's staged file at pending.json, after the unmarked record moved to its dropping name.
+    ({ step, from, to }) =>
+      step === 'link' && to === pendingPath && from.endsWith('.tmp'),
+  )
+  await endingAfterMark.module
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .catch(() => undefined)
+  // A name the stopped refresh left empty reads as 'absent', so the assertions below name it.
+  const isMarkedAfterStop = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack === true
+    : false
+  const droppingAfterStop = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+
+  // Act
+  const refresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(endingAfterMark.hasEnded(), true)
+  assert.equal(isMarkedAfterStop, true)
+  assert.equal(droppingAfterStop, unmarkedText)
+  assert.equal(refresh.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  // The stopped run's staged and vacated names stay under their fresh private names, as after any stop; no build reads such a name.
+  assert.deepEqual(
+    readdirSync(recordsPath).filter(
+      (name) => name.startsWith('pending.json') && !name.endsWith('.tmp'),
+    ),
+    [],
+  )
+})
+
 test("A file another program puts at a take-back's rollback record name while its rewrite waits at the dropping name stays at the next refresh too, and so does the version that rewrite moved there: both are named", async (context) => {
   // Value: protects=the run start finishes a stopped rewrite only while the record's name shows the very new record the dropping note names, so a file another program puts at the emptied name keeps both it and the old version, which names the moved-aside copy of the learner's config, at the next run as well (Cycle 0149 task 36, acceptance criterion 13's third state); fails_when=the file does not land, either refresh resolves or says anything but the not-taken-out refusal and then the sentence naming both names, the file at the record's name or the old version at the dropping name changes or is gone, or the copy the old version names is gone; no_claim=a real sync tool (seam.beforeRecordWrite arms at the take-back's write of its completed record and reads the record as it stands then, and the config module is loaded with a link that, once armed, puts another file at pending.json.rollback right before the link that would publish that rewrite there), what the learner does with both files next
   // Arrange
