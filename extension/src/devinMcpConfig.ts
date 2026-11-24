@@ -6733,7 +6733,7 @@ async function settleAfterRecovery(
 
 /**
  * Joins a refusal of the steps after recovery with the leftover recovery could not settle, so the learner reads both in one message; called by {@link inspect} when {@link settleAfterRecovery} throws.
- * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read. It also applies to a refusal about the publish record itself ({@link RecordConflictError}): the record that names the leftover changed or disappeared, so no later run may find that leftover through it.
+ * It applies to a copy handed over in this run and to a leftover whose own text names both files ({@link namesBothFiles}): a refusal about the config or its entry must not hide where that copy is or that the config changed while it was read. It also applies to a refusal about the publish record itself ({@link RecordConflictError}): the record that names the leftover changed or disappeared, so no later run may find that leftover through it; and to another file at a held legacy journal's name ({@link JournalConflictError}), which ends the run before the leftover's own refusal, as it does in {@link withJournalLeftover}.
  * @param context - The run.
  * @param cause - What {@link settleAfterRecovery} threw.
  * @param phase - The phase of the pending record.
@@ -6753,11 +6753,12 @@ function mergeWithLeftover(
   isHandedNow: boolean,
 ): unknown {
   if (!reported || !(cause instanceof Error)) return cause
-  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it; a record that changed or disappeared under the run may never lead there again.
+  // Any other leftover stays in the record, which the failed step did not retire, and a later run names it; a record that changed or disappeared under the run may never lead there again, and a run stopped by another file at a rollback record's name (a held legacy journal's) names it now, as {@link withJournalLeftover} does.
   if (
     !isHandedNow &&
     !namesBothFiles(reported.cause) &&
-    !(cause instanceof RecordConflictError)
+    !(cause instanceof RecordConflictError) &&
+    !(cause instanceof JournalConflictError)
   )
     return cause
   return new Error(
