@@ -10693,8 +10693,8 @@ function loadWithWrappedOpen(
   )
 }
 
-test("A copy of the previous config that only its bytes prove is not put back at the empty config name when a backup puts back that change's record handing the copy to you right after recovery recorded the put-back as unchecked, and the refresh says the record changed", async (context) => {
-  // Value: protects=a put-back by bytes links the copy only while the record it just wrote still stands at a synchronous look right before the link, so a record of that change a backup puts back handing the copy to the learner keeps the copy at its private name and the config name empty (README line 95; Cycle 0149 task 3); fails_when=a file stands at the config name, the copy's name is gone or holds other bytes, the restored record is gone or changes, or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (the config module is loaded with an openWithoutFollowing that renames the handed record over pending.json once, right after the unchecked mark's own read after its rename opened that file), a restore between the last look and the link, what the next run says about the handed copy
+test("A copy of the previous config that only its bytes prove is not put back at the empty config name when a backup puts back that change's record handing the copy to you after recovery recorded the put-back as unchecked, and the refresh says the record changed", async (context) => {
+  // Value: protects=a put-back by bytes links the copy only while the record it just wrote still stands at a synchronous look right before the link, so a record of that change a backup puts back handing the copy to the learner once that write is done keeps the copy at its private name and the config name empty (README line 95; Cycle 0149 tasks 3 and 22); fails_when=a file stands at the config name, the copy's name is gone or holds other bytes, the restored record is gone or changes, the backup lands at another open of the unchecked record than the second (the record check's read after the write's own), or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (the config module is loaded with an openWithoutFollowing that renames the handed record over pending.json once, right after the first open of the unchecked record that follows the write's last look at its name, seam.beforeLeftoverCheck), a restore between the last look and the link, what the next run says about the handed copy
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
@@ -10706,16 +10706,21 @@ test("A copy of the previous config that only its bytes prove is not put back at
     keptIno: statSync(keptPath).ino,
   })}\n`
   const backupPath = join(home, 'pending-from-backup.json')
+  const holdsUncheckedRecord = (): boolean =>
+    existsSync(pendingPath) &&
+    readFileSync(pendingPath, 'utf8').includes('"bytesUnverified":true')
+  let hasWriteLookedLast = false
+  let uncheckedOpens = 0
+  let uncheckedOpensAtRestore = 0
   let hasRestoredPending = false
   const restoringOpen = await loadWithWrappedOpen(async (path, openReal) => {
     const file = await openReal()
-    // The first open of the unchecked mark is its own read right after its rename: the backup lands right after it.
-    if (
-      path === pendingPath &&
-      !hasRestoredPending &&
-      readFileSync(path, 'utf8').includes('"bytesUnverified":true')
-    ) {
+    if (path !== pendingPath || !holdsUncheckedRecord()) return file
+    uncheckedOpens += 1
+    // The first open after the write's last look is the record check right before the link: the backup lands right after it opened the record.
+    if (hasWriteLookedLast && !hasRestoredPending) {
       hasRestoredPending = true
+      uncheckedOpensAtRestore = uncheckedOpens
       writeFileSync(backupPath, handedPendingText)
       renameSync(backupPath, pendingPath)
     }
@@ -10727,6 +10732,13 @@ test("A copy of the previous config that only its bytes prove is not put back at
     storage,
     ENTRY,
     home,
+    {
+      beforeLeftoverCheck: (path) => {
+        // The write of the unchecked record ends with a look at its name: only an open after that look reads the finished write.
+        if (path === pendingPath && holdsUncheckedRecord())
+          hasWriteLookedLast = true
+      },
+    },
   )
 
   // Assert
@@ -10734,6 +10746,8 @@ test("A copy of the previous config that only its bytes prove is not put back at
     message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
   })
   assert.equal(hasRestoredPending, true)
+  // The write's own read after its publication, then the record check's read right before the link.
+  assert.equal(uncheckedOpensAtRestore, 2)
   assert.equal(existsSync(configPath), false)
   // A file the refresh deleted reads as 'absent', so the assertions name it.
   assert.equal(
