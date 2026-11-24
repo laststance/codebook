@@ -10222,6 +10222,65 @@ test('A setup after mcp_config.json was moved away keeps the old record when the
   assert.equal(next.status, 'current')
 })
 
+test("A first setup never deletes a file another program put at the old record's private name while its config was linked in: it keeps that file and the record that leads there, and the next setup leaves that file and finds its entry current", async (context) => {
+  // Value: protects=once a first setup's own config stands, the old record's private name goes only while a look right before the delete still shows the record that setup moved there and verified, so a file a sync tool puts there during the config's link is never deleted unread, and the publish record that leads there stays so the next run settles that name with its own checks, which leave a file that is no record of this config (Cycle 0148 ship review); fails_when=the setup answers anything but installed, the file at the private name changes or is gone, pending.json is gone after the setup, receipt.json does not hold the setup's own record, or the next setup answers anything but current or leaves anything but its record and that file; no_claim=a real sync tool (the config module is loaded with a link that, for the config's link, first puts another program's file at the private name at another inode, then links), and a file put there between the last look and the delete (no Node primitive unlinks by inode)
+  // Arrange
+  const { home, storage, configPath } = await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const otherProgramText = '{"note":"a settings file of another program"}'
+  let retiredName = 'no private name'
+  const swappingDuringLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            // The old record waits under its private name; another program's file takes that name while the config is linked in.
+            retiredName =
+              readdirSync(recordsFolder).find((name) =>
+                name.endsWith('.retired'),
+              ) ?? retiredName
+            swapFile(join(recordsFolder, retiredName), otherProgramText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const result = await swappingDuringLink.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+  const recordsAfterSetup = await recordsIn(storage)
+  const receiptAfterSetup = await readRecordFile(storage, 'receipt.json')
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.deepEqual(recordsAfterSetup, [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.equal(next.status, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json', retiredName])
+  assert.equal(
+    readFileSync(join(recordsFolder, retiredName), 'utf8'),
+    otherProgramText,
+  )
+})
+
 /**
  * Sets up Codebook's entry beside another server, then moves the config away, so the receipt stands for an entry that is gone and the next setup is a first setup that retires that receipt.
  * @param context - The test context.

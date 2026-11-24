@@ -1338,11 +1338,12 @@ async function stageConfigFile(
   }
 }
 
-/** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise) and whether the record says completed (`false`: the completed record could not be written, so nothing was deleted). */
+/** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so nothing was deleted) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
 type Published = {
   config: ConfigNumbers
   keptLeft: KeptFile[]
   isRecorded: boolean
+  isRetiredKept: boolean
 }
 
 /** Everything a replacement of an existing config works with: the staged file, the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
@@ -1357,23 +1358,29 @@ type Replacement = {
 
 /**
  * Links the staged file in at the config name, the step that exposes a publish; called by {@link createConfig} and {@link linkInStaged}.
- * A first setup's stale receipt ({@link isFirstSetup}) moves to its private name right before the link ({@link retireStaleReceipt}), so it goes only once this setup's own publish record, which names that move, is written, and no reader takes the new entry for that receipt's. When the link fails nothing of this setup stands, so that receipt goes back ({@link putBackRetiredReceipt}): a config that came back meanwhile is still owned by it, and an unrecorded removal's retry still answers `removed`. That put-back needs no free space, never replaces a newer receipt and puts back only a record of this config that it read at the private name; a private name it finds empty, or holding another program's file, keeps the publish record, which is then marked, so the next run looks there again. Once the link stands the private name is deleted; one that cannot be deleted then is dropped by the next run while the publish record stays ({@link settleRetiredReceipt}), and otherwise stays in Codebook's records folder, where nothing reads it.
+ * A first setup's stale receipt ({@link isFirstSetup}) moves to its private name right before the link ({@link retireStaleReceipt}), so it goes only once this setup's own publish record, which names that move, is written, and no reader takes the new entry for that receipt's. When the link fails nothing of this setup stands, so that receipt goes back ({@link putBackRetiredReceipt}): a config that came back meanwhile is still owned by it, and an unrecorded removal's retry still answers `removed`. That put-back needs no free space, never replaces a newer receipt and puts back only a record of this config that it read at the private name; a private name it finds empty, or holding another program's file, keeps the publish record, which is then marked, so the next run looks there again. Once the link stands the private name is deleted only while it still shows the record this setup moved there and verified ({@link dropMovedAfterLink}); a name that shows another file then, or cannot be looked at or deleted, stays, and so does the publish record, so the next run settles that name with its own checks ({@link settleRetiredReceipt}).
  * @param context - The run.
  * @param temporary - The staged file.
  * @param staleReceipt - The receipt of an entry that is gone, which a first setup retires; undefined for an update, a removal, a rollback and a first setup without a receipt.
  * @param journal - The publish record as written; its generation names the receipt's private name ({@link retiredReceiptPathOf}).
+ * @returns `true` once the link stood while the old record's private name stays ({@link Published.isRetiredKept}), so the caller keeps the publish record; `false` otherwise.
  * @throws A {@link staleReceiptRefusal} when that receipt cannot be moved aside, a {@link changedRecordRefusal} when another receipt stood at its name by then (nothing was linked); what the link throws, once the receipt is back. An {@link UnrestoredReceiptError} carrying that failure when the receipt could not go back; the publish record is then marked {@link Pending.notLinked}, best effort, so the next run puts the receipt back whatever inode the config shows. When that mark cannot be written, the error promises no put-back: the next run cannot tell that nothing was linked and decides again ({@link retiredReceiptFateOf}).
  * @example
- * await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal) // the config stands and receipt.json is gone
+ * await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal) // => false: the config stands and receipt.json is gone
  */
 async function linkWithoutStaleReceipt(
   context: Context,
   temporary: string,
   staleReceipt: Receipt | undefined,
   journal: Pending,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal)
+    return await linkRetiringStaleReceipt(
+      context,
+      temporary,
+      staleReceipt,
+      journal,
+    )
   } catch (error) {
     if (!(error instanceof UnrestoredReceiptError)) throw error
     // Nothing of this setup was linked and the old record waits under its private name: the record says so, so the next run puts it back whatever inode the config shows.
@@ -1395,17 +1402,18 @@ async function linkWithoutStaleReceipt(
  * @param temporary - The staged file.
  * @param staleReceipt - The receipt a first setup retires; undefined otherwise.
  * @param journal - The publish record as written.
+ * @returns What {@link linkWithoutStaleReceipt} returns.
  * @throws What {@link linkWithoutStaleReceipt} throws.
  * @example
- * await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal) // the config stands and receipt.json is gone
+ * await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal) // => false: the config stands and receipt.json is gone
  */
 async function linkRetiringStaleReceipt(
   context: Context,
   temporary: string,
   staleReceipt: Receipt | undefined,
   journal: Pending,
-): Promise<void> {
-  const retiredPath =
+): Promise<boolean> {
+  const moved =
     staleReceipt && journal.generation
       ? await retireStaleReceipt(context, staleReceipt, journal.generation)
       : undefined
@@ -1413,11 +1421,39 @@ async function linkRetiringStaleReceipt(
     await link(temporary, context.path)
   } catch (error) {
     // Nothing of this setup stands at the config name: the old receipt stands again, or the failure says where it is.
-    if (retiredPath) await putBackRetiredReceipt(context, retiredPath, error)
+    if (moved) await putBackRetiredReceipt(context, moved.retiredPath, error)
     throw error
   }
-  // The link stands: the old receipt covers nothing.
-  if (retiredPath) await unlink(retiredPath).catch(() => undefined)
+  // The link stands: the old receipt covers nothing, and its private name goes only while it still shows that receipt.
+  return moved ? dropMovedAfterLink(context, moved) : false
+}
+
+/**
+ * Deletes a first setup's old record from its private name once that setup's config stands, only while a synchronous look right before the delete still shows the file the setup moved there and verified ({@link retireStaleReceipt}), so a file another program put there while the config was linked in is never deleted unread; called only by {@link linkRetiringStaleReceipt}.
+ * A look through the thread pool comes first ({@link lookAheadAt}), so a storage that already stalls stalls there, where the setup's budget answers. Limits: a file put there between the synchronous look and the delete is not seen (no Node primitive unlinks by inode), and a stall that starts between the two looks still holds the extension host's thread.
+ * @param context - The run; its seam is called around the synchronous look ({@link nameStateNow}).
+ * @param moved - The private name and the look at it before the setup's read of the record it moved there ({@link RetiredMove}).
+ * @returns
+ * - `false` once that name is gone: deleted now, or already empty, so nothing of the old record is left to settle
+ * - `true` when it stays because it shows another file, the look failed or the delete failed: the caller keeps the publish record, so the next run settles that name ({@link settleRetiredReceipt})
+ * @example
+ * await dropMovedAfterLink(context, moved) // => true after a sync tool put another file at the private name during the config's link
+ */
+async function dropMovedAfterLink(
+  context: Context,
+  { retiredPath, look }: RetiredMove,
+): Promise<boolean> {
+  await lookAheadAt([retiredPath])
+  const state = nameStateNow(context, retiredPath, look)
+  // Nothing stands there any more: nothing of the old record is left to delete.
+  if (state === 'gone') return false
+  // Another file there, or a look that failed: it is never deleted unread, and the publish record leads the next run there.
+  if (state !== 'still') return true
+  return unlink(retiredPath).then(
+    () => false,
+    // A name already gone is what the delete was for; another failure keeps the name and the record that leads there.
+    (cause: unknown) => codeOf(cause) !== 'ENOENT',
+  )
 }
 
 /** Why a first setup's moved record was kept under its private name: what a put-back that found `receipt.json` taken saw there ({@link standingReceiptOf}), `other` when it is provably not Codebook's record of that entry, `foreign` when a record of this config stands there and the moved file is no record of this config, `unread` when Codebook could not tell; `moved-unread` when the moved record itself could not be read, or `moved-changed` when its private name showed another file after the read; `superseded` when the record at `receipt.json` owns the entry the config holds and the moved record does not, or `config-unread` when the config could not be read to tell which owns it or changed after the read that told; `undeleted` when the moved record was to be deleted beside a record that covers it and the delete failed, or when its private name after a put-back's link that stood could not go, because the looks no longer showed the linked record at `receipt.json` and at that name as a second name of it or the delete failed ({@link dropLinkedPrivateName}); `moved-gone` when the setup that moved the record found its private name empty as it went to put it back ({@link endOnEmptyName}); `moved-foreign` when the file at the private name is no record of this config while nothing stands at `receipt.json` ({@link settleForeignMoved}), `moved-foreign-other` when something that is not Codebook's record of that entry stands there instead, and `moved-foreign-unread` when Codebook could not tell what stands there. */
@@ -1652,7 +1688,7 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * @param config - The inode the config will have.
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands.
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
- * @returns The inode, and the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config).
+ * @returns The inode, the staged name when it could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), and whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too).
  * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back.
  */
 async function createConfig(
@@ -1662,9 +1698,15 @@ async function createConfig(
   journal: Pending,
   staleReceipt: Receipt | undefined,
 ): Promise<Published> {
+  let isRetiredKept: boolean
   try {
     context.seam?.afterCheck?.()
-    await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal)
+    isRetiredKept = await linkWithoutStaleReceipt(
+      context,
+      temporary,
+      staleReceipt,
+      journal,
+    )
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
     const failure = failureOf(error)
@@ -1684,6 +1726,7 @@ async function createConfig(
     config,
     keptLeft: isStagedGone ? [] : [{ path: temporary, holds: 'new' }],
     isRecorded: didRecord,
+    isRetiredKept,
   }
 }
 
@@ -1745,16 +1788,21 @@ function mismatchRefusal(
  * @param context - The run.
  * @param replacement - The staged file, the displaced file (whose bytes equal what was read), the record and the stale receipt.
  * @param opened - The displaced copy's handle and own mode.
+ * @returns Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}), so the publish record stays.
  * @throws {@link newConfigRefusal} when a config appeared: the staged file is unlinked, the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
  */
 async function linkInStaged(
   context: Context,
   { temporary, displaced, journal, staleReceipt }: Replacement,
   opened: DisplacedHandle | undefined,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal)
-    return
+    return await linkWithoutStaleReceipt(
+      context,
+      temporary,
+      staleReceipt,
+      journal,
+    )
   } catch (error) {
     await unlink(temporary).catch(() => undefined)
     const failure = failureOf(error)
@@ -1840,10 +1888,14 @@ async function replaceConfig(
     if (!held || !isExpectedCopy(held, displaced))
       return await putDisplacedBack(context, replacement, opened)
     context.seam?.afterCompare?.()
-    await linkInStaged(context, replacement, opened)
+    const isRetiredKept = await linkInStaged(context, replacement, opened)
     context.seam?.afterPublish?.(displaced.path)
     // From here the config is published; cleanup failures are reported and leave the pending record.
-    return { config, ...(await settlePublished(context, replacement, held)) }
+    return {
+      config,
+      isRetiredKept,
+      ...(await settlePublished(context, replacement, held)),
+    }
   } finally {
     await opened?.handle.close()
   }
@@ -2612,7 +2664,7 @@ async function nameStateOf(
 }
 
 /**
- * Looks at a name as {@link nameStateOf} does, synchronously, so nothing is awaited between this look and the step it guards; called by {@link stillnessOf} and {@link dropLinkedPrivateName}, whose last looks come right before a first setup's old record or its private name is deleted.
+ * Looks at a name as {@link nameStateOf} does, synchronously, so nothing is awaited between this look and the step it guards; called by {@link stillnessOf}, {@link dropLinkedPrivateName} and {@link dropMovedAfterLink}, whose last looks come right before a first setup's old record or its private name is deleted.
  * @param context - The run; its seam is called around the look as for {@link isLeftoverStill}.
  * @param path - The name to look at.
  * @param checked - What the name must still show ({@link LeftoverLookback}).
@@ -2638,7 +2690,7 @@ function nameStateNow(
 }
 
 /**
- * Looks at names one after another through the thread pool and drops the answers, right before the synchronous last looks at those names decide a delete or the end of a record ({@link nameStateNow}, {@link isConfigUnchanged}, {@link isNameEmptyNow}), so a storage that already stalls stalls here, where the step's 10-second budget still answers, instead of on the extension host's thread; called by {@link standingReceiptOf}, {@link dropLinkedPrivateName} and {@link retiredNameCheck}.
+ * Looks at names one after another through the thread pool and drops the answers, right before the synchronous last looks at those names decide a delete or the end of a record ({@link nameStateNow}, {@link isConfigUnchanged}, {@link isNameEmptyNow}), so a storage that already stalls stalls here, where the step's 10-second budget still answers, instead of on the extension host's thread; called by {@link standingReceiptOf}, {@link dropLinkedPrivateName}, {@link dropMovedAfterLink} and {@link retiredNameCheck}.
  * The synchronous looks still decide: only they leave nothing awaited between them and the step they guard. Limit: a stall that starts between these looks and the synchronous ones still holds the thread.
  * @param paths - The names, in the order of the synchronous looks that follow.
  * @returns Resolves once every look answered, whatever it answered.
@@ -4094,16 +4146,16 @@ function retiredReceiptPathOf(context: Context, generation: string): string {
  * @param context - The run.
  * @param staleReceipt - The receipt this run read.
  * @param generation - The generation of the publish; names the private path.
- * @returns The private path that holds the receipt now; undefined when nothing stood at the receipt's name any more, so nothing is to put back.
+ * @returns The private path that holds the receipt now, with the look at that name before the read that found the receipt there ({@link RetiredMove}), so the delete after the link acts only on that file ({@link dropMovedAfterLink}); undefined when nothing stood at the receipt's name any more, so nothing is to put back.
  * @throws A {@link staleReceiptRefusal} when the name holds no regular file or the move fails, and a {@link changedRecordRefusal} once another receipt that moved went back; nothing is linked then. An {@link UnrestoredReceiptError} carrying that refusal, worded without the put-back, when the other receipt could not go back.
  * @example
- * await retireStaleReceipt(context, receipt, generation) // => '/storage/devin-mcp/receipt.json.<generation>.retired'
+ * await retireStaleReceipt(context, receipt, generation) // => { retiredPath: '/storage/devin-mcp/receipt.json.<generation>.retired', look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } }
  */
 async function retireStaleReceipt(
   context: Context,
   staleReceipt: Receipt,
   generation: string,
-): Promise<string | undefined> {
+): Promise<RetiredMove | undefined> {
   const retiredPath = retiredReceiptPathOf(context, generation)
   try {
     const status = await lstatOrAbsent(context.receiptPath)
@@ -4115,7 +4167,8 @@ async function retireStaleReceipt(
     if (codeOf(cause) === 'ENOENT') return undefined
     throw staleReceiptRefusal(context, cause)
   }
-  if (await holdsReceipt(context, retiredPath, staleReceipt)) return retiredPath
+  const look = await heldReceiptLook(context, retiredPath, staleReceipt)
+  if (look) return { retiredPath, look }
   // Another receipt was saved at that name since the read: it goes back, and nothing is published. A put-back that fails carries the refusal that claims no put-back, and its own sentence says where the receipt is.
   await putBackRetiredReceipt(
     context,
@@ -4125,27 +4178,29 @@ async function retireStaleReceipt(
   throw changedRecordRefusal(context, true)
 }
 
+/** A first setup's old record at its private name as {@link retireStaleReceipt} verified it there: that name and its look right before the read that found the receipt this run read ({@link LeftoverLookback}). */
+type RetiredMove = { retiredPath: string; look: LeftoverLookback }
+
 /**
- * Tells whether a record file holds the given receipt, read without following a link; called by {@link retireStaleReceipt} on the file it just moved aside.
+ * Tells whether a record file holds the given receipt, read without following a link right after a look at its name; called by {@link retireStaleReceipt} on the file it just moved aside.
  * @param context - The run.
  * @param path - The record file.
  * @param expected - The receipt it must hold.
- * @returns `true` when the file parses to the same receipt (compared in canonical form); `false` when it holds another one or cannot be read as a receipt.
+ * @returns The look at the name before the read ({@link readLookedRecord}) when the file parses to the same receipt (compared in canonical form); undefined when it holds another one, cannot be read as a receipt or the name is empty.
  * @example
- * await holdsReceipt(context, retiredPath, receipt) // => true right after the move of the receipt that was read
+ * await heldReceiptLook(context, retiredPath, receipt) // => { ino: 42n, size: 310n, mtimeNs, ctimeNs } right after the move of the receipt that was read
  */
-async function holdsReceipt(
+async function heldReceiptLook(
   context: Context,
   path: string,
   expected: Receipt,
-): Promise<boolean> {
-  const moved = await readRecord(
-    path,
-    receiptSchema,
-    context.retry,
-    context.seam,
-  ).catch(() => undefined)
-  return moved !== undefined && canonicalJson(moved) === canonicalJson(expected)
+): Promise<LeftoverLookback | undefined> {
+  const moved = await readLookedRecord(context, path)
+  // Nothing there, a failed read, or bytes that are no receipt: not the receipt this run read.
+  if (typeof moved !== 'object' || moved.read === 'other') return undefined
+  return canonicalJson(moved.read) === canonicalJson(expected)
+    ? moved.look
+    : undefined
 }
 
 /**
@@ -4640,7 +4695,7 @@ async function readStandingReceipt(
 type LookedRecord = { read: Receipt | 'other'; look: LeftoverLookback }
 
 /**
- * Looks at a record's name, then reads the file, so a later look ({@link stillnessOf}) tells whether the name still shows the file that was read; called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name, and by {@link readMovedForPutBack} for that private name right before a put-back's link.
+ * Looks at a record's name, then reads the file, so a later look ({@link stillnessOf}) tells whether the name still shows the file that was read; called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name, and by {@link readMovedForPutBack} for that private name right before a put-back's link, and by {@link heldReceiptLook} for that private name right after a first setup moved its old record there.
  * @param context - The run.
  * @param path - The record file.
  * @returns
@@ -5445,7 +5500,7 @@ async function publishEntry(
   const installationId = installationIdOf(isFirst ? undefined : receipt)
   const root = rootWithEntry(look, entry)
   await context.seam?.afterRead?.()
-  const { config, keptLeft, isRecorded } = await publishRoot(
+  const { config, keptLeft, isRecorded, isRetiredKept } = await publishRoot(
     context,
     root,
     look,
@@ -5485,8 +5540,8 @@ async function publishEntry(
     if (!isFirst) throw cause
     throw await takeOutUnrecordedEntry(context, written, cause, copies)
   }
-  // A record that names a copy that stays is kept, so the next run settles that copy.
-  if (keptLeft.length === 0) await dropPending(context)
+  // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it.
+  if (keptLeft.length === 0 && !isRetiredKept) await dropPending(context)
   const cleanupFailure = cleanupFailureOf(copies.asTracked)
   return cleanupFailure ? { generation, cleanupFailure } : { generation }
 }
