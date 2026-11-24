@@ -11356,6 +11356,90 @@ test("A setup whose old record's private file is replaced while Codebook reads i
   assert.deepEqual(await readRecordFile(storage, 'receipt.json'), newerReceipt)
 })
 
+test('A setup whose delete of its old record beside a newer record of the same entry finds the private name empty keeps its publish record, so a file a sync tool puts back right after is settled by the next setup, which finds that entry current', async (context) => {
+  // Value: protects=in the setup that moved the old record to its private name, a delete there beside a record that covers it that answers that the name is empty never ends the publish record that leads there, because Codebook put a verified file there moments earlier, so a file a sync tool moved away and puts back right after that delete is still reached by the next run, which drops it beside the record that covers it (Cycle 0148 ship review); fails_when=pending.json is gone or lacks the mark that nothing was linked, the file put back changes or is gone, the refusal is another sentence, or the next setup answers anything but current, leaves that file or changes the record at receipt.json; no_claim=a real sync tool (the config module is loaded with an unlink that, for the private name, moves the file away, deletes nothing there and puts the file back before it answers ENOENT, and with a link that saves a newer record of the same entry at receipt.json and moves the old config back), and a file put there between a later run's last look and the end of the publish record (residual c)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const newerReceipt = {
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000148104',
+  }
+  let putBackFrom: string | undefined
+  let hasMovedAway = false
+  const movingAwayAroundDelete = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            writeFileSync(receiptPath, JSON.stringify(newerReceipt))
+            moveBack()
+          }
+          if (to === receiptPath) putBackFrom = from
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          if (path !== putBackFrom || hasMovedAway) return unlink(path)
+          // A sync tool moves the old record away right before the delete and puts it back right after it answered.
+          hasMovedAway = true
+          const asidePath = join(home, 'synced-record.json')
+          renameSync(path, asidePath)
+          try {
+            return await unlink(path)
+          } finally {
+            renameSync(asidePath, path)
+          }
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await movingAwayAroundDelete
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const retiredPath = putBackFrom ?? 'no put-back'
+  const recordsAfterRefusal = await recordsIn(storage)
+  const restoredAfterRefusal = existsSync(retiredPath)
+    ? JSON.parse(readFileSync(retiredPath, 'utf8'))
+    : 'absent'
+  const markAfterRefusal = existsSync(pendingPath)
+    ? (await readRecordFile(storage, 'pending.json')).notLinked
+    : 'absent'
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasMovedAway, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to settle that record beside what stands at ${receiptPath} (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and compares a record of Devin Desktop's MCP config at ${configPath} that stands there by then with what stands at ${receiptPath}, and puts that record back only while nothing stands there; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    basename(retiredPath),
+  ])
+  assert.deepEqual(restoredAfterRefusal, receiptBefore)
+  assert.equal(markAfterRefusal, true)
+  assert.equal(next, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), newerReceipt)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test("A setup whose old record's private file is deleted right before Codebook's last look at it beside a matching record keeps its publish record and says that nothing stood there", async (context) => {
   // Value: protects=a put-back whose last look finds the old record's private name empty keeps the publish record that leads there and says so, because in the setup that moved the record there an empty name proves nothing: another program acts on the folder (Cycle 0148 task 7); fails_when=the publish record is gone or lacks the mark that nothing was linked, the refusal lacks the sentence that nothing stood at the private name, or the record at receipt.json is gone or changed; no_claim=a real sync tool (seam.beforeLeftoverCheck deletes the private file once, right before the put-back's last look at that name, and the link stub saves a newer record of the same entry at receipt.json and moves the old config back), and a file put at the private name between a later run's last look and the end of the publish record (residual c)
   // Arrange
@@ -11415,7 +11499,7 @@ test("A setup whose old record's private file is deleted right before Codebook's
   assert.equal(hasDeleted, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to put that record back (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and puts back a record of Devin Desktop's MCP config at ${configPath} that stands there by then; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to settle that record beside what stands at ${receiptPath} (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and compares a record of Devin Desktop's MCP config at ${configPath} that stands there by then with what stands at ${receiptPath}, and puts that record back only while nothing stands there; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(recordsAfterRefusal, ['pending.json', 'receipt.json'])
   assert.equal(markAfterRefusal, true)
@@ -11502,7 +11586,7 @@ test("A setup whose old record's private file comes back right after Codebook's 
   assert.equal(hasRestored, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to put that record back (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and puts back a record of Devin Desktop's MCP config at ${configPath} that stands there by then; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to settle that record beside what stands at ${receiptPath} (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and compares a record of Devin Desktop's MCP config at ${configPath} that stands there by then with what stands at ${receiptPath}, and puts that record back only while nothing stands there; then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(restoredAfterRefusal, restoredText)
   assert.deepEqual(recordsAfterRefusal, [
@@ -11585,7 +11669,7 @@ test("A setup whose old record's private file comes back right after Codebook's 
   assert.equal(hasRestored, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to put that record back (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and puts back a record of Devin Desktop's MCP config at ${configPath} that stands there by then; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to settle that record beside what stands at ${receiptPath} (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and compares a record of Devin Desktop's MCP config at ${configPath} that stands there by then with what stands at ${receiptPath}, and puts that record back only while nothing stands there; then run Codebook: Set Up AI Chat again.`,
   )
   assert.equal(restoredAfterRefusal, restoredText)
   assert.deepEqual(recordsAfterRefusal, [
@@ -11671,7 +11755,7 @@ test("A setup whose old record's private file is gone at its first look beside a
   assert.equal(hasRestored, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to put that record back (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and puts back a record of Devin Desktop's MCP config at ${configPath} that stands there by then; then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook moved its own old record of a setup whose entry is gone from ${receiptPath} to ${retiredPath}, and nothing stood at ${retiredPath} when it went to settle that record beside what stands at ${receiptPath} (another program moved or deleted it), so it kept its publish record at ${pendingPath}, and the next run looks at ${retiredPath} again and compares a record of Devin Desktop's MCP config at ${configPath} that stands there by then with what stands at ${receiptPath}, and puts that record back only while nothing stands there; then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(recordsAfterRefusal, [
     'pending.json',
