@@ -172,7 +172,7 @@ type Context = {
   rollbackOf?: string
   /** Set only on a take-back's context ({@link rollbackContextOf} with a generation) whose run tracks the `pending.json` it read ({@link trackedPublishContext}): that run, so the take-back moves the config aside or away only while that record, which proves the entry is the failed setup's, still stands as the run read or last wrote it ({@link assertTakeBackRecordStill}). */
   takeBackRecordRun?: Context
-  /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal, and for the rest of {@link inspect} on every run that read a `pending.json`, which tracks that record the same way: a run that holds a legacy journal the version that journal's decision read ({@link heldPublishContext}), any other the version its own read saw ({@link trackedPublishContext}): the version of the record that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}) and cleared once it deleted that record itself ({@link dropTrackedJournal}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}), and so does a write at a rollback journal's name found empty; a publish record's name found empty is refused instead (`refusesEmptyName`). */
+  /** Set on the context {@link settleRollbackJournal} settles a journal with and on every take-back's context ({@link rollbackContextOf} with a generation), which makes their pending path a tracked journal, and for the rest of {@link inspect} on every run that read a `pending.json`, which tracks that record the same way: a run that holds a legacy journal the version that journal's decision read ({@link heldPublishContext}), any other the version its own read saw ({@link trackedPublishContext}): the version of the record that run read (none for a take-back, whose first write claims the name), replaced by each version it writes at its pending path ({@link writeRecord}) and cleared once it deleted that record itself ({@link dropTrackedJournal}). After {@link inspect}, the setup's publish, the removal and the removal retry track their own `pending.json` the same way, from the version inspect left there ({@link ownRecordContext}). Every write and delete there looks at the name first and once more right before its rename or unlink, and goes on only while the name shows this version, or is empty; otherwise it throws a {@link JournalConflictError} and leaves the name as it is ({@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}). A write while no version is known claims the name, never replacing what stands there ({@link claimJournal}), and so does a write at a rollback journal's name found empty; a publish record's name found empty is refused instead (`refusesEmptyName`). */
   journalVersion?: {
     current: RecordVersion | undefined
     /** Set when the tracked record is the publish record a decision read ({@link heldPublishContext}, {@link markTakeBackOwed}) or `pending.json` as a run read it ({@link trackedPublishContext}): while a version is known, an empty name means that record disappeared after the read, so a write there throws a `gone` {@link JournalConflictError} instead of writing the record back ({@link writeTrackedJournal}). A rollback journal's tracker leaves it unset: that journal is this run's own record of what it still tracks, so a write claims its empty name again. */
@@ -767,16 +767,19 @@ function dropPending(context: Context): Promise<void> {
 
 /**
  * Removes the record of a removal or take-back that took the entry out, as the last step before it reports success; called by {@link takeEntryOut}, {@link settleMovedAside} and {@link finishRemoval}.
- * Any failure leaves a record the next run finds stale, as {@link dropPending} does, except another file at a tracked rollback record's name, or a name that cannot be read again ({@link JournalConflictError}): what stands there stays, and the run must not go on as if the take-back were settled, so the conflict is thrown as a {@link TakenOutConflictError}, which says that the entry is out already and keeps the conflict's kind ({@link rollBackPublishedEntry}).
+ * Any failure leaves a record the next run finds stale, as {@link dropPending} does, except another file at a take-back's rollback record's name, or a name that cannot be read again ({@link JournalConflictError}): what stands there stays, and the run must not go on as if the take-back were settled, so the conflict is thrown as a {@link TakenOutConflictError}, which says that the entry is out already and keeps the conflict's kind ({@link rollBackPublishedEntry}). A removal's own record ({@link ownRecordContext}) that another program replaced stays for the next run as such a stale record does, and the removal, whose entry is out, reports success.
  * @param context - The run; its pending path is the record.
- * @throws A {@link TakenOutConflictError}, with the conflict's kind, when a tracked record's name shows another file or cannot be read again; nothing is deleted then.
+ * @throws A {@link TakenOutConflictError}, with the conflict's kind, when a take-back's tracked record's name shows another file or cannot be read again; nothing is deleted then.
  * @example
  * await dropFinishedRecord(rollbackContext) // pending.json.rollback is gone, or the call throws once a backup put another journal there
  */
 async function dropFinishedRecord(context: Context): Promise<void> {
   await removeRecord(context).catch((error: unknown) => {
-    // Another file at a tracked record's name: the entry is out, and the run goes no further.
-    if (error instanceof JournalConflictError)
+    // Another file at a take-back's record's name: the entry is out, and the run goes no further.
+    if (
+      error instanceof JournalConflictError &&
+      context.rollbackOf !== undefined
+    )
       throw new TakenOutConflictError(error)
   })
 }
@@ -5975,6 +5978,9 @@ async function rollBackPublishedEntry(
   }
 }
 
+/** The end of a rollback journal's name beside `pending.json` ({@link rollbackContextOf}); {@link journalConflictError} words a conflict at a name with it as a rollback record's. */
+const ROLLBACK_JOURNAL_SUFFIX = '.rollback'
+
 /**
  * The run with a pending record of its own for a rollback, so the setup's record is never overwritten; its name differs from the one {@link recoverLeftovers} reads.
  * @param context - The run.
@@ -5989,7 +5995,7 @@ function rollbackContextOf(
 ): Context {
   return {
     ...context,
-    pendingPath: `${context.pendingPath}.rollback`,
+    pendingPath: `${context.pendingPath}${ROLLBACK_JOURNAL_SUFFIX}`,
     // A caller's tracked version is of its own pending path ({@link heldPublishContext}), never of this journal; a take-back's own tracker below replaces it.
     journalVersion: undefined,
     ...(publishGeneration !== undefined && {
@@ -6146,11 +6152,11 @@ async function takeOutUnrecordedEntry(
  * Publishes the config with Codebook's entry: the pending record is written by {@link publishRoot} before the rename, the receipt after it.
  * A first setup ({@link isFirstSetup}) records its entry hash with the {@link FIRST_SETUP_HASH_PREFIX} and `firstSetup`, so no Codebook version adopts its entry before its receipt exists and this one takes it back ({@link isTakeBackOwed}); the receipt holds the plain hash.
  * An existing `codebook` entry keeps the keys Devin manages itself (`disabled`, which Customize sets when the server is toggled off, and `disabledTools`); any other added key makes the entry an edit that is never replaced.
- * @param context - The run; its entry must be set.
+ * @param context - The run; its entry must be set, and it tracks its own record from the version {@link inspect} left there ({@link ownRecordContext}), so a record another program puts at `pending.json` meanwhile is neither written over nor deleted, up to the limit of the last look before a rename or unlink ({@link writeTrackedJournal}, {@link dropTrackedJournal}).
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
  * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted; an empty generation when the run has no entry.
- * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects.
+ * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -7042,7 +7048,7 @@ function unmatchedJournalSentence(
 
 /**
  * Builds the refusal for a tracked rollback journal ({@link Context.journalVersion}) whose name no longer shows the version this run settled or wrote (`changed`), shows nothing (`gone`), or cannot be read again (`unread`); thrown by {@link lookAtTrackedJournal}, {@link assertTrackedJournalStill}, {@link claimJournal}, {@link writeTrackedJournal} and {@link dropTrackedJournal}, so nothing is written or deleted at that name and the run goes no further ({@link settleRollbackJournal}).
- * The tracked record of a run's own `pending.json` (`refusesEmptyName`: {@link heldPublishContext}, {@link trackedPublishContext}, {@link markTakeBackOwed}) is named as Codebook's record of an earlier change, never as a rollback record, wherever its conflict surfaces; a held run's caller words it with both records instead ({@link publishRecordConflict}).
+ * A tracked `pending.json` (the record a decision read, `refusesEmptyName`: {@link heldPublishContext}, {@link trackedPublishContext}, {@link markTakeBackOwed}; or the run's own record after {@link inspect}, {@link ownRecordContext}) is named as Codebook's record of an earlier change, never as a rollback record, wherever its conflict surfaces; a held run's caller words it with both records instead ({@link publishRecordConflict}).
  * @param context - The run whose pending path is tracked: the rollback's context ({@link rollbackContextOf}) or a run tracking `pending.json`; its retry ends the sentence.
  * @param kind - What the look found.
  * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
@@ -7056,9 +7062,10 @@ function journalConflictError(
   kind: JournalConflictError['kind'],
   cause?: unknown,
 ): JournalConflictError {
-  const sentence = context.journalVersion?.refusesEmptyName
-    ? earlierRecordSentence(context, kind)
-    : rollbackRecordSentence(context, kind)
+  // The name decides the wording, whichever tracker reached it: a rollback journal is that record, `pending.json` Codebook's record of an earlier change.
+  const sentence = context.pendingPath.endsWith(ROLLBACK_JOURNAL_SUFFIX)
+    ? rollbackRecordSentence(context, kind)
+    : earlierRecordSentence(context, kind)
   return new JournalConflictError(
     sentence,
     kind,
@@ -7412,6 +7419,8 @@ type Inspection = {
   receipt: Receipt | undefined
   /** Set when this run's take-back of an interrupted first setup removed the entry (or the file Codebook created): the removal answers it instead of `not-managed`. */
   tookBack?: 'file-removed' | 'removed'
+  /** The version of `pending.json` this run read or last wrote and left standing ({@link Context.journalVersion}); undefined when the run found that name empty or emptied it itself. The rest of the run writes and deletes its own record only from that version on ({@link ownRecordContext}). */
+  pendingVersion?: RecordVersion
 }
 
 /**
@@ -7467,7 +7476,24 @@ async function inspect(context: Context): Promise<Inspection> {
     throw mergeWithLeftover(run, cause, phase, reported, isHandedNow)
   })
   if (pending && reported) throw unsettledRefusal(run, phase, reported)
-  return inspection
+  // The rest of the run writes and deletes its own record only from the version this run left at that name ({@link ownRecordContext}).
+  return { ...inspection, pendingVersion: run.journalVersion?.current }
+}
+
+/**
+ * Makes the rest of a locked run track its own `pending.json` from the version {@link inspect} left at that name ({@link Inspection.pendingVersion}), so the setup's publish, the removal and the removal retry write that record only while its name shows the version this run read or last wrote, claim a name this run left or found empty instead of writing over what another program put there ({@link claimJournal}), and delete it only as the version they last wrote ({@link dropTrackedJournal}); a record a backup or sync tool puts at that name meanwhile stays for the next run. Called by {@link writeManagedDevinMcpEntry}, {@link refreshManagedDevinMcpEntry} and {@link removeManagedDevinMcpEntry} right after {@link inspect}.
+ * Unlike the record a decision read ({@link trackedPublishContext}), this run's own record is written again at a name another program emptied, as a rollback journal is: it is the run's own record of what it still tracks.
+ * @param context - The locked run.
+ * @param inspection - What {@link inspect} returned; only its {@link Inspection.pendingVersion} is used.
+ * @returns The run tracking its own record.
+ * @example
+ * ownRecordContext(context, await inspect(context)).journalVersion // => { current: undefined } once inspect retired the record it read
+ */
+function ownRecordContext(
+  context: Context,
+  { pendingVersion }: Pick<Inspection, 'pendingVersion'>,
+): Context {
+  return { ...context, journalVersion: { current: pendingVersion } }
 }
 
 /**
@@ -7711,9 +7737,12 @@ export async function writeManagedDevinMcpEntry(
 }> {
   return inLockedFolder(storageRoot, homeRoot, entry, seam, async (context) => {
     const { path, entryHash, retry } = context
-    const { look, current, receipt } = await inspect(context)
+    const inspection = await inspect(context)
+    const { look, current, receipt } = inspection
+    // The publish writes and deletes its own record only from the version inspect left there.
+    const run = ownRecordContext(context, inspection)
     if (current === undefined) {
-      const published = await publishEntry(context, look, receipt)
+      const published = await publishEntry(run, look, receipt)
       return { status: 'installed', path, ...published }
     }
     if (!receipt)
@@ -7740,7 +7769,7 @@ export async function writeManagedDevinMcpEntry(
         ...disabled,
       }
     }
-    const published = await publishEntry(context, look, receipt)
+    const published = await publishEntry(run, look, receipt)
     return { status: 'updated', path, ...published, ...disabled }
   })
 }
@@ -7771,7 +7800,8 @@ export async function refreshManagedDevinMcpEntry(
 }> {
   return inLockedFolder(storageRoot, homeRoot, entry, seam, async (context) => {
     const { path, entryHash } = context
-    const { look, current, receipt } = await inspect(context)
+    const inspection = await inspect(context)
+    const { look, current, receipt } = inspection
     if (!receipt || current === undefined)
       return { status: 'not-managed', path }
     const disabled = disabledFlagOf(current)
@@ -7785,7 +7815,12 @@ export async function refreshManagedDevinMcpEntry(
       await withInstallationId(context, receipt)
       return { status: 'current', path, ...disabled }
     }
-    const published = await publishEntry(context, look, receipt)
+    // The publish writes and deletes its own record only from the version inspect left there.
+    const published = await publishEntry(
+      ownRecordContext(context, inspection),
+      look,
+      receipt,
+    )
     return {
       status: 'refreshed',
       path,
@@ -7836,7 +7871,7 @@ function removalOwnership(
  * @param context - The run.
  * @param owned - The present config and the receipt that owns its entry ({@link removalOwnership}).
  * @returns `file-removed` when the file went, `removed` when only the entry went, and the private files that could not be deleted (empty when none).
- * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot}, and an {@link unrecordedRemovalRefusal} when the reduced config stands but the completed record could not be written (the receipt stays); a {@link TakenOutConflictError} when the entry is out but a take-back's tracked rollback record could not be deleted because its name shows another file ({@link dropFinishedRecord}).
+ * @throws The refusals of {@link deleteConfig}, {@link assertRewritable} and {@link publishRoot} (a removal's own record that cannot be written first, because another file stands at its name, among them: {@link ownRecordContext}), and an {@link unrecordedRemovalRefusal} when the reduced config stands but the completed record could not be written (the receipt stays); a {@link TakenOutConflictError} when the entry is out but a take-back's tracked rollback record could not be deleted because its name shows another file ({@link dropFinishedRecord}).
  * @example
  * await takeEntryOut(context, owned) // => { status: 'removed' }
  */
@@ -8019,8 +8054,10 @@ export async function removeManagedDevinMcpEntry(
       // Read before inspect retires it: an earlier removal that took the entry out and left its record unwritten.
       const wasUnrecorded = await hasUnrecordedRemoval(context)
       const inspected = await inspect(context)
-      // The retry has read the record; it ends it now ({@link inspect} leaves an unrecorded removal's record for this read).
-      if (wasUnrecorded) await dropPending(context)
+      // From here the removal writes and deletes its own record only from the version inspect left there.
+      const run = ownRecordContext(context, inspected)
+      // The retry has read the record; it ends it now, only as the version inspect read ({@link inspect} leaves an unrecorded removal's record for this read).
+      if (wasUnrecorded) await dropPending(run)
       const ownership = removalOwnership(inspected, options.expectedGeneration)
       // Not Codebook's entry to take out (gone, changed, or a newer setup's): answer without touching the config.
       if ('status' in ownership)
@@ -8030,7 +8067,7 @@ export async function removeManagedDevinMcpEntry(
           inspected,
           wasUnrecorded,
         )
-      const { status, keptLeft } = await takeEntryOut(context, ownership)
+      const { status, keptLeft } = await takeEntryOut(run, ownership)
       return dropReceiptAfterRemoval(
         context.receiptPath,
         status,
