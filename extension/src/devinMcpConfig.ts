@@ -1592,6 +1592,25 @@ function foreignKeptRecordOf(record: Pending): Pending {
 }
 
 /**
+ * Gives the identity of the old receipt a first setup moves aside: the bytes' hash its publish record names ({@link movedIdentityOf}) and the inode of the version its run read at `receipt.json` ({@link Context.receiptVersion}), which {@link readRetiringReceipt} checked right before that record was written, so the check right after the move ({@link retireStaleReceipt}) and the put-back after a failed link take only that very file, never a copy with the same bytes at another inode; called only by {@link linkRetiringStaleReceipt}.
+ * @param journal - The publish record as written.
+ * @param read - The version the run read at `receipt.json`; undefined when it read none.
+ * @returns The record's identity with that inode; without the inode when the run read no version; undefined when the record names no bytes, so nothing moves.
+ * @example
+ * retiringIdentityOf({ ...journal, retiresReceipt: { sha256: '9f86…' } }, { ino: 42n, sha256: '9f86…' }) // => { sha256: '9f86…', ino: 42n }
+ * retiringIdentityOf({ ...journal, retiresReceipt: true }, { ino: 42n, sha256: '9f86…' })                 // => undefined
+ */
+function retiringIdentityOf(
+  journal: Pending,
+  read: RecordVersion | undefined,
+): MovedIdentity | undefined {
+  const named = movedIdentityOf(journal)
+  // A record that names no bytes moves nothing; the inode comes only from the run's own read.
+  if (named === undefined || read === undefined) return named
+  return { ...named, ino: read.ino }
+}
+
+/**
  * Moves the stale receipt aside, links the staged file in and settles that receipt's private name; the steps of {@link linkWithoutStaleReceipt}, which marks the record when the receipt could not go back.
  * @param context - The run.
  * @param temporary - The staged file.
@@ -1608,8 +1627,8 @@ async function linkRetiringStaleReceipt(
   staleReceipt: Receipt | undefined,
   journal: Pending,
 ): Promise<LinkedRecord> {
-  // The publish record names the bytes of the receipt that moves; a record without them moves nothing.
-  const identity = movedIdentityOf(journal)
+  // The publish record names the bytes of the receipt that moves, the run's read its inode; a record without the bytes moves nothing.
+  const identity = retiringIdentityOf(journal, context.receiptVersion.current)
   const moved =
     staleReceipt && identity && journal.generation
       ? await retireStaleReceipt(context, identity, journal.generation)
@@ -5599,11 +5618,11 @@ function retiredReceiptPathOf(context: Context, generation: string): string {
   return `${context.receiptPath}.${generation}.retired`
 }
 
-/** What names the file a first setup moved to its old record's private name: the SHA-256 of its bytes, and for the setup's undo of a move that found another receipt ({@link retireStaleReceipt}) the inode the look before the move found at `receipt.json`; a byte-identical copy on another inode still matches a record's identity. */
+/** What names the file a first setup moved to its old record's private name: the SHA-256 of its bytes, and, in the setup itself, the inode its run read at `receipt.json` ({@link retiringIdentityOf}) or, for its undo of a move that found another receipt ({@link retireStaleReceipt}), the inode the look before the move found there; at a later run a byte-identical copy on another inode still matches a record's identity, which names no inode. */
 type MovedIdentity = { sha256: string; ino?: bigint }
 
 /**
- * Gives the identity a publish record names for the file its first setup moved to the old record's private name; called by {@link settleRetiredReceipt}, {@link retiredReceiptFateOf} and {@link linkRetiringStaleReceipt}.
+ * Gives the identity a publish record names for the file its first setup moved to the old record's private name; called by {@link settleRetiredReceipt}, {@link retiredReceiptFateOf} and {@link retiringIdentityOf}.
  * @param pending - The publish record as read or written.
  * @returns The bytes' hash of this build's record ({@link retiredReceiptSchema}); undefined for `true`, `foreign` and a record without a hash, which name no file, so no file there is put back or deleted on their word.
  * @example
@@ -5660,11 +5679,11 @@ function undoIdentityOf(
 }
 
 /**
- * Reads the old receipt a first setup is about to move aside once more, through one handle, right before the publish record that names its bytes is written, so the move goes on only with those bytes ({@link Pending.retiresReceipt}); called only by {@link publishRoot}, before anything is staged.
+ * Reads the old receipt a first setup is about to move aside once more, through one handle, right before the publish record that names its bytes is written, so the move goes on only with those bytes ({@link Pending.retiresReceipt}) and only while `receipt.json` still shows the version the run's own read found there ({@link Context.receiptVersion}: the inode and the raw bytes' hash), which the check right after the move compares again ({@link linkRetiringStaleReceipt}); called only by {@link publishRoot}, before anything is staged.
  * @param context - The run.
  * @param staleReceipt - The receipt the run's inspection read.
- * @returns The SHA-256 of the bytes read, which parse to that receipt; undefined when nothing stands at `receipt.json` any more, so nothing is moved aside.
- * @throws A {@link staleReceiptRefusal} when the name holds a link, no regular file, too many bytes, or cannot be read; a {@link changedRecordRefusal} (no put-back claimed) when the bytes no longer parse to that receipt. Nothing is written or moved then.
+ * @returns The SHA-256 of the bytes read, which parse to that receipt; undefined when the run read no version there and nothing stands there now, so nothing is moved aside.
+ * @throws A {@link staleReceiptRefusal} when the name holds a link, no regular file, too many bytes, or cannot be read; a {@link changedRecordRefusal} (no put-back claimed) when the name no longer shows the version the run read (another inode, other bytes, or nothing: a sync tool may have put a copy there or moved that record away) or the bytes no longer parse to that receipt. Nothing is written or moved then.
  * @example
  * await readRetiringReceipt(context, staleReceipt) // => '9f86…'
  */
@@ -5683,8 +5702,17 @@ async function readRetiringReceipt(
     // A name the move could not take safely: nothing moves, as when the move itself fails.
     throw staleReceiptRefusal(context, cause)
   }
-  // Gone since the inspection: nothing stands to move aside.
-  if (read === undefined) return undefined
+  const expected = context.receiptVersion.current
+  // Nothing was read there and nothing stands there: nothing to move aside.
+  if (read === undefined && expected === undefined) return undefined
+  // Only the version the run read moves aside: a name emptied since, or a file put there since (even a copy with the same bytes at another inode), stays as it is.
+  if (
+    read === undefined ||
+    expected === undefined ||
+    read.ino !== expected.ino ||
+    bytesSha256(read.bytes) !== expected.sha256
+  )
+    throw changedRecordRefusal(context, false)
   let receipt: Receipt
   try {
     receipt = parseRecord(
@@ -5706,7 +5734,7 @@ async function readRetiringReceipt(
  * Moves the receipt of an entry that is gone to its private name ({@link retiredReceiptPathOf}) right before a first setup links its config in, so no reader takes the new entry for that receipt's, and a run that stops before the new receipt leaves an entry that is taken back; called by {@link linkWithoutStaleReceipt} when {@link isFirstSetup} held and a receipt stood, once the setup's own publish record, which names that move ({@link Pending.retiresReceipt}), is written.
  * Safe because the entry that receipt owned no longer stands, so it covers nothing. A move instead of a delete: putting the receipt back after a failed link needs no free space ({@link putBackRetiredReceipt}). Only a regular file moves, and the file that moved must hold the bytes this run's publish record names ({@link isMovedFile}): another one, saved at that name since, goes back and the setup refuses, but only while the file at the private name is provably the one the move took there (the inode the look before the move found, and the bytes read right after it, {@link undoIdentityOf}); without that proof nothing goes to `receipt.json`, and that file is kept and named.
  * @param context - The run.
- * @param identity - The bytes of the receipt this run read, as its publish record names them ({@link movedIdentityOf}).
+ * @param identity - The bytes of the receipt this run read, as its publish record names them, and the inode its run read them from ({@link retiringIdentityOf}), so a copy with the same bytes that a sync tool swapped in at another inode right before the move goes back.
  * @param generation - The generation of the publish; names the private path.
  * @returns The private path that holds the receipt now, with the look at that name before the read that found the receipt there ({@link RetiredMove}), so the delete after the link acts only on that file ({@link dropMovedAfterLink}); undefined when nothing stood at the receipt's name any more, so nothing is to put back.
  * @throws A {@link staleReceiptRefusal} when the name holds no regular file or the move fails, and a {@link changedRecordRefusal} once another receipt that moved went back; nothing is linked then. An {@link UnrestoredReceiptError} carrying that refusal, worded without the put-back, when the other receipt could not go back.

@@ -20626,6 +20626,118 @@ test('A setup whose old record changed right before it moves that record aside p
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
 })
 
+test('A first setup never moves aside a file with the same bytes as its old record that a sync tool put at receipt.json after the setup read that record: it changes nothing, and the next setup retires that file once it has read it', async (context) => {
+  // Value: protects=a first setup moves its old record aside only while receipt.json still shows the version its run read there (the inode and the hash of the raw bytes), so a copy a sync tool put there at another inode after that read stays where it is, even with the same bytes, and nothing is published (Cycle 0149 task 26); fails_when=the setup resolves or says anything but the changed-record sentence without a put-back, receipt.json no longer shows the sync tool's file (its inode or its bytes), a config, a pending record or a private name of the record is left, or the next setup does not install; no_claim=a real sync tool (seam.afterRead swaps a copy of the record in at another inode once, after the run's read of receipt.json and before the setup reads it again to name its bytes), a swap after that read again (its own test)
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await arrangeMovedAwayConfig(context)
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let syncedIno = 0
+
+  // Act
+  const setupOutcome = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterRead: () => {
+      if (syncedIno !== 0) return
+      // A sync tool puts a copy of the same record back at another inode after the run read it.
+      swapFile(receiptPath, receiptText)
+      syncedIno = statSync(receiptPath).ino
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const receiptInoAfterSetup = statSync(receiptPath).ino
+  const receiptTextAfterSetup = readFileSync(receiptPath, 'utf8')
+  const recordsAfterSetup = await recordsIn(storage)
+  const configAfterSetup = existsSync(configPath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.notEqual(syncedIno, 0)
+  assert.equal(
+    setupOutcome,
+    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it changed nothing in Devin Desktop's MCP config at ${configPath}; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(receiptInoAfterSetup, syncedIno)
+  assert.equal(receiptTextAfterSetup, receiptText)
+  assert.deepEqual(recordsAfterSetup, ['receipt.json'])
+  assert.equal(configAfterSetup, false)
+  assert.equal(next.status, 'installed')
+})
+
+test('A first setup whose old record a sync tool moves away after the setup read it changes nothing and writes no record in its place, and the next setup retires that record once it is back', async (context) => {
+  // Value: protects=a first setup goes on only while receipt.json still shows the version its run read there, so an old record a sync tool moved away after that read is never answered with a new record at its name and nothing is published (Cycle 0149 tasks 26 and 27); fails_when=the setup resolves or says anything but the changed-record sentence without a put-back, anything stands at receipt.json after it, the moved record changes, a config or a pending record is left, or the next setup, once the record is back, does not install; no_claim=a real sync tool (seam.afterRead renames receipt.json into the home folder once, after the run's read of it and before the setup reads it again to name its bytes, and the test renames it back before the next setup), a move after that read again (the first setup's own move then finds the name empty)
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await arrangeMovedAwayConfig(context)
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  const syncedPath = join(home, 'receipt-in-sync.json')
+  let hasMoved = false
+
+  // Act
+  const setupOutcome = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterRead: () => {
+      if (hasMoved) return
+      hasMoved = true
+      // A sync tool moves the record away after the run read it.
+      renameSync(receiptPath, syncedPath)
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const recordsAfterSetup = await recordsIn(storage)
+  const configAfterSetup = existsSync(configPath)
+  const syncedTextAfterSetup = readFileSync(syncedPath, 'utf8')
+  // The sync tool is done and puts the record back.
+  renameSync(syncedPath, receiptPath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMoved, true)
+  assert.equal(
+    setupOutcome,
+    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it changed nothing in Devin Desktop's MCP config at ${configPath}; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterSetup, [])
+  assert.equal(configAfterSetup, false)
+  assert.equal(syncedTextAfterSetup, receiptText)
+  assert.equal(next.status, 'installed')
+})
+
+test('A first setup whose old record a sync tool swaps for a copy with the same bytes right before the move aside puts that copy back and changes nothing', async (context) => {
+  // Value: protects=the check right after a first setup's move aside compares the inode its run read at receipt.json as well as the bytes' hash its publish record names, so a copy with the same bytes that a sync tool swapped in at another inode right before the move goes back to receipt.json, never retired and deleted as the old record, and nothing is published (Cycle 0149 task 26); fails_when=the setup resolves or says anything but the changed-record sentence with the put-back, receipt.json no longer shows the sync tool's file (its inode or its bytes), or a config, a pending record or a private name of the record is left; no_claim=a real sync tool (seam.afterCheck swaps a copy of the record in at another inode once, right before the receipt is moved aside, after the setup read it again to name its bytes), a swap between the look right before the move and the move itself (the undo then links nothing, its own tests)
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await arrangeMovedAwayConfig(context)
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let syncedIno = 0
+
+  // Act
+  const setupOutcome = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterCheck: () => {
+      if (syncedIno !== 0) return
+      // A sync tool puts a copy of the same record back at another inode right before the move aside.
+      swapFile(receiptPath, receiptText)
+      syncedIno = statSync(receiptPath).ino
+    },
+  }).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.notEqual(syncedIno, 0)
+  assert.equal(
+    setupOutcome,
+    `Codebook found that its own old record at ${receiptPath} changed while it was setting up, so it put that record back and changed nothing in Devin Desktop's MCP config at ${configPath}; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(statSync(receiptPath).ino, syncedIno)
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.equal(existsSync(configPath), false)
+})
+
 test("A setup that finds another installation's record at the old record's private name right after it moved the old record there never puts that record at receipt.json: it keeps that file and its publish record and names that file as one Codebook cannot tell is its old record", async (context) => {
   // Value: protects=a first setup whose move aside finds another file than the record it read puts back only the file that move provably took there (the inode the look before the move found, and the bytes read right after it), so another installation's record that a sync tool swapped in at the private name right after the move never reaches receipt.json (Cycle 0149 task 1, D5 on devinMcpConfig.ts:4639); fails_when=a file appears at receipt.json, the swapped-in record changes or is gone, a config is published, pending.json is gone, or the refusal is another sentence than the changed-record refusal followed by the unverified-file sentence; no_claim=a real sync tool (the config module is loaded with a rename that, for the move of receipt.json aside, moves it and then swaps another installation's record in at the private name at another inode), and a swap between the undo's last look and its link (criterion 17)
   // Arrange
