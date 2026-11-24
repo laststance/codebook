@@ -17889,6 +17889,199 @@ test('A removal that found no record of the entry never deletes one a backup res
   assert.equal(existsSync(pendingPath), false)
 })
 
+/**
+ * Writes, at `receipt.json`, Codebook's valid record of the entry in the MCP config of another home folder beside the test's own, as a copy of Codebook's storage folder made under another home folder leaves it.
+ * @param storage - Codebook's storage folder.
+ * @param home - The test's home folder; the other one is its sibling `other-home`.
+ * @returns The receipt's path, the config path that record names and its exact text.
+ * @example
+ * const { receiptPath, otherConfigPath, otherRecordText } = await writeOtherHomeRecord(storage, home)
+ */
+async function writeOtherHomeRecord(storage: string, home: string) {
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const otherConfigPath = devinMcpConfigPath(join(dirname(home), 'other-home'))
+  const otherRecordText = JSON.stringify({
+    schemaVersion: 1,
+    targetPath: otherConfigPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    installed: true,
+    generation: 'c0ffee00-0000-4000-8000-000000004901',
+    installationId: 'c0ffee00-0000-4000-8000-000000004902',
+    config: { ino: 1 },
+  })
+  await mkdir(dirname(receiptPath), { recursive: true })
+  await writeFile(receiptPath, otherRecordText)
+  return { receiptPath, otherConfigPath, otherRecordText }
+}
+
+test("A first setup whose storage holds Codebook's record of the entry in another home folder's config never writes over that record, changes no config, names that record, and runs once that record is moved away", async (context) => {
+  // Value: protects=a valid record at receipt.json that names another config path is an occupied name, never an empty one, so a first setup refuses before it publishes, never writes over that record, names it and the config it names, and runs once that record is moved to another folder (Cycle 0149 task 49); fails_when=the setup resolves or says anything but the other-config sentence, receipt.json changes, the config changes, any record stays beside receipt.json, or the setup after the record was moved away answers anything but installed or changes the moved record; no_claim=a real copy of Codebook's storage folder made under another home folder (the test writes a valid record whose targetPath names a config under a sibling home folder), whether that other config exists
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const { receiptPath, otherConfigPath, otherRecordText } =
+    await writeOtherHomeRecord(storage, home)
+  const movedAwayPath = join(home, 'other-home-record.json')
+
+  // Act
+  const setupOutcome = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const receiptAfterSetup = readFileSync(receiptPath, 'utf8')
+  const configAfterSetup = readFileSync(configPath, 'utf8')
+  const recordsAfterSetup = await recordsIn(storage)
+  // The way out the refusal names: that record goes to another folder.
+  renameSync(receiptPath, movedAwayPath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    setupOutcome,
+    `Codebook found at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, its record of that entry in the MCP config at ${otherConfigPath} instead (Codebook's storage folder may have been copied from another home folder), so it did not write over or delete that record, left it as it is and went no further; if you no longer use ${otherConfigPath}, move that record to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(receiptAfterSetup, otherRecordText)
+  assert.equal(configAfterSetup, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  assert.deepEqual(recordsAfterSetup, ['receipt.json'])
+  assert.equal(next, 'installed')
+  assert.equal(readFileSync(movedAwayPath, 'utf8'), otherRecordText)
+})
+
+test("A removal whose storage holds Codebook's record of the entry in another home folder's config never deletes that record, changes no config and names that record", async (context) => {
+  // Value: protects=a valid record at receipt.json that names another config path is never deleted by a removal of this config's entry, which finds nothing of Codebook's to take out here, refuses and names that record and the config it names, and answers not-managed once that record is moved away (Cycle 0149 task 49); fails_when=the removal resolves or says anything but the other-config sentence, receipt.json is gone or changes, the config changes, or the removal after the record was moved away answers anything but not-managed or changes the moved record; no_claim=a real copy of Codebook's storage folder made under another home folder (the test writes a valid record whose targetPath names a config under a sibling home folder), whether that other config exists
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const { receiptPath, otherConfigPath, otherRecordText } =
+    await writeOtherHomeRecord(storage, home)
+  const movedAwayPath = join(home, 'other-home-record.json')
+
+  // Act
+  const removalOutcome = await removeManagedDevinMcpEntry(storage, home).then(
+    (result) => JSON.stringify(result),
+    (error: Error) => error.message,
+  )
+  // A record the removal deleted reads as 'absent', so the assertion names it.
+  const receiptAfterRemoval = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const configAfterRemoval = readFileSync(configPath, 'utf8')
+  // The way out the refusal names: that record goes to another folder.
+  if (existsSync(receiptPath)) renameSync(receiptPath, movedAwayPath)
+  const next = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.equal(
+    removalOutcome,
+    `Codebook found at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, its record of that entry in the MCP config at ${otherConfigPath} instead (Codebook's storage folder may have been copied from another home folder), so it did not write over or delete that record, left it as it is and went no further; if you no longer use ${otherConfigPath}, move that record to another folder, then run Codebook: Remove Devin Desktop Setup again.`,
+  )
+  assert.equal(receiptAfterRemoval, otherRecordText)
+  assert.equal(configAfterRemoval, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  assert.deepEqual(next, { status: 'not-managed', path: configPath })
+  assert.equal(readFileSync(movedAwayPath, 'utf8'), otherRecordText)
+})
+
+test("A refresh that would record an entry an interrupted setup published never writes that record over Codebook's record of the entry in another home folder's config, and names that record", async (context) => {
+  // Value: protects=the adoption of an entry an interrupted setup published never writes over a valid record at receipt.json that names another config path, refuses, names that record and the config it names, and keeps the interrupted setup's record, so the refresh after that record was moved away adopts the entry (Cycle 0149 task 49); fails_when=the refresh resolves or says anything but the other-config sentence, receipt.json, pending.json or the config changes, or the refresh after the record was moved away answers anything but current with a receipt of the interrupted setup's generation; no_claim=a real copy of Codebook's storage folder made under another home folder (the test writes a valid record whose targetPath names a config under a sibling home folder) and a real interrupted older build (the test writes its setup record, without a first-setup mark, beside the config that holds its entry)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const configText = readFileSync(configPath, 'utf8')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { receiptPath, otherConfigPath, otherRecordText } =
+    await writeOtherHomeRecord(storage, home)
+  const interruptedRecordText = JSON.stringify({
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000004903',
+    stagedIno: (await stat(configPath)).ino,
+  })
+  await writeFile(pendingPath, interruptedRecordText)
+  const movedAwayPath = join(home, 'other-home-record.json')
+
+  // Act
+  const refreshOutcome = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const receiptAfterRefresh = readFileSync(receiptPath, 'utf8')
+  // A record the refresh ended reads as 'absent', so the assertion names it.
+  const pendingAfterRefresh = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const configAfterRefresh = readFileSync(configPath, 'utf8')
+  // The way out the refusal names: that record goes to another folder.
+  renameSync(receiptPath, movedAwayPath)
+  const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    refreshOutcome,
+    `Codebook found at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, its record of that entry in the MCP config at ${otherConfigPath} instead (Codebook's storage folder may have been copied from another home folder), so it did not write over or delete that record, left it as it is and went no further; if you no longer use ${otherConfigPath}, move that record to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(receiptAfterRefresh, otherRecordText)
+  assert.equal(pendingAfterRefresh, interruptedRecordText)
+  assert.equal(configAfterRefresh, configText)
+  assert.equal(next.status, 'current')
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).generation,
+    'c0ffee00-0000-4000-8000-000000004903',
+  )
+})
+
+test("A removal whose take-back of a cut-short first setup took the entry out keeps Codebook's record of the entry in another home folder's config, says so, and still answers removed", async (context) => {
+  // Value: protects=a removal whose own run took a cut-short first setup back never deletes a valid record at receipt.json that names another config path, and its notice names that record and the config it names, while the removal still reports the entry it took back (Cycle 0149 task 49); fails_when=the removal answers anything but removed with the other-config kept sentence, receipt.json is gone or changes, or the config keeps the entry or loses the other server; no_claim=a real copy of Codebook's storage folder made under another home folder (the test writes a valid record whose targetPath names a config under a sibling home folder after the first setup was cut short), a real stop of the first setup (seam.afterPublish blocks its receipt with a folder and seam.afterMoveAside ends its rollback)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const blockedReceiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(blockedReceiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(blockedReceiptPath, { recursive: true })
+  const { receiptPath, otherConfigPath, otherRecordText } =
+    await writeOtherHomeRecord(storage, home)
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home)
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 'removed',
+    path: configPath,
+    cleanupFailure: `Codebook left the file at ${receiptPath} as it is, because it holds its record of the "codebook" entry in the MCP config at ${otherConfigPath}, not in this one (Codebook's storage folder may have been copied from another home folder); if you no longer use ${otherConfigPath}, move that file to another folder.`,
+  })
+  // A record the removal deleted reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : 'absent',
+    otherRecordText,
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test("A setup that put its old record back keeps the window running while its look at receipt.json before the old record's private name goes stalls, and finishes once storage answers", async (context) => {
   // Value: protects=the synchronous last looks before a first setup deletes its old record's private name after that record went back come right after a look at receipt.json through the thread pool, so a storage that already stalls holds that look, not the extension host's thread, where the setup's budget still answers, and once storage answers the private name still goes only after those last looks (Cycle 0148 ship review); fails_when=no look at receipt.json reaches the file system's asynchronous call after the put-back's link stood (the synchronous look blocked the thread instead), the setup settles while that look is held, or after the release the setup answers anything but the changed-file refusal, receipt.json holds anything but the old record or another record stays; no_claim=a real stalled disk (an lstat of receipt.json held after the put-back's link stood, until the test releases it, stands for it), a stall that starts between that look and the synchronous one (no Node primitive closes it), and a real sync tool (seam.afterCheck moves the config back right before the link in its place)
   // Arrange

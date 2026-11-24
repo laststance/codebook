@@ -203,6 +203,8 @@ type Context = {
   /** The version of `receipt.json` the run's decisions rest on: the inode and bytes' hash its one read in {@link settleAfterRecovery} saw there (none for an empty name), replaced by each receipt this run publishes ({@link writeReceipt}), and cleared once this run deleted that receipt ({@link dropReceipt}) or moved it aside before a first setup's link ({@link retireStaleReceipt}). Every write there replaces only this version, or claims the name while none is known, and refuses an empty name while one is known (another program moved that record away, {@link writeReceipt}); every delete removes only this version, so a record a backup or sync tool puts at that name after the read stays. One object per locked run ({@link inLockedFolder}), shared by every context derived from it. */
   receiptVersion: {
     current: RecordVersion | undefined
+    /** Set by {@link settleAfterRecovery} when its read found at `receipt.json` a valid record of the entry in another config (the config path that record names, as when Codebook's storage folder was copied from another home folder): that name is occupied, never empty, so no write or delete of this run replaces or removes that record ({@link writeReceipt}, {@link dropReceipt}), a setup refuses before it publishes ({@link publishEntry}) and a removal that changed nothing refuses, both naming that record ({@link otherConfigReceiptRefusal}). */
+    otherConfigPath?: string
     /** Set by {@link assertReceiptVerified} while the publish record as read notes that a put-back left a file Codebook did not verify at `receipt.json`, and cleared by {@link settleAfterRecovery} once its read of that name passed it: every read of that name the run decides on until then passes only an empty name or the very bytes the note names ({@link assertNotedReceipt}). */
     unverifiedNote?: UnverifiedReceiptNote
   }
@@ -3743,16 +3745,19 @@ async function readReceipt(context: Context): Promise<Receipt | undefined> {
 }
 
 /**
- * Reads `receipt.json` through one handle, as {@link readVersionedRecord} does, and gives the receipt together with the version of the file that read saw; called by {@link readReceipt}, and by {@link settleAfterRecovery}, whose read is the one the run's decisions rest on, so it keeps that version as {@link Context.receiptVersion}.
+ * Reads `receipt.json` through one handle, as {@link readVersionedRecord} does, and gives the receipt together with the version of the file that read saw; called by {@link readReceipt}, and by {@link settleAfterRecovery}, whose read is the one the run's decisions rest on, so it keeps that version, and the config path a record of another config names, as {@link Context.receiptVersion}.
  * @param context - The run.
- * @returns The receipt when it covers this run's config path (undefined otherwise), and the inode and bytes' hash of the file read there whatever config it covers (undefined when the name is empty).
+ * @returns The receipt when it covers this run's config path (undefined otherwise), the inode and bytes' hash of the file read there whatever config it covers (undefined when the name is empty), and, for a valid record of another config, the config path it names (`otherConfigPath`), so that occupied name is never taken for an empty one.
  * @throws What {@link readRecord} throws for a record that is a link, no regular file, too large, unreadable or of another shape.
  * @example
  * await readReceiptWithVersion(context) // => { receipt: { schemaVersion: 1, … }, version: { ino: 42n, sha256: 'ab…' } }
+ * await readReceiptWithVersion(context) // => { version: { ino: 42n, sha256: 'ab…' }, otherConfigPath: '/Users/old/.config/devin/mcp_config.json' } after the storage folder was copied from another home folder
  */
-async function readReceiptWithVersion(
-  context: Context,
-): Promise<{ receipt?: Receipt; version?: RecordVersion }> {
+async function readReceiptWithVersion(context: Context): Promise<{
+  receipt?: Receipt
+  version?: RecordVersion
+  otherConfigPath?: string
+}> {
   const read = await readVersionedRecord(
     context.receiptPath,
     receiptSchema,
@@ -3763,17 +3768,52 @@ async function readReceiptWithVersion(
   const { record, version } = read
   return record.targetPath === context.path
     ? { receipt: record, version }
-    : { version }
+    : { version, otherConfigPath: record.targetPath }
+}
+
+/** Why `receipt.json` may hold Codebook's record of the entry in another config; named by {@link otherConfigReceiptRefusal} and {@link keptReceiptSentence}. */
+const OTHER_HOME_CAUSE =
+  "Codebook's storage folder may have been copied from another home folder"
+
+/**
+ * Stops a write of `receipt.json`, or a removal that changed nothing, while that name holds a valid record of the entry in another config ({@link Context.receiptVersion}'s `otherConfigPath`); called by {@link publishEntry} before anything is published, by {@link writeReceipt} before it stages anything, and by {@link answerRemovalWithoutTakeOut}, so that record is never written over or deleted.
+ * @param context - The run; its paths and retry are named.
+ * @throws The {@link otherConfigReceiptRefusal} while such a record stands there; nothing is changed then.
+ * @example
+ * assertNoOtherConfigReceipt(context) // throws once the storage folder holds a record of the entry in another home folder's config
+ */
+function assertNoOtherConfigReceipt(context: Context): void {
+  const { otherConfigPath } = context.receiptVersion
+  if (otherConfigPath !== undefined)
+    throw otherConfigReceiptRefusal(context, otherConfigPath)
+}
+
+/**
+ * Builds the refusal of a setup or removal that found at `receipt.json` Codebook's valid record of the entry in another config (as when Codebook's storage folder was copied from another home folder); thrown by {@link assertNoOtherConfigReceipt}. It is a {@link ReceiptConflictError}: its own sentence names that record, says Codebook left it as it is and gives the way out.
+ * @param context - The run; its paths and retry are named.
+ * @param otherConfigPath - The config path that record names.
+ * @returns The error, not thrown yet.
+ * @example
+ * throw otherConfigReceiptRefusal(context, '/Users/old/.config/devin/mcp_config.json') // 'Codebook found at …/receipt.json, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at …, its record of that entry in the MCP config at /Users/old/.config/devin/mcp_config.json instead …'
+ */
+function otherConfigReceiptRefusal(
+  { path, receiptPath, retry }: Context,
+  otherConfigPath: string,
+): ReceiptConflictError {
+  return new ReceiptConflictError(
+    `Codebook found at ${receiptPath}, where it keeps its record of the "${SERVER_NAME}" entry in Devin Desktop's MCP config at ${path}, its record of that entry in the MCP config at ${otherConfigPath} instead (${OTHER_HOME_CAUSE}), so it did not write over or delete that record, left it as it is and went no further; if you no longer use ${otherConfigPath}, move that record to another folder, ${retry}.`,
+  )
 }
 
 /**
  * Writes Codebook's record of the entry (`receipt.json`) without ever replacing a file this run did not read there; called by {@link recordPublishedEntry}, {@link adoptPending} and {@link withInstallationId}, every write of that record.
+ * A valid record of the entry in another config that the run's read found there is never written over: the write refuses before it stages anything ({@link assertNoOtherConfigReceipt}).
  * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), the staged file is renamed over it right after a synchronous look that still finds that file; while it shows nothing and no version is known (none was read there, or this run deleted it or moved it aside itself), the name is claimed ({@link claimReceiptName}), which never replaces a file; an empty name where a version is known (another program moved that record away) and anything else there stay as they are and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
  * Limits: a file put at the name between the synchronous look and the rename is replaced (no Node primitive renames over a name only while it shows an inode); one put there right after the rename or link is not looked at again here, and the next write or delete of this run finds it.
  * @param context - The run; its seam is called after the bytes were flushed and before the look at the name.
  * @param value - The complete receipt.
  * @param assertStill - What else must still hold, looked at right before the rename or link, after an awaited look at its names (and again before the rename that publishes where links fail, {@link claimReceiptName}).
- * @throws The {@link receiptConflictError}: `changed` when the name shows another file or other bytes than the version this run read, or any file while no version is known; `gone` when it shows nothing while a version is known; `unread` when it cannot be read again; what the write, the seam, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the claim throws. Nothing is published then, and what stands at the name stays.
+ * @throws The {@link otherConfigReceiptRefusal} while the run's read found a record of another config's entry there; the {@link receiptConflictError}: `changed` when the name shows another file or other bytes than the version this run read, or any file while no version is known; `gone` when it shows nothing while a version is known; `unread` when it cannot be read again; what the write, the seam, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the claim throws. Nothing is published then, and what stands at the name stays.
  * @example
  * await writeReceipt(context, written) // receipt.json holds `written`, or the call throws once a backup put another record there after the run read it
  */
@@ -3782,6 +3822,7 @@ async function writeReceipt(
   value: Receipt,
   assertStill?: StillLook,
 ): Promise<void> {
+  assertNoOtherConfigReceipt(context)
   const path = context.receiptPath
   const staged = await stageRecord(path, value)
   try {
@@ -3922,12 +3963,14 @@ function receiptConflictSentence(
  * @param context - The run.
  * @returns
  * - `gone` when nothing of the receipt stands there any more: this call deleted it, or nothing stood there (also when the run read no receipt)
- * - `kept` when the name shows another file or other bytes, any file while the run read none, or cannot be read again: what stands there stays
+ * - `kept` when the name shows another file or other bytes, any file while the run read none, or cannot be read again, and while the run's read found a record of another config's entry there ({@link Context.receiptVersion}'s `otherConfigPath`): what stands there stays
  * @throws What the unlink throws other than for a name that is gone.
  * @example
  * await dropReceipt(context) // => 'kept' once a backup put a record back at receipt.json after the removal read it
  */
 async function dropReceipt(context: Context): Promise<'gone' | 'kept'> {
+  // A record of another config's entry is never Codebook's to delete for this config.
+  if (context.receiptVersion.otherConfigPath !== undefined) return 'kept'
   const path = context.receiptPath
   let standing: InspectedCopy | undefined
   try {
@@ -8096,7 +8139,7 @@ async function markBeforeTakeBack(context: Context): Promise<MarkedTakeBack> {
  * @param look - What the config looked like.
  * @param receipt - The receipt that stands, if any; decides whether the file is still Codebook's own ({@link createdFileFor}).
  * @returns The generation recorded in the receipt, a fresh random id, and the sentence for a kept copy that could not be deleted (and, when another program kept the completed record from being written, the sentence that says so); an empty generation when the run has no entry.
- * @throws A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published. A {@link PublishUncoveredError} when another program kept the completed record from being written and the config is no longer the file this setup published with its entry ({@link settleRecordConflict}): no receipt is written, and that record, the config and the copies stay.
+ * @throws The {@link otherConfigReceiptRefusal} before anything is published while `receipt.json` holds Codebook's record of the entry in another config ({@link assertNoOtherConfigReceipt}). A {@link refusal} when the file changed before the rename or holds a number that would not survive; no record stays when nothing was published. A {@link staleReceiptRefusal} or {@link changedRecordRefusal} when a first setup cannot move the receipt of an entry that is gone aside right before its link; nothing is published then. A refusal before that link leaves that receipt as it was, and a link that fails puts it back; when it cannot go back, the refusal names where it is and the publish record stays, so the next run puts it back ({@link settleRetiredReceipt}). When the receipt of a first setup cannot be written after the entry was published, the entry is taken out again ({@link takeOutUnrecordedEntry}) and the call rejects. A {@link JournalConflictError} when the first write of its own record finds another file at `pending.json`, or not the version {@link inspect} left there ({@link writeRecord}): that file stays and nothing is published. A {@link PublishUncoveredError} when another program kept the completed record from being written and the config is no longer the file this setup published with its entry ({@link settleRecordConflict}): no receipt is written, and that record, the config and the copies stay.
  * @example
  * const published = await publishEntry(context, look, receipt)
  */
@@ -8107,6 +8150,8 @@ async function publishEntry(
 ): Promise<PublishedEntry> {
   const { entry, entryHash } = context
   if (!entry || !entryHash) return { generation: '' }
+  // A record of another config's entry at receipt.json is never written over: nothing is published.
+  assertNoOtherConfigReceipt(context)
   assertRewritable(context, look)
   assertSingleLink(context, look)
   const isFirst = isFirstSetup(look, receipt)
@@ -9881,13 +9926,18 @@ async function settleAfterRecovery(
   let look = await lookAtConfig(context)
   assertHeldJournalStill(context, held, look)
   // The receipt the run decides on: its later writes and deletes of that name act only on the version this read saw.
-  const { receipt: stored, version: storedVersion } =
-    await readReceiptWithVersion(context)
+  const {
+    receipt: stored,
+    version: storedVersion,
+    otherConfigPath,
+  } = await readReceiptWithVersion(context)
   // This read itself passes the note that receipt.json is unverified: a look before it that found the name empty grants nothing to a file put there since.
   assertNotedReceipt(context, storedVersion)
   // The note is the publish record's as read, which this read settles: the run's own later writes and put-backs answer to the records they write.
   context.receiptVersion.unverifiedNote = undefined
   context.receiptVersion.current = storedVersion
+  // A record of another config's entry occupies that name: no write or delete of this run touches it.
+  context.receiptVersion.otherConfigPath = otherConfigPath
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
   const afterTakeBack =
     pending && isTakeBackOwed(pending, stored)
@@ -10257,13 +10307,21 @@ async function dropReceiptAfterRemoval(
 }
 
 /**
- * Says that a removal whose entry went left the file at `receipt.json` as it is, because that name no longer showed the record the run read there ({@link dropReceipt} answered `kept`); used by {@link dropReceiptAfterRemoval} and, for a retry of an unrecorded removal and a removal whose run took a cut-short first setup back, by {@link answerRemovalWithoutTakeOut}.
- * @param context - The run; its receipt path is named.
- * @returns One sentence for the removal's `cleanupFailure`.
+ * Says that a removal whose entry went left the file at `receipt.json` as it is, because that name no longer showed the record the run read there, or held Codebook's record of the entry in another config ({@link dropReceipt} answered `kept`); used by {@link dropReceiptAfterRemoval} and, for a retry of an unrecorded removal and a removal whose run took a cut-short first setup back, by {@link answerRemovalWithoutTakeOut}.
+ * @param context - The run; its receipt path is named, and the config path a record of another config names ({@link Context.receiptVersion}'s `otherConfigPath`) picks the sentence.
+ * @returns One sentence for the removal's `cleanupFailure`:
+ * - for a record of another config: that the file holds Codebook's record of the entry in that config, not in this one, and is to be moved to another folder once that config is no longer used
+ * - otherwise: that Codebook could not confirm it was still the record it had read there, and the next run reads it again
  * @example
  * keptReceiptSentence(context) // => 'Codebook left the file at …/receipt.json as it is, because it could not confirm that it was still the record of that entry Codebook had read there (…); the next run reads it again.'
  */
-function keptReceiptSentence({ receiptPath }: Context): string {
+function keptReceiptSentence({
+  receiptPath,
+  receiptVersion: { otherConfigPath },
+}: Context): string {
+  // A record of another config's entry is named with that config, never as a record Codebook could not confirm.
+  if (otherConfigPath !== undefined)
+    return `Codebook left the file at ${receiptPath} as it is, because it holds its record of the "${SERVER_NAME}" entry in the MCP config at ${otherConfigPath}, not in this one (${OTHER_HOME_CAUSE}); if you no longer use ${otherConfigPath}, move that file to another folder.`
   return `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`
 }
 
@@ -10352,7 +10410,7 @@ export async function removeManagedDevinMcpEntry(
 
 /**
  * Answers a removal whose entry is not Codebook's to take out (gone, changed, or a newer setup's) without touching the config; called by {@link removeManagedDevinMcpEntry} under its lock.
- * The receipt of an entry that is gone or changed goes only while `receipt.json` still shows the record the run's own read found there ({@link dropReceipt}); a record a backup or sync tool put there after that read, also after a read that found the name empty, stays for the next run, and when the entry went (this run's take-back, or the earlier removal a retry reports) the notice says so ({@link keptReceiptSentence}).
+ * The receipt of an entry that is gone or changed goes only while `receipt.json` still shows the record the run's own read found there ({@link dropReceipt}); a record a backup or sync tool put there after that read, also after a read that found the name empty, stays for the next run, and when the entry went (this run's take-back, or the earlier removal a retry reports) the notice says so ({@link keptReceiptSentence}). A record of the entry in another config that the run's read found there always stays: a removal that changed nothing refuses, naming it ({@link assertNoOtherConfigReceipt}), and one whose take-back took the entry out names it in its notice.
  * @param context - The locked removal's paths and the version of the receipt it read.
  * @param status - What {@link removalOwnership} decided.
  * @param inspected - What {@link inspect} found under the lock.
@@ -10360,6 +10418,7 @@ export async function removeManagedDevinMcpEntry(
  * @returns
  * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload), or this run's take-back's answer; either with the kept-record sentence as `cleanupFailure` when a record stays at `receipt.json`
  * - otherwise `status` itself, with `entryStays` when `not-managed` finds the entry still in the config without its receipt.
+ * @throws The {@link otherConfigReceiptRefusal} when no take-back of this run took the entry out and `receipt.json` holds Codebook's record of the entry in another config; what {@link dropReceipt} throws.
  * @example
  * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
  * await answerRemovalWithoutTakeOut(context, 'not-managed', inspected, true) // => { status: 'removed', path, cleanupFailure: 'Codebook left the file at …/receipt.json as it is, …' } once a backup put a record back there
@@ -10370,6 +10429,8 @@ async function answerRemovalWithoutTakeOut(
   inspected: Awaited<ReturnType<typeof inspect>>,
   wasUnrecorded: boolean,
 ): Promise<DevinMcpRemovalResult> {
+  // A record of another config's entry stays, and a removal that changed nothing says so and goes no further.
+  if (!inspected.tookBack) assertNoOtherConfigReceipt(context)
   // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry, and only as the run read it.
   const receiptFate =
     status === 'superseded' ? undefined : await dropReceipt(context)
