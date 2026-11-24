@@ -2469,6 +2469,60 @@ test('A retry after a removal that took the entry out but could not record it re
   assert.equal(existsSync(join(storage, 'devin-mcp', 'receipt.json')), false)
 })
 
+test('A retry after a removal that took the entry out but could not record it keeps a record a backup restores at receipt.json after the retry read it, says so, and still reports the entry removed', async (context) => {
+  // Value: protects=the retry of an unrecorded removal deletes receipt.json only while it still shows the record the retry read, and when a backup put a record back there meanwhile it keeps that record and its notice says so, as after any removal that took the entry out (README line 95; OCR L2 P2 on answerRemovalWithoutTakeOut; Cycle 0149 review round); fails_when=the retry answers anything but removed with the kept-record sentence, or receipt.json is gone or changes; no_claim=a real backup tool (seam.afterLeftoverCheck puts a copy of the record back at receipt.json, at another inode, once, at the retry's last look at pending.json after seam.afterStat saw its read of receipt.json, the look before it ends the earlier removal's record), what the next removal does with that record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let pendingBytes = ''
+  await assert.rejects(
+    removeManagedDevinMcpEntry(storage, home, {
+      afterPublish: () => {
+        pendingBytes = readFileSync(pendingPath, 'utf8')
+        rmSync(pendingPath, { force: true })
+        mkdirSync(pendingPath)
+      },
+    }),
+    /could not write its own record/,
+  )
+  // The record's room is back, as the refusal asked.
+  rmSync(pendingPath, { recursive: true })
+  writeFileSync(pendingPath, pendingBytes)
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  let hasReadReceipt = false
+  let hasRestored = false
+
+  // Act
+  const retry = await removeManagedDevinMcpEntry(storage, home, {
+    afterStat: (path) => {
+      if (path === receiptPath) hasReadReceipt = true
+    },
+    afterLeftoverCheck: (path) => {
+      // Recovery looks at pending.json before the receipt's read too; only the look after that read ends the earlier removal's record.
+      if (path !== pendingPath || !hasReadReceipt || hasRestored) return
+      hasRestored = true
+      // A backup restores the record the retry read, at another inode, before the retry drops it.
+      swapFile(receiptPath, receiptText)
+    },
+  })
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.deepEqual(retry, {
+    status: 'removed',
+    path: configPath,
+    cleanupFailure: `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`,
+  })
+  // A record the retry deleted reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : 'absent',
+    receiptText,
+  )
+})
+
 test('A retry after a removal that could not record its completion still reports removed when another window refreshed in between', async (context) => {
   // protects: the removal retry still offers Reload Window although another window's refresh ran between the removal and the retry / fails_when: the refresh retires the unrecorded removal's record, so the retry answers not-managed and no reload is offered / no_claim: the refresh's own result; the failing record write is simulated by a folder standing where pending.json is
   // Arrange
@@ -7108,7 +7162,7 @@ test('A first setup whose receipt cannot be written leaves its entry and the set
   assert.notEqual(restoredPendingText, '')
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, restoredPendingText)
   assert.deepEqual(configAfterSetup, {
@@ -7176,7 +7230,7 @@ test('A first setup that created the config and whose receipt and take-back mark
   assert.notEqual(restoredPendingText, '')
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, restoredPendingText)
   assert.deepEqual(configAfterSetup, { mcpServers: { codebook: ENTRY } })
@@ -7227,7 +7281,7 @@ test("A first setup whose receipt and take-back mark both hit a full disk still 
   assert.notEqual(pendingAtMark, '')
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, pendingAtMark)
   assert.deepEqual(configAfterSetup, {
@@ -7239,6 +7293,48 @@ test("A first setup whose receipt and take-back mark both hit a full disk still 
     mcpServers: { alpha: { command: 'a' } },
   })
   assert.equal(existsSync(receiptPath), false)
+})
+
+test("A first setup whose receipt cannot be written and whose take-back mark finds a file at its record's dropping name leaves its entry and names both names in that refusal's own words, instead of saying another program changed its record", async (context) => {
+  // Value: protects=a take-back mark that Codebook's own step at the setup record's dropping name refuses (a file already stands at pending.json.codebook-dropping) stops the take-back before the config changes and is reported with that refusal's own sentence, which names both names and its way out, instead of saying another program changed or moved that record; the entry, the learner's other server, the setup record and the file at the dropping name stay, and no rollback record is written (OCR L3 P2 on markBeforeTakeBack; Cycle 0149 review round); fails_when=the setup answers anything but the could-not-finish-marking refusal with the receipt's sentence and the dropping-name sentence, the entry or the other server is gone, the setup record or the file at the dropping name changes or is gone, or a rollback record stays; no_claim=how such a file got there (seam.beforeRecordWrite writes it once, at the take-back mark's write after its bytes were flushed; seam.afterPublish puts a folder at receipt.json), what the next run does with both names
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const droppingText = '{"left":"by a run that stopped"}\n'
+  let pendingAtMark = ''
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    beforeRecordWrite: ({ path, record }) => {
+      if (path !== pendingPath || pendingAtMark !== '') return
+      // Only the write of the take-back mark, as the write puts it on disk.
+      if (JSON.parse(JSON.stringify(record)).takeBack !== true) return
+      pendingAtMark = readFileSync(pendingPath, 'utf8')
+      writeFileSync(droppingPath, droppingText)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.notEqual(pendingAtMark, '')
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath}.`,
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingAtMark)
+  assert.equal(readFileSync(droppingPath, 'utf8'), droppingText)
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+  assert.equal(existsSync(journalPath), false)
 })
 
 test("A first setup whose receipt cannot be written leaves its entry and another setup's record that a backup restores before it marks its take-back, and says that record changed", async (context) => {
@@ -7336,7 +7432,7 @@ test('A first setup whose receipt cannot be written never marks an older copy of
   assert.equal(JSON.parse(olderPendingText).phase, undefined)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, olderPendingText)
   assert.deepEqual(configAfterSetup, {
@@ -7395,7 +7491,7 @@ test('A first setup whose receipt cannot be written leaves its entry when its se
   assert.equal(hasReadFailed, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, pendingAtReceipt)
   assert.deepEqual(configAfterSetup, {
@@ -7455,7 +7551,7 @@ test('A first setup whose receipt cannot be written leaves its entry when a sync
   assert.notEqual(movedPendingText, '')
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(journalWriteCount, 0)
   assert.equal(awayAfterSetup, movedPendingText)
@@ -7509,7 +7605,7 @@ test('A first setup whose receipt cannot be written leaves its entry when a back
   assert.notEqual(markedPendingText, '')
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, markedPendingText)
   assert.deepEqual(configAfterSetup, {
@@ -7563,7 +7659,7 @@ test('A first setup whose receipt cannot be written leaves its entry when a back
   assert.equal(JSON.parse(restoredPendingText).takeBack, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(pendingAfterSetup, restoredPendingText)
   assert.deepEqual(configAfterSetup, {
@@ -7615,7 +7711,7 @@ test('A first setup whose receipt cannot be written leaves its entry when a sync
   assert.equal(JSON.parse(movedMarkText).takeBack, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then found its record of this setup at ${pendingPath} changed or moved away, or could not read it again (a backup or sync tool may have put an older one back or be moving it), so it left ${configPath} unchanged and that name as it is and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, and the next run reads ${pendingPath} first. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.deepEqual(configAfterSetup, {
     mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
@@ -10328,6 +10424,98 @@ test('A setup whose own record a backup puts back as it stood before the config 
   assert.equal(existsSync(pendingPath), false)
 })
 
+test("A setup whose completed-record write finds a file at that record's dropping name keeps its entry and names both names in that refusal's own words, instead of saying another program changed its record", async (context) => {
+  // Value: protects=a completed-record write that Codebook's own step at the record's dropping name refuses (a file already stands at pending.json.codebook-dropping) is reported with that refusal's own sentence, which names both names and its way out, instead of saying another program changed or replaced the setup's record; the setup still records its entry while the config is the file it published, and both names stay as they were (OCR L1 and L3 P2 on markCompleted; Cycle 0149 review round); fails_when=the setup answers anything but installed with the leftover warning followed by the dropping-name sentence, the setup record or the file at the dropping name changes or is gone, or no receipt of this setup stands; no_claim=how such a file got there (seam.afterPublish writes it once, after the config is in place and before the completed record), what the next run does with both names
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const droppingText = '{"left":"by a run that stopped"}\n'
+  let copyPath = ''
+  let pendingAtPublish = ''
+
+  // Act
+  const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: (displacedPath) => {
+      if (copyPath || displacedPath === undefined) return
+      copyPath = displacedPath
+      pendingAtPublish = readFileSync(pendingPath, 'utf8')
+      // A file stands at the dropping name before the completed record's write would move the record there.
+      writeFileSync(droppingPath, droppingText)
+    },
+  })
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers) because it could not delete that file safely, but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it. Codebook wrote its record of the entry but could not finish rewriting its record of this setup. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath}.`,
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingAtPublish)
+  assert.equal(readFileSync(droppingPath, 'utf8'), droppingText)
+  assert.equal(
+    JSON.parse(readFileSync(receiptPath, 'utf8')).generation,
+    result.generation,
+  )
+})
+
+test("A setup whose completed record meets another program's record and whose config cannot be read again once writes no receipt and says it could not read that config again, never that the config is another file", async (context) => {
+  // Value: protects=a setup whose completed record another program kept from being written records its entry only while it can confirm the config is the file it published, and a re-read of that config that fails once (EMFILE) is said as a config it could not read again, not as a config that is no longer the file it wrote; no receipt is written and the record, the config and the copy stay (OCR L3 P3 on settleRecordConflict; Cycle 0149 review round); fails_when=the setup resolves or says anything but the could-not-read sentence with the copy's sentence, a receipt appears, the restored record changes, or the config loses its entry; no_claim=a real backup tool or lack of file handles (seam.afterPublish renames another setup's marked record over pending.json once, after the config is in place, and the config module is loaded with an openWithoutFollowing that fails the config's next open once with EMFILE), what the next run does
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const restoredPendingText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000152',
+    takeBack: true,
+  })}\n`
+  const backupPath = join(home, 'pending-from-backup.json')
+  let copyPath = ''
+  let isArmed = false
+  let hasFailedOpen = false
+  const failingOpen = await loadWithWrappedOpen(async (path, openReal) => {
+    // The setup's read of its config right before it would write its receipt finds no file handle free, once.
+    if (path !== configPath || !isArmed || hasFailedOpen) return openReal()
+    hasFailedOpen = true
+    throw Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+  })
+
+  // Act
+  const setupOutcome = await failingOpen
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: (displacedPath) => {
+        if (copyPath || displacedPath === undefined) return
+        copyPath = displacedPath
+        // A backup restores another setup's marked record at pending.json once the config is in place.
+        writeFileSync(backupPath, restoredPendingText)
+        renameSync(backupPath, pendingPath)
+        isArmed = true
+      },
+    })
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+
+  // Assert
+  assert.equal(hasFailedOpen, true)
+  assert.equal(
+    setupOutcome,
+    `Codebook put its entry in Devin Desktop's MCP config at ${configPath}, but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), and it could not read that config again, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it, then run Codebook: Set Up AI Chat again, and that run reads ${pendingPath} first. Codebook also kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers); delete that copy when you no longer need it.`,
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), restoredPendingText)
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+})
+
 test('A setup that finds a record a backup restored at pending.json after its recovery left that name empty writes no record over it, publishes nothing and says that record changed', async (context) => {
   // Value: protects=a setup's first write of its own record claims the name its recovery left empty and never writes over a record a backup or sync tool put there meanwhile, so that record stays and nothing is published (Cycle 0148 task 33); fails_when=the setup resolves or says anything but the changed-record sentence, the record put at pending.json is gone or changes, the config changes, a receipt is written, or a staged file stays beside the config; no_claim=a real backup tool (seam.afterRead renames another record over pending.json once, after the setup read the config and before it stages its own), what the next run does with that record
   // Arrange
@@ -12790,7 +12978,7 @@ test("A first setup whose receipt cannot be written still takes its entry out wh
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   // One refused link per record write: three at the setup's own record, then two at the take-back's rollback record.
   assert.deepEqual(refusedLinkNames, [
@@ -14169,6 +14357,58 @@ test('Removing the setup right after a first setup that created the config file 
   assert.equal(existsSync(configPath), false)
 })
 
+test('A removal that takes back a first setup that created the config keeps a record a backup puts at receipt.json while the take-back removes that config, says so, and still answers file-removed', async (context) => {
+  // Value: protects=a removal whose own run took a cut-short first setup back deletes receipt.json only while it shows what the removal read there (nothing), so a record a backup put there meanwhile stays and the notice says so, as after any removal that took the entry out (README line 95; OCR L2 P2 on answerRemovalWithoutTakeOut; Cycle 0149 review round); fails_when=the removal answers anything but file-removed with the kept-record sentence, receipt.json is gone or changes, or the config file stays; no_claim=a real backup tool (seam.afterRead writes a record at receipt.json once, at the take-back's read of the config right before it takes the entry out, after the removal read receipt.json; the first setup's seam.afterPublish blocks its receipt and seam.afterCheck ends its rollback), what the next run does with that record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  let isPublished = false
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => {
+      isPublished = true
+      mkdirSync(receiptPath, { recursive: true })
+    },
+    afterCheck: () => {
+      if (isPublished) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const restoredReceiptText = `${JSON.stringify({
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256: sha256(ENTRY_CANONICAL),
+    createdFile: true,
+    installed: true,
+    generation: 'c0ffee00-0000-4000-8000-000000000153',
+    config: { ino: 1 },
+  })}\n`
+  let hasRestored = false
+
+  // Act
+  const result = await removeManagedDevinMcpEntry(storage, home, {
+    afterRead: () => {
+      if (hasRestored) return
+      hasRestored = true
+      // A backup puts a record at receipt.json while the take-back takes the entry out.
+      writeFileSync(receiptPath, restoredReceiptText)
+    },
+  })
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.deepEqual(result, {
+    status: 'file-removed',
+    path: configPath,
+    cleanupFailure: `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`,
+  })
+  // A record the removal deleted reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(receiptPath) ? readFileSync(receiptPath, 'utf8') : 'absent',
+    restoredReceiptText,
+  )
+  assert.equal(existsSync(configPath), false)
+})
+
 test('A take-back that would delete the config Codebook created leaves it in place when another rollback journal already stands at the journal name, and the next refresh takes it back', async (context) => {
   // Value: protects=the take-back that deletes a created config claims its journal's name too, so a journal a backup put there stays and the config is not deleted, and the next run settles that journal and then takes the config back (Cycle 0148 task 3); fails_when=the restored journal changes or is gone, the config is gone or changes after the first refresh, the first refresh resolves or words it otherwise, or the second refresh leaves the config or a journal; no_claim=a real backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the take-back's first journal write), a restore over the take-back's own journal after its claim
   // Arrange
@@ -14277,7 +14517,7 @@ test('A first setup whose receipt cannot be written leaves its entry and its tak
   assert.equal(hasRestoredJournal, true)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, but something already stands at ${journalPath}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${configPath} unchanged; the next run reads ${journalPath} before it takes the entry out (if what stands there is not Codebook's for ${configPath}, move it to another folder first); make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, but something already stands at ${journalPath}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${configPath} unchanged; the next run reads ${journalPath} before it takes the entry out (if what stands there is not Codebook's for ${configPath}, move it to another folder first). Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(journalAfterSetup, restoredJournalText)
   assert.equal(
@@ -16032,7 +16272,7 @@ test("A first setup leaves a record a backup restores at receipt.json together w
   // Assert
   assert.equal(
     setupOutcome,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and that file is gone or its "codebook" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and that file is gone or its "codebook" entry is no longer the one Codebook wrote, so it left that file unchanged; check that entry yourself before you remove it. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(receiptAfterSetup, receiptText)
   assert.equal(configAfterSetup, oldConfigText)
@@ -16101,7 +16341,7 @@ test('On storage that cannot give a file a second name, a first setup never writ
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   // One refused link per record write, since every record write tries a link first (Cycle 0149 task 13): the setup's own record and its rewrite, its record of the entry, the take-back mark, then the take-back's rollback record and its rewrite.
   assert.deepEqual(refusedLinkNames, [

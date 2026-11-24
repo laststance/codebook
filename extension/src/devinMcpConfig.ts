@@ -122,7 +122,7 @@ const pendingSchema = z.object({
   publishGeneration: z.string().optional(),
   /** Set by a first setup (no receipt owned an entry that stood, {@link isFirstSetup}) in its publish record before anything is published: its entry may be adopted only once its own receipt exists, so a run that finds the record without a same-generation receipt takes the entry back ({@link isTakeBackOwed}). Absent for an update, a removal and a record of an older build. */
   firstSetup: z.boolean().optional(),
-  /** Set by a first setup whose stale receipt stood ({@link isFirstSetup}), before anything is published: right before its link that receipt moves to its private name ({@link retiredReceiptPathOf}), and it goes back to `receipt.json` when the link fails, never over a newer receipt ({@link putBackRetiredReceipt}). A run that finds the private name settles it the same way ({@link settleRetiredReceipt}). This build writes the object form from the first record on, which names the bytes of the receipt that moves ({@link retiredReceiptSchema}), so only that file is ever put back or deleted ({@link movedIdentityOf}). `true` (0.2.142.0 to 0.2.144.0) and `foreign` (0.2.144.0, once a run kept a file there it did not verify) name no bytes: this build never puts back or deletes the file such a record leads to, keeps it and names it, and rewrites that record as an object without bytes ({@link foreignKeptRecordOf}). 0.2.142.0, 0.2.143.0 and 0.2.144.0 refuse the object form as unreadable before they look at that name, also when a later write of the record fails and leaves the first one; builds before them drop the field. Absent for every other publish. */
+  /** Set by a first setup whose stale receipt stood ({@link isFirstSetup}), before anything is published: right before its link that receipt moves to its private name ({@link retiredReceiptPathOf}), and it goes back to `receipt.json` when the link fails, never over a newer receipt ({@link putBackRetiredReceipt}). A run that finds the private name settles it the same way ({@link settleRetiredReceipt}). This build writes the object form from the first record on, which names the bytes of the receipt that moves ({@link retiredReceiptSchema}), so only that file is ever put back or deleted ({@link movedIdentityOf}). `true` (0.2.142.0 to 0.2.144.0) and `foreign` (0.2.144.0, once a run kept a file there it did not verify) name no bytes: this build never puts back or deletes the file such a record leads to. Where it would put that file back, it keeps it, names it and rewrites that record as an object without bytes ({@link foreignKeptRecordOf}); where it would delete it (that setup's own receipt stands, {@link isPublishReceipted}, its link is proven, {@link isProvenLink}, or the config holds its publish, {@link retiredReceiptFateOf}), it leaves that file at its private name without naming it, and the publish record then ends, so nothing leads there any more ({@link dropRetiredReceipt}). 0.2.142.0, 0.2.143.0 and 0.2.144.0 refuse the object form as unreadable before they look at that name, also when a later write of the record fails and leaves the first one; builds before them drop the field. Absent for every other publish. */
   retiresReceipt: z
     .union([z.boolean(), z.literal('foreign'), retiredReceiptSchema])
     .optional(),
@@ -846,16 +846,16 @@ async function removeRecord(
   await rm(context.pendingPath, { force: true })
 }
 
-/** How a run's completed record went ({@link markCompleted}): `recorded`; `unrecorded` when its write failed (a full disk), so the record written before the first move stays byte for byte; or the kind of {@link JournalConflictError} when that record's name showed another file, nothing or a name that could not be read again (`changed`, `gone`, `unread`), so what stands there is not provably this run's record and stays as it is. */
-type Completion = 'recorded' | 'unrecorded' | JournalConflictError['kind']
+/** How a run's completed record went ({@link markCompleted}): `recorded`; `unrecorded` when its write failed (a full disk), so the record written before the first move stays byte for byte; or the {@link JournalConflictError} itself when that record's name showed another file, nothing or a name that could not be read again (its kind `changed`, `gone`, `unread`), so what stands there is not provably this run's record and stays as it is, or when Codebook's own step at that record's dropping name refused ({@link DroppingNameConflictError}), whose sentence says where the record stands. */
+type Completion = 'recorded' | 'unrecorded' | JournalConflictError
 
 /**
  * Rewrites the pending record as completed: the config was already published or removed, so a copy that stays is a leftover and never goes back to the config name ({@link recoverLeftovers}); called by {@link createConfig} and {@link discardDisplaced}.
  * @param context - The run.
  * @param journal - The record as it was written before the first move.
- * @returns The {@link Completion}: `recorded` when the record says completed; otherwise nothing was written there, the caller must not rely on that record, and a conflict's kind says what stood at its name.
+ * @returns The {@link Completion}: `recorded` when the record says completed; otherwise the caller must not rely on that record, and a conflict says what stood at its name (nothing was written there, unless Codebook's own step at the dropping name refused after the new record stood, {@link dropAsideRecord}).
  * @example
- * await markCompleted(context, journal) // => 'changed' once a backup renamed another record over pending.json after the config was linked in
+ * await markCompleted(context, journal) // => a `changed` JournalConflictError once a backup renamed another record over pending.json after the config was linked in
  */
 async function markCompleted(
   context: Context,
@@ -868,17 +868,17 @@ async function markCompleted(
     } satisfies Pending)
     return 'recorded'
   } catch (error) {
-    // Another program's record, an emptied name or a failed read is told apart from a full disk, which leaves this run's own record.
-    return error instanceof JournalConflictError ? error.kind : 'unrecorded'
+    // Another program's record, an emptied name, a failed read or Codebook's own dropping-name refusal is told apart from a full disk, which leaves this run's own record.
+    return error instanceof JournalConflictError ? error : 'unrecorded'
   }
 }
 
 /**
  * Gives the {@link Published.recordConflict} a {@link Completion} carries; called by {@link createConfig} and {@link discardDisplaced}.
  * @param completion - How the completed record went.
- * @returns `{ recordConflict }` for a conflict's kind; an empty object for `recorded` and `unrecorded`.
+ * @returns `{ recordConflict }` for a conflict; an empty object for `recorded` and `unrecorded`.
  * @example
- * recordConflictOf('unread') // => { recordConflict: 'unread' }
+ * recordConflictOf(journalConflictError(context, 'unread')) // => { recordConflict: that error }
  * recordConflictOf('unrecorded') // => {}
  */
 function recordConflictOf(
@@ -1472,8 +1472,8 @@ type Published = {
   keptLeft: KeptFile[]
   isRecorded: boolean
   isRetiredKept: boolean
-  /** Set when the completed record was not written because its name showed another file (`changed`), nothing (`gone`) or could not be read again (`unread`) ({@link Completion}): what stands there is not provably this run's record, so {@link publishEntry} records its entry only while the config is still the file it published ({@link settleRecordConflict}). Absent for a full disk, whose record stays this run's own. */
-  recordConflict?: JournalConflictError['kind']
+  /** Set, to the conflict itself, when the completed record was not written because its name showed another file (`changed`), nothing (`gone`) or could not be read again (`unread`), or when Codebook's own step at that record's dropping name refused ({@link DroppingNameConflictError}) ({@link Completion}): what stands there is not provably this run's record, so {@link publishEntry} records its entry only while the config is still the file it published ({@link settleRecordConflict}). Absent for a full disk, whose record stays this run's own. */
+  recordConflict?: JournalConflictError
 }
 
 /** Everything a replacement of an existing config works with: the staged file with the inode and bytes this run wrote there (every cleanup before the link deletes that name only while it still shows them, {@link dropStagedRecord}; the one after it, only while it shows that inode, {@link dropPublishedStage}), the probe name, the displaced copy, the identity of the config that was read, the record that names them, and the stale receipt a first setup retires right before its link ({@link linkWithoutStaleReceipt}). */
@@ -3312,7 +3312,7 @@ async function settleDroppedRecord(context: Context): Promise<void> {
 function bothRecordNamesError(context: Context): JournalConflictError {
   const { pendingPath, retry } = context
   const droppingPath = droppingPathOf(context)
-  return new JournalConflictError(
+  return new DroppingNameConflictError(
     `Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, ${retry}, and that run puts the file at ${droppingPath} back at ${pendingPath}.`,
     'changed',
   )
@@ -3328,7 +3328,7 @@ function bothRecordNamesError(context: Context): JournalConflictError {
 function recordNotBackError(context: Context): JournalConflictError {
   const { pendingPath, retry } = context
   const droppingPath = droppingPathOf(context)
-  return new JournalConflictError(
+  return new DroppingNameConflictError(
     `Codebook moved its record at ${pendingPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and could not move it back (the file system refused to give it that name again), so it left it at ${droppingPath} and went no further; move the file at ${droppingPath} back to ${pendingPath} if nothing stands there, ${retry}.`,
     'gone',
   )
@@ -3623,11 +3623,14 @@ function receiptConflictError(
   kind: JournalConflictError['kind'],
   cause?: unknown,
 ): Error {
-  return new Error(
+  return new ReceiptConflictError(
     receiptConflictSentence(context, kind),
     cause === undefined ? undefined : { cause },
   )
 }
+
+/** The refusal {@link receiptConflictError} builds: its own sentence names `receipt.json`, says Codebook left what stands there as it is and gives the way out, so a first setup that takes its entry out keeps that sentence instead of asking the learner to make room ({@link receiptFailureEnding}). */
+class ReceiptConflictError extends Error {}
 
 /**
  * Words the refusal of a write of Codebook's record of the entry ({@link receiptConflictError}): what the run found at `receipt.json` against what it knew of that name.
@@ -4103,6 +4106,9 @@ class JournalConflictError extends Error {
     super(message, options)
   }
 }
+
+/** The {@link JournalConflictError} of Codebook's own step at a tracked record's dropping name ({@link bothRecordNamesError}, {@link recordNotBackError}), not of another program's change: its own sentence names where the record stands and the way out, so {@link settleRecordConflict} and {@link takeOutUnrecordedEntry} say it as it is instead of blaming another program's record. */
+class DroppingNameConflictError extends JournalConflictError {}
 
 /** Thrown by {@link dropFinishedRecord} when a removal or take-back that took the entry out finds another file at its tracked rollback record's name as it deletes that record, or cannot read that name again: the entry is out already, what stands there stays ({@link JournalConflictError}, its cause, whose `kind` it keeps), and {@link rollBackPublishedEntry} answers `took-out-record-unread` for a name it could not read and `took-out-record-taken` otherwise, so the run goes no further. */
 class TakenOutConflictError extends Error {
@@ -7671,7 +7677,7 @@ function rollbackOutcomeClause(
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
  * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}); when that name showed another file, the publish's completed record already carries the shape older builds refuse ({@link LinkedRecord}), and the take-back mark keeps it ({@link writeTakeBackMark}). Limit: when that completed record could not be written either, the record on disk is the one written before the link.
- * @returns The error to reject with: whether the entry was taken out again, and the way out.
+ * @returns The error to reject with: whether the entry was taken out again, and the way out that fits why the receipt could not be written ({@link receiptFailureEnding}), followed by the refusal of Codebook's own step at the setup record's dropping name when the take-back mark stopped there ({@link unrecordedEntrySentences}).
  */
 async function takeOutUnrecordedEntry(
   context: Context,
@@ -7680,13 +7686,13 @@ async function takeOutUnrecordedEntry(
   { asLeft, asTracked }: LeftCopies,
   isRetiredKept: boolean,
 ): Promise<Error> {
-  const { path, retry } = context
   const recordChanged: RollbackResult = {
     outcome: 'record-changed',
     keptLeft: [],
   }
   // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry.
-  const { run, markVersion } = await markBeforeTakeBack(context)
+  const { run, markVersion, droppingConflict } =
+    await markBeforeTakeBack(context)
   let result = recordChanged
   // No run: the setup's record changed, moved away or could not be read again as the mark read or wrote it, so the config is never changed on this run's word alone.
   if (run)
@@ -7718,15 +7724,69 @@ async function takeOutUnrecordedEntry(
       ...context,
       journalVersion: { current: markVersion, refusesEmptyName: true },
     })
-  const sentence = rollbackOutcomeClause(outcome, context)
   return new Error(
-    `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}; make room for that record, ${retry}.${keptCopiesSentence(keptCopies)}`,
+    `${unrecordedEntrySentences(context, outcome, cause, droppingConflict)}${keptCopiesSentence(keptCopies)}`,
     { cause },
   )
 }
 
-/** How a failed first setup's take-back goes on after its mark ({@link markBeforeTakeBack}): the run its rollback takes the entry out with, none when the take-back stops before it changes the config, and the version of the mark this call wrote, the only record {@link takeOutUnrecordedEntry} may delete after a complete rollback. */
-type MarkedTakeBack = { run?: Context; markVersion?: RecordVersion }
+/**
+ * Words a failed first setup's refusal once its take-back went as far as it could; called by {@link takeOutUnrecordedEntry}.
+ * What happened to the entry comes first ({@link rollbackOutcomeClause}), then the way out that fits why the receipt could not be written ({@link receiptFailureEnding}); a take-back mark that stopped at Codebook's own step at the setup record's dropping name changed nothing, and that refusal's own sentence, which names where the record stands, follows last.
+ * @param context - The run; its paths and retry are named.
+ * @param outcome - How the take-back went ({@link RollbackResult}); `record-changed` when the mark stopped it.
+ * @param cause - Why the receipt could not be written.
+ * @param droppingConflict - The refusal the take-back mark stopped at ({@link MarkedTakeBack.droppingConflict}); undefined otherwise.
+ * @returns The refusal's sentences, without the sentence that names the copies that stay.
+ * @example
+ * unrecordedEntrySentences(context, 'took-out', noSpaceLeft, undefined) // => 'Codebook added its entry … but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.'
+ */
+function unrecordedEntrySentences(
+  context: Context,
+  outcome: RollbackResult['outcome'],
+  cause: unknown,
+  droppingConflict: DroppingNameConflictError | undefined,
+): string {
+  const { path, pendingPath } = context
+  // The mark stopped at Codebook's own dropping-name step: the config stays, and that refusal says where the record stands.
+  const sentence = droppingConflict
+    ? `and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${path} unchanged and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it`
+    : rollbackOutcomeClause(outcome, context)
+  const droppingSentence = droppingConflict
+    ? ` ${droppingConflict.message}`
+    : ''
+  return `Codebook added its entry to Devin Desktop's MCP config at ${path} but could not write its own record of it, ${sentence}${receiptFailureEnding(context, cause)}${droppingSentence}`
+}
+
+/** The codes of a write refused because the storage has no room left: a full disk (`ENOSPC`) or a full quota (`EDQUOT`), the only failures {@link receiptFailureEnding} asks the learner to make room for. */
+const FULL_DISK_CODES: ReadonlySet<unknown> = new Set(['ENOSPC', 'EDQUOT'])
+
+/**
+ * Ends a failed first setup's refusal with the way out that fits why its receipt could not be written; called by {@link unrecordedEntrySentences}.
+ * @param context - The run; its retry ends the sentence.
+ * @param cause - Why the receipt write failed.
+ * @returns
+ * - `; make room for that record, <retry>.` for a full disk or quota ({@link FULL_DISK_CODES})
+ * - `. ` and the receipt conflict's own sentence ({@link ReceiptConflictError}), which names `receipt.json`, says that what stands there stays, and gives its own way out
+ * - `, <retry>.` for any other failure
+ * @example
+ * receiptFailureEnding(context, noSpaceLeft) // => '; make room for that record, then run Codebook: Set Up AI Chat again.'
+ * receiptFailureEnding(context, receiptConflictError(context, 'changed')) // => '. Codebook found a file at …/receipt.json, … and that run reads that file first.'
+ */
+function receiptFailureEnding({ retry }: Context, cause: unknown): string {
+  if (FULL_DISK_CODES.has(codeOf(cause)))
+    return `; make room for that record, ${retry}.`
+  // A file at receipt.json, or a name that could not be read again: that refusal names the file it left and its own way out.
+  if (cause instanceof ReceiptConflictError) return `. ${cause.message}`
+  return `, ${retry}.`
+}
+
+/** How a failed first setup's take-back goes on after its mark ({@link markBeforeTakeBack}): the run its rollback takes the entry out with, none when the take-back stops before it changes the config, the version of the mark this call wrote, the only record {@link takeOutUnrecordedEntry} may delete after a complete rollback, and, when the mark stopped at Codebook's own step at the record's dropping name, that refusal, whose own sentence the notice keeps. */
+type MarkedTakeBack = {
+  run?: Context
+  markVersion?: RecordVersion
+  droppingConflict?: DroppingNameConflictError
+}
 
 /**
  * Writes a failed first setup's take-back mark over the setup record exactly as this run last wrote it ({@link writeTakeBackMark}) and decides what its take-back rests on; called by {@link takeOutUnrecordedEntry} before its rollback, so the entry is never taken out on the run's word alone once the setup record that proves it is this setup's changed, moved away or could not be read again.
@@ -7734,7 +7794,7 @@ type MarkedTakeBack = { run?: Context; markVersion?: RecordVersion }
  * @param context - The run; it tracks the version of `pending.json` it last wrote ({@link ownRecordContext}).
  * @returns
  * - the run tracking the mark, refusing an empty name, and the version of that mark once this call wrote it, so the take-back moves the config only while that mark still stands ({@link Context.takeBackRecordRun}, {@link assertTakeBackRecordStill})
- * - no run when the read found the record gone, changed or unreadable, or the mark's write found it so ({@link JournalConflictError}): the take-back stops before it changes the config, and that name stays as it is
+ * - no run when the read found the record gone, changed or unreadable, or the mark's write found it so ({@link JournalConflictError}): the take-back stops before it changes the config, and that name stays as it is; with that refusal as `droppingConflict` when the mark's write stopped at Codebook's own step at the record's dropping name ({@link DroppingNameConflictError}), whose sentence names where the record stands
  * - otherwise, after a mark's write that failed (for example on a full disk), the run tracking the record this run last wrote, refusing an empty name, so the take-back moves the config only while that record still stands
  * @example
  * await markBeforeTakeBack(context) // => { run: { ...context, journalVersion: { current: { ino: 43n, sha256: 'cd…' }, refusesEmptyName: true } }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
@@ -7763,6 +7823,9 @@ async function markBeforeTakeBack(context: Context): Promise<MarkedTakeBack> {
     const markVersion = await writeTakeBackMark(context, read)
     return { run: runTracking(markVersion), markVersion }
   } catch (error) {
+    // Codebook's own step at the record's dropping name refused: nothing is taken out, and the notice keeps that refusal's own sentence.
+    if (error instanceof DroppingNameConflictError)
+      return { droppingConflict: error }
     // The record changed, moved away or could not be read again under the mark's write: nothing is taken out on its word.
     if (error instanceof JournalConflictError) return {}
     // The mark could not be written over the record this read verified: the take-back still runs, but moves the config only while that record still stands.
@@ -7907,36 +7970,53 @@ type RecordConflictSettlement = {
  * @param context - The run.
  * @param written - The receipt this setup writes.
  * @param keptLeft - The files the publish left.
- * @param conflict - What stood at the record's name.
+ * @param conflict - What stood at the record's name; Codebook's own dropping-name refusal ({@link DroppingNameConflictError}) is said in its own sentence, which names where the record stands, never as another program's change.
  * @returns The copies, the sentence for the notice and the look at the config ({@link RecordConflictSettlement}).
- * @throws A {@link PublishUncoveredError} naming the record, the config and the copies when the config is gone, no longer holds this setup's entry, has another inode or cannot be read again; the returned look throws it too once the config name changes before the receipt's rename.
+ * @throws A {@link PublishUncoveredError} naming the record, the config and the copies when the config is gone, no longer holds this setup's entry, has another inode or cannot be read again (said as such); the returned look throws it too once the config name changes before the receipt's rename.
  * @example
- * await settleRecordConflict(context, written, keptLeft, 'changed') // => { copies, sentence: 'Codebook wrote its record of the entry but could not record that this setup finished, …', configStill }
+ * await settleRecordConflict(context, written, keptLeft, journalConflictError(context, 'changed')) // => { copies, sentence: 'Codebook wrote its record of the entry but could not record that this setup finished, …', configStill }
+ * await settleRecordConflict(context, written, keptLeft, bothRecordNamesError(context))           // => { copies, sentence: 'Codebook wrote its record of the entry but could not finish rewriting its record of this setup. Codebook found its record at …', configStill }
  */
 async function settleRecordConflict(
   context: Context,
   written: Receipt,
   keptLeft: KeptFile[],
-  conflict: JournalConflictError['kind'],
+  conflict: JournalConflictError,
 ): Promise<RecordConflictSettlement> {
   const { path, pendingPath, retry } = context
-  const cause = recordConflictCause(context, conflict)
+  // Codebook's own step at the record's dropping name says where that record stands and its way out in its own sentence; another program's change is a cause.
+  const isOwnDrop = conflict instanceof DroppingNameConflictError
+  const happened = isOwnDrop
+    ? 'could not finish rewriting its record of this setup'
+    : `could not record that this setup finished, because ${recordConflictCause(context, conflict.kind)}`
+  const recordEnd = isOwnDrop
+    ? `. ${conflict.message}`
+    : `, ${retry}, and that run reads ${pendingPath} first.`
   const copies = await copiesBesideRecord(context, keptLeft)
-  const uncovered = (): PublishUncoveredError =>
+  const notWritten = 'that config is no longer the file it wrote'
+  const uncovered = (configState: string): PublishUncoveredError =>
     new PublishUncoveredError(
-      `Codebook put its entry in Devin Desktop's MCP config at ${path}, but could not record that this setup finished, because ${cause}, and that config is no longer the file it wrote, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it, ${retry}, and that run reads ${pendingPath} first.${keptCopiesSentence(copies.asTracked)}`,
+      `Codebook put its entry in Devin Desktop's MCP config at ${path}, but ${happened}, and ${configState}, so it wrote no record of that entry, left that config and that record as they are and went no further; check that the "${SERVER_NAME}" entry in ${path} is what you want before you change it${recordEnd}${keptCopiesSentence(copies.asTracked)}`,
     )
   const confirmed = await confirmPublishedConfig(context, written)
-  if (!('look' in confirmed)) throw uncovered()
+  // A config that could not be read again is never said to be another file.
+  if (!('look' in confirmed))
+    throw uncovered(
+      confirmed.outcome === 'unreadable'
+        ? 'it could not read that config again'
+        : notWritten,
+    )
   const { identity } = confirmed.look
   return {
     copies,
-    sentence: `Codebook wrote its record of the entry but could not record that this setup finished, because ${cause}, so it left that name as it is; the next run reads that name first.`,
+    sentence: isOwnDrop
+      ? `Codebook wrote its record of the entry but ${happened}. ${conflict.message}`
+      : `Codebook wrote its record of the entry but ${happened}, so it left that name as it is; the next run reads that name first.`,
     configStill: {
       names: [path],
       assert: (): void => {
         // A look that fails proves nothing: the config counts as changed.
-        if (!isConfigStill(context, identity)) throw uncovered()
+        if (!isConfigStill(context, identity)) throw uncovered(notWritten)
       },
     },
   }
@@ -9885,9 +9965,7 @@ async function dropReceiptAfterRemoval(
   try {
     // Another file there, other bytes, or a name that cannot be read again: what stands there stays, and the notice says so.
     if ((await dropReceipt(context)) === 'kept')
-      failures.push(
-        `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`,
-      )
+      failures.push(keptReceiptSentence(context))
   } catch {
     failures.push(
       `Codebook could not delete its own record of that entry at ${receiptPath}; delete that record by hand.`,
@@ -9895,6 +9973,17 @@ async function dropReceiptAfterRemoval(
   }
   const cleanupFailure = failures.filter(Boolean).join(' ')
   return cleanupFailure ? { status, path, cleanupFailure } : { status, path }
+}
+
+/**
+ * Says that a removal whose entry went left the file at `receipt.json` as it is, because that name no longer showed the record the run read there ({@link dropReceipt} answered `kept`); used by {@link dropReceiptAfterRemoval} and, for a retry of an unrecorded removal and a removal whose run took a cut-short first setup back, by {@link answerRemovalWithoutTakeOut}.
+ * @param context - The run; its receipt path is named.
+ * @returns One sentence for the removal's `cleanupFailure`.
+ * @example
+ * keptReceiptSentence(context) // => 'Codebook left the file at …/receipt.json as it is, because it could not confirm that it was still the record of that entry Codebook had read there (…); the next run reads it again.'
+ */
+function keptReceiptSentence({ receiptPath }: Context): string {
+  return `Codebook left the file at ${receiptPath} as it is, because it could not confirm that it was still the record of that entry Codebook had read there (a backup or sync tool may have put a record back there); the next run reads it again.`
 }
 
 /** What a removal reports: the config change that was made, apart from a failure to delete Codebook's own record afterwards. */
@@ -9982,16 +10071,17 @@ export async function removeManagedDevinMcpEntry(
 
 /**
  * Answers a removal whose entry is not Codebook's to take out (gone, changed, or a newer setup's) without touching the config; called by {@link removeManagedDevinMcpEntry} under its lock.
- * The receipt of an entry that is gone or changed goes only while `receipt.json` still shows the record the run's own read found there ({@link dropReceipt}); a record a backup or sync tool put there after that read, also after a read that found the name empty, stays for the next run.
+ * The receipt of an entry that is gone or changed goes only while `receipt.json` still shows the record the run's own read found there ({@link dropReceipt}); a record a backup or sync tool put there after that read, also after a read that found the name empty, stays for the next run, and when the entry went (this run's take-back, or the earlier removal a retry reports) the notice says so ({@link keptReceiptSentence}).
  * @param context - The locked removal's paths and the version of the receipt it read.
  * @param status - What {@link removalOwnership} decided.
  * @param inspected - What {@link inspect} found under the lock.
  * @param wasUnrecorded - Whether an earlier removal took the entry out and left its record unwritten.
  * @returns
- * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload);
+ * - `removed` when an earlier unrecorded removal already took the entry out (the retry reports it, so the window is still offered its reload), or this run's take-back's answer; either with the kept-record sentence as `cleanupFailure` when a record stays at `receipt.json`
  * - otherwise `status` itself, with `entryStays` when `not-managed` finds the entry still in the config without its receipt.
  * @example
  * await answerRemovalWithoutTakeOut(context, 'changed', inspected, false) // => { status: 'changed', path }
+ * await answerRemovalWithoutTakeOut(context, 'not-managed', inspected, true) // => { status: 'removed', path, cleanupFailure: 'Codebook left the file at …/receipt.json as it is, …' } once a backup put a record back there
  */
 async function answerRemovalWithoutTakeOut(
   context: Context,
@@ -10000,13 +10090,19 @@ async function answerRemovalWithoutTakeOut(
   wasUnrecorded: boolean,
 ): Promise<DevinMcpRemovalResult> {
   // A newer setup's receipt stays; the receipt of an entry that is gone or changed is dropped, because Codebook no longer owns that entry, and only as the run read it.
-  if (status !== 'superseded') await dropReceipt(context)
+  const receiptFate =
+    status === 'superseded' ? undefined : await dropReceipt(context)
+  // After the entry went, a record a backup or sync tool put at receipt.json meanwhile stays, and the notice says so.
+  const keptReceipt =
+    receiptFate === 'kept'
+      ? { cleanupFailure: keptReceiptSentence(context) }
+      : {}
   // The entry is gone because this run's take-back of an interrupted first setup took it out: the removal reports that, so the window is offered its reload.
   if (status === 'not-managed' && inspected.tookBack)
-    return { status: inspected.tookBack, path: context.path }
+    return { status: inspected.tookBack, path: context.path, ...keptReceipt }
   // The entry is gone because an earlier removal took it out: the retry reports that removal, so the window is still offered its reload.
   if (status === 'not-managed' && wasUnrecorded && inspected.receipt)
-    return { status: 'removed', path: context.path }
+    return { status: 'removed', path: context.path, ...keptReceipt }
   // An entry that stays without its receipt is no absent entry: the caller must not count the take-back complete.
   const entryStays =
     status === 'not-managed' &&
