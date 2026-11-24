@@ -8831,6 +8831,71 @@ test('A take-back that would delete the config Codebook created leaves it in pla
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A first setup whose receipt cannot be written leaves its entry and its take-back mark when another rollback journal already stands at the journal name, and the next refresh takes the entry back', async (context) => {
+  // Value: protects=a first setup's own take-back claims its journal's name too, so a journal a backup put there stays, the entry stays with the take-back mark that owes it, the setup says so, and the next run settles that journal and then takes the entry back (Cycle 0148 ship review); fails_when=the restored journal changes or is gone, the config changes, the setup record loses its take-back mark or is deleted, the setup answers anything but the journal-taken refusal, or the next refresh leaves the entry, a journal or the setup record, or writes a receipt; no_claim=a real backup tool (seam.beforeRecordWrite renames another journal over the journal's name once, at the take-back's first journal write), a restore over the take-back's own journal after its claim; seam=seam.afterPublish blocks the receipt
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000206',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000207',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let hasRestoredJournal = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath || hasRestoredJournal) return
+      hasRestoredJournal = true
+      // A backup restores another journal at the journal's name right before the take-back's own journal would stand there.
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A record the setup retired reads as 'absent', so the assertion below names it.
+  const journalAfterSetup = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+  const configAfterSetup = JSON.parse(readFileSync(configPath, 'utf8'))
+  rmSync(receiptPath, { recursive: true })
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, but something already stands at ${journalPath}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${configPath} unchanged; the next run reads ${journalPath} before it takes the entry out (if what stands there is not Codebook's for ${configPath}, move it to another folder first); make room for that record, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(journalAfterSetup, restoredJournalText)
+  assert.equal(
+    pendingAfterSetup === 'absent' ? 'absent' : pendingAfterSetup.takeBack,
+    true,
+  )
+  assert.deepEqual(configAfterSetup, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A rollback journal of another installation does not mark a pending publish for take-back', async (context) => {
   // protects=a journal left by installation A never takes out the entry installation B is publishing; fails_when=B's published entry is taken out of the config or no receipt is written for it; no_claim=the wording of any refusal; seam=seam.afterMoveAside ends A's rollback and seam.afterPublish makes its receipt unwritable; the journal names another generation than the publish record
   // Arrange
