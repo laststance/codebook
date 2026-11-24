@@ -187,7 +187,7 @@ type Context = {
     /** Set when the tracked record is the publish record a decision read ({@link heldPublishContext}, {@link markTakeBackOwed}) or `pending.json` as a run read it ({@link trackedPublishContext}): while a version is known, an empty name means that record disappeared after the read, so a write there throws a `gone` {@link JournalConflictError} instead of writing the record back ({@link writeTrackedJournal}). A rollback journal's tracker leaves it unset: that journal is this run's own record of what it still tracks, so a write claims its empty name again. */
     refusesEmptyName?: true
   }
-  /** The version of `receipt.json` the run's decisions rest on: the inode and bytes' hash its one read in {@link settleAfterRecovery} saw there (none for an empty name), replaced by each receipt this run publishes ({@link writeReceipt}), and cleared once this run deleted that receipt ({@link dropReceipt}) or moved it aside before a first setup's link ({@link publishEntry}). Every write there replaces only this version, or claims the name while none is known, and every delete removes only this version, so a record a backup or sync tool puts at that name after the read stays. One object per locked run ({@link inLockedFolder}), shared by every context derived from it. */
+  /** The version of `receipt.json` the run's decisions rest on: the inode and bytes' hash its one read in {@link settleAfterRecovery} saw there (none for an empty name), replaced by each receipt this run publishes ({@link writeReceipt}), and cleared once this run deleted that receipt ({@link dropReceipt}) or moved it aside before a first setup's link ({@link retireStaleReceipt}). Every write there replaces only this version, or claims the name while none is known, and refuses an empty name while one is known (another program moved that record away, {@link writeReceipt}); every delete removes only this version, so a record a backup or sync tool puts at that name after the read stays. One object per locked run ({@link inLockedFolder}), shared by every context derived from it. */
   receiptVersion: {
     current: RecordVersion | undefined
     /** Set by {@link assertReceiptVerified} while the publish record as read notes that a put-back left a file Codebook did not verify at `receipt.json`, and cleared by {@link settleAfterRecovery} once its read of that name passed it: every read of that name the run decides on until then passes only an empty name or the very bytes the note names ({@link assertNotedReceipt}). */
@@ -3488,12 +3488,12 @@ const UNSUPPORTED_LINK_CODES: ReadonlySet<unknown> = new Set([
 
 /**
  * Writes Codebook's record of the entry (`receipt.json`) without ever replacing a file this run did not read there; called by {@link recordPublishedEntry}, {@link adoptPending} and {@link withInstallationId}, every write of that record.
- * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), the staged file is renamed over it right after a synchronous look that still finds that file; while it shows nothing, the name is claimed ({@link claimReceiptName}), which never replaces a file; anything else there stays and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
+ * The bytes are staged and flushed under a fresh private name beside it first ({@link stageRecord}); after the seam the name is read through the thread pool ({@link receiptNameState}). While it shows the version this run read or last wrote ({@link Context.receiptVersion}), the staged file is renamed over it right after a synchronous look that still finds that file; while it shows nothing and no version is known (none was read there, or this run deleted it or moved it aside itself), the name is claimed ({@link claimReceiptName}), which never replaces a file; an empty name where a version is known (another program moved that record away) and anything else there stay as they are and the write is refused. The staged name goes afterwards while it shows the file this call wrote ({@link dropStagedRecord}).
  * Limits: a file put at the name between the synchronous look and the rename is replaced (no Node primitive renames over a name only while it shows an inode); one put there right after the rename or link is not looked at again here, and the next write or delete of this run finds it.
  * @param context - The run; its seam is called after the bytes were flushed and before the look at the name.
  * @param value - The complete receipt.
  * @param assertStill - What else must still hold, looked at right before the rename or link, after an awaited look at its names (and again before the rename that publishes where links fail, {@link claimReceiptName}).
- * @throws The {@link receiptConflictError} when the name shows another file or other bytes than the version this run read, any file while none was read or this run moved it aside, or cannot be read again; what the write, the seam, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the claim throws. Nothing is published then, and what stands at the name stays.
+ * @throws The {@link receiptConflictError}: `changed` when the name shows another file or other bytes than the version this run read, or any file while no version is known; `gone` when it shows nothing while a version is known; `unread` when it cannot be read again; what the write, the seam, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the claim throws. Nothing is published then, and what stands at the name stays.
  * @example
  * await writeReceipt(context, written) // receipt.json holds `written`, or the call throws once a backup put another record there after the run read it
  */
@@ -3507,6 +3507,9 @@ async function writeReceipt(
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
     const standing = await receiptNameState(context)
+    // The record this run read, and neither deleted nor moved aside itself, is gone: its empty name is never claimed, since another program may put that record back.
+    if (!standing && context.receiptVersion.current !== undefined)
+      throw receiptConflictError(context, 'gone')
     // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order: the receipt's name, `assertStill`'s names, the staged name.
     await lookAheadAt([path, ...(assertStill?.names ?? [])])
     const source = await lookAtStagedRecord(staged)
@@ -3582,25 +3585,51 @@ async function claimReceiptName(
 }
 
 /**
- * Builds the refusal for a write of Codebook's record of the entry that found `receipt.json` no longer showing the record the run read there, or could not read it again; thrown by {@link receiptNameState} and {@link claimReceiptName}, so nothing is written over that name and the run goes no further. A first setup takes its entry out instead of naming it ({@link takeOutUnrecordedEntry}); an update, an adoption ({@link adoptPending}) and an installation-id backfill ({@link withInstallationId}) reject with it.
- * @param context - The run; its paths and retry are named.
- * @param kind - `changed` for another file or other bytes there, `unread` for a read that failed.
+ * Builds the refusal for a write of Codebook's record of the entry that found `receipt.json` no longer showing the record the run read there, or could not read it again; thrown by {@link writeReceipt}, {@link receiptNameState} and {@link claimReceiptName}, so nothing is written at that name and the run goes no further. A first setup takes its entry out instead of naming it ({@link takeOutUnrecordedEntry}); an update, an adoption ({@link adoptPending}) and an installation-id backfill ({@link withInstallationId}) reject with it.
+ * @param context - The run; its paths and retry are named, and whether it knows a version there ({@link Context.receiptVersion}) picks the sentence for another file.
+ * @param kind - `changed` for another file or other bytes there, `gone` for an empty name where the run read its record, `unread` for a read that failed.
  * @param cause - The failure behind it, kept for diagnosis and never put into the sentence.
  * @returns The error, not thrown yet.
  * @example
  * throw receiptConflictError(context, 'changed') // 'Codebook found a file at …/receipt.json, where it keeps its record of the "codebook" entry …'
  */
 function receiptConflictError(
-  { path, receiptPath, retry }: Context,
-  kind: Extract<JournalConflictError['kind'], 'changed' | 'unread'>,
+  context: Context,
+  kind: JournalConflictError['kind'],
   cause?: unknown,
 ): Error {
+  return new Error(
+    receiptConflictSentence(context, kind),
+    cause === undefined ? undefined : { cause },
+  )
+}
+
+/**
+ * Words the refusal of a write of Codebook's record of the entry ({@link receiptConflictError}): what the run found at `receipt.json` against what it knew of that name.
+ * @param context - The run; its paths and retry are named, and its known version there ({@link Context.receiptVersion}) tells a record it read from a name it found or left empty.
+ * @param kind - What the run found ({@link receiptConflictError}).
+ * @returns
+ * - `unread`: the sentence that Codebook could not read that file again, and asks to make it readable
+ * - `gone`: the sentence that nothing stands where Codebook had read its record, so it wrote no record there
+ * - `changed` with no version known (none was read there, or this run deleted or moved its record away itself): the sentence that a file stands where Codebook expected none
+ * - `changed` otherwise: the sentence that the file there is not the record Codebook had read
+ * @example
+ * receiptConflictSentence(context, 'gone') // => 'Codebook found nothing at …/receipt.json, where it keeps its record of the "codebook" entry …, although it had read its record there …'
+ */
+function receiptConflictSentence(
+  { path, receiptPath, retry, receiptVersion }: Context,
+  kind: JournalConflictError['kind'],
+): string {
   const where = `${receiptPath}, where it keeps its record of the "${SERVER_NAME}" entry in Devin Desktop's MCP config at ${path},`
-  const sentence =
-    kind === 'unread'
-      ? `Codebook could not read ${where} again to check that it still holds the record it had read there, so it did not write over that file, left it as it is and went no further; make that file readable by you if it is not, ${retry}, and that run reads that file first.`
-      : `Codebook found a file at ${where} that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, ${retry}, and that run reads that file first.`
-  return new Error(sentence, cause === undefined ? undefined : { cause })
+  if (kind === 'unread')
+    return `Codebook could not read ${where} again to check that it still holds the record it had read there, so it did not write over that file, left it as it is and went no further; make that file readable by you if it is not, ${retry}, and that run reads that file first.`
+  // The record the run read is gone: nothing is written in its place.
+  if (kind === 'gone')
+    return `Codebook found nothing at ${where} although it had read its record there (a backup or sync tool may have moved it away), so it wrote no record there and went no further; wait until that tool is done, ${retry}, and that run reads that name first.`
+  // No record the run read stands behind that name: the file found there is none Codebook ever read.
+  if (receiptVersion.current === undefined)
+    return `Codebook found a file at ${where} although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, ${retry}, and that run reads that file first.`
+  return `Codebook found a file at ${where} that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, ${retry}, and that run reads that file first.`
 }
 
 /**
@@ -5754,6 +5783,8 @@ async function retireStaleReceipt(
     if (!status.isFile()) throw new Error('The record is no regular file.')
     movedIno = status.ino
     await rename(context.receiptPath, retiredPath)
+    // This run emptied that name itself: its own receipt claims it, never replacing what a backup puts back there.
+    context.receiptVersion.current = undefined
   } catch (cause) {
     // Gone between the look and the move: nothing stands to put back.
     if (codeOf(cause) === 'ENOENT') return undefined
@@ -7666,8 +7697,6 @@ async function publishEntry(
     // The receipt of an entry that is gone goes right before the link, so no reader can take this publish for that receipt's, and it stays when the publish refuses before then.
     isFirst ? receipt : undefined,
   )
-  // That receipt went to its private name before the link: this setup's own receipt claims the empty name, never replacing what a backup puts back there.
-  if (isFirst && receipt) context.receiptVersion.current = undefined
   const written: Receipt = {
     schemaVersion: 1,
     targetPath: context.path,

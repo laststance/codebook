@@ -9614,6 +9614,66 @@ test("A rollback record a backup restores while a refresh adopts an older build'
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A refresh that adopts an older build's interrupted setup where no record of the entry stood never writes over a record a backup puts at receipt.json meanwhile, and says it found a file where it expected none", async (context) => {
+  // Value: protects=a write of Codebook's record of the entry whose run read no record at receipt.json claims that name only while it is empty, and its refusal names the file a backup put there as one Codebook expected none at, never as "not the record it had read there", since it read none (Cycle 0149 review round, OCR L2 P3 on devinMcpConfig.ts:3565); fails_when=the refresh resolves or says anything but the expected-none sentence of receipt.json, the file the backup put there changes, or the older build's record at pending.json changes; no_claim=a real backup tool (seam.beforeRecordWrite writes a record at receipt.json once, at the adoption's receipt write, before its look at that name), what the next refresh does with that record, the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  await mkdir(folder, { recursive: true })
+  const olderRecordText = JSON.stringify({
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001494',
+    stagedIno: (await stat(configPath)).ino,
+  })
+  await writeFile(pendingPath, olderRecordText)
+  const restoredReceiptText = JSON.stringify({
+    schemaVersion: 1,
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    installed: true,
+    generation: 'c0ffee00-0000-4000-8000-000000001495',
+    installationId: 'c0ffee00-0000-4000-8000-000000001496',
+    config: { ino: 1 },
+  })
+  let hasRestored = false
+
+  // Act
+  const refreshOutcome = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      beforeRecordWrite: ({ path }) => {
+        if (path !== receiptPath || hasRestored) return
+        hasRestored = true
+        // A backup puts a record at receipt.json, where the refresh read none, right before the adoption writes its own.
+        writeFileSync(receiptPath, restoredReceiptText)
+      },
+    },
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    refreshOutcome,
+    `Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), restoredReceiptText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), olderRecordText)
+})
+
 test("A rollback record a backup restores right after a refresh published the receipt that adopts an older build's interrupted setup takes that receipt back out, so the next refresh takes the failed setup back", async (context) => {
   // Value: protects=a refresh ends the record it adopted only while the rollback record's name still shows what that run's settlement left there, and when a rollback record came back after the adoption's receipt was published it keeps that record and takes the receipt back out, so the next refresh takes the failed setup back instead of finding it receipted (Cycle 0149 task 2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, the receipt stays, either record changes or is gone, or the second refresh answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (the config module is loaded with a link that, once, right after the adoption's link claimed the empty receipt.json resolved, renames the rollback record in), a restore after the retirement's last look, a process end between the receipt's link and its withdrawal (that receipt then stays), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
   // Arrange
@@ -16210,6 +16270,61 @@ test('A refresh that adds the installation id to an older record never writes ov
     `Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, that is not the record it had read there (a backup or sync tool may have put an older one back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
   assert.equal(receiptAfterRefresh, olderReceiptText)
+  assert.equal(next.status, 'current')
+  assert.equal(
+    typeof (await readRecordFile(storage, 'receipt.json')).installationId,
+    'string',
+  )
+})
+
+test('A refresh that adds the installation id to an older record writes no record when a sync tool moved that record away after the refresh read it, says so, and the next refresh adds the id once the record is back', async (context) => {
+  // Value: protects=a write of Codebook's record of the entry whose run read a version at receipt.json and finds that name empty refuses instead of creating a new record there, so a record a sync tool moved away never comes back as a new one with another installation id (Cycle 0149 task 27); fails_when=the refresh resolves or says anything but the moved-away sentence of receipt.json, anything stands at receipt.json after it, the moved record changes, or the next refresh, once the record is back, answers anything but current with an installation id; no_claim=a real sync tool (seam.beforeRecordWrite renames receipt.json into the home folder once, right before the backfill writes its own, and the test renames it back before the next refresh), a real older build (the receipt is rewritten without its installation id), a move between the last look and the rename
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const olderReceipt = await readRecordFile(storage, 'receipt.json')
+  // A receipt of an older build holds no installation id.
+  delete olderReceipt.installationId
+  const olderReceiptText = JSON.stringify(olderReceipt)
+  writeFileSync(receiptPath, olderReceiptText)
+  const syncedPath = join(home, 'receipt-in-sync.json')
+  let hasMoved = false
+
+  // Act
+  const refreshOutcome = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      beforeRecordWrite: ({ path }) => {
+        if (path !== receiptPath || hasMoved) return
+        hasMoved = true
+        // A sync tool moves the record the refresh read away right before the backfill writes its own.
+        renameSync(receiptPath, syncedPath)
+      },
+    },
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+  const receiptAfterRefresh = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const syncedTextAfterRefresh = readFileSync(syncedPath, 'utf8')
+  // The sync tool is done and puts the record back.
+  renameSync(syncedPath, receiptPath)
+  const next = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMoved, true)
+  assert.equal(
+    refreshOutcome,
+    `Codebook found nothing at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it had read its record there (a backup or sync tool may have moved it away), so it wrote no record there and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(receiptAfterRefresh, 'absent')
+  assert.equal(syncedTextAfterRefresh, olderReceiptText)
   assert.equal(next.status, 'current')
   assert.equal(
     typeof (await readRecordFile(storage, 'receipt.json')).installationId,
