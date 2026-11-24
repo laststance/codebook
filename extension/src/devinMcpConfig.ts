@@ -5899,12 +5899,13 @@ function rollbackOutcomeClause(
 
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
- * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link PublishDecision.markVersion}), so another generation's record a backup or sync tool put there before the mark, or a record it put over the mark, stays for the next run, and so does the setup's own record when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
+ * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy, and for good while the old record's private name stayed after the link (`isRetiredKept`), because it is the only way to that name; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link PublishDecision.markVersion}), so another generation's record a backup or sync tool put there before the mark, or a record it put over the mark, stays for the next run, and so does the setup's own record when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
  * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out (also one that then found another file at its own record's name, `took-out-record-taken`), which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
  * @param copies - The copies the publish left, as reported and as the record on disk still tracks them ({@link LeftCopies}); one that stays is named in the error.
+ * @param isRetiredKept - Whether the old record's private name stayed after the link ({@link Published.isRetiredKept}): the record is then the only way to that name, so it stays after the rollback too, as after a publish whose receipt was written, and the next run settles that name ({@link settleRetiredReceipt}).
  * @returns The error to reject with: whether the entry was taken out again, and the way out.
  */
 async function takeOutUnrecordedEntry(
@@ -5912,6 +5913,7 @@ async function takeOutUnrecordedEntry(
   written: Receipt,
   cause: unknown,
   { asLeft, asTracked }: LeftCopies,
+  isRetiredKept: boolean,
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
@@ -5933,10 +5935,11 @@ async function takeOutUnrecordedEntry(
     ...(isHandedNext ? asLeft : asTracked),
     ...result.keptLeft,
   ]
-  // Nothing stays that the setup's record must prove: after a complete rollback with no copy left, only the mark this call wrote goes, while that name still shows it ({@link dropTrackedJournal}); a record another program put there meanwhile stays.
+  // Nothing stays that the setup's record must prove: after a complete rollback with no copy left and no old record's private name it leads to, only the mark this call wrote goes, while that name still shows it ({@link dropTrackedJournal}); a record another program put there meanwhile stays.
   if (
     outcome === 'took-out' &&
     keptCopies.length === 0 &&
+    !isRetiredKept &&
     markVersion !== undefined
   )
     await dropPending({
@@ -6016,7 +6019,13 @@ async function publishEntry(
   } catch (cause) {
     // A first setup never leaves an entry without a receipt; an update keeps the old receipt and rejects as before.
     if (!isFirst) throw cause
-    throw await takeOutUnrecordedEntry(context, written, cause, copies)
+    throw await takeOutUnrecordedEntry(
+      context,
+      written,
+      cause,
+      copies,
+      isRetiredKept,
+    )
   }
   // A record that names a copy that stays, or the old record's private name that stays, is kept, so the next run settles it.
   if (keptLeft.length === 0 && !isRetiredKept) await dropPending(context)

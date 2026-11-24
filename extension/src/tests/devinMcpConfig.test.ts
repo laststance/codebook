@@ -11430,6 +11430,72 @@ test("A first setup never deletes a file another program put at the old record's
   )
 })
 
+test("A first setup that cannot write its own record after another program's file took its old record's private name keeps the record that leads there when it takes its entry out, and the next setup still names that file", async (context) => {
+  // Value: protects=a first setup whose config stood while the old record's private name no longer showed the record it moved there (another program's file), and whose own record then could not be written, keeps its publish record after it took its entry out again, as a setup whose own record was written does, so the next run still reaches that private name and names that file instead of leaving it there unnamed (Cycle 0148 final-range review); fails_when=pending.json is gone after the setup, the file at the private name changes or is gone, the setup answers another sentence, or the next setup answers anything but the refusal that names that file; no_claim=a real sync tool (the config module is loaded with a link that, for the config's link, first puts another program's file at the private name at another inode, then links), and a real full disk (seam.beforeRecordWrite fails the write of receipt.json with ENOSPC)
+  // Arrange
+  const { home, storage, configPath, receiptPath } =
+    await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsFolder, 'pending.json')
+  const otherProgramText = '{"note":"a settings file of another program"}'
+  let retiredName = 'no private name'
+  const swappingDuringLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            // The old record waits under its private name; another program's file takes that name while the config is linked in.
+            retiredName =
+              readdirSync(recordsFolder).find((name) =>
+                name.endsWith('.retired'),
+              ) ?? retiredName
+            swapFile(join(recordsFolder, retiredName), otherProgramText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await swappingDuringLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path }) => {
+        if (path === receiptPath) throw noSpaceLeft()
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const recordsAfterRefusal = await recordsIn(storage)
+  const nextError = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  const retiredPath = join(recordsFolder, retiredName)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else; make room for that record, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, ['pending.json', retiredName])
+  assert.equal(
+    nextError instanceof Error ? nextError.message : nextError,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because that file is no record of Devin Desktop's MCP config at ${configPath} (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
+  )
+  assert.equal(readFileSync(retiredPath, 'utf8'), otherProgramText)
+})
+
 /**
  * Sets up Codebook's entry beside another server, then moves the config away, so the receipt stands for an entry that is gone and the next setup is a first setup that retires that receipt.
  * @param context - The test context.
