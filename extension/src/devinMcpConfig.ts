@@ -5360,9 +5360,9 @@ async function takeOutUnrecordedEntry(
 ): Promise<Error> {
   const { path, retry } = context
   let result: RollbackResult = { outcome: 'not-taken-out', keptLeft: [] }
-  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. Only a mark this call wrote has a version; a mark that failed, or a record that needed none (another generation's a backup put there), leaves the record at that name for the next run.
+  // The intent comes first: a failure inside the rollback (a full disk fails its journal too) must never let a later run adopt this entry. Only a mark this call wrote counts; a mark that failed, a record that needed none (another generation's a backup put there) or one marked already (a backup's, since this setup's record was just written without the mark) leaves the record at that name for the next run.
   const markVersion = await markTakeBackOwed(context, written.generation).then(
-    (decision) => decision?.markVersion,
+    (decision) => (decision?.isMarkFound ? undefined : decision?.markVersion),
     () => undefined,
   )
   try {
@@ -6229,7 +6229,8 @@ function unmatchedLeftoverSentence(
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
  * @returns
  * - The decision ({@link PublishDecision}): the belonging it decided ({@link JournalBelonging}), `belongs` once the mark is written, with the version of that mark, `another` or `another-config` when nothing is marked ({@link settleRollbackJournal} holds the journal on `another-config`), with the version of the record it was decided on
- * - undefined when there is no publish record of this config, or it is marked already
+ * - `belongs` with the version this call read as the mark's ({@link PublishDecision.isMarkFound}) when the record carries the mark already (an earlier run wrote it and stopped before its journal went), so that journal too ends only while the record's name still shows that mark; nothing is written then
+ * - undefined when there is no publish record of this config
  * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written, and its `record-gone` sentence when that name is found empty then ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
  * @example
  * await markTakeBackOwed(context, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
@@ -6245,10 +6246,17 @@ async function markTakeBackOwed(
     context.retry,
     context.seam,
   )
-  // No publish record, one of another config, or one already marked: nothing to mark.
-  if (read?.record.targetPath !== context.path || read.record.takeBack)
-    return undefined
+  // No publish record, or one of another config: nothing to mark.
+  if (read?.record.targetPath !== context.path) return undefined
   const { record: publish, version } = read
+  // An earlier run wrote the mark and stopped before its journal went: that mark stands as read, so the journal ends only while the record's name still shows this version ({@link markLeftCheck}).
+  if (publish.takeBack)
+    return {
+      belonging: 'belongs',
+      publishVersion: version,
+      markVersion: version,
+      isMarkFound: true,
+    }
   // A journal of this build names the publish it rolled back (another generation is another installation's publish); one of an older build names none, so its displaced file and the restored config decide.
   const belonging: JournalBelonging =
     publishGeneration === undefined
@@ -6279,12 +6287,14 @@ async function markTakeBackOwed(
 type PublishDecision = {
   belonging: JournalBelonging
   publishVersion: RecordVersion
-  /** The version of the take-back mark this call wrote ({@link stageRecord}); undefined when nothing was marked. The journal that proves that take-back is ended only while the record's name still shows it ({@link markLeftCheck}). */
+  /** The version of the take-back mark that stands: the one this call wrote ({@link stageRecord}), or the one it read when the record carried the mark already ({@link PublishDecision.isMarkFound}); undefined when nothing is marked. The journal that proves that take-back is ended only while the record's name still shows it ({@link markLeftCheck}). */
   markVersion?: RecordVersion
+  /** Set when the record carried the mark already, written by an earlier run that stopped before its journal went: this call wrote nothing, so that record is never deleted as this call's own mark ({@link takeOutUnrecordedEntry}). */
+  isMarkFound?: true
 }
 
 /**
- * Gives the synchronous look that must still find the take-back mark this run wrote at the publish record's name right before the rollback journal that proves that take-back is ended; called by {@link settleRollbackJournal}, so a setup record a backup puts back without that mark keeps the journal, and the next run marks it again instead of adopting it.
+ * Gives the synchronous look that must still find the take-back mark this run wrote, or found as an earlier run left it ({@link PublishDecision.isMarkFound}), at the publish record's name right before the rollback journal that proves that take-back is ended; called by {@link settleRollbackJournal}, so a setup record a backup puts back without that mark keeps the journal, and the next run marks it again instead of adopting it.
  * @param context - The run; its pending path is the publish record.
  * @param markVersion - The version of the mark ({@link PublishDecision.markVersion}); undefined when nothing was marked.
  * @param legacy - The journal's evidence, which the refusal names; undefined for a journal of this build.
