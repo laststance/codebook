@@ -18979,6 +18979,49 @@ test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads t
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A later setup never puts back the file a publish record without the old record's bytes leads to, the shape this version gives an older version's record: it keeps that file and that record byte for byte and names that file as one Codebook cannot tell is its old record", async (context) => {
+  // Value: protects=a publish record whose retiresReceipt is an object without bytes (this version's rewrite of an older version's record, foreignKeptRecordOf) names no file at the old record's private name, so a later run never links the record of this config that stands there into receipt.json on its word: it keeps that file, never answers current on it, names it unverified, and keeps that record byte for byte, since its shape already keeps older versions away (Cycle 0149 task 54, the empty × put-back cell of the old record's settle); fails_when=receipt.json appears, the setup answers current, the file at the private name changes or is gone, pending.json is gone or changes, or the refusal is another sentence; no_claim=the rewrite that writes that shape (the test writes the record by hand: this version's record with retiresReceipt {} and the mark that nothing was linked; the sibling test above shows the rewrite), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...(await readRecordFile(storage, 'pending.json')),
+      retiresReceipt: {},
+    }),
+  )
+  const pendingBefore = readFileSync(pendingPath, 'utf8')
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
+  )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingBefore)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A later setup never drops a first setup's old record beside a newer record of the same entry when a backup puts back that setup's publish record while Codebook compares the two: it keeps the old record and says that record changed", async (context) => {
   // Value: protects=a later run's drop of the old record beside a record that covers it deletes only while the publish record it read still stands at pending.json, at a synchronous look beside the looks at both receipt names right before the unlink (Cycle 0149 task 9, D5 on devinMcpConfig.ts:5041), so a record a backup puts back during the comparison never loses the old record; fails_when=the old record's private file is gone or changed, receipt.json holds anything but the newer record, pending.json is not the record the backup put back, or the refusal is another sentence than the changed-record one; no_claim=a real backup tool (seam.afterStat renames the setup's record without its mark over pending.json once, at the comparison's read of the old record, the second read of it in that run), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), the newer record (the test writes it), and a record put there between the last look and the unlink (no Node primitive unlinks by inode)
   // Arrange
@@ -23866,6 +23909,135 @@ test("A refresh never deletes a finished first setup's old record when a sync to
   assert.equal(second, 'not-managed')
   assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
+test("A refresh after an older version's finished first setup leaves its old record at the private name and ends the publish record", async (context) => {
+  // Value: protects=a finished first setup's own record at receipt.json proves its link stood, so the old record is to go, but a publish record of 0.2.142.0, 0.2.143.0 or 0.2.144.0 (retiresReceipt true) names no bytes of the file it moved there: this version never deletes that file on its word, leaves it at the private name byte for byte, and ends the publish record, so nothing leads a later run there and the refresh answers current on that setup's record (Cycle 0149 task 54, the true × drop cell of the old record's settle; this branch deleted that file before the cycle); fails_when=the file at the private name is gone or changes, pending.json stays, receipt.json holds anything but that setup's record, or the refresh refuses or answers anything but current; no_claim=0.2.143.0 itself (the test writes its record by hand: this version's finished setup's record with retiresReceipt true), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays), what the learner does with the file left there
+  // Arrange
+  const { home, storage, pendingPath, setupReceipt, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...(await readRecordFile(storage, 'pending.json')),
+      retiresReceipt: true,
+    }),
+  )
+  const retiredText = readFileSync(retiredPath, 'utf8')
+
+  // Act
+  const refreshAnswer = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(refreshAnswer, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+})
+
+test("A refresh after a finished first setup whose publish record Codebook 0.2.144.0 kept as foreign leaves the file at the old record's private name and ends the publish record", async (context) => {
+  // Value: protects=a publish record 0.2.144.0 kept as foreign names no bytes of the file at the old record's private name, so once that setup's own record at receipt.json proves its link stood, this version never deletes that file on that record's word: it leaves that file byte for byte and ends the publish record, so nothing leads a later run there, and the refresh answers current on that setup's record (Cycle 0149 task 54, the foreign × drop cell of the old record's settle); fails_when=the file at the private name is gone or changes, pending.json stays, receipt.json holds anything but that setup's record, or the refresh refuses or answers anything but current; no_claim=0.2.144.0 itself (the test writes its record by hand: this version's finished setup's record with retiresReceipt foreign), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays), the comparison of one file at both names (its own cells)
+  // Arrange
+  const { home, storage, pendingPath, setupReceipt, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...(await readRecordFile(storage, 'pending.json')),
+      retiresReceipt: 'foreign',
+    }),
+  )
+  const retiredText = readFileSync(retiredPath, 'utf8')
+
+  // Act
+  const refreshAnswer = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(refreshAnswer, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+})
+
+test("A refresh after a finished first setup whose publish record names no bytes of the old record, the shape this version gives an older version's record, leaves the file at the private name and ends the publish record", async (context) => {
+  // Value: protects=a publish record whose retiresReceipt is an object without bytes (this version's rewrite of an older version's record, foreignKeptRecordOf) names no file at the old record's private name, so once that setup's own record at receipt.json proves its link stood, this version never deletes that file on that record's word: it leaves that file byte for byte and ends the publish record, so nothing leads a later run there, and the refresh answers current on that setup's record (Cycle 0149 task 54, the empty × drop cell of the old record's settle); fails_when=the file at the private name is gone or changes, pending.json stays, receipt.json holds anything but that setup's record, or the refresh refuses or answers anything but current; no_claim=the rewrite that writes that shape (the test writes the record by hand: this version's finished setup's record with retiresReceipt {}), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays), the comparison of one file at both names (its own cells)
+  // Arrange
+  const { home, storage, pendingPath, setupReceipt, retiredName, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...(await readRecordFile(storage, 'pending.json')),
+      retiresReceipt: {},
+    }),
+  )
+  const retiredText = readFileSync(retiredPath, 'utf8')
+
+  // Act
+  const refreshAnswer = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(refreshAnswer, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), setupReceipt)
+})
+
+test("A refresh never deletes a finished first setup's old record while its publish record notes that receipt.json is unverified and another file stands there: it keeps every record byte for byte and asks to move that file", async (context) => {
+  // Value: protects=the note that a put-back left a file at receipt.json that Codebook did not verify (receiptUnverified) is checked before any drop of the old record (assertReceiptVerified, first in settleRetiredReceipt), so a record at receipt.json that would otherwise prove the setup's link stood (the same generation) never lets the old record be deleted while the note stands and other bytes than the noted ones stand there: the refresh refuses with the unverified sentence and deletes nothing (Cycle 0149 task 54, the unverified × drop cell of the old record's settle); fails_when=the file at the private name is gone or changes, pending.json is gone or changes, receipt.json is gone or changes, or the refresh answers anything but the unverified sentence; no_claim=how the note and that record came to stand together (the test writes the note by hand into the finished setup's record, as a backup restoring a record of another moment may leave it), why the setup could not delete the old record's private file (unlink stub EBUSY for that name; the setup keeps its publish record while that file stays), a receipt.json that holds the noted bytes (the note's own tests)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, retiredPath } =
+    await arrangeFinishedSetupWithOldRecordLeft(context)
+  const retiredText = readFileSync(retiredPath, 'utf8')
+  writeFileSync(
+    pendingPath,
+    JSON.stringify({
+      ...(await readRecordFile(storage, 'pending.json')),
+      retiresReceipt: { sha256: sha256(retiredText), receiptUnverified: true },
+    }),
+  )
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+
+  // Act
+  const refreshAnswer = await refreshManagedDevinMcpEntry(
+    storage,
+    OTHER_ENTRY,
+    home,
+  ).then(
+    ({ status }) => status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(
+    refreshAnswer,
+    `Codebook's publish record at ${pendingPath} notes that a put-back for a setup left a file at ${receiptPath} that Codebook did not verify as its record of Devin Desktop's MCP config at ${configPath} (another program may have replaced the record Codebook read at ${retiredPath}), and that file still stands there, so Codebook did not take it for its record, deleted nothing and kept that publish record; move the file at ${receiptPath} to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
 })
 
 test('A refresh after a finished first setup that finds a link at receipt.json asks to move that link to another folder, never to make it readable, and the refresh after the link is moved away settles the old record', async (context) => {
