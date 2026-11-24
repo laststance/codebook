@@ -5882,7 +5882,7 @@ function rollbackOutcomeClause(
 /**
  * Takes out the entry a first setup just published when its receipt could not be written, so no entry stays that no record owns; called by {@link publishEntry}.
  * Only the file of this write is edited: the config is read again, its inode must still be the one published, and the entry must still hash like the receipt that was about to be written ({@link ownsEntry}); every other server and key stays. The setup's pending record stays until the rollback is complete and no copy remains, because it is the only proof that the entry is Codebook's and the only record of a displaced copy; it then goes only as the take-back mark this call wrote, while its name still shows that mark ({@link PublishDecision.markVersion}), so another generation's record a backup or sync tool put there before the mark, or a record it put over the mark, stays for the next run, and so does the setup's own record when its mark could not be written (the next run takes that setup back, {@link isTakeBackOwed}).
- * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out, which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
+ * A copy of the previous config is worded as one a later run deletes ({@link KeptFile.isLeftover}) whenever the record on disk still lets the next run delete it: always once {@link publishEntry} marked it so, except after a rollback that took the entry out (also one that then found another file at its own record's name, `took-out-record-taken`), which replaced the published file, so the next run hands that copy over instead ({@link keepOriginalUnlessPublished}). Another config found at the config path proves no such thing: the published file may still have another name, and a sync tool that puts it back before the next run lets that run delete the copy.
  * @param context - The run.
  * @param written - The receipt that could not be written, of this write's generation.
  * @param cause - The failure of the receipt write, kept for diagnosis.
@@ -5908,8 +5908,9 @@ async function takeOutUnrecordedEntry(
     // The rejection below says the entry may still stand.
   }
   const { outcome } = result
-  // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it; another file found at the config path may still give way to the published one before then.
-  const isHandedNext = outcome === 'took-out'
+  // The rollback replaced the published file, so the next run hands an untracked copy over instead of deleting it, also when it then found another file at its own record's name; another file found at the config path may still give way to the published one before then.
+  const isHandedNext =
+    outcome === 'took-out' || outcome === 'took-out-record-taken'
   const keptCopies = [
     ...(isHandedNext ? asLeft : asTracked),
     ...result.keptLeft,

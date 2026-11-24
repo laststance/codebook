@@ -8426,6 +8426,91 @@ test("Another rollback journal a backup restores at the journal name after a set
   assert.equal(existsSync(pendingPath), false)
 })
 
+test("A first setup that cannot write its completed record or its receipt and whose take-back took the entry out before it found another rollback record at its record's name leaves the moved-aside copy to you, which the next setup hands over instead of deleting", async (context) => {
+  // Value: protects=once a take-back took the entry out it replaced the published file, so the next run hands the moved-aside copy of the learner's previous config over instead of deleting it, also when that take-back then found another program's file at its rollback record's name, and the notice leaves that copy to the learner instead of warning that Codebook still tracks it (Cycle 0148 ship review); fails_when=the setup says anything but the took-out-then-found-another-file refusal followed by the copy left to the learner, the next setup does not name that copy as handed over, the copy is gone or changes after either setup, the restored journal changes, or the config holds the entry after the first setup; no_claim=a real ENOSPC (seam.beforeRecordWrite fails only the setup's completed record and its receipt; the take-back mark is written), a real backup tool (seam.afterLeftoverCheck renames another installation's journal over the journal's name once, at the take-back's look at its displaced copy after its completed rollback record was written)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const originalText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, originalText)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const journalPath = `${pendingPath}.rollback`
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000164',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000165',
+  })}\n`
+  const backupPath = join(home, 'journal-from-backup.json')
+  let copyPath = ''
+  let hasRestoredJournal = false
+
+  // Act
+  const setupError = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      if (path === pendingPath && phaseOfRecord(record) === 'completed')
+        throw noSpaceLeft()
+      if (path === receiptPath) throw noSpaceLeft()
+    },
+    afterPublish: (displacedPath) => {
+      // The setup's own publish comes first; the take-back's publish follows.
+      if (copyPath === '') copyPath = displacedPath ?? ''
+    },
+    afterLeftoverCheck: (path) => {
+      if (path === journalPath || hasRestoredJournal) return
+      // Only once the take-back's completed record stands: its entry is out, and only its own record is still to go.
+      if (
+        !existsSync(journalPath) ||
+        JSON.parse(readFileSync(journalPath, 'utf8')).phase !== 'completed'
+      )
+        return
+      hasRestoredJournal = true
+      writeFileSync(backupPath, restoredJournalText)
+      renameSync(backupPath, journalPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A file a setup deleted reads as 'absent', so the assertions below name it.
+  const copyAfterFirst = existsSync(copyPath)
+    ? readFileSync(copyPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = JSON.parse(readFileSync(configPath, 'utf8'))
+  const secondError = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestoredJournal, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else, but then found another file at ${journalPath}, where it keeps the record of that take-back (a backup or sync tool may have put an older file there), so it left that file as it is and went no further; the next run reads ${journalPath} first (if what stands there is not Codebook's for ${configPath}, move it to another folder first); make room for that record, then run Codebook: Set Up AI Chat again. Codebook also kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers); delete that copy when you no longer need it.`,
+  )
+  assert.equal(copyAfterFirst, originalText)
+  assert.equal(journalAfterFirst, restoredJournalText)
+  assert.deepEqual(configAfterFirst, {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  // The next setup hands the copy over and names it as left to the learner.
+  assert.equal(
+    secondError instanceof Error ? secondError.message : secondError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file; Codebook kept a private copy of your previous Devin MCP config at ${copyPath} (it holds the settings of your other servers), so delete that copy when you no longer need it, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(
+    existsSync(copyPath) ? readFileSync(copyPath, 'utf8') : 'absent',
+    originalText,
+  )
+})
+
 test("A file another program puts at the staged name of a take-back's first rollback record never becomes that record, so the take-back moves nothing and the next refresh takes the entry out", async (context) => {
   // Value: protects=a take-back's first rollback-record write links only the file it wrote and flushed itself, checked by inode and bytes right before the link, so a file another program put at that record's staged name never stands at the journal name while the take-back moves the config (Cycle 0148 ship review); fails_when=anything stands at the journal name after the first refresh, the file at the staged name is deleted or changed, the config changes, the setup's record loses its take-back mark, the first refresh says anything but the not-taken-out refusal, or the second refresh leaves the entry; no_claim=a real sync tool (seam.beforeRecordWrite renames another file over the staged name once, at the take-back's first journal write), a swap between the last look at the staged name and the link (its own test), what a later run does with the file at the staged name
   // Arrange
