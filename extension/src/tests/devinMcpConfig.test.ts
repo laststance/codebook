@@ -9140,7 +9140,7 @@ test("A setup record a sync tool moves away at a held run's last look at it befo
 })
 
 test("Another rollback journal a backup restores at the journal name after a setup's take-back of a failed first setup took the entry out stops that setup before it installs the entry again, says the entry is out, and the next setup installs it", async (context) => {
-  // Value: protects=a take-back that took the entry out and then finds another file at its rollback record's name, where it would delete that record, leaves that file, says that the entry is out, and ends the run, so Set Up AI Chat never retires the failed setup's record and installs the entry again beside a rollback record it did not settle (Cycle 0148 ship review); fails_when=the first setup resolves or says anything but the took-out-then-found-another-file refusal, the restored journal changes or is gone, the config holds the entry or loses another server after it, the failed setup's record loses its take-back mark, a receipt appears, or the second setup does not install the entry beside the other server with no journal left; no_claim=a real backup tool (seam.afterLeftoverCheck renames another journal over the journal's name once, at the take-back's look at its displaced copy after its completed record was written), a restore after the last look before the unlink, the same order in a removal (its record is untracked)
+  // Value: protects=a take-back that took the entry out and then finds another file at its rollback record's name, where it would delete that record, leaves that file, says that the entry is out, and ends the run, so Set Up AI Chat never retires the failed setup's record and installs the entry again beside a rollback record it did not settle (Cycle 0148 ship review); fails_when=the first setup resolves or says anything but the took-out-then-found-another-file refusal, the restored journal changes or is gone, the config holds the entry or loses another server after it, the failed setup's record loses its take-back mark, a receipt appears, or the second setup does not install the entry beside the other server with no journal left; no_claim=a real backup tool (seam.afterLeftoverCheck renames another journal over the journal's name once, at the take-back's look at its displaced copy after its completed record was written), a restore after the last look before the unlink, the same order in a removal (it tracks its own record too since Cycle 0148 task 33, but a removal whose entry is out leaves another file at that name and reports removed, which its own test drives)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -10252,7 +10252,7 @@ test("A file another program puts at the staged name of a take-back's rewritten 
 })
 
 test("A take-back's rewrite of its rollback record waits for an asynchronous look at that record's name before its synchronous last look, so a stalled disk holds the take-back instead of the window", async (context) => {
-  // Value: protects=a rewrite of a tracked rollback record reaches the file system's asynchronous look at the record's name right before its synchronous last look, so storage that already stalls holds that step in the thread pool, where the take-back's budget can answer, not the extension host's thread, and the take-back still finishes once storage answers (Cycle 0148 ship review); fails_when=no asynchronous look at the record's name is held while the refresh runs, the refresh settles or the record says completed while the look is held, or the refresh after the release leaves the entry or the record; no_claim=a real stalled disk (an lstat of the journal name held until the test releases it stands for it), a stall that starts between the asynchronous and the synchronous look, the window's timers themselves
+  // Value: protects=a rewrite of a tracked rollback record reaches the file system's asynchronous look at the record's name right before its synchronous last look, so storage that already stalls holds that step in the thread pool, where the take-back's budget can answer, not the extension host's thread, and the take-back still finishes once storage answers (Cycle 0148 ship review); fails_when=no asynchronous look at the record's name is held once the take-back moved the config aside (its claim of the record and that claim's own look at the name are done by then, so only a rewrite's look is held), the refresh settles or the record says completed while the look is held, or the refresh after the release leaves the entry or the record; no_claim=a real stalled disk (an lstat of the journal name, held from the take-back's move of the config aside until the test releases it, stands for it), a stall that starts between the asynchronous and the synchronous look, the claim's own look at the name (not held here), the window's timers themselves
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -10271,14 +10271,15 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
   rmSync(receiptPath, { recursive: true })
   const release = defer<void>()
   let heldLooks = 0
+  let isConfigMovedAside = false
   const stalled = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
         link,
         lstat: async (...args: Parameters<typeof lstat>) => {
-          // Storage stops answering for the journal's name until the test releases it.
-          if (args[0] === journalPath) {
+          // Once the take-back moved the config aside, storage stops answering for the journal's name until the test releases it.
+          if (args[0] === journalPath && isConfigMovedAside) {
             heldLooks += 1
             await release.promise
           }
@@ -10286,7 +10287,11 @@ test("A take-back's rewrite of its rollback record waits for an asynchronous loo
         },
         mkdir,
         open,
-        rename,
+        rename: async (...args: Parameters<typeof rename>) => {
+          await rename(...args)
+          // The take-back's move of the config aside: its claim of the journal and that claim's own look at the name are done by then.
+          if (args[0] === configPath) isConfigMovedAside = true
+        },
         rm,
         unlink,
       },
