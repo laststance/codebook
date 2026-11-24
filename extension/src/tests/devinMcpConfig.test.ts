@@ -14532,6 +14532,153 @@ test("A setup record's rewrite that stops inside its publication where Codebook'
   assert.equal(existsSync(droppingPath), false)
 })
 
+/**
+ * Loads the config module as it runs where Codebook's storage folder cannot give a file a second name: every link into the `devin-mcp` records folder is refused with ENOTSUP, as macOS answers for exFAT, while links beside the config work.
+ * @param storage - Codebook's storage folder.
+ * @param renameFile - The rename the module uses; the real one unless a test swaps a file in right before a rename.
+ * @returns The loaded module.
+ * @example
+ * const withoutStorageLinks = await loadWithoutStorageLinks(storage)
+ * await withoutStorageLinks.writeManagedDevinMcpEntry(storage, ENTRY, home)
+ */
+async function loadWithoutStorageLinks(
+  storage: string,
+  renameFile: typeof rename = rename,
+): Promise<typeof DevinMcpConfigModule> {
+  const recordsPath = join(storage, 'devin-mcp')
+  return loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The storage folder's file system gives no file a second name; the config's folder does.
+          if (dirname(to) === recordsPath)
+            throw Object.assign(
+              new Error(`ENOTSUP: operation not supported, link '${from}'`),
+              { code: 'ENOTSUP' },
+            )
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename: renameFile,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+}
+
+test("A first setup whose link fails after the old config came back puts the old record back where Codebook's storage folder cannot give a file a second name, so the next setup finds that entry current", async (context) => {
+  // Value: protects=on a storage folder without hard links, a first setup's put-back of the old record it moved aside takes the route without links (Cycle 0149 task 45): a rename into the empty receipt.json right after a last look finds that name empty and the private name still showing that record, then a read that finds that record's inode and bytes at receipt.json, so the old config's codebook entry stays Codebook's own instead of the old record waiting at its private name for a link no run can make; fails_when=the setup says more than the changed-file refusal (the sentence that it could not put the old record back, say), receipt.json is not the old record, a publish record or a private name stays, or the next setup answers anything but current; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), a real sync tool (seam.afterCheck moves the config back right before the config's link), and a file put at receipt.json between the last look and the rename (the limit of renameIntoEmptyName)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const withoutStorageLinks = await loadWithoutStorageLinks(storage)
+
+  // Act
+  const setupError = await withoutStorageLinks
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, { afterCheck: moveBack })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const receiptAfterRefusal = existsSync(receiptPath)
+    ? await readRecordFile(storage, 'receipt.json')
+    : 'absent'
+  const recordsAfterRefusal = await recordsIn(storage)
+  const next = await withoutStorageLinks.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(receiptAfterRefusal, receiptBefore)
+  assert.deepEqual(recordsAfterRefusal, ['receipt.json'])
+  assert.equal(next.status, 'current')
+})
+
+test("A later setup puts back the old record that a failed put-back left at its private name where Codebook's storage folder cannot give a file a second name, and finds that entry current", async (context) => {
+  // Value: protects=a later run's put-back of a first setup's old record takes the route without links where the storage folder cannot give a file a second name (Cycle 0149 task 45), so that record goes back once instead of every later setup, refresh and removal retrying a link the storage refuses; fails_when=the setup answers anything but current (the sentence that it could not put the old record back, say), receipt.json is not the old record, or a publish record or a private name stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link), and a file put at receipt.json between the last look and the rename (the limit of renameIntoEmptyName)
+  // Arrange
+  const { home, storage, receiptBefore } = await arrangeFailedPutBack(context)
+  const withoutStorageLinks = await loadWithoutStorageLinks(storage)
+
+  // Act
+  const setupAnswer = await withoutStorageLinks
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      (result) => result.status,
+      (error: unknown) => (error instanceof Error ? error.message : error),
+    )
+
+  // Assert
+  assert.equal(setupAnswer, 'current')
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
+test("A later setup whose put-back moves another installation's record to receipt.json, swapped in at the old record's private name right before that move where Codebook's storage folder cannot give a file a second name, keeps that file, notes in its publish record that it is unverified and says so", async (context) => {
+  // Value: protects=the route without links checks receipt.json after its rename like the link route does after its link (Cycle 0149 task 45): a file another program swapped in at the private name between the last look and the rename (criterion 17's residual) is never taken for the old record, stays at receipt.json, and the publish record notes, before the run answers, that receipt.json is unverified (Cycle 0149 task 43), which the sentence says; fails_when=the swap never met the put-back's rename, the refusal is another sentence, receipt.json holds other bytes than the swapped-in record, or pending.json lacks the note naming the old record's bytes; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), a real sync tool (that module's rename, for the put-back's rename of the private name to receipt.json, first swaps another installation's record in at the private name, then renames), why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    pendingPath,
+    retiredPath,
+  } = await arrangeFailedPutBack(context)
+  const swappedText = JSON.stringify({
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000149169',
+    installationId: 'c0ffee00-0000-4000-8000-000000149170',
+  })
+  let hasSwapped = false
+  const withoutStorageLinks = await loadWithoutStorageLinks(
+    storage,
+    async (from, to) => {
+      // Another installation's record takes the private name right before the put-back's rename.
+      if (from === retiredPath && to === receiptPath && !hasSwapped) {
+        hasSwapped = true
+        swapFile(retiredPath, swappedText)
+      }
+      return rename(from, to)
+    },
+  )
+
+  // Act
+  const setupError = await withoutStorageLinks
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(hasSwapped, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook moved the file at ${retiredPath} back to ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept that file and noted that in its publish record at ${pendingPath}, and the next run looks at ${receiptPath} again; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), swappedText)
+  assert.deepEqual(
+    (await readRecordFile(storage, 'pending.json')).retiresReceipt,
+    {
+      sha256: sha256(JSON.stringify(receiptBefore)),
+      receiptUnverified: true,
+    },
+  )
+})
+
 test('A first record write whose link fails with an I/O error publishes nothing at that name by another route, so the setup refuses and leaves the config and Codebook records as they were', async (context) => {
   // Value: protects=only the codes of storage without hard links (EPERM, ENOTSUP, EOPNOTSUPP, ENOSYS) start the no-link route of a record's first write, so a failing disk never gets a record published at that name by another route (Cycle 0149 task 5, D5 review); fails_when=the setup resolves, pending.json, a receipt or a staged name of a record stays, or the config changes; no_claim=a real I/O error (the config module is loaded with a link that fails with EIO for pending.json only), other codes than EIO
   // Arrange
