@@ -3647,7 +3647,7 @@ function otherInodeRefusal(
 
 /**
  * Recovers what an interrupted run left under the private names its pending record holds; called by {@link inspect} before the config is read.
- * Every name must be a bare name Codebook made beside the config with the inode the record holds, checked for all of them before any is moved, linked or deleted. Each leftover is then settled on its own: one that cannot be settled stays and is returned, and the others are still settled.
+ * Every name must be a bare name Codebook made beside the config with the inode the record holds, checked for all of them before any is moved, linked or deleted. Each leftover is then settled on its own: one that cannot be settled stays and is returned, and the others are still settled, unless a look at the record itself stopped it (a {@link JournalConflictError}: the record changed, disappeared or could not be read again, {@link recordStillCheck}): no leftover after that one is settled on that record's word, and the caller ends the run ({@link recoveryConflictOf}).
  * - A displaced config of a write or removal that was still in progress, while the config name is empty: it goes back with a link, which never replaces anything, only while it still has the recorded inode or the recorded bytes; a file with both different (a sync or backup tool replaced it) stays private, the config name stays empty and the refusal names it. When the config name is another name of the same file (a put-back interrupted after its link), the extra displaced name is unlinked; when only the bytes ever proved that file (another inode than the recorded one), only after the shared bytes were checked against the record ({@link assertSharedPutBackBytes}).
  * - A displaced or staged file that holds exactly the bytes the record names: it is Codebook's own leftover and is deleted. After a finished publish or removal (a completed record) it is never put back.
  * - A staged or displaced name that is another link to the config itself: unlinked, whatever the config holds now; the config keeps the inode.
@@ -3685,9 +3685,23 @@ async function recoverLeftovers(
       await tidyLeftover(context, leftover, look.copy, pending)
     } catch (cause) {
       unsettled.push(await unsettledOf(leftover, look, cause))
+      // A record that changed, disappeared or could not be read again ends the recovery: nothing after it is settled on that record's word.
+      if (cause instanceof JournalConflictError) break
     }
   }
   return unsettled
+}
+
+/**
+ * Finds the leftover whose recovery a record check stopped ({@link JournalConflictError}: the record changed, disappeared or could not be read again, {@link recordStillCheck}); called by {@link inspect} and {@link settleRollbackJournal} right after {@link recoverLeftovers}, which settles nothing after that leftover, so the run ends there instead of settling, rewriting or deleting that record on a later read.
+ * @param unsettled - The leftovers recovery could not settle.
+ * @returns The first entry whose cause is a {@link JournalConflictError}; undefined when no record check failed.
+ * @example
+ * recoveryConflictOf([{ leftover, cause: journalConflictError(context, 'unread') }]) // => that entry
+ * recoveryConflictOf([{ leftover, cause: new Error('busy') }])                       // => undefined
+ */
+function recoveryConflictOf(unsettled: Unsettled[]): Unsettled | undefined {
+  return unsettled.find(({ cause }) => cause instanceof JournalConflictError)
 }
 
 /**
@@ -3754,7 +3768,7 @@ async function unsettledOf(
 }
 
 /**
- * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named. A copy handed over in this run whose name a sync tool swapped meanwhile ({@link Unsettled.isReplaced}) is said to be no longer that copy ({@link replacedCopySentence}), never the previous config to delete.
+ * Words the one leftover a run reports: a leftover of a finished or handed change is said once ({@link completedLeftRefusal}) and then no longer tracked; one of a change in progress stays named. A copy handed over in this run whose name a sync tool swapped meanwhile ({@link Unsettled.isReplaced}) is said to be no longer that copy ({@link replacedCopySentence}), never the previous config to delete. A finished change's copy whose record recovery could not read again (an `unread` {@link JournalConflictError}) is said to be kept, with a later run possibly deleting it ({@link UNCONFIRMED_CLAUSE}): that record stays and may still let a later run delete the copy, so the learner is never told to delete it.
  * @param context - The run.
  * @param phase - The phase recovery read the pending record in ({@link leftoverPhaseOf}).
  * @param reported - The unsettled leftover to name.
@@ -3780,6 +3794,12 @@ function unsettledRefusal(
       `${changedWhileWorking(context).message} ${replacedCopySentence(leftover.path)}`,
     )
   if (isHandedOver) return newConfigRefusal(context, leftover.path)
+  // A finished change's copy whose record could not be read again stays tracked by that record, which a later run may still delete it on: it is never left to the learner to delete.
+  if (phase && cause instanceof JournalConflictError && cause.kind === 'unread')
+    return new Error(
+      `Codebook kept ${keptCopyPhrase(leftover.path)}, ${UNCONFIRMED_CLAUSE}.`,
+      { cause },
+    )
   return phase
     ? completedLeftRefusal(context, leftover.path, cause)
     : leftCopyRefusal(context, leftover.path, cause)
@@ -4505,7 +4525,7 @@ async function keepOriginalUnlessPublished(
  * Each synchronous look here comes right after an awaited look at the same name ({@link lookAheadAt}), so a storage that already stalls holds this step in the thread pool, where the step's budget answers; a stall that starts between the two looks still holds the extension host's thread.
  * The name is looked at again right before the link and before it goes ({@link isLeftoverStill}); after the link the config name must show the checked inode. When it shows another one and the leftover name shows that same inode, the link itself made this name, so the config name is unlinked again and the leftover is refused; when the leftover name changed again too, Codebook cannot prove which name it made, so both stay and the refusal says so. The displaced name goes only through {@link dropPutBackName}, which moves it aside and checks the moved file again, so a file swapped in after the last look is never deleted. The put-back links only while the record still shows the version recovery read, or for a put-back by bytes the unchecked record it just wrote, looked at right before the name's last look ({@link recordStillCheck}), and the displaced name goes only while that version still stands at a look right before its unlink ({@link dropCheckedName}).
  * Limits: a swap between the look before the link and the link is not seen; a record a sync tool puts back after the link keeps the displaced name, which then stays a second name of the config that stands.
- * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}).
+ * A put-back that only the bytes prove first rewrites the record as handed and unverified ({@link Pending.bytesUnverified}), after the second hash and before the link: a run that stops between the link and the check then leaves a record that older builds never delete from and that this build checks at its next run ({@link assertSharedPutBackBytes}). When that write fails nothing is linked; once the check passed and the private name is gone, the record goes back to what it said, best effort. A step after that write that throws writes the record back as it was read, best effort, unless the displaced name stays an unverified second name of the config ({@link restoreUnlessSecondName}) or the step found that the record changed, disappeared or could not be read again ({@link JournalConflictError}): nothing is written then, so the record that stands, or the unverified one this run wrote, stays as it is.
  * @param context - The run.
  * @param leftover - The displaced name and the hash the record holds for it.
  * @param pending - The pending record of the interrupted run; its phase as recovery reads it ({@link leftoverPhaseOf}) must be absent.
@@ -4564,8 +4584,8 @@ async function putBackDisplaced(
         : undefined
     await dropPutBackName(context, path, published ?? { ino: copy.ino })
   } catch (cause) {
-    // The unverified record must not outlive the state it describes: also where the run keeps pending.json as it finds it (an unrecorded removal).
-    if (proof === 'bytes')
+    // The unverified record must not outlive the state it describes: also where the run keeps pending.json as it finds it (an unrecorded removal). A record that changed, disappeared or could not be read again is never written over: it stays as it is, and the next run reads that name first.
+    if (proof === 'bytes' && !(cause instanceof JournalConflictError))
       await restoreUnlessSecondName(context, leftover, pending)
     throw cause
   }
@@ -6776,10 +6796,11 @@ function currentEntryOf(look: ConfigLook): unknown {
 /**
  * Settles the leftovers of a failed first setup's rollback before anything else reads the config; called by {@link inspect}.
  * The rollback keeps its own journal ({@link rollbackContextOf}). A process that ends after the rollback moved the config aside leaves the config name empty and the learner's other servers only under the rollback's private name, so that journal is settled first, the same way as `pending.json`'s ({@link recoverLeftovers}): the recorded original goes back to an empty config name, extra names are dropped, and anything that cannot be settled stays and is named. The journal is retired (or reduced to what stays) before `pending.json` is read, only while its name still shows the version this run settled ({@link retirePending}).
+ * A recovery that a look at the journal itself stopped (the journal changed, disappeared or could not be read again, {@link recoveryConflictOf}) settles no copy after that one; the journal as recovery read it still decides the take-back mark below, because it alone may prove that an older build's unmarked setup record owes its take-back, and then the run ends, naming the copy first and the journal's conflict after it, with no journal rewritten, held or deleted.
  * A settled journal marks the setup's publish record `takeBack` ({@link markTakeBackOwed}) first, so {@link inspect} finishes the take-back instead of adopting that record, in this run or a later one; the journal then ends only while that record's name still shows the mark ({@link markLeftCheck}), so a setup record a backup puts back without it keeps the journal; a journal that marks nothing (another setup's record, or none at that name) ends only while that name still shows the record the decision read, or nothing, so the setup record a backup restores there meanwhile is decided together with the journal instead of being adopted without it. A journal of an older build names no publish, so the config its recovery put back is read for {@link legacyBelonging}; one that cannot be matched, or not yet because that config could not be read or is no valid JSON config yet, is refused before the journal is retired, and both records then stay. One decided as another publish's on that one read (`another-config`) is never deleted here: it is held ({@link holdLegacyJournal}) until the run's own look shows the same bytes and the publish record can no longer adopt ({@link settleAfterRecovery}).
  * @param context - The run.
  * @returns The held journal of an older build that this read decided as another publish's; undefined when the journal was retired (or reduced) here, or there was none.
- * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread`, `record-gone` or `record-unread` sentence when the publish record's name no longer shows the version the mark read, the take-back mark this run wrote or found, or what the decision read when nothing was marked, or cannot be read again then ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as the journal is held or retired: that name stays as it is and the run goes no further. Either comes after the first leftover's refusal when one stays and the refusal does not name it already ({@link withJournalLeftover}).
+ * @throws A refusal naming the first leftover that could not be settled, or what {@link recoverLeftovers} throws for a name that is not Codebook's own; nothing is created then. The {@link unmatchedJournalRefusal} for an older build's journal whose file has the published inode but other bytes, while the config holds the setup's entry and does not start with the published bytes, cannot be read or is no valid JSON config yet: no record is written or retired then. Its `record-reread`, `record-gone` or `record-unread` sentence when the publish record's name no longer shows the version the mark read, the take-back mark this run wrote or found, or what the decision read when nothing was marked, or cannot be read again then ({@link markLeftCheck}): both records stay. A {@link JournalConflictError} when the journal's name no longer shows the version this run settled or cannot be read again as recovery acts on a copy on its word (after the take-back mark), or as the journal is held or retired: that name stays as it is and the run goes no further. Either comes after the first leftover's refusal when one stays and the refusal does not name it already ({@link withJournalLeftover}).
  * @example
  * await settleRollbackJournal(context) // the original config is back at its path when a rollback was cut short
  */
@@ -6823,6 +6844,16 @@ async function settleRollbackJournal(
     // A mark refused for a publish record that changed meanwhile names the leftover this recovery could not settle too.
     throw withJournalLeftover(error, rollbackContext, phase, reported, legacy)
   })
+  // A journal its recovery could no longer confirm ends the run once the take-back it proves as read is marked: no copy, no journal and no hold changes after that, and the next run reads that name first.
+  const conflict = recoveryConflictOf(unsettled)
+  if (conflict)
+    throw withJournalLeftover(
+      conflict.cause,
+      rollbackContext,
+      phase,
+      conflict,
+      legacy,
+    )
   const retained = retainedRecord(
     await recordAfterRecovery(rollbackContext, pending, unsettled, isHandedNow),
     tracked,
@@ -7987,7 +8018,7 @@ type Inspection = {
 
 /**
  * Settles a kept copy and a pending record, reads the config and returns what a run decides on.
- * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that; a refusal of the steps after recovery names it too when it was handed over in this run or its own text names both files ({@link mergeWithLeftover}).
+ * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that; a refusal of the steps after recovery names it too when it was handed over in this run or its own text names both files ({@link mergeWithLeftover}). A record that recovery could no longer confirm as it acted on a copy on its word ({@link recoveryConflictOf}) ends the run right after recovery, with that record's sentence and then the copy's, before anything is written, adopted or taken back.
  * @param context - The run.
  * @returns The {@link Inspection}.
  * @throws What {@link recoverLeftovers} and {@link settleAfterRecovery} throw, a refusal naming the first leftover that could not be settled, and what {@link readPublishRecord} and {@link heldPublishContext} throw for a publish record that is gone or is no longer the one a held legacy journal was decided on.
@@ -8010,6 +8041,16 @@ async function inspect(context: Context): Promise<Inspection> {
   const unsettled = await recoverOwnLeftovers(run, pending)
   // An unverified put-back's handed record is read as the change in progress it is.
   const phase = pending && leftoverPhaseOf(pending)
+  // A record recovery could no longer confirm ends the run before anything is written, adopted or taken back: that name and the copy stay as they are, and the next run reads that name first.
+  const conflict = recoveryConflictOf(unsettled)
+  if (conflict)
+    throw mergeWithLeftover(
+      run,
+      recordRefusalOf(run, held, conflict.cause),
+      phase,
+      conflict,
+      false,
+    )
   // A finished or handed change names its leftover once: the one reported is no longer tracked. A copy handed over in this run keeps the record, now handed, so no later run deletes it.
   const isHandedNow = unsettled.some(({ isHandedOver }) => isHandedOver)
   // Written at once, before the config is read: a refusal of the steps below must not leave the handed copy deletable. A write that failed is said in the refusal, which then promises no handover.
@@ -8136,6 +8177,25 @@ function persistHandover(
 }
 
 /**
+ * Words a conflict at the publish record's name as that record's refusal, never a rollback record's, unless the held journal's own name threw it: a held run's says so with both records ({@link publishRecordConflict}), any other run's as its own record's ({@link asRecordConflict}); called by {@link settleAfterRecovery} for its steps on that record, and by {@link inspect} when recovery's look at that record stopped it ({@link recoveryConflictOf}).
+ * @param context - The run; its pending path is the publish record.
+ * @param held - The legacy rollback journal {@link settleRollbackJournal} held; undefined when none is held.
+ * @param error - What the step threw.
+ * @returns The refusal to throw; `error` itself when it is no conflict at that record's name.
+ * @example
+ * throw recordRefusalOf(run, undefined, conflict) // 'While Codebook settled its record of an earlier change at …/pending.json, another program changed or replaced it …'
+ */
+function recordRefusalOf(
+  context: Context,
+  held: HeldJournal | undefined,
+  error: unknown,
+): unknown {
+  return held
+    ? publishRecordConflict(context, held.legacy, error)
+    : asRecordConflict(error)
+}
+
+/**
  * Reads the config and the receipt once recovery settled the leftovers, finishes the take-back of a cut-short first setup and settles the pending record; called by {@link inspect}, which merges a refusal from here with a leftover that stays ({@link mergeWithLeftover}).
  * A stale receipt that a first setup moved aside is settled first ({@link settleRetiredReceipt}), so the receipt read here is the one that stands; the config is read after that settlement, so a config that a backup restored while the old receipt went back is the one this run decides on, with the receipt that stands by then. When that settlement found the old record's private name empty, the publish record that leads there ends only while that name is still empty right before ({@link retirePending}). A legacy rollback journal held as another publish's ({@link HeldJournal}) stands only while that look shows the bytes that decided it; the publish record is ended or rewritten only while the journal's name still shows the journal this run held, at a look right before that record's unlink or rename ({@link HeldJournal.lookStill}), so a journal a backup restores there meanwhile keeps the record it rests on; and the journal is retired once the publish record is settled and that record's name shows what this run left there, also right before the journal's unlink ({@link retireHeldJournal}), so a refusal or failure before then leaves both records for the next run.
  * @param context - The run; it tracks its publish record while a journal is held ({@link heldPublishContext}).
@@ -8155,11 +8215,8 @@ async function settleAfterRecovery(
   held: HeldJournal | undefined,
   isStagedLinked: boolean,
 ): Promise<Inspection> {
-  // A conflict at the publish record's name is that record's refusal, never a rollback record's, unless the held journal's own name threw it: a held run's says so with both records, any other run's as its own record's.
   const asPublishRefusal = (error: unknown): never => {
-    throw held
-      ? publishRecordConflict(context, held.legacy, error)
-      : asRecordConflict(error)
+    throw recordRefusalOf(context, held, error)
   }
   // A later run's put-back of the old record looks at the publish record right before its link ({@link assertPutBackRecordStill}).
   const emptiedRetiredPath = await settleRetiredReceipt(
