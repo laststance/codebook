@@ -3116,7 +3116,7 @@ type TrackedWrite = {
 /**
  * Replaces a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and publishing the new bytes at the emptied name without replacing anything; called by {@link writeTrackedJournal} right after those looks.
  * After the move the staged name, the caller's names and the dropping name are looked at again ({@link assertAfterMove}), so nothing that changed while the record moved is published; any refusal puts the record back first ({@link putTrackedBack}). The new bytes go in with a link, which never replaces a file; where the storage gives no file a second name ({@link NO_LINK_CODES}), the complete staged file is renamed into the emptied name right after a synchronous look finds it empty ({@link publishMovedRecord}), so that name shows nothing or the whole record at every instant. The moved record goes last, while its dropping name still shows it ({@link dropAsideRecord}).
- * Limits: a file put at the dropping name between its synchronous look and the move is replaced (a name only Codebook uses); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run settles as this step would have, deleting the old version while the dropping note proves both ({@link settleDroppedRecord}); on storage without hard links a file another program puts at the emptied name between that last look and the rename is replaced ({@link claimWithoutLinks}).
+ * Limits: on storage without hard links, a file put at the dropping name between its synchronous look and the move is replaced ({@link moveToDroppingName}); a stop between the publication and the dropping name's delete leaves both names holding a record, which the next run settles as this step would have, deleting the old version while the dropping note proves both ({@link settleDroppedRecord}); on storage without hard links a file another program puts at the emptied name between that last look and the rename is replaced ({@link claimWithoutLinks}).
  * @param context - The run; its pending path is the record.
  * @param look - The record as the last look saw it: this run's version.
  * @param write - The staged bytes and the caller's look ({@link TrackedWrite}).
@@ -3502,12 +3502,12 @@ async function provenDroppedRecord(
 
 /**
  * Moves a tracked record to its dropping name right after the last looks found this run's version at its name, and proves there that it is that version; called by {@link replaceThroughDroppingName} and {@link deleteThroughDroppingName} before they publish new bytes at that name or delete the record.
- * The rename moves exactly what stands at the name, so a file another program renamed over the record after the last look moves instead, is read at the dropping name, goes back to the record's name ({@link putTrackedBack}) and the run stops; it is never replaced or deleted. The rename runs only while nothing stands at the dropping name, which it would replace.
- * Limit: a file put at the dropping name between its synchronous look and the rename is replaced (a name only Codebook uses); a stop right after the rename leaves the record there for the next run, which puts it back first ({@link settleDroppedRecord}).
+ * The move never replaces a file at the dropping name ({@link moveToDroppingName}) and takes exactly what stands at the record's name, so a file another program renamed over the record after the last look moves instead, is read at the dropping name, goes back to the record's name ({@link putTrackedBack}) and the run stops; it is never replaced or deleted.
+ * Limits: those of {@link moveToDroppingName}; a stop inside the move leaves the record at the dropping name, or at both names, for the next run, which puts it back or drops that second name first ({@link settleDroppedRecord}).
  * @param context - The run; its pending path is the record.
  * @param version - The version the last looks found: this run's.
- * @returns The record at its dropping name ({@link AsideRecord}); undefined when the record's name was empty at the rename (another program removed it after the last look), and nothing moved.
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the dropping name; nothing moved then. A `changed` {@link JournalConflictError} once the moved file, not this run's version or not readable as a record, went back to its name, a `gone` one when it disappeared from the dropping name; what {@link putTrackedBack} and the rename throw.
+ * @returns The record at its dropping name ({@link AsideRecord}); undefined when the record's name was empty at the move (another program removed it after the last look), and nothing moved.
+ * @throws What {@link moveToDroppingName} throws: the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the dropping name (nothing moved then) or comes to the record's name during the move. A `changed` {@link JournalConflictError} once the moved file, not this run's version or not readable as a record, went back to its name, a `gone` one when it disappeared from the dropping name; what {@link putTrackedBack} throws.
  * @example
  * await moveTrackedAside(rollbackContext, look) // => { droppingPath: '…/pending.json.rollback.codebook-dropping', moved: { ino: 43n, … } }
  */
@@ -3516,9 +3516,83 @@ async function moveTrackedAside(
   version: RecordVersion,
 ): Promise<AsideRecord | undefined> {
   const droppingPath = droppingPathOf(context)
+  if (!(await moveToDroppingName(context, droppingPath))) return undefined
+  const moved = await inspectCopy(droppingPath).catch(() => undefined)
+  if (moved?.ino === version.ino && moved.sha256 === version.sha256)
+    return { droppingPath, moved }
+  // What moved is not this run's version (a file a backup renamed over the record after the last look): it goes back to its name, never replacing a file, and the run stops.
+  await putTrackedBack(context, droppingPath)
+  throw journalConflictError(context, 'changed')
+}
+
+/**
+ * Moves the file at a tracked record's name to its dropping name without replacing anything there; called only by {@link moveTrackedAside}, right after the last looks found this run's version at the record's name.
+ * Where the storage gives a file a second name, a link claims the dropping name, which never replaces a file (a file put there right before the link stays, and the run stops), and the record's own name is then emptied without an unlink at that name ({@link vacateRecordName}); where it gives none ({@link NO_LINK_CODES}), a rename moves the record right after a synchronous look finds the dropping name empty ({@link renameToDroppingName}).
+ * Limits: on storage without hard links, a file put at the dropping name between that look and the rename is replaced (no Node primitive renames without replacing). A file another program swaps in at the record's name between the last look and the link gets the dropping name instead, and the move proves it is not this run's version ({@link moveTrackedAside}); when it is a symbolic link, the link gives its target that second name (the system's link follows symbolic links), which the next run settles or names.
+ * @param context - The run; its pending path is the record.
+ * @param droppingPath - The dropping name ({@link droppingPathOf}).
+ * @returns `true` once the file that stood at the record's name stands at the dropping name and the record's name is empty; `false` when the record's name was empty at the link or the rename, and nothing moved.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the dropping name (nothing moved then); what {@link vacateRecordName} throws; what the link throws for another reason than storage without hard links, and what the rename throws.
+ * @example
+ * await moveToDroppingName(rollbackContext, droppingPath) // => true; '…/pending.json.rollback.codebook-dropping' holds the record, its own name is empty
+ */
+async function moveToDroppingName(
+  context: Context,
+  droppingPath: string,
+): Promise<boolean> {
+  const route = await link(context.pendingPath, droppingPath).then(
+    () => 'linked' as const,
+    (error: unknown) => routeOfRefusedLink(context, error),
+  )
+  if (route === 'empty') return false
+  if (route === 'no-link') return renameToDroppingName(context, droppingPath)
+  await vacateRecordName(context, droppingPath)
+  return true
+}
+
+/**
+ * Tells how a tracked record's move goes on after its link to the dropping name was refused; called only by {@link moveToDroppingName}.
+ * @param context - The run; its pending path is the record.
+ * @param error - What the link threw.
+ * @returns
+ * - `empty` when the record's name was empty (another program removed the record after the last look): nothing moved
+ * - `no-link` when the storage gives no file a second name ({@link NO_LINK_CODES}): the record moves by a rename
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the dropping name; `error` itself for any other failure. Nothing moved then.
+ * @example
+ * routeOfRefusedLink(rollbackContext, Object.assign(new Error('not supported'), { code: 'ENOTSUP' })) // => 'no-link'
+ */
+function routeOfRefusedLink(
+  context: Context,
+  error: unknown,
+): 'empty' | 'no-link' {
+  const code = codeOf(error)
+  // A file at the dropping name already: the link never replaces it, so nothing moved and both stay.
+  if (code === 'EEXIST') throw bothRecordNamesError(context)
+  if (code === 'ENOENT') return 'empty'
+  if (NO_LINK_CODES.has(code)) return 'no-link'
+  throw error
+}
+
+/**
+ * Moves a tracked record to its dropping name with a rename where the storage gives no file a second name ({@link NO_LINK_CODES}); called only by {@link moveToDroppingName} once its link was refused for that reason.
+ * The refused link was awaited, so the dropping name is looked at through the thread pool and then synchronously right before the rename, nothing awaited in between: it must be empty, because a rename replaces what stands at its destination.
+ * Limit: a file put at the dropping name between that look and the rename is replaced; no Node primitive renames without replacing where links fail.
+ * @param context - The run; its pending path is the record.
+ * @param droppingPath - The dropping name ({@link droppingPathOf}).
+ * @returns `true` once the record moved; `false` when its name was empty at the rename, and nothing moved.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the dropping name; nothing moved then. What the rename throws otherwise.
+ * @example
+ * await renameToDroppingName(rollbackContext, droppingPath) // => true on an exFAT storage folder
+ */
+async function renameToDroppingName(
+  context: Context,
+  droppingPath: string,
+): Promise<boolean> {
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([droppingPath])
   // A file at the dropping name already: the rename would replace it, so nothing moves and both stay.
   if (!isNameEmptyNow(droppingPath)) throw bothRecordNamesError(context)
-  const isMoved = await rename(context.pendingPath, droppingPath).then(
+  return rename(context.pendingPath, droppingPath).then(
     () => true,
     (error: unknown) => {
       // Another program emptied the name after the last look: nothing moved.
@@ -3526,13 +3600,111 @@ async function moveTrackedAside(
       throw error
     },
   )
-  if (!isMoved) return undefined
-  const moved = await inspectCopy(droppingPath).catch(() => undefined)
-  if (moved?.ino === version.ino && moved.sha256 === version.sha256)
-    return { droppingPath, moved }
-  // What moved is not this run's version (a file a backup renamed over the record after the last look): it goes back to its name, never replacing a file, and the run stops.
-  await putTrackedBack(context, droppingPath)
-  throw journalConflictError(context, 'changed')
+}
+
+/**
+ * Empties a tracked record's name once a link gave the file that stood there its dropping name as well, without ever unlinking at the record's name; called only by {@link moveToDroppingName}.
+ * After an awaited look at both names, synchronous looks right before the rename find the dropping name and the record's name showing one file; the record's name is then renamed to a fresh private name beside it (`<record>.<uuid>.tmp`, as a staged file's), which no other program uses, so that rename replaces nothing and moves exactly what stands at the record's name ({@link settleVacatedName}).
+ * Limit: a file another program renames over the record in the instant between those looks and the rename moves to the fresh name; it goes back to the record's name with a link, which never replaces a file, and the run stops naming both names.
+ * @param context - The run; its pending path is the record.
+ * @param droppingPath - The dropping name, which the link gave the record's file.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when the record's name no longer shows the linked file at that look (another file came there after the link: it stays, and so does the linked one at the dropping name); what {@link settleVacatedName} throws; what the rename throws for another reason than an empty name, once the dropping name, then only a second name of the record's file, went again ({@link dropTrackedSecondName}).
+ * @example
+ * await vacateRecordName(rollbackContext, droppingPath) // pending.json.rollback is empty, its file stands at '…/pending.json.rollback.codebook-dropping' alone
+ */
+async function vacateRecordName(
+  context: Context,
+  droppingPath: string,
+): Promise<void> {
+  const path = context.pendingPath
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([droppingPath, path])
+  const linkedIno = inodeNow(droppingPath)
+  // Another file came to the record's name after the link: it stays, and so does the linked one at the dropping name.
+  if (linkedIno === undefined || !isStagedNameStill(path, { ino: linkedIno }))
+    throw bothRecordNamesError(context)
+  const vacatedPath = `${path}.${randomUUID()}.tmp`
+  try {
+    await rename(path, vacatedPath)
+  } catch (error) {
+    // Another program emptied the record's name right after the look: the dropping name holds the file the link reached.
+    if (codeOf(error) === 'ENOENT') return
+    // Nothing moved: the dropping name, only a second name of the record's file, goes again.
+    await dropTrackedSecondName(context, linkedIno)
+    throw error
+  }
+  await settleVacatedName(context, vacatedPath, linkedIno)
+}
+
+/**
+ * Gives the inode a name shows by one synchronous look, without following a link; called by {@link vacateRecordName} for the dropping name right before its look at the record's name.
+ * @param path - The name to look at.
+ * @returns The inode; undefined when nothing stands there or the look failed.
+ * @example
+ * inodeNow(droppingPath) // => 43n
+ */
+function inodeNow(path: string): bigint | undefined {
+  try {
+    return lstatSync(path, { bigint: true, throwIfNoEntry: false })?.ino
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Settles the fresh private name a tracked record's name was renamed to ({@link vacateRecordName}): when it is only another name of the file the dropping name holds, it goes; any other file there (one another program renamed over the record in the instant before that rename) goes back to the record's name with a link, which never replaces a file, and the run stops.
+ * @param context - The run; its pending path is the record.
+ * @param vacatedPath - The fresh private name.
+ * @param linkedIno - The inode of the file the link gave the dropping name.
+ * @returns Nothing once that name went, or holds nothing; a failed unlink of that second name is no failure (no build reads such a name).
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) once another file went back to the record's name; a {@link leftoverReplacedError} naming the fresh name when that file is no regular file or could not go back (it stays there); what the look at the fresh name throws other than for a missing name (the record stays at the dropping name, which the next run puts back).
+ * @example
+ * await settleVacatedName(rollbackContext, vacatedPath, 43n) // '…/pending.json.rollback.<uuid>.tmp' is gone
+ */
+async function settleVacatedName(
+  context: Context,
+  vacatedPath: string,
+  linkedIno: bigint,
+): Promise<void> {
+  const vacated = await lstatOrAbsent(vacatedPath)
+  if (!vacated) return
+  // Only another name of the moved record: dropping it loses nothing.
+  if (vacated.ino === linkedIno) {
+    await unlink(vacatedPath).catch(() => undefined)
+    return
+  }
+  // Another program's file moved off the record's name goes back there, never replacing what stands there by now; a link would follow a symbolic link, so anything but a regular file stays where it is, named.
+  if (!vacated.isFile()) throw leftoverReplacedError(vacatedPath)
+  await link(vacatedPath, context.pendingPath).catch(() => {
+    throw leftoverReplacedError(vacatedPath)
+  })
+  await unlink(vacatedPath).catch(() => undefined)
+  throw bothRecordNamesError(context)
+}
+
+/**
+ * Deletes a tracked record's dropping name while it is only a second name of the file at the record's name, so a step that leaves the record at its name leaves no second name that the next move would refuse; called by {@link vacateRecordName} when its rename failed after the link.
+ * After an awaited look at both names, synchronous looks right before the unlink find the record's name showing that inode and the dropping name showing it with another name.
+ * Limits: a swap at the dropping name between those looks and the unlink is not seen (no Node primitive unlinks by inode). A stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * @param context - The run; its pending path is the record.
+ * @param ino - The inode both names must show.
+ * @returns Nothing; best effort: a dropping name that shows another file, stands beside a record name that no longer shows that inode, or cannot be deleted stays, and the next run settles it ({@link settleDroppedRecord}).
+ * @example
+ * await dropTrackedSecondName(rollbackContext, 43n) // '…/pending.json.rollback.codebook-dropping' is gone; pending.json.rollback still shows inode 43
+ */
+async function dropTrackedSecondName(
+  context: Context,
+  ino: bigint,
+): Promise<void> {
+  const droppingPath = droppingPathOf(context)
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order.
+  await lookAheadAt([context.pendingPath, droppingPath])
+  if (
+    !isStagedNameStill(context.pendingPath, { ino }) ||
+    !isStagedNameStill(droppingPath, { ino, isShared: true })
+  )
+    return
+  await unlink(droppingPath).catch(() => undefined)
 }
 
 /**
@@ -9663,7 +9835,7 @@ async function dropTrackedJournal(
 /**
  * Deletes a tracked record that the last looks showed as this run's version by moving it to its dropping name first ({@link moveTrackedAside}) and deleting it there; called by {@link dropTrackedJournal} right after those looks.
  * After the move the caller's names and the dropping name are looked at again ({@link assertAfterMove}), right before the delete, and the record goes back to its name when anything changed ({@link renewOrPutBack}), so a record whose companion record changed while it moved is never deleted on the earlier look. A file another program puts at the record's own name after the move is not looked at here: it stays, and a caller that must not end beside such a file looks at that name once the delete is done ({@link adoptPending}).
- * Limits: a file put at the dropping name between its synchronous look and the move is replaced, and a swap there between its last look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode); a stop between the move and the unlink leaves the record at the dropping name, where the next run puts it back, while the dropping note proves it ({@link dropTrackedJournal}), and settles it again ({@link settleDroppedRecord}).
+ * Limits: on storage without hard links, a file put at the dropping name between its synchronous look and the move is replaced ({@link moveToDroppingName}), and a swap there between its last look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode); a stop between the move and the unlink leaves the record at the dropping name, where the next run puts it back, while the dropping note proves it ({@link dropTrackedJournal}), and settles it again ({@link settleDroppedRecord}).
  * @param context - The run; its pending path is the record.
  * @param look - The record as the last look saw it: this run's version.
  * @param assertStill - The caller's look; undefined when nothing else must hold.

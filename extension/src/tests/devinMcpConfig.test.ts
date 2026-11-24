@@ -7047,7 +7047,7 @@ test('A setup record a sync tool moves away while a refresh marks a cut-short fi
 })
 
 test('A setup record a sync tool moves away right as a refresh beside a held legacy rollback journal deletes it keeps that journal, and the refresh says that record disappeared', async (context) => {
-  // Value: protects=a held run counts the setup record's name as emptied by itself only when its own delete removed that record, so a record a sync tool moves away right before that delete keeps the held journal (Cycle 0148 review round); fails_when=the refresh resolves or says anything but the disappearance sentence, deletes or changes the journal, changes the moved record or writes a receipt; no_claim=a real sync tool (the config module is loaded with a rename that, for the delete's move of pending.json to its dropping name (Cycle 0149 task 13), moves that record away once and then makes that move find the name empty; seam.afterStat rewrites the config in place once, at the read that decides the journal), what the next run does with the moved record
+  // Value: protects=a held run counts the setup record's name as emptied by itself only when its own delete removed that record, so a record a sync tool moves away right before that delete keeps the held journal (Cycle 0148 review round); fails_when=the refresh resolves or says anything but the disappearance sentence, deletes or changes the journal, changes the moved record or writes a receipt; no_claim=a real sync tool (the config module is loaded with a link and a rename that, for the delete's move of pending.json to its dropping name (Cycle 0149 task 13; its link since task 37), move that record away once and then make that move find the name empty; seam.afterStat rewrites the config in place once, at the read that decides the journal), what the next run does with the moved record
   // Arrange
   const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
     await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
@@ -7058,24 +7058,33 @@ test('A setup record a sync tool moves away right as a refresh beside a held leg
   const pendingText = readFileSync(pendingPath, 'utf8')
   const movedPath = join(home, 'pending-moved-away.json')
   let hasMovedPending = false
+  /**
+   * Moves the setup record away once, right before the run's delete moves it to its dropping name (with a link since Cycle 0149 task 37, a rename before).
+   * @param from - The name the step takes the file from.
+   * @param to - The name it gives the file.
+   * @example
+   * moveAwayBeforeMove(pendingPath, `${pendingPath}.codebook-dropping`) // pending.json now stands at movedPath
+   */
+  const moveAwayBeforeMove = (from: string, to: string): void => {
+    if (from !== pendingPath || to !== `${pendingPath}.codebook-dropping`)
+      return
+    if (hasMovedPending) return
+    hasMovedPending = true
+    renameSync(pendingPath, movedPath)
+  }
   const movingBeforeUnlink = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
-        link,
+        link: async (from: string, to: string) => {
+          moveAwayBeforeMove(from, to)
+          return link(from, to)
+        },
         lstat,
         mkdir,
         open,
         rename: async (from: string, to: string) => {
-          // A sync tool moves the setup record away right before the run's delete moves it to its dropping name.
-          if (
-            from === pendingPath &&
-            to === `${pendingPath}.codebook-dropping` &&
-            !hasMovedPending
-          ) {
-            hasMovedPending = true
-            renameSync(pendingPath, movedPath)
-          }
+          moveAwayBeforeMove(from, to)
           return rename(from, to)
         },
         rm,
@@ -7117,7 +7126,7 @@ test('A setup record a sync tool moves away right as a refresh beside a held leg
 })
 
 test('A setup record a sync tool moves away right as a refresh beside a held legacy rollback journal deletes it and puts back right after keeps that journal, so the setup is taken back once its config is back', async (context) => {
-  // Value: protects=a held run whose delete of the setup record finds that name empty, because another program moved the record away, stops at once and keeps the held journal, so the same record put back right after is never taken for one this run settled (Cycle 0148 ship review); fails_when=the first refresh resolves or says anything but the disappearance sentence, deletes or changes the journal, leaves anything but the moved record at pending.json, writes a receipt, or the second refresh leaves the entry; no_claim=a real sync tool (the config module is loaded with a rename that, for the delete's move of pending.json to its dropping name (Cycle 0149 task 13), moves that record away once, then makes that move find the name empty and moves the record back; seam.afterStat rewrites the config in place once, at the read that decides the journal; the test writes the config's bytes back before the second refresh), a record moved away by the first look of that delete (the same branch)
+  // Value: protects=a held run whose delete of the setup record finds that name empty, because another program moved the record away, stops at once and keeps the held journal, so the same record put back right after is never taken for one this run settled (Cycle 0148 ship review); fails_when=the first refresh resolves or says anything but the disappearance sentence, deletes or changes the journal, leaves anything but the moved record at pending.json, writes a receipt, or the second refresh leaves the entry; no_claim=a real sync tool (the config module is loaded with a link and a rename that, for the delete's move of pending.json to its dropping name (Cycle 0149 task 13; its link since task 37), move that record away once, then make that move find the name empty and move the record back; seam.afterStat rewrites the config in place once, at the read that decides the journal; the test writes the config's bytes back before the second refresh), a record moved away by the first look of that delete (the same branch)
   // Arrange
   const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
     await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
@@ -7128,30 +7137,40 @@ test('A setup record a sync tool moves away right as a refresh beside a held leg
   const pendingText = readFileSync(pendingPath, 'utf8')
   const movedPath = join(home, 'pending-moved-away.json')
   let hasMovedPending = false
+  /**
+   * Wraps the step that moves a name to another so that, for the delete's move of the setup record to its dropping name (a link since Cycle 0149 task 37, a rename before), a sync tool moves that record away once right before the step and puts it back right after.
+   * @param step - The real link or rename.
+   * @returns The wrapped step.
+   * @example
+   * const wrappedLink = movingAround(link)
+   */
+  const movingAround =
+    (step: (from: string, to: string) => Promise<void>) =>
+    async (from: string, to: string): Promise<void> => {
+      if (
+        from !== pendingPath ||
+        to !== `${pendingPath}.codebook-dropping` ||
+        hasMovedPending
+      )
+        return step(from, to)
+      // A sync tool moves the setup record away right before the run's delete moves it to its dropping name, and puts it back right after.
+      hasMovedPending = true
+      renameSync(pendingPath, movedPath)
+      try {
+        return await step(from, to)
+      } finally {
+        renameSync(movedPath, pendingPath)
+      }
+    }
   const movingAroundUnlink = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
-        link,
+        link: movingAround(link),
         lstat,
         mkdir,
         open,
-        rename: async (from: string, to: string) => {
-          if (
-            from !== pendingPath ||
-            to !== `${pendingPath}.codebook-dropping` ||
-            hasMovedPending
-          )
-            return rename(from, to)
-          // A sync tool moves the setup record away right before the run's delete moves it to its dropping name, and puts it back right after.
-          hasMovedPending = true
-          renameSync(pendingPath, movedPath)
-          try {
-            return await rename(from, to)
-          } finally {
-            renameSync(movedPath, pendingPath)
-          }
-        },
+        rename: movingAround(rename),
         rm,
         unlink,
       },
@@ -7490,6 +7509,346 @@ test("A first setup whose receipt cannot be written and whose take-back mark fin
     ['alpha', 'codebook'],
   )
   assert.equal(existsSync(journalPath), false)
+})
+
+test("A file a backup puts at a setup record's dropping name at the very moment Codebook moves that record there to mark its take-back is never replaced: it stays, the record and the entry stay, and the refusal names both names", async (context) => {
+  // Value: protects=a tracked record moves to its dropping name with a link, which never replaces a file, so a file a backup or sync tool puts at pending.json.codebook-dropping after the synchronous look that found that name empty, as the move runs, stays byte for byte, the setup record stays as this run wrote it, the take-back stops before the config changes, and the refusal names both names in its own words (Cycle 0149 task 37; ship review: outside voice 4); fails_when=the hook does not fire, the setup answers anything but the could-not-finish-marking refusal with the receipt's sentence and the dropping-name sentence, the file at the dropping name changes or is gone, the setup record changes, the entry or the learner's other server is gone, or a rollback record stays; no_claim=a real backup tool (seam.beforeRecordWrite arms at the take-back mark's write, and the config module is loaded with a link and a rename that, once armed, write a file at pending.json.codebook-dropping right before Codebook's move of pending.json to that name runs), storage without hard links (the move there is still a rename right after a synchronous look finds that name empty: a stated residual), what the next run does with both names; seam=seam.afterPublish puts a folder at receipt.json
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const droppingText = '{"restored":"by a backup"}\n'
+  let isArmed = false
+  let pendingAtMove = ''
+  /**
+   * Puts the backup's file at the dropping name once, right before Codebook's move of the setup record to that name runs for the take-back mark.
+   * @param from - The name the move takes the record from.
+   * @param to - The name it moves the record to.
+   * @example
+   * restoreAtMove(pendingPath, droppingPath) // the dropping name now holds the backup's file
+   */
+  const restoreAtMove = (from: string, to: string): void => {
+    if (!isArmed || from !== pendingPath || to !== droppingPath) return
+    if (pendingAtMove !== '') return
+    pendingAtMove = readFileSync(pendingPath, 'utf8')
+    writeFileSync(droppingPath, droppingText)
+  }
+  const restoringAtMove = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          restoreAtMove(from, to)
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          restoreAtMove(from, to)
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await restoringAtMove
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the write of the take-back mark, as the write puts it on disk.
+        if (path === pendingPath && JSON.parse(JSON.stringify(record)).takeBack)
+          isArmed = true
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the setup left empty reads as 'absent', so the assertions below name it.
+  const droppingAfterSetup = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.notEqual(pendingAtMove, '')
+  assert.equal(droppingAfterSetup, droppingText)
+  assert.equal(pendingAfterSetup, pendingAtMove)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+  )
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+  assert.equal(existsSync(journalPath), false)
+})
+
+test("A record a backup renames over a setup record right after Codebook gave that record its dropping name to mark its take-back stays at the record's name, the moved record stays at the dropping name, and the refusal names both names", async (context) => {
+  // Value: protects=once a tracked record's move gave its file the dropping name, another file a backup renames over the record's name is never moved away, replaced or deleted: it stays at pending.json, the setup record as this run wrote it stays at pending.json.codebook-dropping, the take-back stops before the config changes, and the refusal names both names (Cycle 0149 task 37: the move's look right before it empties the record's name; pins the outcome Cycle 0149 task 13 gave a file at the emptied name); fails_when=the hook does not fire, the setup answers anything but the could-not-finish-marking refusal with the receipt's sentence and the dropping-name sentence, either file changes or is gone, a fresh private name of the record stays, the entry or the learner's other server is gone, or a rollback record stays; no_claim=a real backup tool (seam.beforeRecordWrite arms at the take-back mark's write, and the config module is loaded with a link and a rename that, once armed, rename another record over pending.json right after Codebook's move gave the setup record the name pending.json.codebook-dropping: its link since task 37, its rename before), what the next run does with both names; seam=seam.afterPublish puts a folder at receipt.json
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const recordsPath = join(storage, 'devin-mcp')
+  const receiptPath = join(recordsPath, 'receipt.json')
+  const pendingPath = join(recordsPath, 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const backupPath = join(home, 'setup-record-from-backup.json')
+  const restoredText = '{"restored":"by a backup"}\n'
+  let isArmed = false
+  let pendingAtMove = ''
+  /**
+   * Renames the backup's record over the setup record's name once, right after Codebook's move gave that record the dropping name for the take-back mark.
+   * @param from - The name the move took the record from.
+   * @param to - The name the move gave the record.
+   * @example
+   * restoreAfterMove(pendingPath, droppingPath) // pending.json now holds the backup's record
+   */
+  const restoreAfterMove = (from: string, to: string): void => {
+    if (!isArmed || from !== pendingPath || to !== droppingPath) return
+    if (pendingAtMove !== '') return
+    pendingAtMove = readFileSync(droppingPath, 'utf8')
+    writeFileSync(backupPath, restoredText)
+    renameSync(backupPath, pendingPath)
+  }
+  const restoringAfterMove = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          restoreAfterMove(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          await rename(from, to)
+          restoreAfterMove(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await restoringAfterMove
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the write of the take-back mark, as the write puts it on disk.
+        if (path === pendingPath && JSON.parse(JSON.stringify(record)).takeBack)
+          isArmed = true
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the setup left empty reads as 'absent', so the assertions below name it.
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const droppingAfterSetup = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.notEqual(pendingAtMove, '')
+  assert.equal(pendingAfterSetup, restoredText)
+  assert.equal(droppingAfterSetup, pendingAtMove)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+  )
+  assert.deepEqual(
+    readdirSync(recordsPath).filter(
+      (name) => name.startsWith('pending.json.') && name.endsWith('.tmp'),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+  assert.equal(existsSync(journalPath), false)
+})
+
+test("A record a backup renames over a setup record in the instant Codebook moves that record's own name off it, after giving it the dropping name, goes back to the record's name: both names keep their files and the refusal names them", async (context) => {
+  // Value: protects=a tracked record's move empties the record's name only by a rename to a fresh private name, which replaces nothing, and a file that rename took instead of the record (another program renamed it over the record in that instant) goes back to the record's name with a link, so it is never deleted or hidden: it stays at pending.json, the setup record as this run wrote it stays at pending.json.codebook-dropping, no fresh private name stays, the take-back stops before the config changes, and the refusal names both names (Cycle 0149 task 37); fails_when=the hook does not fire, the setup answers anything but the could-not-finish-marking refusal with the receipt's sentence and the dropping-name sentence, either file changes or is gone, a fresh private name stays, the entry or the learner's other server is gone, or a rollback record stays; no_claim=a real backup tool (seam.beforeRecordWrite arms at the take-back mark's write, and the config module is loaded with a rename that, once armed, renames another record over pending.json right before Codebook's rename of pending.json to its fresh private name runs), a third file put at pending.json before that record goes back (it stays at the fresh name, named), what the next run does with both names; seam=seam.afterPublish puts a folder at receipt.json
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const recordsPath = join(storage, 'devin-mcp')
+  const receiptPath = join(recordsPath, 'receipt.json')
+  const pendingPath = join(recordsPath, 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  const backupPath = join(home, 'setup-record-from-backup.json')
+  const restoredText = '{"restored":"by a backup"}\n'
+  let isArmed = false
+  let pendingAtMove = ''
+  const restoringAtVacate = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          // A backup renames another record over pending.json right as Codebook moves that name off the record the dropping name already holds.
+          if (
+            isArmed &&
+            pendingAtMove === '' &&
+            from === pendingPath &&
+            to.endsWith('.tmp')
+          ) {
+            pendingAtMove = readFileSync(pendingPath, 'utf8')
+            writeFileSync(backupPath, restoredText)
+            renameSync(backupPath, pendingPath)
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await restoringAtVacate
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the write of the take-back mark, as the write puts it on disk.
+        if (path === pendingPath && JSON.parse(JSON.stringify(record)).takeBack)
+          isArmed = true
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the setup left empty reads as 'absent', so the assertions below name it.
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const droppingAfterSetup = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.notEqual(pendingAtMove, '')
+  assert.equal(pendingAfterSetup, restoredText)
+  assert.equal(droppingAfterSetup, pendingAtMove)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, and then could not finish marking its record of this setup at ${pendingPath} for its take-back, so it left ${configPath} unchanged and went no further; check that the "codebook" entry in ${configPath} is what you want before you change it. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first. Codebook found its record at ${pendingPath} and another file at ${droppingPath}, the private name it moves that record to while it rewrites or deletes it (a run of Codebook that stopped in that moment, or a backup or sync tool, may have left one of them), and cannot tell which of the two holds its record, so it left both as they are and went no further; look at both before you use either, then move the file at ${pendingPath} to another folder and keep it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${pendingPath} if it is the record Codebook moved there.`,
+  )
+  assert.deepEqual(
+    readdirSync(recordsPath).filter(
+      (name) => name.startsWith('pending.json.') && name.endsWith('.tmp'),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers),
+    ['alpha', 'codebook'],
+  )
+  assert.equal(existsSync(journalPath), false)
+})
+
+test("A setup record whose own name cannot be moved off it, after its take-back mark's move gave it the dropping name, keeps no second name there, so the take-back still takes the entry out and the record stays as written", async (context) => {
+  // Value: protects=when the rename that empties a tracked record's name fails after the move's link gave that record the dropping name, the dropping name, then only a second name of the record's file, goes again, so the record stands at its name alone and a take-back whose mark could not be written still takes the entry out (its later steps never meet a dropping name of its own making), and that record stays as this run wrote it (Cycle 0149 task 37); fails_when=the hook does not fire, the setup answers anything but the took-out refusal, the dropping name or a fresh private name of the record stays, the setup record changes, the entry stays, or the learner's other server is gone; no_claim=a real busy file system (seam.beforeRecordWrite arms at the take-back mark's write, and the config module is loaded with a rename that, once armed, fails Codebook's rename of pending.json to its fresh private name with EBUSY), what the next refresh does with that record; seam=seam.afterPublish puts a folder at receipt.json
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const recordsPath = join(storage, 'devin-mcp')
+  const receiptPath = join(recordsPath, 'receipt.json')
+  const pendingPath = join(recordsPath, 'pending.json')
+  const droppingPath = `${pendingPath}.codebook-dropping`
+  let isArmed = false
+  let pendingAtMove = ''
+  const busyAtVacate = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          // The file system is busy, once, as Codebook moves pending.json's own name off the record the dropping name already holds.
+          if (
+            isArmed &&
+            pendingAtMove === '' &&
+            from === pendingPath &&
+            to.endsWith('.tmp')
+          ) {
+            pendingAtMove = readFileSync(pendingPath, 'utf8')
+            throw Object.assign(new Error('resource busy'), { code: 'EBUSY' })
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await busyAtVacate
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the write of the take-back mark, as the write puts it on disk.
+        if (path === pendingPath && JSON.parse(JSON.stringify(record)).takeBack)
+          isArmed = true
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the setup left empty reads as 'absent', so the assertion below names it.
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+
+  // Assert
+  assert.notEqual(pendingAtMove, '')
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
+  )
+  assert.equal(pendingAfterSetup, pendingAtMove)
+  assert.equal(existsSync(droppingPath), false)
+  assert.deepEqual(
+    readdirSync(recordsPath).filter(
+      (name) => name.startsWith('pending.json.') && name.endsWith('.tmp'),
+    ),
+    [],
+  )
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
 })
 
 test("A first setup whose receipt cannot be written leaves its entry and another setup's record that a backup restores before it marks its take-back, and says that record changed", async (context) => {
@@ -9059,7 +9418,7 @@ function leaveStoppedMove(recordPath: string): string {
 }
 
 test('A rollback record a backup renames over the settled one at the moment Codebook moves it aside to delete it goes back to its name, the refresh goes no further and says so, and the next refresh settles that record before it takes the failed first setup back', async (context) => {
-  // Value: protects=a tracked record is deleted only after it was moved to its dropping name and proved there to be the version this run settled, so a record a backup renames over it after the last look goes back to its name instead of being deleted, the run stops, and the next run settles it (Cycle 0149 task 13; D5 review: armed on the move itself, and the swap is asserted to fire); fails_when=the swap does not fire, the first refresh resolves or says anything but the rollback record's changed sentence, the rollback record's name holds anything but the restored record, the setup record loses its take-back mark, the restored record's staged copy changes, the dropping name stays, a receipt appears, or the second refresh leaves the entry, a record or that staged copy; no_claim=a real backup tool (the config module is loaded with a rename that, once, renames another rollback record over pending.json.rollback right before Codebook's move of that name to its dropping name), a file put at the dropping name between its last look and that move
+  // Value: protects=a tracked record is deleted only after it was moved to its dropping name and proved there to be the version this run settled, so a record a backup renames over it after the last look goes back to its name instead of being deleted, the run stops, and the next run settles it (Cycle 0149 task 13; D5 review: armed on the move itself, and the swap is asserted to fire); fails_when=the swap does not fire, the first refresh resolves or says anything but the rollback record's changed sentence, the rollback record's name holds anything but the restored record, the setup record loses its take-back mark, the restored record's staged copy changes, the dropping name stays, a receipt appears, or the second refresh leaves the entry, a record or that staged copy; no_claim=a real backup tool (the config module is loaded with a link and a rename that, once, rename another rollback record over pending.json.rollback right before Codebook's move of that name to its dropping name runs: its link since Cycle 0149 task 37, its rename before), a file put at the dropping name between its last look and that move on storage without hard links
   // Arrange
   const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
     await leaveCutShortTakeBack(context)
@@ -9083,21 +9442,33 @@ test('A rollback record a backup renames over the settled one at the moment Code
   })}\n`
   const backupPath = join(home, 'rollback-record-from-backup.json')
   let isSwapped = false
+  /**
+   * Renames another rollback record over the settled one once, right as Codebook's move of that name to its dropping name runs (a link since Cycle 0149 task 37, a rename before).
+   * @param from - The name the move takes the record from.
+   * @param to - The name it gives the record.
+   * @example
+   * restoreAtMove(journalPath, droppingPath) // pending.json.rollback now holds the restored record
+   */
+  const restoreAtMove = (from: string, to: string): void => {
+    // A backup restores another rollback record at that name right as Codebook moves the settled one aside to delete it.
+    if (from !== journalPath || to !== droppingPath || isSwapped) return
+    isSwapped = true
+    writeFileSync(backupPath, restoredJournalText)
+    renameSync(backupPath, journalPath)
+  }
   const swappingAtMove = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
-        link,
+        link: async (from: string, to: string) => {
+          restoreAtMove(from, to)
+          return link(from, to)
+        },
         lstat,
         mkdir,
         open,
         rename: async (from: string, to: string) => {
-          // A backup restores another rollback record at that name right as Codebook moves the settled one aside to delete it.
-          if (from === journalPath && to === droppingPath && !isSwapped) {
-            isSwapped = true
-            writeFileSync(backupPath, restoredJournalText)
-            renameSync(backupPath, journalPath)
-          }
+          restoreAtMove(from, to)
           return rename(from, to)
         },
         rm,
@@ -9148,7 +9519,7 @@ test('A rollback record a backup renames over the settled one at the moment Code
 })
 
 test("A record a backup renames over a take-back's rollback record at the moment Codebook moves it aside to rewrite it is never replaced, so the record still names the copy of the previous config", async (context) => {
-  // Value: protects=a tracked record is rewritten only after it was moved to its dropping name and proved there to be the version this run wrote, and the new bytes are linked in without replacing, so a record a backup renames over it after the last look goes back to its name and stays byte for byte (Cycle 0149 task 13); fails_when=the swap does not fire, the rollback record's name holds anything but the restored record, the copy it names is gone, the dropping name stays, the first refresh says anything but the not-taken-out refusal, or the second refresh does not end with the config without the entry and no rollback record; no_claim=a real backup tool (seam.beforeRecordWrite arms at the take-back's write of its completed record, and the config module is loaded with a rename that, once armed, renames the same record in other bytes over pending.json.rollback right before Codebook's move of that name to its dropping name), a file put at the emptied name between the last look and the link (the pair refusal keeps both)
+  // Value: protects=a tracked record is rewritten only after it was moved to its dropping name and proved there to be the version this run wrote, and the new bytes are linked in without replacing, so a record a backup renames over it after the last look goes back to its name and stays byte for byte (Cycle 0149 task 13); fails_when=the swap does not fire, the rollback record's name holds anything but the restored record, the copy it names is gone, the dropping name stays, the first refresh says anything but the not-taken-out refusal, or the second refresh does not end with the config without the entry and no rollback record; no_claim=a real backup tool (seam.beforeRecordWrite arms at the take-back's write of its completed record, and the config module is loaded with a link and a rename that, once armed, rename the same record in other bytes over pending.json.rollback right before Codebook's move of that name to its dropping name runs: its link since Cycle 0149 task 37, its rename before), a file put at the emptied name between the last look and the link (the pair refusal keeps both)
   // Arrange
   const { home, storage, configPath, receiptPath, journalPath } =
     await leaveCutShortTakeBack(context)
@@ -9156,30 +9527,38 @@ test("A record a backup renames over a take-back's rollback record at the moment
   const backupPath = join(home, 'rollback-record-from-backup.json')
   let isArmed = false
   let restoredJournalText = ''
+  /**
+   * Renames the record as it stood, in other bytes, over itself once armed, right as Codebook's move of that name to its dropping name runs (a link since Cycle 0149 task 37, a rename before).
+   * @param from - The name the move takes the record from.
+   * @param to - The name it gives the record.
+   * @example
+   * restoreAtMove(journalPath, droppingPath) // pending.json.rollback now holds the restored bytes
+   */
+  const restoreAtMove = (from: string, to: string): void => {
+    if (!isArmed || restoredJournalText !== '') return
+    if (from !== journalPath || to !== droppingPath) return
+    // A backup restores the record as it stood, formatted in other bytes, right as Codebook moves it aside to rewrite it.
+    restoredJournalText = `${JSON.stringify(
+      JSON.parse(readFileSync(journalPath, 'utf8')),
+      null,
+      2,
+    )}\n`
+    writeFileSync(backupPath, restoredJournalText)
+    renameSync(backupPath, journalPath)
+  }
   const swappingAtMove = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
-        link,
+        link: async (from: string, to: string) => {
+          restoreAtMove(from, to)
+          return link(from, to)
+        },
         lstat,
         mkdir,
         open,
         rename: async (from: string, to: string) => {
-          // A backup restores the record as it stood, formatted in other bytes, right as Codebook moves it aside to rewrite it.
-          if (
-            isArmed &&
-            restoredJournalText === '' &&
-            from === journalPath &&
-            to === droppingPath
-          ) {
-            restoredJournalText = `${JSON.stringify(
-              JSON.parse(readFileSync(journalPath, 'utf8')),
-              null,
-              2,
-            )}\n`
-            writeFileSync(backupPath, restoredJournalText)
-            renameSync(backupPath, journalPath)
-          }
+          restoreAtMove(from, to)
           return rename(from, to)
         },
         rm,
@@ -9236,7 +9615,7 @@ test("A record a backup renames over a take-back's rollback record at the moment
 })
 
 test("A file another program swaps in at a rollback record's dropping name while Codebook deletes that record there is never put back at the record's name: it stays where it is, and the refresh names it and goes no further", async (context) => {
-  // Value: protects=a put-back after a failed look puts back only the version this run moved to the dropping name, so a file a sync tool swapped in there is never linked to the record's name as Codebook's record, and the refusal names the dropping name (Cycle 0149 task 23); fails_when=the swap does not fire, the first refresh resolves or says anything but the sentence naming the dropping name, anything stands at the rollback record's name, the swapped file at the dropping name changes or is gone, the setup record loses its take-back mark, or a receipt appears; no_claim=a real sync tool (the config module is loaded with an lstat that, once, swaps another file in at pending.json.rollback.codebook-dropping at the first awaited look at that name after Codebook moved the settled rollback record there to delete it and read it), a swap before the move's own read of that name (that file went back as what moved from the record's name), a swap between the put-back's first look and its link, what the next refresh does with that file (it stays there, named, Cycle 0149 task 35: its own test)
+  // Value: protects=a put-back after a failed look puts back only the version this run moved to the dropping name, so a file a sync tool swapped in there is never linked to the record's name as Codebook's record, and the refusal names the dropping name (Cycle 0149 task 23); fails_when=the swap does not fire, the first refresh resolves or says anything but the sentence naming the dropping name, anything stands at the rollback record's name, the swapped file at the dropping name changes or is gone, the setup record loses its take-back mark, or a receipt appears; no_claim=a real sync tool (the config module is loaded with an lstat that, once, swaps another file in at pending.json.rollback.codebook-dropping at the first awaited look at that name after Codebook moved the settled rollback record there to delete it, emptying the record's name, and read it; since Cycle 0149 task 37 the move links first, and its own look at the dropping name while the record's name still stands never fires this), a swap before the move's own read of that name (that file went back as what moved from the record's name), a swap between the put-back's first look and its link, what the next refresh does with that file (it stays there, named, Cycle 0149 task 35: its own test)
   // Arrange
   const { home, storage, receiptPath, pendingPath, journalPath } =
     await leaveCutShortTakeBack(context)
@@ -9253,7 +9632,8 @@ test("A file another program swaps in at a rollback record's dropping name while
           if (
             args[0] === droppingPath &&
             !isSwapped &&
-            existsSync(droppingPath)
+            existsSync(droppingPath) &&
+            !existsSync(journalPath)
           ) {
             isSwapped = true
             swapFile(droppingPath, swappedText)
@@ -9291,7 +9671,7 @@ test("A file another program swaps in at a rollback record's dropping name while
 })
 
 test('An adoption whose setup record, moved aside to end it, cannot go back beside a rollback record a backup restored still takes its receipt back out, so the next refresh takes the failed setup back instead of keeping it', async (context) => {
-  // Value: protects=when the look after a tracked record's move aside fails and the put-back fails too, the run throws the look's own refusal, so an adoption still tells a rollback record that came back from any other failure and takes the receipt it published back out (Cycle 0149 task 23, review round L1 P2: the renew error stays the thrown error, the put-back's failure its cause); fails_when=the restore does not fire, the first refresh says anything but the rollback record's changed sentence, the receipt stays, the restored rollback record or either setup record changes or is gone; no_claim=a real backup tool (the config module is loaded with a rename that, once, restores the rollback record at pending.json.rollback and another copy of the setup record at pending.json right after Codebook moved that record to its dropping name to end it), what the next refresh does beside both setup-record names (acceptance criterion 13's third state refuses, naming both), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Value: protects=when the look after a tracked record's move aside fails and the put-back fails too, the run throws the look's own refusal, so an adoption still tells a rollback record that came back from any other failure and takes the receipt it published back out (Cycle 0149 task 23, review round L1 P2: the renew error stays the thrown error, the put-back's failure its cause); fails_when=the restore does not fire, the first refresh says anything but the rollback record's changed sentence, the receipt stays, the restored rollback record or either setup record changes or is gone; no_claim=a real backup tool (the config module is loaded with a rename that, once, restores the rollback record at pending.json.rollback and another copy of the setup record at pending.json right after Codebook moved that record to its dropping name to end it, at the rename that emptied the record's name: since Cycle 0149 task 37 the one after the move's link), what the next refresh does beside both setup-record names (acceptance criterion 13's third state refuses, naming both), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(
@@ -9323,9 +9703,9 @@ test('An adoption whose setup record, moved aside to end it, cannot go back besi
   const journalBackupPath = join(home, 'journal-from-backup.json')
   const recordBackupPath = join(home, 'record-from-backup.json')
   let hasRestored = false
-  const restoring = await loadWithAfterRename((from, to) => {
-    if (from !== pendingPath || to !== pendingDroppingPath || hasRestored)
-      return
+  const restoring = await loadWithAfterRename((from) => {
+    // The step of the move that leaves the setup record at its dropping name alone: the rename that empties its name (since Cycle 0149 task 37, after a link to the dropping name; before, the rename to it).
+    if (from !== pendingPath || existsSync(pendingPath) || hasRestored) return
     hasRestored = true
     // A backup restores the folder right after the adoption moved its setup record aside to end it: the rollback record, and the setup record at its own name.
     writeFileSync(journalBackupPath, restoredJournalText)
@@ -9757,11 +10137,12 @@ test("A file a sync tool swaps in at a rollback record's dropping name while Cod
       'node:fs/promises': {
         link,
         lstat: async (...args: Parameters<typeof lstat>) => {
-          // A sync tool swaps its own record in at the dropping name once Codebook moved the settled record there and read it, right as the look before the delete waits.
+          // A sync tool swaps its own record in at the dropping name once Codebook moved the settled record there, emptying its name, and read it, right as the look before the delete waits (since Cycle 0149 task 37 the move links first, and its own look at the dropping name while the record's name stands never fires this).
           if (
             args[0] === droppingPath &&
             !isSwapped &&
-            existsSync(droppingPath)
+            existsSync(droppingPath) &&
+            !existsSync(journalPath)
           ) {
             isSwapped = true
             swapFile(droppingPath, swappedJournalText)
@@ -9828,8 +10209,8 @@ test('A rollback record that a run moved to its dropping name to delete it and t
         open,
         rename: async (from: string, to: string) => {
           await rename(from, to)
-          // The process ends right after Codebook moved the settled rollback record to its dropping name to delete it.
-          if (from === journalPath && to === droppingPath && !hasStopped) {
+          // The process ends right after Codebook moved the settled rollback record to its dropping name to delete it: the rename that empties the record's name (since Cycle 0149 task 37, after the move's link to the dropping name; before, the rename to it).
+          if (from === journalPath && !existsSync(journalPath) && !hasStopped) {
             hasStopped = true
             throw new Error('process ended')
           }
@@ -10117,7 +10498,7 @@ test('A rollback record a sync tool moves away and puts back while a refresh ret
 })
 
 test('A rollback record a sync tool moves away right as a refresh moves it aside to retire it, and puts back right after, stops that refresh with the record intact, and the next refresh settles it', async (context) => {
-  // Value: protects=a delete whose move to the dropping name finds the record's name empty goes on as after a delete only while that name is still empty at a last synchronous look after an awaited look, so a rollback record a sync tool puts back right after that move stops the run and stays byte for byte, and the next run settles it (Cycle 0149 review round, L1 P3: the last looks of the route where nothing moved); fails_when=the sync tool's move does not fire, the first refresh resolves or says anything but the rollback record's changed sentence, the restored record changes or is gone, the config or the receipt changes, or the second refresh answers anything but current or leaves the rollback record; no_claim=a real sync tool (the config module is loaded with a rename that, for the retirement's move of pending.json.rollback to its dropping name, moves that record away once, so the move finds the name empty, and moves it back right after), a restore between that last look and the run's next step
+  // Value: protects=a delete whose move to the dropping name finds the record's name empty goes on as after a delete only while that name is still empty at a last synchronous look after an awaited look, so a rollback record a sync tool puts back right after that move stops the run and stays byte for byte, and the next run settles it (Cycle 0149 review round, L1 P3: the last looks of the route where nothing moved); fails_when=the sync tool's move does not fire, the first refresh resolves or says anything but the rollback record's changed sentence, the restored record changes or is gone, the config or the receipt changes, or the second refresh answers anything but current or leaves the rollback record; no_claim=a real sync tool (the config module is loaded with a link and a rename that, for the retirement's move of pending.json.rollback to its dropping name (its link since Cycle 0149 task 37), move that record away once, so the move finds the name empty, and move it back right after), a restore between that last look and the run's next step
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -10137,30 +10518,40 @@ test('A rollback record a sync tool moves away right as a refresh moves it aside
   writeFileSync(journalPath, journalText)
   const movedPath = join(home, 'journal-moved-away.json')
   let hasMovedJournal = false
+  /**
+   * Wraps the step that moves a name to another so that, for the retirement's move of the rollback record to its dropping name (a link since Cycle 0149 task 37, a rename before), a sync tool moves that record away once right before the step and puts it back right after.
+   * @param step - The real link or rename.
+   * @returns The wrapped step.
+   * @example
+   * const wrappedLink = movingAround(link)
+   */
+  const movingAround =
+    (step: (from: string, to: string) => Promise<void>) =>
+    async (from: string, to: string): Promise<void> => {
+      if (
+        from !== journalPath ||
+        to !== `${journalPath}.codebook-dropping` ||
+        hasMovedJournal
+      )
+        return step(from, to)
+      // A sync tool moves the rollback record away right before the retirement moves it to its dropping name, and puts it back right after.
+      hasMovedJournal = true
+      renameSync(journalPath, movedPath)
+      try {
+        return await step(from, to)
+      } finally {
+        renameSync(movedPath, journalPath)
+      }
+    }
   const movingAroundMove = await loadModule<typeof DevinMcpConfigModule>(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
-        link,
+        link: movingAround(link),
         lstat,
         mkdir,
         open,
-        rename: async (from: string, to: string) => {
-          if (
-            from !== journalPath ||
-            to !== `${journalPath}.codebook-dropping` ||
-            hasMovedJournal
-          )
-            return rename(from, to)
-          // A sync tool moves the rollback record away right before the retirement moves it to its dropping name, and puts it back right after.
-          hasMovedJournal = true
-          renameSync(journalPath, movedPath)
-          try {
-            return await rename(from, to)
-          } finally {
-            renameSync(movedPath, journalPath)
-          }
-        },
+        rename: movingAround(rename),
         rm,
         unlink,
       },
@@ -10907,7 +11298,7 @@ test("A setup record a backup restores with its take-back mark right after a ref
 })
 
 test("A rollback record and a marked setup record a backup restores while a refresh moves the setup record it adopted aside take that adoption's receipt back out, so the refresh after the both-names way out takes the failed setup back", async (context) => {
-  // Value: protects=a refresh whose retirement of the record it adopted fails with a rollback record's conflict anywhere in the error's cause chain (here the put-back after it fails too, because the same restore put the setup record back) takes the receipt it published back out, so once the learner runs setup again as that refusal asks and follows the both-names way out the rerun gives, the next refresh takes the failed setup back instead of finding it receipted (Cycle 0149 task 30, OCR L1 P2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence (the renew error stays on top, the put-back's failure is only its cause), the rerun says anything but the both-names sentence or changes either setup-record name, the receipt stays, a record changes or is gone, or the refresh after the way out answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (the config module is loaded with a rename that, once, right after the adopted record's move to its dropping name resolved, restores the rollback record and the marked setup record), a restore after the delete at the dropping name, a process end between the receipt's link and its withdrawal (that receipt then stays)
+  // Value: protects=a refresh whose retirement of the record it adopted fails with a rollback record's conflict anywhere in the error's cause chain (here the put-back after it fails too, because the same restore put the setup record back) takes the receipt it published back out, so once the learner runs setup again as that refusal asks and follows the both-names way out the rerun gives, the next refresh takes the failed setup back instead of finding it receipted (Cycle 0149 task 30, OCR L1 P2); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence (the renew error stays on top, the put-back's failure is only its cause), the rerun says anything but the both-names sentence or changes either setup-record name, the receipt stays, a record changes or is gone, or the refresh after the way out answers anything but not-managed or leaves the entry, a record or a receipt; no_claim=a real backup tool (the config module is loaded with a rename that, once, right after the adopted record's move to its dropping name emptied the record's name, restores the rollback record and the marked setup record; since Cycle 0149 task 37 that is the rename after the move's link), a restore after the delete at the dropping name, a process end between the receipt's link and its withdrawal (that receipt then stays)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(
@@ -10941,11 +11332,11 @@ test("A rollback record and a marked setup record a backup restores while a refr
   const recordBackupPath = join(home, 'record-from-backup.json')
   const keptRecordPath = join(home, 'kept-record.json')
   let hasRestored = false
-  const restoring = await loadWithAfterRename((from, to) => {
-    // Only the adoption's retirement moves the setup record aside once the receipt stands.
+  const restoring = await loadWithAfterRename((from) => {
+    // Only the adoption's retirement moves the setup record aside once the receipt stands, at the rename that empties its name (since Cycle 0149 task 37, after a link to the dropping name; before, the rename to it).
     if (
       from !== pendingPath ||
-      to !== droppingPath ||
+      existsSync(pendingPath) ||
       !existsSync(receiptPath) ||
       hasRestored
     )
@@ -11046,11 +11437,11 @@ test("A setup record a backup restores with its take-back mark at pending.json w
   const markedRecordText = JSON.stringify({ ...olderRecord, takeBack: true })
   const recordBackupPath = join(home, 'record-from-backup.json')
   let hasRestored = false
-  const restoring = await loadWithAfterRename((from, to) => {
-    // Only the adoption's retirement moves the setup record aside once the receipt stands.
+  const restoring = await loadWithAfterRename((from) => {
+    // Only the adoption's retirement moves the setup record aside once the receipt stands, at the rename that empties its name (since Cycle 0149 task 37, after a link to the dropping name; before, the rename to it).
     if (
       from !== pendingPath ||
-      to !== droppingPath ||
+      existsSync(pendingPath) ||
       !existsSync(receiptPath) ||
       hasRestored
     )
@@ -14770,7 +15161,7 @@ test("A file another program renames over a take-back's first rollback record wh
 })
 
 test("A first setup whose receipt cannot be written still takes its entry out when Codebook's storage folder cannot give a file a second name, because its take-back writes its rollback record without links and never over another file", async (context) => {
-  // Value: protects=a take-back on a storage file system without hard links (every link there refused with ENOTSUP, as macOS answers for exFAT) still writes its rollback record, its first write renamed in complete at the empty name and its rewrite renamed in complete at the name its move emptied (Cycle 0149 task 18), so the failed first setup's entry is still taken out, and neither that record nor its staged or dropping name stays (Cycle 0148 ship review; Cycle 0149 tasks 5 and 13); since Cycle 0149 task 13 every record write tries a link first, so the refused links are the setup's claim, completed record and take-back mark at pending.json, then the take-back's claim and completed record at pending.json.rollback (a delete needs no link); fails_when=the setup answers anything but the took-out refusal, another link is tried in the storage folder, the entry stays in the config, or the rollback record or a staged or dropping name of it stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), what a process end inside those writes leaves (the first write: its own test), the storage lock's own fallback
+  // Value: protects=a take-back on a storage file system without hard links (every link there refused with ENOTSUP, as macOS answers for exFAT) still writes its rollback record, its first write renamed in complete at the empty name and its rewrite renamed in complete at the name its move emptied (Cycle 0149 task 18), so the failed first setup's entry is still taken out, and neither that record nor its staged or dropping name stays (Cycle 0148 ship review; Cycle 0149 tasks 5 and 13); since Cycle 0149 task 13 every record write tries a link first, so the refused links are the setup's claim, completed record and take-back mark at pending.json, then the take-back's claim and completed record at pending.json.rollback, and since task 37 every move of a record to its dropping name tries one first too (each rewrite's and each delete's); fails_when=the setup answers anything but the took-out refusal, another link is tried in the storage folder, the entry stays in the config, or the rollback record or a staged or dropping name of it stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, while links beside the config work), what a process end inside those writes leaves (the first write: its own test), the storage lock's own fallback
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -14818,13 +15209,18 @@ test("A first setup whose receipt cannot be written still takes its entry out wh
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
-  // One refused link per record write: three at the setup's own record, then two at the take-back's rollback record.
+  // One refused link per record write, and one per move of a record to its dropping name (Cycle 0149 task 37): the setup's own record, its rewrite (move, then publication) and the take-back mark (the same), then the take-back's rollback record, its rewrite (the same) and the delete of that record (a move), and last the delete of the setup's own record (a move).
   assert.deepEqual(refusedLinkNames, [
     'pending.json',
+    'pending.json.codebook-dropping',
     'pending.json',
+    'pending.json.codebook-dropping',
     'pending.json',
     'pending.json.rollback',
+    'pending.json.rollback.codebook-dropping',
     'pending.json.rollback',
+    'pending.json.rollback.codebook-dropping',
+    'pending.json.codebook-dropping',
   ])
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     mcpServers: { alpha: { command: 'a' } },
@@ -18533,7 +18929,7 @@ test("A first setup leaves a record a backup restores at receipt.json together w
 })
 
 test('On storage that cannot give a file a second name, a first setup never writes its record of the entry over a record a backup puts at receipt.json as the setup publishes it, and takes its entry back', async (context) => {
-  // Value: protects=where the storage folder's file system gives no file a second name, a first setup's record of the entry goes to receipt.json only while a look after the refused link still finds that name empty (Cycle 0149 tasks 12 and 19), never over a record a backup puts there as that record is published, which stays, and the setup takes its own entry back (Cycle 0149 task 12, D5's unsupported link); fails_when=the setup resolves or says anything but the took-out refusal, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, its record of the entry, the take-back mark, the take-back's rollback record and its rewrite) is tried in the storage folder, the record the backup put there changes, or the config keeps the entry; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, for receipt.json, first puts the backup's record there), a file put there between the last synchronous look and the rename (stated residual on such storage)
+  // Value: protects=where the storage folder's file system gives no file a second name, a first setup's record of the entry goes to receipt.json only while a look after the refused link still finds that name empty (Cycle 0149 tasks 12 and 19), never over a record a backup puts there as that record is published, which stays, and the setup takes its own entry back (Cycle 0149 task 12, D5's unsupported link); fails_when=the setup resolves or says anything but the took-out refusal, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, its record of the entry, the take-back mark, the take-back's rollback record and its rewrite) and the one each move of a record to its dropping name tries first (task 37: each rewrite's and each delete's) is tried in the storage folder, the record the backup put there changes, or the config keeps the entry; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, for receipt.json, first puts the backup's record there), a file put there between the last synchronous look and the rename (stated residual on such storage)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -18592,14 +18988,19 @@ test('On storage that cannot give a file a second name, a first setup never writ
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook added its entry to Devin Desktop's MCP config at ${configPath} but could not write its own record of it, so it took that entry out again and changed nothing else. Codebook found a file at ${receiptPath}, where it keeps its record of the "codebook" entry in Devin Desktop's MCP config at ${configPath}, although it expected none there (a backup or sync tool may have put an older record back), so it did not write over that file, left it as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that file first.`,
   )
-  // One refused link per record write, since every record write tries a link first (Cycle 0149 task 13): the setup's own record and its rewrite, its record of the entry, the take-back mark, then the take-back's rollback record and its rewrite.
+  // One refused link per record write, since every record write tries a link first (Cycle 0149 task 13), and one per move of a record to its dropping name (task 37): the setup's own record and its rewrite (move, then publication), its record of the entry, the take-back mark (move, then publication), then the take-back's rollback record, its rewrite (the same) and the delete of that record (a move), and last the delete of the setup's own record (a move).
   assert.deepEqual(refusedLinkNames, [
     'pending.json',
+    'pending.json.codebook-dropping',
     'pending.json',
     'receipt.json',
+    'pending.json.codebook-dropping',
     'pending.json',
     'pending.json.rollback',
+    'pending.json.rollback.codebook-dropping',
     'pending.json.rollback',
+    'pending.json.rollback.codebook-dropping',
+    'pending.json.codebook-dropping',
   ])
   assert.equal(readFileSync(receiptPath, 'utf8'), restoredReceiptText)
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
@@ -18608,7 +19009,7 @@ test('On storage that cannot give a file a second name, a first setup never writ
 })
 
 test('On storage that cannot give a file a second name, a first setup moves its complete record of the entry to its empty name and answers installed', async (context) => {
-  // Value: protects=where the storage folder's file system gives no file a second name, a first setup still writes its record of the entry, its flushed staged file renamed to its empty name, so Devin Desktop setup keeps working on such storage, and no staged name of that record stays (Cycle 0149 task 12, regression guard of the route without links, which task 19 made a rename); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, then its record of the entry) is tried in the storage folder, or a staged name of the receipt stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), what a process end inside that write leaves (its own test)
+  // Value: protects=where the storage folder's file system gives no file a second name, a first setup still writes its record of the entry, its flushed staged file renamed to its empty name, so Devin Desktop setup keeps working on such storage, and no staged name of that record stays (Cycle 0149 task 12, regression guard of the route without links, which task 19 made a rename); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, then its record of the entry) and the one each move of a record to its dropping name tries first (task 37: the rewrite's, then the delete's of the setup's own record) is tried in the storage folder, or a staged name of the receipt stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), what a process end inside that write leaves (its own test)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -18655,8 +19056,10 @@ test('On storage that cannot give a file a second name, a first setup moves its 
   )
   assert.deepEqual(refusedLinkNames, [
     'pending.json',
+    'pending.json.codebook-dropping',
     'pending.json',
     'receipt.json',
+    'pending.json.codebook-dropping',
   ])
   assert.deepEqual(
     readdirSync(recordsPath).filter((name) => name.startsWith('receipt.json')),
@@ -19276,9 +19679,9 @@ test("A removal whose take-back of a cut-short first setup took the entry out ke
 })
 
 /**
- * Loads the config module with a rename and an unlink that, the first time either is about to change `receipt.json` (an unlink of that name, or a rename from or to it), first call `beforeChange`, so a test can act right after the module's last look at that name and before the step that moves, replaces or deletes what stands there.
+ * Loads the config module with a link, a rename and an unlink that, the first time one is about to change `receipt.json` (an unlink of that name, or a link or rename from or to it; a move to its private name links first since Cycle 0149 task 37), first call `beforeChange`, so a test can act right after the module's last look at that name and before the step that moves, replaces or deletes what stands there.
  * @param receiptPath - The receipt's path.
- * @param beforeChange - Called once, right before that rename or unlink runs.
+ * @param beforeChange - Called once, right before that link, rename or unlink runs.
  * @returns The config module.
  * @example
  * const module = await loadWithBeforeReceiptChange(receiptPath, () => swapFile(receiptPath, restoredText))
@@ -19297,7 +19700,10 @@ function loadWithBeforeReceiptChange(
     resolve(__dirname, '../devinMcpConfig.js'),
     {
       'node:fs/promises': {
-        link,
+        link: async (from: string, to: string) => {
+          changeOnce([from, to])
+          await link(from, to)
+        },
         lstat,
         mkdir,
         open,
