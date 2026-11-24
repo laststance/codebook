@@ -1689,12 +1689,13 @@ test('Set Up AI Chat gives the hard-link probe a name that is in the pending rec
 })
 
 test('Every record write of a first setup passes the record-write seam, and a completed record the seam cancels leaves the earlier pending record byte for byte', async (context) => {
-  // Value: protects=the seam the Cycle 0146 tests use to fail one record write sees the setup's pending record, its completed rewrite and its receipt, and a cancelled write keeps the earlier record on disk the way a full disk at the temporary file does; fails_when=a record write bypasses the seam, or the cancelled completed write changes or deletes pending.json or leaves its temporary file; no_claim=a real ENOSPC, and the writers this setup does not reach (handOver, retirePending, adoption, the take-back mark, the removal's record), which their own tests drive
+  // Value: protects=the seam the Cycle 0146 tests use to fail one record write sees the setup's pending record, its completed rewrite and its receipt, and a cancelled write keeps the earlier record on disk the way a full disk at the temporary file does, until the setup, which deletes the staged second name of its new config all the same, ends that record once its receipt stands (Cycle 0149 task 25); fails_when=a record write bypasses the seam, the cancelled completed write changes or deletes pending.json before the receipt's write or leaves its temporary file, or the setup leaves a record, a staged name or a notice behind; no_claim=a real ENOSPC, and the writers this setup does not reach (handOver, retirePending, adoption, the take-back mark, the removal's record), which their own tests drive
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const pendingPath = join(storage, 'devin-mcp', 'pending.json')
   const writes: Array<{ name: string; phase: unknown }> = []
   let recordOnDiskAtCompleted: string | undefined
+  let recordOnDiskAtReceipt: string | undefined
 
   // Act
   const result = await writeManagedDevinMcpEntry(storage, ENTRY, home, {
@@ -1704,6 +1705,9 @@ test('Every record write of a first setup passes the record-write seam, and a co
           ? record.phase
           : undefined
       writes.push({ name: basename(path), phase })
+      // The receipt's write comes right after the cancelled one: the earlier record must still stand then.
+      if (basename(path) === 'receipt.json')
+        recordOnDiskAtReceipt = readFileSync(pendingPath, 'utf8')
       if (phase !== 'completed') return
       recordOnDiskAtCompleted = readFileSync(path, 'utf8')
       throw Object.assign(new Error('no space left on device'), {
@@ -1719,14 +1723,14 @@ test('Every record write of a first setup passes the record-write seam, and a co
     { name: 'receipt.json', phase: undefined },
   ])
   assert.equal(result.status, 'installed')
-  const pendingAfter = await readFile(pendingPath, 'utf8')
-  assert.equal(pendingAfter, recordOnDiskAtCompleted)
-  assert.equal(JSON.parse(pendingAfter).phase, undefined)
-  assert.equal(JSON.parse(pendingAfter).targetPath, configPath)
+  assert.equal(result.cleanupFailure, undefined)
+  assert.equal(recordOnDiskAtReceipt, recordOnDiskAtCompleted)
+  assert.equal(JSON.parse(String(recordOnDiskAtReceipt)).phase, undefined)
+  assert.equal(JSON.parse(String(recordOnDiskAtReceipt)).targetPath, configPath)
   assert.deepEqual((await readdir(join(storage, 'devin-mcp'))).sort(), [
-    'pending.json',
     'receipt.json',
   ])
+  assert.deepEqual(await leftoversBeside(configPath), [])
 })
 
 test('Recovery deletes a leftover probe whose inode equals the recorded staged inode', async (context) => {
@@ -9957,8 +9961,8 @@ test('A setup leaves a record a backup restores at pending.json after the setup 
   assert.equal(receipt.installed, true)
 })
 
-test("A setup never writes its finished record over a record a backup restores at pending.json after the setup's own record was written, and names the second name of its config it then keeps", async (context) => {
-  // Value: protects=a setup rewrites its own record of the change only while that name still shows the version it wrote, so a record a backup or sync tool put at pending.json in between stays for the next run, and the staged name its unwritten completed record no longer lets it delete is kept and named, followed by the sentence that its record changed (Cycle 0148 task 33, Cycle 0149 task 6); fails_when=the record put at pending.json is gone or changes, the setup does not answer installed with the staged name's sentence and the changed-record sentence, the staged name is gone, or the config or the receipt is not the setup's; no_claim=a real backup tool (seam.afterPublish renames another record over pending.json once, right after the config was linked in and before the completed record), a restore between the last look and the rename (no Node primitive renames over a name only while it shows an inode), what the next run does with that record
+test('A first setup never writes its finished record over a record a backup restores at pending.json after the config was linked in, deletes the second name of its new config, and a removal then takes the entry out', async (context) => {
+  // Value: protects=a first setup rewrites its own record of the change only while that name still shows the version it wrote, so a record a backup or sync tool put at pending.json in between stays, and it still deletes its staged name, which is only a second name of the new config that the record there no longer names, so a later removal is not refused as a file linked from another path (Cycle 0148 task 33, Cycle 0149 tasks 6 and 25); fails_when=the record put at pending.json is gone or changes after the setup, the setup does not answer installed with only the changed-record sentence, a file stays beside the config, the config has a second name, the config or the receipt is not the setup's, or the removal answers anything but file-removed or leaves the config or the receipt; no_claim=a real backup tool (seam.afterPublish renames another record over pending.json once, right after the config was linked in and before the completed record), a restore between the last look and the rename (no Node primitive renames over a name only while it shows an inode), a file put at the staged name between the drop's last look and its unlink (no Node primitive unlinks by inode)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
@@ -9981,26 +9985,88 @@ test("A setup never writes its finished record over a record a backup restores a
       renameSync(backupPath, pendingPath)
     },
   })
+  // A record the setup overwrote or deleted reads otherwise, so the assertion below names it.
+  const pendingAfterSetup = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const leftoversAfterSetup = await leftoversBeside(configPath)
+  const configLinksAfterSetup = statSync(configPath).nlink
+  const configAfterSetup = JSON.parse(readFileSync(configPath, 'utf8'))
+  const receiptAfterSetup = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const removal = await removeManagedDevinMcpEntry(storage, home).catch(
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
 
   // Assert
   assert.equal(hasRestoredPending, true)
-  // A record the setup overwrote or deleted reads otherwise, so the assertion names it.
-  assert.equal(
-    existsSync(pendingPath) ? readFileSync(pendingPath, 'utf8') : 'absent',
-    restoredPendingText,
-  )
-  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
-  const stagedPath = `${configPath}.${receipt.generation}.tmp`
+  assert.equal(pendingAfterSetup, restoredPendingText)
   assert.equal(result.status, 'installed')
   assert.equal(
     result.cleanupFailure,
-    `Codebook kept a private copy of the Devin MCP config it just wrote at ${stagedPath} (it holds the settings of your other servers) because it could not delete that file safely; delete it when you no longer need it. Codebook wrote its record of the entry but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), so it left that name as it is; the next run reads that name first.`,
+    `Codebook wrote its record of the entry but could not record that this setup finished, because another program changed or replaced its record of this setup at ${pendingPath} (a backup or sync tool may have put an older one back), so it left that name as it is; the next run reads that name first.`,
   )
-  assert.equal(existsSync(stagedPath), true)
-  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
-    mcpServers: { codebook: ENTRY },
+  assert.deepEqual(leftoversAfterSetup, [])
+  assert.equal(configLinksAfterSetup, 1)
+  assert.deepEqual(configAfterSetup, { mcpServers: { codebook: ENTRY } })
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.deepEqual(removal, { status: 'file-removed', path: configPath })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A first setup whose completed record a sync tool moves away right after its publication deletes the second name of its new config, and a removal then takes the entry out', async (context) => {
+  // Value: protects=a first setup whose completed record's name is found empty right after that record was published (a sync tool moved it away) says that its record was moved away, writes nothing back there, and still deletes its staged name, which is only a second name of the new config that no record at pending.json names any more, so a later removal is not refused as a file linked from another path (Cycle 0149 task 25); fails_when=a record stands at pending.json after the setup, the moved record is no completed record or changes, the setup does not answer installed with only the moved-record sentence, a file stays beside the config, the config has a second name, the config or the receipt is not the setup's, or the removal answers anything but file-removed or leaves the config or the receipt; no_claim=a real sync tool (the config module is loaded with a rename and a link that move pending.json away once, right after the first publication at that name once seam.afterPublish saw the config linked in: the completed record's link), what a later run does when that tool moves the record back, a file put at the staged name between the drop's last look and its unlink (no Node primitive unlinks by inode)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const movedPath = join(home, 'pending-moved-by-sync.json')
+  let isConfigLinked = false
+  let movedText = ''
+  const movingAfterCompletion = await loadWithAfterRename((_from, to) => {
+    if (to !== pendingPath || !isConfigLinked || movedText) return
+    // A sync tool moves the completed record away right after its publication.
+    movedText = readFileSync(pendingPath, 'utf8')
+    renameSync(pendingPath, movedPath)
   })
-  assert.equal(receipt.generation, result.generation)
+
+  // Act
+  const result = await movingAfterCompletion.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      afterPublish: () => {
+        isConfigLinked = true
+      },
+    },
+  )
+  const isPendingAfterSetup = existsSync(pendingPath)
+  const movedAfterSetup = readFileSync(movedPath, 'utf8')
+  const leftoversAfterSetup = await leftoversBeside(configPath)
+  const configLinksAfterSetup = statSync(configPath).nlink
+  const configAfterSetup = JSON.parse(readFileSync(configPath, 'utf8'))
+  const receiptAfterSetup = JSON.parse(readFileSync(receiptPath, 'utf8'))
+  const removal = await removeManagedDevinMcpEntry(storage, home).catch(
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(JSON.parse(movedText).phase, 'completed')
+  assert.equal(isPendingAfterSetup, false)
+  assert.equal(movedAfterSetup, movedText)
+  assert.equal(result.status, 'installed')
+  assert.equal(
+    result.cleanupFailure,
+    `Codebook wrote its record of the entry but could not record that this setup finished, because another program moved its record of this setup at ${pendingPath} away (a backup or sync tool may be moving it), so it left that name as it is; the next run reads that name first.`,
+  )
+  assert.deepEqual(leftoversAfterSetup, [])
+  assert.equal(configLinksAfterSetup, 1)
+  assert.deepEqual(configAfterSetup, { mcpServers: { codebook: ENTRY } })
+  assert.equal(receiptAfterSetup.generation, result.generation)
+  assert.deepEqual(removal, { status: 'file-removed', path: configPath })
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(receiptPath), false)
 })
 
 test("A setup whose own record a backup replaces with another setup's take-back mark once its config is in place keeps its entry, leaves that record and the moved-aside copy to the learner and says so, and the next refresh keeps the entry", async (context) => {
@@ -10796,7 +10862,7 @@ test('A put-back by bytes whose look at its own unchecked record fails once keep
 })
 
 test('A legacy first setup whose rollback journal a backup replaces while recovery puts its config back is still marked for its take-back, the refresh stops and names the copy, and the next refresh takes the failed setup back', async (context) => {
-  // Value: protects=a rollback journal's recovery that meets another journal at its name changes no copy any more, but still marks the take-back that the journal as recovery read it proves on the unmarked setup record of an older build, so the next refresh settles the other journal and takes the failed first setup back instead of adopting it (D5 on Cycle 0149 task 11; the failure behind Cycle 0148 task 37; Cycle 0149 task 8's evidence: the only writer of the mark here is this refresh's settlement of the journal it read); fails_when=the setup record is not exactly the unmarked record with takeBack: true after the first refresh, the first refresh says anything but the copy's sentence followed by the changed-journal sentence, the restored journal, the copy or the journal's staged copy changes or is gone, a receipt appears, or the second refresh answers anything but not-managed, leaves the entry, a record or a receipt, or touches the staged copy no record names any more; no_claim=a real backup tool (seam.afterStat renames another generation's journal over the journal's name once, at recovery's read of the journal's displaced copy), the learner's move of that copy back to the empty config path (the test renames it, as the refusal asks), a journal of this build (its setup record carries the mark from its own take-back)
+  // Value: protects=a rollback journal's recovery that meets another journal at its name changes no copy any more, but still marks the take-back that the journal as recovery read it proves on the unmarked setup record of an older build, so the next refresh settles the other journal and takes the failed first setup back instead of adopting it (D5 on Cycle 0149 task 11; the failure behind Cycle 0148 task 37; Cycle 0149 task 8's evidence: the only writer of the mark here is this refresh's settlement of the journal it read); fails_when=the setup record is not exactly the unmarked record with takeBack: true after the first refresh, the first refresh says anything but the copy's sentence followed by the changed-journal sentence, the restored journal, the copy or the journal's staged copy changes or is gone, a receipt appears, or the second refresh answers anything but not-managed, leaves the entry, a record or a receipt, or touches the staged copy no record names any more; no_claim=a real backup tool (seam.afterStat renames another generation's journal over the journal's name once, at recovery's read of the journal's displaced copy), the learner's move of that copy back to the empty config path (the test renames it, as the refusal asks), a journal of this build (its setup record carries the mark from its own take-back), that the learner learns of the replaced journal's staged copy (a private copy of the config that rollback wrote, with the other servers): no record names it once that journal is replaced, so no refusal names it and no run deletes it, and it stays beside the config for good (Cycle 0149 review round, OCR L1 and L4 P3; naming it needs a read of the record that stands, which may be an older version of that very journal that still leads a later run to it)
   // Arrange
   const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
     await leaveLegacyCutShortSetup(context, () => undefined)

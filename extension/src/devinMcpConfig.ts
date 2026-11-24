@@ -1466,7 +1466,7 @@ async function dropFailedStage(
   await unlinkStagedWhileStill(temporary, now)
 }
 
-/** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so nothing was deleted) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
+/** What a publish reports: the inode of the config now standing, the files that stay beside it (empty when everything was deleted; the pending record stays otherwise), whether the record says completed (`false`: the completed record could not be written, so no copy of the previous config was deleted; the staged name, only a second name of the config, goes all the same, {@link dropPublishedStage}) and whether a first setup's old record's private name stayed after the link because it no longer showed the record that setup moved there ({@link dropMovedAfterLink}; the pending record stays then too). */
 type Published = {
   config: ConfigNumbers
   keptLeft: KeptFile[]
@@ -2008,7 +2008,7 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * @param config - The inode the config will have.
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands, in the shape older builds refuse when the old record's private name showed another file by then ({@link LinkedRecord}).
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
- * @returns The inode, the staged name when it may still show the published config and could not be unlinked afterwards or the completed record could not be written (its pending record stays then; recovery unlinks that name, which is another link to the config), whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too), and what stood at the record's name when another program kept the completed record from being written ({@link Published.recordConflict}).
+ * @returns The inode, the staged name when it may still show the published config and could not be looked at or unlinked afterwards (its pending record stays then; recovery unlinks that name, which is another link to the config); that name is dropped whether or not the completed record was written, because a record another program put at the record's name, or none, never names it, so no later run would unlink it and every later update or removal would refuse a config with two names ({@link assertSingleLink}), and after a full disk the record written before the link then has nothing left to settle; whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too), and what stood at the record's name when another program kept the completed record from being written ({@link Published.recordConflict}).
  * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back.
  */
 async function createConfig(
@@ -2044,8 +2044,8 @@ async function createConfig(
   // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
   const completion = await markCompleted(context, linked.journal)
   const isRecorded = completion === 'recorded'
-  const isStagedSettled =
-    isRecorded && (await dropPublishedStage(temporary, stagedVersion.ino))
+  // That second name goes whatever became of the completed record, as after a replacement: a record another program put at pending.json, or none, never names it, so no later run would drop it and every later update or removal would refuse a config with two names; after a full disk this run's own record still names it, and then leaves nothing to settle.
+  const isStagedSettled = await dropPublishedStage(temporary, stagedVersion.ino)
   return {
     config,
     keptLeft: isStagedSettled ? [] : [{ path: temporary, holds: 'new' }],
@@ -2168,7 +2168,7 @@ async function linkInStaged(
  * @param context - The run.
  * @param replacement - The staged file with the inode this run wrote there, the displaced copy and the record.
  * @param held - The displaced copy as it was compared.
- * @returns The files that stay, each with what it holds (empty when everything was deleted; another program's file at the staged name stays untouched and is not named), whether the completed record was written (`false` means nothing was deleted, and a caller that must not report success without that record, {@link takeEntryOut}, refuses), and what stood at that record's name when another program kept it from being written ({@link Published.recordConflict}).
+ * @returns The files that stay, each with what it holds (empty when everything was deleted; another program's file at the staged name stays untouched and is not named), whether the completed record was written (`false` means the displaced copy was not deleted, and a caller that must not report success without that record, {@link takeEntryOut}, refuses), and what stood at that record's name when another program kept it from being written ({@link Published.recordConflict}).
  */
 async function settlePublished(
   context: Context,
