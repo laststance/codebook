@@ -9165,6 +9165,71 @@ test('An adoption whose setup record, moved aside to end it, cannot go back besi
   assert.equal(readFileSync(pendingDroppingPath, 'utf8'), olderRecordText)
 })
 
+test("A take-back's rollback record a sync tool moves away right after Codebook published its rewrite keeps the version it replaced at its dropping name, so the record that names the copy of the previous config is never lost", async (context) => {
+  // Value: protects=a rewrite deletes the version it moved to the dropping name only while the record's name still shows the version it just published there, at a synchronous look right before that delete, so a new record a sync tool moves away right after its link leaves the old one, which names the moved-aside copy of the learner's config, at the dropping name for the next run (Cycle 0149 task 28); fails_when=the move does not fire, the dropping name is empty or holds anything but the record as it stood before that rewrite, the copy it names is gone, or the next refresh does not end with the learner's config without the entry and no record or copy left; no_claim=a real sync tool (seam.beforeRecordWrite arms at the take-back's write of its completed record and reads the record as it stands then, and the config module is loaded with a link that, once armed, moves pending.json.rollback away right after the link that published that rewrite resolved), a move between that last look and the unlink (no Node primitive unlinks by inode)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  const movedPath = join(home, 'rollback-record-moved-away.json')
+  let isArmed = false
+  let replacedJournalText = ''
+  let hasMovedAway = false
+  const movingAfterLink = await loadWithAfterRename((from, to) => {
+    // A sync tool moves the rollback record away right after the link that published its rewrite.
+    if (
+      !isArmed ||
+      hasMovedAway ||
+      to !== journalPath ||
+      !from.endsWith('.tmp')
+    )
+      return
+    hasMovedAway = true
+    renameSync(journalPath, movedPath)
+  })
+
+  // Act
+  await movingAfterLink
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the take-back's completed record, a rewrite of the record its claim wrote, which stands at that name now.
+        if (path !== journalPath || isArmed) return
+        if (JSON.parse(JSON.stringify(record)).phase !== 'completed') return
+        isArmed = true
+        replacedJournalText = readFileSync(journalPath, 'utf8')
+      },
+    })
+    .catch(() => undefined)
+  // A name the first refresh left empty reads as 'absent', so the assertions below name it.
+  const droppingAfterFirst = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const keptPath =
+    replacedJournalText === ''
+      ? ''
+      : join(
+          dirname(configPath),
+          String(JSON.parse(replacedJournalText).keptName),
+        )
+  const isNamedCopyAfterFirst = keptPath !== '' && existsSync(keptPath)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMovedAway, true)
+  assert.notEqual(replacedJournalText, '')
+  assert.equal(droppingAfterFirst, replacedJournalText)
+  assert.equal(isNamedCopyAfterFirst, true)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(keptPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test('A rollback record a stopped run left at its dropping name is put back by the next refresh, which settles it and takes the failed first setup back', async (context) => {
   // Value: protects=the run start finds a rollback record that a run which stopped inside its move left at the dropping name and puts it back at the empty record name before anything reads that record, so the moved-aside copy of the learner's config it names comes back and the failed first setup is taken back (Cycle 0149 task 13, acceptance criterion 13's first state); fails_when=the refresh answers anything but not-managed, the config is not the learner's own without the entry, or the dropping name, the rollback record, the copy it names, the setup record or a receipt stays; no_claim=a real process end (the test renames the rollback record to its dropping name, as a stop right after that move leaves it)
   // Arrange

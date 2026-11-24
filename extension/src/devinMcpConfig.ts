@@ -2881,7 +2881,7 @@ async function replaceThroughDroppingName(
     assertAfterMove(context, aside, write.assertStill, write.staged),
   )
   const version = await publishMovedRecord(context, aside, write)
-  await dropAsideRecord(context, aside)
+  await dropAsideRecord(context, aside, version)
   return version
 }
 
@@ -3180,20 +3180,27 @@ async function renewOrPutBack(
 }
 
 /**
- * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, while the dropping name still shows the moved file; called by {@link replaceThroughDroppingName}.
- * Limit: a swap at the dropping name between this look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode).
+ * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, only while synchronous looks right before the unlink find the record's name still showing the version just published there and the dropping name still showing the moved file; called by {@link replaceThroughDroppingName}, so a new record another program moves away or replaces right after its publication never takes the old one with it: the old one stays at the dropping name, which the next run puts back or names ({@link settleDroppedRecord}).
+ * Limit: a swap at either name between these looks and the unlink is not seen (no Node primitive unlinks by inode); the look at the record's name compares its inode only, and the read after the cleanup checks its bytes ({@link confirmPublished}).
  * @param context - The run; its pending path is the record.
  * @param aside - The record at its dropping name ({@link moveTrackedAside}).
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when the dropping name shows another file or cannot be deleted: both stay, and the next run names them again. A dropping name another program emptied is no failure.
+ * @param published - The version just published at the record's name ({@link publishMovedRecord}).
+ * @throws A `gone` {@link JournalConflictError} when the record's name is empty; the refusal naming both names ({@link bothRecordNamesError}) when it shows another file or cannot be looked at, or when the dropping name shows another file or cannot be deleted: both stay, and the next run names them again. A dropping name another program emptied is no failure.
  * @example
- * await dropAsideRecord(rollbackContext, aside) // '…/pending.json.rollback.codebook-dropping' is gone
+ * await dropAsideRecord(rollbackContext, aside, version) // '…/pending.json.rollback.codebook-dropping' is gone
  */
 async function dropAsideRecord(
   context: Context,
   { droppingPath, moved }: AsideRecord,
+  published: RecordVersion,
 ): Promise<void> {
-  // A storage that already stalls holds this step here, not at the synchronous look below.
-  await lookAheadAt([droppingPath])
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the record's name, then the dropping name.
+  await lookAheadAt([context.pendingPath, droppingPath])
+  // The new version moved away or replaced right after its publication: the old one stays at the dropping name.
+  if (!isStagedNameStill(context.pendingPath, { ino: published.ino }))
+    throw isNameEmptyNow(context.pendingPath)
+      ? journalConflictError(context, 'gone')
+      : bothRecordNamesError(context)
   if (!isStagedNameStill(droppingPath, moved))
     throw bothRecordNamesError(context)
   await unlink(droppingPath).catch((error: unknown) => {
@@ -3481,14 +3488,15 @@ async function unlinkStagedWhileStill(
 }
 
 /**
- * Tells, by one synchronous look, whether a staged name still shows the file as a read of it found it (inode, size and times); called by {@link assertStagedRecordStill} right before a rename or link publishes that file, and by {@link unlinkStagedWhileStill} right before its unlink, each after an awaited look at that name, and the same way for `receipt.json` by {@link writeReceipt} and {@link dropReceipt} right before the rename or unlink of the receipt they read, and by the look {@link coveringReceiptCheck} gives right before a first setup's old record is deleted beside it.
- * @param staged - The staged name (or `receipt.json`).
- * @param read - That file as {@link inspectCopy} read it.
+ * Tells, by one synchronous look, whether a staged name still shows the file as a read of it found it (inode, size and times); called by {@link assertStagedRecordStill} right before a rename or link publishes that file, and by {@link unlinkStagedWhileStill} right before its unlink, each after an awaited look at that name, the same way for `receipt.json` by {@link writeReceipt} and {@link dropReceipt} right before the rename or unlink of the receipt they read, by the look {@link coveringReceiptCheck} gives right before a first setup's old record is deleted beside it, and by {@link dropAsideRecord} for a tracked record's name and its dropping name right before that dropping name's unlink.
+ * @param staged - The staged name (or `receipt.json`, or a tracked record's name).
+ * @param read - That file as {@link inspectCopy} read it, or only the inode a write just published there.
  * @returns `true` when the name shows that file; `false` when it shows another file, size or times, nothing, or the look failed.
  * @example
  * isStagedNameStill(stagedPath, read) // => false once a sync tool wrote into the staged file after the read
+ * isStagedNameStill(rollbackContext.pendingPath, { ino: 43n }) // => false once a sync tool moved the record just linked there away
  */
-function isStagedNameStill(staged: string, read: InspectedCopy): boolean {
+function isStagedNameStill(staged: string, read: LeftoverLookback): boolean {
   try {
     return showsChecked(
       lstatSync(staged, { bigint: true, throwIfNoEntry: false }),
