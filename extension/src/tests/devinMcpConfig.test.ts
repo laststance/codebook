@@ -9684,6 +9684,81 @@ test("A rollback record a backup restores right after a refresh published the re
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A receipt a sync tool puts back with the adopted receipt's bytes as another file stays when a restored rollback record takes that adoption's receipt back out", async (context) => {
+  // Value: protects=an adoption that takes its receipt back out deletes only the version its own write published at receipt.json, so a file a backup or sync tool puts there with the same bytes as another file stays (Cycle 0149 task 24); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, receipt.json is gone or is not the sync tool's file with the adopted receipt's bytes, or either record changes or is gone; no_claim=a real sync tool (the config module is loaded with a link that, once, right after the receipt's link resolved, renames a copy of the receipt's bytes over receipt.json and restores the rollback record), a swap between the withdrawal's last look and its unlink (no Node primitive unlinks by inode), what the next refresh decides with the kept copy (it reads it as the receipt it holds)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000002401',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  // The rollback record of that same setup names no private file, so its settlement changes nothing beside the config.
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000002402',
+    publishGeneration: olderRecord.generation,
+  })}\n`
+  const journalBackupPath = join(home, 'journal-from-backup.json')
+  const receiptCopyPath = join(home, 'receipt-from-sync.json')
+  let hasRestored = false
+  let copiedReceiptText = ''
+  let copiedReceiptIno = 0
+  const restoring = await loadWithAfterRename((_from, to) => {
+    if (to !== receiptPath || hasRestored) return
+    hasRestored = true
+    // A sync tool puts the adopted receipt's bytes back as another file and restores the rollback record, right after the adoption's receipt was published.
+    copiedReceiptText = readFileSync(receiptPath, 'utf8')
+    writeFileSync(receiptCopyPath, copiedReceiptText)
+    copiedReceiptIno = statSync(receiptCopyPath).ino
+    renameSync(receiptCopyPath, receiptPath)
+    writeFileSync(journalBackupPath, restoredJournalText)
+    renameSync(journalBackupPath, journalPath)
+  })
+
+  // Act
+  const firstOutcome = await restoring
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  // The copy holds the receipt that adopted this setup.
+  assert.equal(
+    JSON.parse(copiedReceiptText).generation,
+    'c0ffee00-0000-4000-8000-000000002401',
+  )
+  // A receipt the first refresh deleted reads as 'absent', so the assertion names it.
+  assert.equal(
+    existsSync(receiptPath) ? statSync(receiptPath).ino : 'absent',
+    copiedReceiptIno,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), copiedReceiptText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), olderRecordText)
+  assert.equal(readFileSync(journalPath, 'utf8'), restoredJournalText)
+})
+
 test('A setup leaves a record a backup restores at pending.json after the setup wrote its receipt, instead of deleting it with its own record, and still reports the entry installed', async (context) => {
   // Value: protects=a setup deletes its own record of the change only as the version it last wrote, so a record a backup or sync tool put at pending.json after that write stays for the next run (Cycle 0148 task 33); fails_when=the record put at pending.json is gone or changes, the setup does not answer installed without a cleanup notice, or the config or the receipt is not the setup's; no_claim=a real backup tool (seam.beforeRecordWrite renames another record over pending.json once, right before the receipt's rename, after the setup's completed record was written), a restore between the last look and the unlink (no Node primitive unlinks by inode), what the next run does with that record
   // Arrange

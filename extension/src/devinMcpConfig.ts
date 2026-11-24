@@ -3574,7 +3574,7 @@ function receiptConflictError(
 }
 
 /**
- * Deletes `receipt.json` only while it shows the version the run's own read found there ({@link Context.receiptVersion}), the read that let a removal take its entry out or decide that nothing is Codebook's; called by {@link dropReceiptAfterRemoval} and {@link answerRemovalWithoutTakeOut}.
+ * Deletes `receipt.json` only while it shows the version the run's own read found there or its own last write published ({@link Context.receiptVersion}): the read that let a removal take its entry out or decide that nothing is Codebook's, or the adoption's receipt that goes back out; called by {@link dropReceiptAfterRemoval}, {@link answerRemovalWithoutTakeOut} and {@link withdrawAdoptedReceipt}.
  * The name is read through the thread pool ({@link receiptNameState}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}).
  * Limit: a file put there between that last look and the unlink is deleted; no Node primitive unlinks by inode.
  * @param context - The run.
@@ -5378,12 +5378,12 @@ async function adoptPending(
   )
   await retirePending(context, retained, assertLeft).catch(
     async (error: unknown) => {
-      // A rollback record back at its name after the receipt's rename: that receipt would make the next run skip the take-back that record proves, so it goes back out while it still holds what this call wrote.
+      // A rollback record back at its name after the receipt's rename: that receipt would make the next run skip the take-back that record proves, so it goes back out while it still is the version this call wrote.
       if (
         error instanceof JournalBackConflictError ||
         error instanceof HeldJournalConflictError
       )
-        await withdrawAdoptedReceipt(context, adopted)
+        await withdrawAdoptedReceipt(context)
       throw error
     },
   )
@@ -5391,31 +5391,17 @@ async function adoptPending(
 }
 
 /**
- * Takes the receipt an adoption just published back out once a rollback record stands at its name again beside the record that adoption could not end, only while `receipt.json` still shows the bytes that adoption wrote, so the next run, which settles that rollback record first, takes the failed setup back instead of finding its receipt ({@link finishCutShortSetup}); called only by {@link adoptPending}.
- * The bytes are read through the thread pool, then the inode, size and times of that read are looked at once more synchronously right before the unlink ({@link isLeftoverStill}).
- * Limit: a file another program puts at `receipt.json` between that last look and the unlink is deleted (no Node primitive unlinks by inode), and a byte-identical copy of that receipt passes as it; a receipt that another program replaced, or that cannot be looked at or deleted, stays, and the next run then keeps the entry as receipted, as does a run that ends before this step.
- * @param context - The run; gives the receipt's path, and its seam is called around the last look ({@link isLeftoverStill}).
- * @param adopted - The receipt the adoption wrote.
- * @returns Resolves once the receipt is gone, or once it stays because `receipt.json` shows other bytes or nothing, or the look or the delete failed: the adoption's own refusal is what the run says.
+ * Takes the receipt an adoption just published back out once a rollback record stands at its name again beside the record that adoption could not end, only while `receipt.json` still shows the very version that adoption's write published there ({@link Context.receiptVersion}, which {@link writeReceipt} moved to it), so the next run, which settles that rollback record first, takes the failed setup back instead of finding its receipt ({@link finishCutShortSetup}); called only by {@link adoptPending}.
+ * The delete is {@link dropReceipt}'s: the name is read through the thread pool and must show that inode and those bytes, then it is looked at once more synchronously right before the unlink, so a file a backup or sync tool put there since, even one with the same bytes on another inode, stays.
+ * Limit: a file another program puts at `receipt.json` between that last look and the unlink is deleted (no Node primitive unlinks by inode); a receipt that another program replaced, or that cannot be looked at or deleted, stays, and the next run then keeps the entry as receipted, as does a run that ends before this step.
+ * @param context - The run; its receipt version is the one the adoption's write published.
+ * @returns Resolves once the receipt is gone, or once it stays because `receipt.json` shows another file, other bytes or nothing, or the look or the delete failed: the adoption's own refusal is what the run says.
  * @example
- * await withdrawAdoptedReceipt(run, adopted) // receipt.json is gone while it held the adopted receipt
+ * await withdrawAdoptedReceipt(run) // receipt.json is gone while it held the receipt this run's adoption wrote; a copy with the same bytes on another inode stays
  */
-async function withdrawAdoptedReceipt(
-  context: Context,
-  adopted: Receipt,
-): Promise<void> {
-  try {
-    const published = await inspectCopy(context.receiptPath)
-    // Only the bytes this adoption wrote go ({@link writeRecord} writes them as `JSON.stringify` gives them), and only while the name still shows that file.
-    if (
-      published?.sha256 !== bytesSha256(JSON.stringify(adopted)) ||
-      !isLeftoverStill(context, context.receiptPath, published)
-    )
-      return
-    await unlink(context.receiptPath)
-  } catch {
-    // A receipt that cannot be looked at or deleted stays as it is.
-  }
+async function withdrawAdoptedReceipt(context: Context): Promise<void> {
+  // A receipt that cannot be looked at or deleted stays as it is.
+  await dropReceipt(context).catch(() => undefined)
 }
 
 /** A {@link JournalConflictError} at the rollback journal's name met by the look an adoption rests on ({@link journalLeftCheck}): a rollback record stands there where settlement left none, another file stands there than the one it left, or that name could not be read again; {@link adoptPending} takes back the receipt it published when this ends its record's retirement, as it does for a held journal's ({@link HeldJournalConflictError}). */
