@@ -14703,6 +14703,80 @@ test("A setup whose put-back finds another file at the old record's private name
   assert.equal(markAfterRefusal, true)
 })
 
+test("A setup keeps the old record's private file and its publish record and says that what stands at receipt.json is unverified when a sync tool rewrites the record that went back in place, at the same length and with its modification time put back", async (context) => {
+  // Value: protects=after a put-back's link stood, the old record's private name goes only while receipt.json, read again after the link, still holds the record Codebook read before the link, so a write through either name that keeps the inode, the size and the modification time never leaves bytes Codebook did not verify as the live receipt with the private name, the only sign of that, gone (Cycle 0148 task 44); fails_when=the private file or the publish record is gone, pending.json lacks the mark that nothing was linked, either name holds other bytes than the rewrite, or the refusal is another sentence; no_claim=a real sync tool (the config module is loaded with a link that, for the put-back's link, links and then rewrites the file at the private name in place with another entry's record of the same length and puts its whole-second modification time back; seam.afterCheck moves the config back right before the config's link), and a write in the syscall gap after the last look (residual a; no Node primitive closes it)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  // A whole second, so the rewrite can put the modification time back to the nanosecond.
+  utimesSync(receiptPath, 1_700_000_000, 1_700_000_000)
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  const rewrittenText = receiptText.replace(
+    receiptBefore.entrySha256,
+    sha256('another entry'),
+  )
+  let putBackFrom: string | undefined
+  const rewritingAfterLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          if (to !== receiptPath || putBackFrom !== undefined) return
+          // The put-back's link stood; a sync tool rewrites that file in place through the private name and puts its modification time back.
+          putBackFrom = from
+          writeFileSync(from, rewrittenText)
+          utimesSync(from, 1_700_000_000, 1_700_000_000)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await rewritingAfterLink
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, { afterCheck: moveBack })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const retiredPath = putBackFrom ?? 'no put-back'
+  const recordsAfterRefusal = await recordsIn(storage)
+  const privateTextAfterRefusal = existsSync(retiredPath)
+    ? readFileSync(retiredPath, 'utf8')
+    : 'absent'
+  const markAfterRefusal = existsSync(pendingPath)
+    ? (await readRecordFile(storage, 'pending.json')).notLinked
+    : 'absent'
+
+  // Assert
+  // The rewrite kept the size and the modification time the read before the link saw.
+  assert.equal(rewrittenText.length, receiptText.length)
+  assert.equal(
+    lstatSync(receiptPath, { bigint: true }).mtimeNs,
+    1_700_000_000_000_000_000n,
+  )
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    basename(retiredPath),
+  ])
+  assert.equal(readFileSync(receiptPath, 'utf8'), rewrittenText)
+  assert.equal(privateTextAfterRefusal, rewrittenText)
+  assert.equal(markAfterRefusal, true)
+})
+
 test("A setup whose put-back links another program's file to receipt.json, because that file replaced the old record at its private name right before the link, takes that link back and keeps that file and its publish record", async (context) => {
   // Value: protects=a put-back whose link put another file at receipt.json than the record it read at the private name (another program replaced that file between the last look and the link) leaves no unverified file at the live receipt name: while both names still show that one file, receipt.json goes again, so that file stays only at the private name with the publish record that leads there (Cycle 0148 ship review), and that record is in the shape 0.2.142.0 and 0.2.143.0 refuse to read (retiresReceipt "foreign"), so an older window never links that unverified file into receipt.json (Cycle 0148 task 34); fails_when=a file stands at receipt.json after the setup, the file at the private name changes or is gone, pending.json is gone or lacks the mark that nothing was linked or retiresReceipt "foreign", 0.2.143.0's field rules accept it, or the refusal is another sentence; no_claim=0.2.143.0 itself (the test checks the record against that build's field rules, RELEASED_PUT_BACK_FIELDS), a real sync tool (the config module is loaded with a link that, for the put-back's link, first puts another program's file at the private name at another inode, then links; seam.afterCheck moves the config back right before the config's link), and a file put at receipt.json between the last look and the unlink that takes the link back (no Node primitive unlinks by inode)
   // Arrange
