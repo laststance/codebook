@@ -9005,6 +9005,55 @@ test('A setup record a refresh beside a held legacy rollback journal cannot read
   assert.equal(existsSync(receiptPath), false)
 })
 
+test('A setup record a refresh beside a held legacy rollback journal cannot read again at its own read of it keeps both records, and the refresh says that record could not be read, not that it changed', async (context) => {
+  // Value: protects=a held run whose own read of the setup record, after the read that decided the journal, fails says so and keeps both records, instead of claiming that a backup or sync tool changed that record (Cycle 0148 ship review); fails_when=the refresh resolves or says anything but the could-not-be-read sentence, the journal or the setup record is deleted or changes, or a receipt is written; no_claim=a real unreadable file system (seam.afterStat takes the read permission off pending.json once, at the decision's read of it, whose open handle still reads the record, so the run's own open of it that follows fails), a lack of file handles, what the next run does once the file is readable; seam=seam.afterStat rewrites the config in place once, at the read that decides the journal, so the journal is held
+  if (process.getuid?.() === 0 || process.platform === 'win32') {
+    context.skip('mode 000 does not stop root or Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const journalText = readFileSync(journalPath, 'utf8')
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  let hasEmptied = false
+  let hasLocked = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      if (path === configPath && !hasEmptied) {
+        hasEmptied = true
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+        return
+      }
+      // The decision's read of the setup record still reads the file it opened; the run's own read of it that follows cannot open it.
+      if (path === pendingPath && hasEmptied && !hasLocked) {
+        hasLocked = true
+        chmodSync(pendingPath, 0o000)
+      }
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  chmodSync(pendingPath, 0o600)
+
+  // Assert
+  assert.equal(hasLocked, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} could not be read again while Codebook was settling it, so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand (${pendingPath}, ${journalPath}), so the next run decides on them again; make that file readable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(journalPath, 'utf8'), journalText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A setup record a sync tool moves away at a held run's last look at it before the legacy rollback journal goes keeps that journal, and the refresh says that record disappeared, not that it changed", async (context) => {
   // Value: protects=a held run whose last synchronous look at the setup record it rewrote, right before the journal's unlink, finds that name empty says the record disappeared and keeps the journal, instead of claiming that both records stand as they are (Cycle 0148 ship review); fails_when=the refresh says anything but the disappearance sentence followed by the staged file's sentence, the journal is deleted or changes, anything stands at pending.json, the moved record is not the rewritten one, or a receipt is written; no_claim=a real sync tool (seam.beforeLeftoverCheck moves pending.json away once, at the first look at it after the journal's own last look; seam.afterStat rewrites the config in place once, at the read that decides the journal), a move after that look; seam=folders at the setup record's staged and probe names stand for two private files recovery cannot settle, so the record is rewritten, not deleted
   // Arrange

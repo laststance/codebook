@@ -5367,7 +5367,7 @@ async function readRecordKind(
 }
 
 /**
- * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} or {@link readRetiredRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt} and {@link retiredReceiptFateOf}, which keep every record after a failed read and advise deleting none.
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} or {@link readRetiredRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt}, {@link retiredReceiptFateOf} and {@link readPublishRecord}, which keep every record after a failed read and advise deleting none.
  * @param error - What {@link readRecord} or {@link readRetiredRecord} threw.
  * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link (whose open without following it fails with `ELOOP`), no regular file, too many bytes or bytes that are no record.
  * @example
@@ -6686,7 +6686,7 @@ function heldPublishContext(
  * @param context - The run; its seam is called as for every record read ({@link readRecordFile}).
  * @param held - The held journal; undefined when none is held.
  * @returns The record and its version ({@link readVersionedRecord}); undefined when the name is empty, which {@link heldPublishContext} words beside a held journal.
- * @throws What {@link readVersionedRecord} throws when no journal is held. Beside a held journal the `record-reread` {@link unmatchedJournalRefusal} when the name shows another inode or other bytes than the decision read, or cannot be read as a record now (a link, a folder, a file too large or a failed read): nothing is parsed, written or retired then, so the next run decides on both records again.
+ * @throws What {@link readVersionedRecord} throws when no journal is held. Beside a held journal the `record-reread` {@link unmatchedJournalRefusal} when the name shows another inode or other bytes than the decision read, or something that is no record now (a link, a folder or a file too large), and the `record-unread` one when the read itself fails ({@link isFailedRead}): nothing is parsed, written or retired then, so the next run decides on both records again.
  * @example
  * const read = await readPublishRecord(context, held) // throws the record-reread refusal once a backup put a file that is no record at pending.json
  */
@@ -6696,10 +6696,16 @@ async function readPublishRecord(
 ): Promise<{ record: Pending; version: RecordVersion } | undefined> {
   const { pendingPath, retry, seam } = context
   if (!held) return readVersionedRecord(pendingPath, pendingSchema, retry, seam)
-  const read = await readRecordFile(pendingPath, retry, seam).catch(() => {
-    // The decision read a record at this name: one that cannot be read as a record now is another file, and both records stay as they stand.
-    throw unmatchedJournalRefusal(context, 'record-reread', held.legacy)
-  })
+  const read = await readRecordFile(pendingPath, retry, seam).catch(
+    (error: unknown) => {
+      // The decision read a record at this name: a read that failed is said as one, anything else that is no record now is another file, and both records stay as they stand.
+      throw unmatchedJournalRefusal(
+        context,
+        isFailedRead(error) ? 'record-unread' : 'record-reread',
+        held.legacy,
+      )
+    },
+  )
   if (!read) return undefined
   const version = { ino: read.ino, sha256: bytesSha256(read.bytes) }
   const decided = held.publishVersion
@@ -6852,7 +6858,7 @@ function asRecordConflict(error: unknown): unknown {
 type JournalBelonging =
   'belongs' | 'another' | 'another-config' | 'unmatched' | 'unread' | 'invalid'
 
-/** Why a rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, `reread` when the config changed between the read that decided an older build's journal and the run's own look ({@link assertHeldJournalStill}), `record-reread` when the publish record a decision read changed before the run adopted, marked or ended it ({@link markTakeBackOwed}, {@link readPublishRecord}, {@link publishRecordConflict}), `record-gone` when it disappeared before a held journal could go ({@link heldPublishContext}, {@link publishLeftCheck}), or `record-unread` when it could not be read again then ({@link publishRecordConflict}). */
+/** Why a rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, `reread` when the config changed between the read that decided an older build's journal and the run's own look ({@link assertHeldJournalStill}), `record-reread` when the publish record a decision read changed before the run adopted, marked or ended it ({@link markTakeBackOwed}, {@link readPublishRecord}, {@link publishRecordConflict}), `record-gone` when it disappeared before a held journal could go ({@link heldPublishContext}, {@link publishLeftCheck}), or `record-unread` when it could not be read again then ({@link publishRecordConflict}, {@link readPublishRecord}). */
 type UnmatchedReason =
   | Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'>
   | 'reread'
