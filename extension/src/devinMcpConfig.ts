@@ -1446,7 +1446,7 @@ function notLinkedRecordOf(
 }
 
 /**
- * Gives a publish record that leads to an old record's private name that holds a file that is no record of this config ({@link settleForeignMoved}), in the shape this build reads as before and that 0.2.142.0 and 0.2.143.0 refuse as unreadable before they look at that name: those builds put back whatever stands there, so they would put that file at `receipt.json` and delete its private name ({@link Pending.retiresReceipt}); called by {@link notLinkedRecordOf} and {@link markForeignKept}.
+ * Gives a publish record that leads to an old record's private name that holds a file that is no record of this config ({@link UnrestoredReceiptError.isForeignKept}), in the shape this build reads as before and that 0.2.142.0 and 0.2.143.0 refuse as unreadable before they look at that name: those builds put back whatever stands there, so they would put that file at `receipt.json` and delete its private name ({@link Pending.retiresReceipt}); called by {@link notLinkedRecordOf} and {@link markForeignKept}.
  * @param record - The publish record.
  * @returns The same record with `retiresReceipt: 'foreign'`.
  * @example
@@ -1571,9 +1571,10 @@ class UnrestoredReceiptError extends Error {
     )
   }
 
-  /** Whether the file this error keeps at the private name is no record of this config ({@link settleForeignMoved}), so the publish record that leads there is written in the shape older builds refuse ({@link foreignKeptRecordOf}). */
+  /** Whether the file this error keeps at the private name is no record of this config: beside a record of this config at `receipt.json` (`foreign`, {@link compareStandingReceipt}) or beside anything else there ({@link settleForeignMoved}), so the publish record that leads there is written in the shape older builds refuse ({@link foreignKeptRecordOf}). */
   get isForeignKept(): boolean {
     return (
+      this.standing === 'foreign' ||
       this.standing === 'moved-foreign' ||
       this.standing === 'moved-foreign-other' ||
       this.standing === 'moved-foreign-unread'
