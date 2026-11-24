@@ -2490,29 +2490,57 @@ async function readVersionedRecord<Schema extends z.ZodType>(
   }
 }
 
-/** The bytes of one of Codebook's records and the inode of the open file they were read from ({@link readRecordFile}). */
-type RecordFileRead = { bytes: Buffer; ino: bigint }
+/** The look at one of Codebook's records that a later look at its name compares ({@link LeftoverLookback}): the inode, size and times of the open file the bytes came from ({@link readRecordFile}). */
+type RecordLook = Required<
+  Pick<LeftoverLookback, 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'>
+>
+
+/** The bytes of one of Codebook's records, the inode of the open file they were read from, and that open file's look ({@link readRecordFile}). */
+type RecordFileRead = { bytes: Buffer; ino: bigint; look: RecordLook }
+
+/** What {@link readRecordFile} throws when the open file it read through is no regular file, holds more than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} or grew past that after its stat: no failed system call, so {@link isFailedRead} answers `false`, and it carries that open file's look, so {@link readLookedRecord} names what stands there by the file it opened, never by an earlier look at the name. */
+class RefusedRecordError extends Error {
+  constructor(
+    message: string,
+    readonly look: RecordLook,
+  ) {
+    super(message)
+  }
+}
 
 /**
- * Reads the bytes of one of Codebook's own records through one handle opened without following a link; called by {@link readVersionedRecord} and {@link readRetiredRecord}, which parse them with {@link parseRecord}.
+ * Gives the look of an open file a later look at its name compares; called by {@link readRecordFile}.
+ * @param status - The open file's status.
+ * @returns Its inode, size and modification and change times in nanoseconds.
+ * @example
+ * recordLookOf(await file.stat({ bigint: true })) // => { ino: 42n, size: 310n, mtimeNs, ctimeNs }
+ */
+function recordLookOf({
+  ino,
+  size,
+  mtimeNs,
+  ctimeNs,
+}: BigIntStats): RecordLook {
+  return { ino, size, mtimeNs, ctimeNs }
+}
+
+/**
+ * Reads the bytes of one of Codebook's own records through one handle opened without following a link; called by {@link readVersionedRecord}, {@link readRetiredRecord} and {@link readLookedRecord}, which parse them with {@link parseRecord}.
  * @param path - The record file.
  * @param retry - The command a refusal asks the learner to run again.
  * @param seam - Test hook, see {@link DevinMcpTestSeam}.
- * @returns The bytes and the inode of the file they came from; undefined when the name is empty.
- * @throws When the record is a link, no regular file, larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} (also when it grew past that after its stat) or unreadable; a failed system call is the error's cause ({@link isFailedRead}).
+ * @returns The bytes, the inode of the file they came from and that open file's look ({@link RecordFileRead}); undefined when the name is empty.
+ * @throws A {@link RefusedRecordError} with the open file's look when that file is no regular file or larger than {@link DEVIN_MCP_RECORD_LIMIT_BYTES} (also when it grew past that after its stat); when the record is a link or unreadable, an error whose cause is the failed system call ({@link isFailedRead}).
  * @example
- * await readRecordFile(receiptPath, SET_UP_AGAIN) // => { bytes: <Buffer 7b 22 ...>, ino: 42n }
+ * await readRecordFile(receiptPath, SET_UP_AGAIN) // => { bytes: <Buffer 7b 22 ...>, ino: 42n, look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } }
  */
 async function readRecordFile(
   path: string,
   retry: string,
   seam?: DevinMcpTestSeam,
 ): Promise<RecordFileRead | undefined> {
-  const unsafe = (cause?: unknown) =>
-    new Error(
-      `Codebook's Devin Desktop MCP record at ${path} is a link, no regular file, larger than ${DEVIN_MCP_RECORD_LIMIT_BYTES} bytes or not readable, so the config was left untouched; remove that record, ${retry}.`,
-      cause === undefined ? undefined : { cause },
-    )
+  const sentence = `Codebook's Devin Desktop MCP record at ${path} is a link, no regular file, larger than ${DEVIN_MCP_RECORD_LIMIT_BYTES} bytes or not readable, so the config was left untouched; remove that record, ${retry}.`
+  const unsafe = (cause: unknown) => new Error(sentence, { cause })
   let file
   try {
     file = await openWithoutFollowing(path)
@@ -2524,8 +2552,10 @@ async function readRecordFile(
     const status = await file.stat({ bigint: true }).catch((error) => {
       throw unsafe(error)
     })
+    const look = recordLookOf(status)
+    // The open file itself holds no record: its look names what stands there.
     if (!status.isFile() || status.size > BigInt(DEVIN_MCP_RECORD_LIMIT_BYTES))
-      throw unsafe()
+      throw new RefusedRecordError(sentence, look)
     const bytes = await readWithinLimit(
       file,
       status.size,
@@ -2534,8 +2564,8 @@ async function readRecordFile(
     ).catch((error) => {
       throw unsafe(error)
     })
-    if (!bytes) throw unsafe()
-    return { bytes, ino: status.ino }
+    if (!bytes) throw new RefusedRecordError(sentence, look)
+    return { bytes, ino: status.ino, look }
   } finally {
     await file.close()
   }
@@ -6089,20 +6119,20 @@ async function readStandingReceipt(
   }
 }
 
-/** A record file as {@link readLookedRecord} read it: the receipt, or `other` for a file that holds none, and its name's inode, size and times at the look right before the read. */
-type LookedRecord = { read: Receipt | 'other'; look: LeftoverLookback }
+/** A record file as {@link readLookedRecord} read it: the receipt, or `other` for a file that holds none, and the inode, size and times of the open file the bytes came from (the name's own look only for what was never opened). */
+type LookedRecord = { read: Receipt | 'other'; look: RecordLook }
 
 /** The old record of this config as {@link readMovedForPutBack} read it at its private name right before a put-back's link, which {@link dropLinkedPrivateName} reads again at `receipt.json` after the link. */
 type MovedRecord = LookedRecord & { read: Receipt }
 
 /**
- * Looks at a record's name, then reads the file, so a later look ({@link stillnessOf}) tells whether the name still shows the file that was read; called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name, and by {@link readMovedForPutBack} for that private name right before a put-back's link, by {@link dropLinkedPrivateName} for `receipt.json` right after that link, and by {@link heldReceiptLook} for that private name right after a first setup moved its old record there.
+ * Looks at a record's name, then reads the file through one open handle, whose own look comes with the bytes, so a later look ({@link stillnessOf}) tells whether the name still shows the very file whose bytes were read, also after another file stood there between the look and the open and the record came back (a records folder swapped away and back keeps every file's times); called by {@link readStandingReceipt} for `receipt.json` and for the moved record's private name, and by {@link readMovedForPutBack} for that private name right before a put-back's link, by {@link dropLinkedPrivateName} for `receipt.json` right after that link, and by {@link heldReceiptLook} for that private name right after a first setup moved its old record there.
  * @param context - The run.
  * @param path - The record file.
  * @returns
- * - The receipt, or `other` for no regular file, too many bytes or bytes that are no receipt, each with the look ({@link LookedRecord})
+ * - The receipt, or `other` for no regular file, too many bytes or bytes that are no receipt, each with the look of the file the open found ({@link LookedRecord}); the name's own look only for what is never opened (a folder, a link or another kind of file at the look, or a link the open found there instead)
  * - undefined when the name is empty, or empty again by the read
- * - `unread` when the look or the read failed ({@link readRecordKind})
+ * - `unread` when the look or the read failed (a failed system call, {@link isFailedRead})
  * @example
  * await readLookedRecord(context, retiredPath) // => { read: oldReceipt, look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } }
  */
@@ -6117,13 +6147,27 @@ async function readLookedRecord(
     return 'unread'
   }
   if (!before) return undefined
-  const { ino, size, mtimeNs, ctimeNs } = before
-  const look = { ino, size, mtimeNs, ctimeNs }
   // A folder, a link or another kind of file holds no record and is not read.
-  if (!before.isFile()) return { read: 'other', look }
-  const read = await readRecordKind(context, path)
-  if (read === undefined || read === 'unread') return read
-  return { read, look }
+  if (!before.isFile()) return { read: 'other', look: recordLookOf(before) }
+  let file: RecordFileRead | undefined
+  try {
+    file = await readRecordFile(path, context.retry, context.seam)
+  } catch (error) {
+    // The open file holds no record: its own look names it.
+    if (error instanceof RefusedRecordError)
+      return { read: 'other', look: error.look }
+    if (isFailedRead(error)) return 'unread'
+    // A link the open found in place of the regular file the look saw: nothing was opened, so the look names it.
+    return { read: 'other', look: recordLookOf(before) }
+  }
+  if (file === undefined) return undefined
+  try {
+    const read = parseRecord(path, receiptSchema, context.retry, file.bytes)
+    return { read, look: file.look }
+  } catch {
+    // Bytes that are no receipt, read through that same open file.
+    return { read: 'other', look: file.look }
+  }
 }
 
 /**
@@ -6193,28 +6237,8 @@ function isConfigStill(context: Context, boundConfig: BoundConfig): boolean {
 }
 
 /**
- * Reads one receipt file and tells a failed read from foreign bytes; called only by {@link readStandingReceipt}.
- * @param context - The run.
- * @param path - The record file.
- * @returns
- * - The receipt; undefined when the name is empty
- * - `unread` when opening, looking at or reading the file failed ({@link readRecord} carries that failure's code as its cause)
- * - `other` when the name holds no regular file, too many bytes or bytes that are no receipt
- * @example
- * await readRecordKind(context, receiptPath) // => 'other' for a file that holds no JSON
- */
-async function readRecordKind(
-  context: Context,
-  path: string,
-): Promise<Receipt | undefined | 'other' | 'unread'> {
-  return readRecord(path, receiptSchema, context.retry, context.seam).catch(
-    (error: unknown) => (isFailedRead(error) ? 'unread' : 'other'),
-  )
-}
-
-/**
- * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord} or {@link readRetiredRecord} threw; called by {@link readRecordKind}, {@link isPublishReceipted}, {@link dropRetiredReceipt}, {@link retiredReceiptFateOf} and {@link readPublishRecord}, which keep every record after a failed read and advise deleting none.
- * @param error - What {@link readRecord} or {@link readRetiredRecord} threw.
+ * Tells a record that could not be read from one whose bytes are no record, by the error {@link readRecord}, {@link readRecordFile} or {@link readRetiredRecord} threw; called by {@link readLookedRecord}, {@link isPublishReceipted}, {@link dropRetiredReceipt}, {@link retiredReceiptFateOf} and {@link readPublishRecord}, which keep every record after a failed read and advise deleting none.
+ * @param error - What {@link readRecord}, {@link readRecordFile} or {@link readRetiredRecord} threw.
  * @returns `true` when opening, looking at or reading the file failed (the error carries that failure's system code as its cause); `false` for a link (whose open without following it fails with `ELOOP`), no regular file, too many bytes or bytes that are no record.
  * @example
  * isFailedRead(new Error('…', { cause: Object.assign(new Error('i/o error'), { code: 'EIO' }) }))       // => true
@@ -6527,14 +6551,10 @@ async function dropRetiredReceipt(
   // The private name must still hold the record the drop was decided on, and the config the bytes of that look.
   if (decided)
     await assertDecisionStill(context, retiredPath, decided, read.ino, retired)
-  const { ino, size, mtimeNs, ctimeNs } = read
-  // The delete acts on the name, which must still show the file that was read.
-  const isStill = await isNameStill(context, retiredPath, {
-    ino,
-    size,
-    mtimeNs,
-    ctimeNs,
-  }).catch(() => false)
+  // The delete acts on the name, which must still show the very file whose bytes were read (the open file's look, never the name's earlier one).
+  const isStill = await isNameStill(context, retiredPath, retired.look).catch(
+    () => false,
+  )
   if (!isStill) throw retiredDropRefusal(context, retiredPath)
   // And the config name must still show the file of that look, right before the delete.
   if (decided)
@@ -6583,8 +6603,13 @@ async function assertDecisionStill(
     throw changedWhileWorking(context)
 }
 
-/** A first setup's old record as one read of its private name found it ({@link readRetiredRecord}): the receipt, the inode of the file that was read and the SHA-256 of its bytes. */
-type RetiredRecordRead = { receipt: Receipt; ino: bigint; sha256: string }
+/** A first setup's old record as one read of its private name found it ({@link readRetiredRecord}): the receipt, the inode of the file that was read, the SHA-256 of its bytes and that open file's look, which the delete compares ({@link dropRetiredReceipt}). */
+type RetiredRecordRead = {
+  receipt: Receipt
+  ino: bigint
+  sha256: string
+  look: RecordLook
+}
 
 /** A drop of a first setup's old record decided on one look at the config ({@link retiredReceiptFateOf}): that look and the record it read, which the delete must find again ({@link assertDecisionStill}). */
 type DecidedDrop = { config: ConfigLook; record: RetiredRecordRead }
@@ -6593,13 +6618,13 @@ type DecidedDrop = { config: ConfigLook; record: RetiredRecordRead }
 type RetiredReceiptFate = 'put-back' | 'compare' | 'undecided' | DecidedDrop
 
 /**
- * Reads a first setup's old record from its private name with the inode and the hash of the bytes read; called by {@link retiredReceiptFateOf}, whose drop carries them, and by {@link dropRetiredReceipt}, which deletes only the record they name.
+ * Reads a first setup's old record from its private name with the inode, the hash of the bytes read and the open file's look; called by {@link retiredReceiptFateOf}, whose drop carries them, and by {@link dropRetiredReceipt}, which deletes only the record they name.
  * @param context - The run.
  * @param retiredPath - The private name that holds the old record.
- * @returns The record with its inode and bytes hash; undefined when the name is empty.
+ * @returns The record with its inode, bytes hash and look ({@link RetiredRecordRead}); undefined when the name is empty.
  * @throws What {@link readRecordFile} and {@link parseRecord} throw.
  * @example
- * await readRetiredRecord(context, retiredPath) // => { receipt: oldReceipt, ino: 42n, sha256: '9f86…' }
+ * await readRetiredRecord(context, retiredPath) // => { receipt: oldReceipt, ino: 42n, sha256: '9f86…', look: { ino: 42n, size: 310n, mtimeNs, ctimeNs } }
  */
 async function readRetiredRecord(
   context: Context,
@@ -6611,6 +6636,7 @@ async function readRetiredRecord(
     receipt: parseRecord(retiredPath, receiptSchema, context.retry, read.bytes),
     ino: read.ino,
     sha256: bytesSha256(read.bytes),
+    look: read.look,
   }
 }
 
