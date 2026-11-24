@@ -2638,6 +2638,19 @@ function nameStateNow(
 }
 
 /**
+ * Looks at names one after another through the thread pool and drops the answers, right before the synchronous last looks at those names decide a delete or the end of a record ({@link nameStateNow}, {@link isConfigUnchanged}, {@link isNameEmptyNow}), so a storage that already stalls stalls here, where the step's 10-second budget still answers, instead of on the extension host's thread; called by {@link standingReceiptOf}, {@link dropLinkedPrivateName} and {@link retiredNameCheck}.
+ * The synchronous looks still decide: only they leave nothing awaited between them and the step they guard. Limit: a stall that starts between these looks and the synchronous ones still holds the thread.
+ * @param paths - The names, in the order of the synchronous looks that follow.
+ * @returns Resolves once every look answered, whatever it answered.
+ * @example
+ * await lookAheadAt([retiredPath, context.receiptPath]) // then stillnessOf(context, retiredPath, standingLook, movedLook)
+ */
+async function lookAheadAt(paths: readonly string[]): Promise<void> {
+  // One name at a time, in the order of the synchronous looks that follow.
+  for (const path of paths) await lstat(path).catch(() => undefined)
+}
+
+/**
  * Words what one look at a name found against what was checked; the shared end of {@link nameStateOf} and {@link nameStateNow}, which calls the seam after a look that passed.
  * @param context - The run; its seam is called once the name still shows the checked file.
  * @param path - The name that was looked at.
@@ -3061,7 +3074,7 @@ function retainedRecord(
  * @throws A {@link JournalConflictError} when a tracked journal's name shows another file or cannot be read again (the name stays as it is); what `assertStill` throws, such as the {@link retiredBackRefusal} (the record stays byte for byte and the run goes no further); what the write or delete throws.
  * @example
  * await retirePending(rollbackContext, undefined) // pending.json.rollback is gone while it held the version this run settled
- * await retirePending(context, retained, retiredNameCheck(context, emptiedRetiredPath)) // throws, keeping pending.json, once a backup put the old record back at that name
+ * await retirePending(context, retained, await retiredNameCheck(context, emptiedRetiredPath)) // throws, keeping pending.json, once a backup put the old record back at that name
  */
 async function retirePending(
   context: Context,
@@ -3074,21 +3087,24 @@ async function retirePending(
 }
 
 /**
- * Gives the synchronous look that must still find the old record's private name empty right before a publish record that leads there ends ({@link retirePending}); called by {@link settlePending} and {@link finishCutShortSetup} with what {@link settleRetiredReceipt} found.
+ * Gives the synchronous look that must still find the old record's private name empty right before a publish record that leads there ends ({@link retirePending}), once one look at that name through the thread pool answered ({@link lookAheadAt}), so a storage that already stalls stalls there, where the step's budget answers; called by {@link settlePending} and {@link finishCutShortSetup} with what {@link settleRetiredReceipt} found, right before they call {@link retirePending}.
+ * Limit: a stall that starts between that look and the synchronous one still holds the extension host's thread.
  * @param context - The run; gives the refusal's publish record path and the command to run again.
  * @param emptiedRetiredPath - The old record's private name this run's put-back found empty; undefined otherwise.
  * @returns
  * - undefined when no private name was found empty
  * - a look that throws the {@link retiredBackRefusal} when a file stands at that name again or the look fails, otherwise
  * @example
- * retiredNameCheck(context, undefined) // => undefined
- * retiredNameCheck(context, retiredPath)?.() // throws once a backup put the old record back at retiredPath
+ * await retiredNameCheck(context, undefined) // => undefined
+ * (await retiredNameCheck(context, retiredPath))?.() // throws once a backup put the old record back at retiredPath
  */
-function retiredNameCheck(
+async function retiredNameCheck(
   context: Context,
   emptiedRetiredPath: string | undefined,
-): (() => void) | undefined {
+): Promise<(() => void) | undefined> {
   if (emptiedRetiredPath === undefined) return undefined
+  // A storage that already stalls stalls in the thread pool first, where the step's budget answers.
+  await lookAheadAt([emptiedRetiredPath])
   return (): void => {
     // A file back at the private name found empty (or a look that failed): the record that leads there stays.
     if (!isNameEmptyNow(emptiedRetiredPath))
@@ -3097,7 +3113,7 @@ function retiredNameCheck(
 }
 
 /**
- * Tells, by one synchronous look, whether nothing stands at a name; called by {@link retiredNameCheck}, right before a publish record whose old record's private name this run found empty ends.
+ * Tells, by one synchronous look, whether nothing stands at a name; called by the look {@link retiredNameCheck} gives, after its look at that name through the thread pool ({@link lookAheadAt}), right before a publish record whose old record's private name this run found empty ends.
  * @param path - The name to look at.
  * @returns `true` when nothing stands there; `false` when anything stands there or the look failed.
  * @example
@@ -3882,8 +3898,9 @@ async function settlePending(
   assertHeldStill?: () => void,
 ): Promise<Receipt | undefined> {
   if (!pending) return receipt
+  // Only synchronous steps follow before the record ends, so the private name's look through the thread pool here still comes right before its last look.
   const assertEndStill = bothLooks(
-    retiredNameCheck(context, emptiedRetiredPath),
+    await retiredNameCheck(context, emptiedRetiredPath),
     assertHeldStill,
   )
   // A publish whose take-back is owed is never adopted, whatever the config holds now: the record ends without a receipt (the take-back, if it stood, already ran or refused before this point).
@@ -4329,7 +4346,7 @@ async function settleForeignMoved(
 
 /**
  * Ends a put-back whose link stood: the private name goes only while synchronous looks still show the file that was linked, first at `receipt.json` and last at the private name as a second name of that file, so a file put at the private name right after the link is never deleted unread, and the old record never loses its last name when another program replaced or deleted `receipt.json` after the link; called only by {@link putBackRetiredReceipt}.
- * Limit: a file put at either name between those looks and the unlink is not seen; no Node primitive unlinks by inode.
+ * Those looks come right after one look at each name through the thread pool ({@link lookAheadAt}), so a storage that already stalls stalls there, where the setup's budget answers. Limits: a file put at either name between the synchronous looks and the unlink is not seen; no Node primitive unlinks by inode. A stall that starts between the two looks at a name still holds the extension host's thread.
  * @param context - The run.
  * @param retiredPath - The private name that holds a second name of the record now at `receipt.json`.
  * @param failure - What made the setup's put-back necessary; undefined at a later run.
@@ -4357,6 +4374,8 @@ async function dropLinkedPrivateName(
       mark,
     )
   const linkedFile = { ino, size, mtimeNs }
+  // A storage that already stalls stalls in the thread pool first, where the setup's budget answers.
+  await lookAheadAt([context.receiptPath, retiredPath])
   // The put-back stands only while receipt.json still shows the record that was linked: another file or an empty name there leaves the private name as the way to that record.
   if (nameStateNow(context, context.receiptPath, linkedFile) !== 'still')
     throw undeleted(undefined)
@@ -4500,6 +4519,12 @@ async function standingReceiptOf(
   const records = await readStandingReceipt(context, retiredPath)
   if (typeof records === 'string') return records
   const { answer, boundConfig } = await compareStandingReceipt(context, records)
+  // A storage that already stalls stalls in the thread pool first, where the setup's budget answers.
+  await lookAheadAt(
+    boundConfig
+      ? [retiredPath, context.path, context.receiptPath]
+      : [retiredPath, context.receiptPath],
+  )
   // The looks come last and run synchronously: a file put at either name, or a config saved, during the comparison's config read is never what the put-back acts on, and only promise returns separate them from the unlink.
   const stillness = stillnessOf(
     context,
@@ -4647,7 +4672,7 @@ async function readLookedRecord(
 
 /**
  * Tells whether the moved record's private name, then the config when it decided the comparison, and last `receipt.json` still show what was read, after the comparison and right before the put-back acts on it; called only by {@link standingReceiptOf}.
- * The looks are synchronous, so nothing is awaited between them and the unlink that follows a `covers`, and `receipt.json`, whose record decides that drop, is looked at last. Limit: a file put at either name, or a config saved, between these looks and the unlink is not seen; no Node primitive unlinks by inode.
+ * The looks are synchronous, so nothing is awaited between them and the unlink that follows a `covers`, and `receipt.json`, whose record decides that drop, is looked at last; its caller looks at the same names through the thread pool right before ({@link lookAheadAt}), so a storage that already stalls stalls there, where the setup's budget answers. Limits: a file put at either name, or a config saved, between these looks and the unlink is not seen; no Node primitive unlinks by inode. A stall that starts between the caller's looks and these still holds the extension host's thread.
  * @param context - The run; its seam is called around each name's look ({@link nameStateNow}).
  * @param retiredPath - The private name that holds the moved record.
  * @param standingLook - `receipt.json`'s look before its read.
@@ -5668,7 +5693,7 @@ function assertHeldJournalLeft(
  * - one look that runs both in that order otherwise
  * @example
  * bothLooks(undefined, undefined) // => undefined
- * bothLooks(retiredNameCheck(context, retiredPath), assertHeldStill)?.() // throws when either name changed
+ * bothLooks(await retiredNameCheck(context, retiredPath), assertHeldStill)?.() // throws when either name changed
  */
 function bothLooks(
   first: (() => void) | undefined,
@@ -6520,7 +6545,7 @@ async function finishCutShortSetup(
   await retirePending(
     context,
     retained,
-    retiredNameCheck(context, emptiedRetiredPath),
+    await retiredNameCheck(context, emptiedRetiredPath),
   )
   return { look: await lookAtConfig(context), removal: result.removal }
 }

@@ -10293,6 +10293,70 @@ test('A setup on a full disk keeps the old record when the old config comes back
   assert.equal(next.status, 'current')
 })
 
+test("A setup that put its old record back keeps the window running while its look at receipt.json before the old record's private name goes stalls, and finishes once storage answers", async (context) => {
+  // Value: protects=the synchronous last looks before a first setup deletes its old record's private name after that record went back come right after a look at receipt.json through the thread pool, so a storage that already stalls holds that look, not the extension host's thread, where the setup's budget still answers, and once storage answers the private name still goes only after those last looks (Cycle 0148 ship review); fails_when=no look at receipt.json reaches the file system's asynchronous call after the put-back's link stood (the synchronous look blocked the thread instead), the setup settles while that look is held, or after the release the setup answers anything but the changed-file refusal, receipt.json holds anything but the old record or another record stays; no_claim=a real stalled disk (an lstat of receipt.json held after the put-back's link stood, until the test releases it, stands for it), a stall that starts between that look and the synchronous one (no Node primitive closes it), and a real sync tool (seam.afterCheck moves the config back right before the link in its place)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const release = defer<void>()
+  let isPutBackLinked = false
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // The put-back's link stood: the looks before the private name goes follow.
+          if (to === receiptPath) isPutBackLinked = true
+        },
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          if (isPutBackLinked && args[0] === receiptPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, { afterCheck: moveBack })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    'the held look at receipt.json after the put-back',
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const setupError = await attempt
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
 test('A setup that cannot put the old record back after the old config came back says where that record is, and the next setup puts it back and finds that entry current', async (context) => {
   // Value: protects=a failed put-back of the record of an entry that is gone is never swallowed: the refusal names the private file that holds that record and the way out, the publish record that names it stays, and the next run puts it back, so the old config's codebook entry stays Codebook's own; fails_when=the refusal lacks that sentence or names another path, the private file or the publish record is gone after the refusal, the old record is not back after the next setup, a private name stays then, or the next setup answers anything but current; no_claim=why a real link fails (the config module is loaded with a link that fails with EIO whenever its target is receipt.json) and a real sync tool (seam.afterCheck moves the config back right before the link in its place)
   // Arrange
@@ -10464,6 +10528,83 @@ test("A setup whose link fails while a newer record appeared at the old record's
     )
 
   // Assert
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), newerReceipt)
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
+test("A setup that drops its old record beside a newer record of the same entry keeps the window running while its look at the old record's private name before the last looks stalls, and finishes once storage answers", async (context) => {
+  // Value: protects=the synchronous last looks before a first setup drops its old record beside a newer record of the same entry come right after a look at the private name through the thread pool, so a storage that already stalls holds that look, not the extension host's thread, where the setup's budget still answers, and once storage answers the drop still runs after those last looks (Cycle 0148 ship review); fails_when=no look at the private name reaches the file system's asynchronous call after the comparison read the old record (the synchronous look blocked the thread instead), the setup settles while that look is held, or after the release the setup answers anything but the changed-file refusal, receipt.json holds anything but the newer record or another record stays; no_claim=a real stalled disk (the second lstat of the private name after the put-back's link, which follows the comparison's read of the old record, held until the test releases it, stands for it), a stall that starts between that look and the synchronous one (no Node primitive closes it), and a real sync or backup tool (the config module is loaded with a link that, for the link that publishes the config, first saves the newer record at receipt.json and moves the old config back, then links)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const newerReceipt = {
+    ...receiptBefore,
+    generation: 'c0ffee00-0000-4000-8000-000000148101',
+  }
+  const release = defer<void>()
+  let isPutBackLinked = false
+  let privateLooksAfterLink = 0
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            writeFileSync(receiptPath, JSON.stringify(newerReceipt))
+            moveBack()
+          }
+          // The put-back's link finds the newer record there, and the comparison follows.
+          if (to === receiptPath) isPutBackLinked = true
+          return link(from, to)
+        },
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          const isPrivateLook =
+            isPutBackLinked && String(args[0]).endsWith('.retired')
+          if (isPrivateLook) privateLooksAfterLink += 1
+          // The first look there comes before the comparison's read of the old record; the next one comes right before the last looks.
+          if (isPrivateLook && privateLooksAfterLink === 2) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    "the held look at the old record's private name before the last looks",
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const setupError = await attempt
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
     `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again.`,
@@ -11727,6 +11868,102 @@ test("A setup that finds the old record's private name empty keeps the record th
   assert.equal(next, 'current')
   assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
   assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+})
+
+test("A setup that finds the old record's private name empty keeps the window running while its look at that name before the record that leads there ends stalls, and finishes once storage answers", async (context) => {
+  // Value: protects=the synchronous last look that must still find the old record's private name empty before a later run ends the publish record that leads there comes right after a look at that name through the thread pool, so a storage that already stalls holds that look, not the extension host's thread, where the setup's budget still answers, and once storage answers the record still ends only after that last look (Cycle 0148 ship review); fails_when=no look at the private name reaches the file system's asynchronous call after the put-back found it empty (the synchronous look blocked the thread instead), the setup settles while that look is held, or after the release pending.json stays, a file appears or the setup answers anything but the entry-of-your-own refusal; no_claim=a real stalled disk (an lstat of the private name held after the first answer that it is empty, until the test releases it, stands for it), a stall that starts between that look and the synchronous one (no Node primitive closes it), and why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const { home, storage, configPath, receiptPath, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const failingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === receiptPath)
+            throw Object.assign(new Error('i/o error'), { code: 'EIO' })
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await assert.rejects(
+    failingPutBack.writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: moveBack,
+    }),
+    /could not put it back/,
+  )
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const retiredPath = join(
+    storage,
+    'devin-mcp',
+    `receipt.json.${String(generation)}.retired`,
+  )
+  rmSync(retiredPath)
+  const release = defer<void>()
+  let isFoundEmpty = false
+  let heldLooks = 0
+  const stalled = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          if (isFoundEmpty && args[0] === retiredPath) {
+            heldLooks += 1
+            await release.promise
+          }
+          return lstat(...args).catch((error: unknown) => {
+            // The put-back's first answer that the private name is empty: the next look there comes right before the record ends.
+            if (args[0] === retiredPath) isFoundEmpty = true
+            throw error
+          })
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let isSettled = false
+
+  // Act
+  const attempt = stalled
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    .finally(() => {
+      isSettled = true
+    })
+  await waitUntil(
+    () => heldLooks > 0,
+    "the held look at the old record's private name before the record ends",
+    10_000,
+  )
+  const isSettledWhileHeld = isSettled
+  release.resolve()
+  const setupError = await attempt
+
+  // Assert
+  assert.equal(isSettledWhileHeld, false)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a "codebook" entry of your own in Devin Desktop's MCP config at ${configPath} and left that file untouched; rename or remove that entry, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(existsSync(retiredPath), false)
+  assert.deepEqual(await recordsIn(storage), [])
 })
 
 test("A setup that finds the old record's private name empty and keeps a private file it cannot settle does not rewrite the record that leads there when a backup puts that record back while the rewrite is flushed", async (context) => {
