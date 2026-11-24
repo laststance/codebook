@@ -188,8 +188,15 @@ type Context = {
     refusesEmptyName?: true
   }
   /** The version of `receipt.json` the run's decisions rest on: the inode and bytes' hash its one read in {@link settleAfterRecovery} saw there (none for an empty name), replaced by each receipt this run publishes ({@link writeReceipt}), and cleared once this run deleted that receipt ({@link dropReceipt}) or moved it aside before a first setup's link ({@link publishEntry}). Every write there replaces only this version, or claims the name while none is known, and every delete removes only this version, so a record a backup or sync tool puts at that name after the read stays. One object per locked run ({@link inLockedFolder}), shared by every context derived from it. */
-  receiptVersion: { current: RecordVersion | undefined }
+  receiptVersion: {
+    current: RecordVersion | undefined
+    /** Set by {@link assertReceiptVerified} while the publish record as read notes that a put-back left a file Codebook did not verify at `receipt.json`, and cleared by {@link settleAfterRecovery} once its read of that name passed it: every read of that name the run decides on until then passes only an empty name or the very bytes the note names ({@link assertNotedReceipt}). */
+    unverifiedNote?: UnverifiedReceiptNote
+  }
 }
+
+/** A publish record's note that a put-back left a file Codebook did not verify at `receipt.json` (`receiptUnverified`, {@link retiredReceiptSchema}) as a run holds it ({@link Context.receiptVersion}): the hash of the old record's bytes the note names (none for a record that names no bytes) and that old record's private name, which the refusal names. */
+type UnverifiedReceiptNote = { sha256: string | undefined; retiredPath: string }
 
 /** A copy of the config that Codebook keeps for a moment, and what it must hold. */
 type KeptCopy = { path: string; sha256: string; ino: bigint }
@@ -5737,7 +5744,7 @@ type RetiredMove = { retiredPath: string; look: LeftoverLookback }
  * @returns
  * - `settled` once the receipt stands at `receipt.json` again, or was dropped beside a record that covers it
  * - `empty` at a later run whose link or look found the private name empty: the caller ends the publish record that leads there only after one more look ({@link settleRetiredReceipt})
- * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell or changed by the last looks after it told, with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, with `undeleted` when the moved record was to be deleted beside a record that covers it, or its private name after a link that stood, and that name showed another file or was that record's only name, `receipt.json` no longer showed that record, or the delete failed, with `undeleted-replaced` when after a link that stood `receipt.json` still holds that record and the private name shows another file, which is named apart from it, with `linked-unverified` when `receipt.json` shows another file than the record that was read after the link, which nothing proves the link's own ({@link refuseUnverifiedLink}), or the file the link put there no longer holds that record, with `moved-gone` when a setup's own put-back (one with a `failure`) found the private name empty, or `moved-gone-beside` when it found that name empty beside something at `receipt.json`, by a look or by the delete beside a record that covers it, with `moved-foreign` when the file at the private name is no record of this config and nothing stands at `receipt.json`, with `moved-foreign-other` or `moved-foreign-unread` when something that is not Codebook's record of that entry stands there instead or Codebook could not tell what stands there, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay. A {@link JournalConflictError} at a later run whose publish record changed, disappeared or could not be read right before the link ({@link lookBeforePutBackLink}); nothing is linked, and both receipt names stay as they are.
+ * @throws An {@link UnrestoredReceiptError} naming the private file when the receipt could not go back: with `other` when something that is not Codebook's record of that entry stands at `receipt.json`, with `foreign` when a record of this config stands there and the moved file is no record of this config, with `superseded` when the record that stands there owns the entry the config holds and the moved one does not, with `config-unread` when the config could not be read to tell or changed by the last looks after it told, with `receipt-unverified` when the publish record notes that receipt.json is unverified and the record the comparison read there is not the very bytes that note names ({@link readStandingReceipt}), with `unread` when the look there failed or the name kept changing, with `moved-unread` when the moved record could not be read, with `moved-changed` when its private name showed another file after the read, with `undeleted` when the moved record was to be deleted beside a record that covers it, or its private name after a link that stood, and that name showed another file or was that record's only name, `receipt.json` no longer showed that record, or the delete failed, with `undeleted-replaced` when after a link that stood `receipt.json` still holds that record and the private name shows another file, which is named apart from it, with `linked-unverified` when `receipt.json` shows another file than the record that was read after the link, which nothing proves the link's own ({@link refuseUnverifiedLink}), or the file the link put there no longer holds that record, with `moved-gone` when a setup's own put-back (one with a `failure`) found the private name empty, or `moved-gone-beside` when it found that name empty beside something at `receipt.json`, by a look or by the delete beside a record that covers it, with `moved-foreign` when the file at the private name is no record of this config and nothing stands at `receipt.json`, with `moved-foreign-other` or `moved-foreign-unread` when something that is not Codebook's record of that entry stands there instead or Codebook could not tell what stands there, without any of them for any other link failure; worded without a promised put-back when `options.mark` is `unmarked`. That file stays, and so does the publish record that names it. The {@link undecidedReceiptRefusal} when a put-back chosen only beside what stood at `receipt.json` finds that name empty; nothing is linked, and both records stay. A {@link JournalConflictError} at a later run whose publish record changed, disappeared or could not be read right before the link ({@link lookBeforePutBackLink}); nothing is linked, and both receipt names stay as they are.
  * @example
  * await putBackRetiredReceipt(context, retiredPath, linkError) // => 'settled' once receipt.json stands again
  * await putBackRetiredReceipt(context, retiredPath, undefined, { mark: 'unmarked' }) // => 'empty' when a later run finds the private name empty
@@ -6409,6 +6416,7 @@ type StandingRecords = {
  * @param context - The run.
  * @param retiredPath - The private name that holds the moved record.
  * @returns Both records with their looks ({@link StandingRecords}); otherwise the answer these looks and reads already give ({@link StandingReceipt}).
+ * @throws The `receipt-unverified` {@link UnrestoredReceiptError} of {@link assertNotedReceipt} when the record at `receipt.json` is not the very bytes the publish record's note that receipt.json is unverified names: it is never compared as a record of Codebook's, so the moved record is never dropped beside it; nothing is changed then.
  * @example
  * await readStandingReceipt(context, retiredPath) // => { standing: newerReceipt, standingLook, moved: { read: oldReceipt, look, sha256 } }
  */
@@ -6421,6 +6429,8 @@ async function readStandingReceipt(
   if (standing === undefined) return 'absent'
   if (standing === 'unread') return 'unread'
   if (standing.read === 'other') return 'other'
+  // This read decides whether the moved record is a spare copy: under a note that receipt.json is unverified, only the bytes it names count as a record.
+  assertNotedReceipt(context, standing)
   const moved = await readLookedRecord(context, retiredPath)
   // Nothing is left under the private name to keep, and a file put there after this look is not the record.
   if (moved === undefined) return 'gone'
@@ -6640,6 +6650,7 @@ async function settleRetiredReceipt(
 
 /**
  * Keeps every step of a later run away from a file a put-back's link left at `receipt.json` without Codebook verifying it as the record that moved ({@link refuseUnverifiedLink}), which the publish record notes (`receiptUnverified`, {@link keptRecordOf}), so that file is never taken for Codebook's record, compared as one, deleted or read as the receipt after a restart; called first by {@link settleRetiredReceipt}.
+ * The run holds that note from here on ({@link Context.receiptVersion}): this look is only the first, and each later read of `receipt.json` the run decides on, the one a put-back compares with ({@link readStandingReceipt}) and the one the run's decisions rest on ({@link settleAfterRecovery}), passes the same rule itself, so a file put there after this look found the name empty is never taken for that record either.
  * @param context - The run.
  * @param retiredPath - The old record's private name, which the refusal names.
  * @param pending - The publish record as read.
@@ -6655,19 +6666,40 @@ async function assertReceiptVerified(
   const { retiresReceipt } = pending
   if (typeof retiresReceipt !== 'object' || !retiresReceipt.receiptUnverified)
     return
+  // Every later read of receipt.json this run decides on is held against the same note.
+  context.receiptVersion.unverifiedNote = {
+    sha256: retiresReceipt.sha256,
+    retiredPath,
+  }
   const standing = await readLookedRecord(context, context.receiptPath)
-  // Nothing stands there: nothing can be taken for Codebook's record.
-  if (standing === undefined) return
-  // The very bytes the record names: what stands there is that record after all.
+  // A look that failed names no bytes, so it never passes as the record the note names.
+  assertNotedReceipt(context, standing === 'unread' ? {} : standing)
+}
+
+/**
+ * Refuses what a read of `receipt.json` found while the run holds its publish record's note that a put-back left a file there Codebook did not verify ({@link Context.receiptVersion}'s `unverifiedNote`), so that file is never taken for Codebook's record, compared as one or read as the receipt: only an empty name or the very bytes the note names pass; called by {@link assertReceiptVerified} for its look, by {@link readStandingReceipt} for the record a put-back compares with, and by {@link settleAfterRecovery} for the read the run's decisions rest on, so a look that found the name empty grants nothing to a file put there after it.
+ * @param context - The run.
+ * @param found - What the read found there: undefined for an empty name; otherwise the hash of the bytes it read, none for a file that holds no receipt or could not be read.
+ * @throws An {@link UnrestoredReceiptError} with `receipt-unverified` while the note stands and the read found anything but an empty name or those bytes; nothing is changed then.
+ * @example
+ * assertNotedReceipt(context, { sha256: 'ab…' }) // throws while the note names other bytes
+ * assertNotedReceipt(context, undefined)         // passes: nothing stands there
+ */
+function assertNotedReceipt(
+  context: Context,
+  found: { sha256?: string } | undefined,
+): void {
+  const note = context.receiptVersion.unverifiedNote
+  // No note, an empty name, or the very bytes the note names: nothing there is the unverified file.
   if (
-    typeof standing === 'object' &&
-    standing.sha256 !== undefined &&
-    standing.sha256 === retiresReceipt.sha256
+    note === undefined ||
+    found === undefined ||
+    (found.sha256 !== undefined && found.sha256 === note.sha256)
   )
     return
   throw new UnrestoredReceiptError(
     context,
-    retiredPath,
+    note.retiredPath,
     undefined,
     undefined,
     'receipt-unverified',
@@ -9261,7 +9293,7 @@ function recordRefusalOf(
  * @param isStagedLinked - What {@link isStagedNameLinked} found before recovery; it proves a first setup's link to {@link settleRetiredReceipt}.
  * @param otherJournalVersion - The version of another config's rollback journal that {@link settleRollbackJournal} read and left at that name ({@link SettledJournal.otherVersion}); undefined when it left that name empty or holds the journal. An adoption without a held journal rests on that name still showing it ({@link settlePending}).
  * @returns The {@link Inspection}.
- * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, the held journal's look ({@link HeldJournal.lookStill}), {@link settlePending} and {@link retireHeldJournal} throw; a conflict at a held run's publish record is worded as that record's ({@link publishRecordConflict}), one at the held journal's name as that journal's.
+ * @throws What {@link settleRetiredReceipt}, {@link lookAtConfig}, {@link assertHeldJournalStill}, {@link readReceipt}, {@link finishCutShortSetup}, the held journal's look ({@link HeldJournal.lookStill}), {@link settlePending} and {@link retireHeldJournal} throw; the `receipt-unverified` refusal of {@link assertNotedReceipt} when the publish record notes that receipt.json is unverified and its read of that name found other bytes than the ones the note names, before anything is decided on that read; a conflict at a held run's publish record is worded as that record's ({@link publishRecordConflict}), one at the held journal's name as that journal's.
  * @example
  * const { look, current, receipt } = await settleAfterRecovery(context, pending, retained, held, false, undefined)
  */
@@ -9287,6 +9319,10 @@ async function settleAfterRecovery(
   // The receipt the run decides on: its later writes and deletes of that name act only on the version this read saw.
   const { receipt: stored, version: storedVersion } =
     await readReceiptWithVersion(context)
+  // This read itself passes the note that receipt.json is unverified: a look before it that found the name empty grants nothing to a file put there since.
+  assertNotedReceipt(context, storedVersion)
+  // The note is the publish record's as read, which this read settles: the run's own later writes and put-backs answer to the records they write.
+  context.receiptVersion.unverifiedNote = undefined
   context.receiptVersion.current = storedVersion
   // A setup whose rollback was cut short is taken back, never adopted (its receipt was never written).
   const afterTakeBack =
