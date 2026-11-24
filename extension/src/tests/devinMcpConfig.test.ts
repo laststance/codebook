@@ -20182,6 +20182,50 @@ test("A removal that stopped right after it moved Codebook's record of the entry
   )
 })
 
+test("A removal that stopped right after it moved Codebook's record of the entry to its private name, followed by an older Codebook window's setup that wrote a new record at receipt.json, is finished by the next refresh, which deletes the moved record and keeps the new one", async (context) => {
+  // Value: protects=a delete of Codebook's record of the entry that stopped with that record at receipt.json's private name is finished at the next run's start while its dropping note proves that file, also beside a record an older Codebook version (0.2.142.0 to 0.2.144.0, which know no such private name) wrote at the emptied receipt.json, so the run reads that record instead of every run refusing both names, whose way out would put the removed entry's old record back beside the older version's entry (Cycle 0149 ship review pass 2, red team 2, mixed versions); fails_when=the stop is not reached or leaves a file at receipt.json, the refresh answers anything but current, receipt.json then holds a record of another generation than the older window's, or the private name or its dropping note stays; no_claim=a real process end (the config module is loaded so that the rename which empties receipt.json during the removal's move, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older window (the test writes the codebook entry back into the config and a record of that entry with another generation at receipt.json, as such a window's setup leaves them), a file another program puts at the private name after the stop (it never matches the note), the stopped run's vacated name (it stays under its fresh private name, as after any stop; no build reads such a name)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const configWithEntryText = readFileSync(configPath, 'utf8')
+  const olderWindowGeneration = 'c0ffee00-0000-4000-8000-000000149571'
+  const olderWindowText = JSON.stringify({
+    ...JSON.parse(readFileSync(receiptPath, 'utf8')),
+    generation: olderWindowGeneration,
+  })
+  const endingAfterMove = await loadEndingAfterStep(
+    // The rename that empties receipt.json once a link gave its file the private name as well.
+    ({ step, from, to }) =>
+      step === 'rename' && from === receiptPath && to.endsWith('.tmp'),
+  )
+  await endingAfterMove.module
+    .removeManagedDevinMcpEntry(storage, home)
+    .catch(() => undefined)
+  const isReceiptAfterStop = existsSync(receiptPath)
+  // An older Codebook window's setup puts the entry back and writes its own record of it at the emptied receipt.json.
+  writeFileSync(configPath, configWithEntryText)
+  writeFileSync(receiptPath, olderWindowText, { mode: 0o600 })
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(endingAfterMove.hasEnded(), true)
+  assert.equal(isReceiptAfterStop, false)
+  assert.deepEqual(result, { status: 'current', path: configPath })
+  assert.equal(
+    (await readRecordFile(storage, 'receipt.json')).generation,
+    olderWindowGeneration,
+  )
+  // The stopped run's vacated name stays under its fresh private name, as after any stop; no build reads such a name.
+  assert.deepEqual(
+    (await recordsIn(storage)).filter((name) => !name.endsWith('.tmp')),
+    ['receipt.json'],
+  )
+})
+
 test("A refresh that stopped right after it published Codebook's record of the entry with the installation id leaves the next refresh to delete the version it replaced and find the entry current", async (context) => {
   // Value: protects=a rewrite of Codebook's record of the entry notes, before it moves the old version to receipt.json's private name, the new version it publishes, so a run that really stops between that publication and the old version's delete leaves the next run the proof to finish the rewrite: the old version goes while receipt.json shows that new record, which stays, instead of every later run refusing both names (Cycle 0149 task 56, task 36's rule for Codebook's record of the entry); fails_when=the stop is not reached, the stop leaves anything but a record with an installation id at receipt.json or anything but the older record at its private name, the next refresh answers anything but current, receipt.json then holds anything but the record the stopped refresh published, or a private name of the record or its dropping note stays; no_claim=a real process end (the config module is loaded so that the link which publishes the backfilled record at receipt.json, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older build (the receipt is rewritten without its installation id), storage without hard links (the new record is published by a rename there), the stopped run's staged and vacated names (they stay under their fresh private names, as after any stop; no build reads such a name)
   // Arrange

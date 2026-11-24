@@ -3794,9 +3794,27 @@ async function dropAsideRecord(
     throw isNameEmptyNow(context.pendingPath)
       ? journalConflictError(context, 'gone')
       : bothRecordNamesError(context)
+  await unlinkMovedRecord(context, { droppingPath, moved })
+}
+
+/**
+ * Deletes the record a step moved to its dropping name right after a synchronous look still finds there the moved file (its inode, size and times); the shared end of {@link dropAsideRecord} and of {@link finishProvenStep}'s delete, each of which awaits a look at that name right before, so a storage that already stalls holds that step in the thread pool.
+ * Limit: a swap at the dropping name between this look and the unlink is not seen (a name only Codebook uses; no Node primitive unlinks by inode); a stall that starts between the awaited look and this one holds the extension host's thread.
+ * @param context - The run; its pending path is the record.
+ * @param aside - The dropping name and the moved file ({@link AsideRecord}).
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when the dropping name shows another file or none, or the unlink fails other than for a missing name: what stands at both names stays. A dropping name another program emptied first is no failure.
+ * @example
+ * await unlinkMovedRecord(rollbackContext, aside) // '…/pending.json.rollback.codebook-dropping' is gone
+ */
+async function unlinkMovedRecord(
+  context: Context,
+  { droppingPath, moved }: AsideRecord,
+): Promise<void> {
+  // Only the moved file, unchanged since it was read, goes.
   if (!isStagedNameStill(droppingPath, moved))
     throw bothRecordNamesError(context)
   await unlink(droppingPath).catch((error: unknown) => {
+    // A record another program removed first is gone, as the step wanted.
     if (codeOf(error) !== 'ENOENT') throw bothRecordNamesError(context)
   })
 }
@@ -3885,11 +3903,11 @@ async function settleDroppedRecords(context: Context): Promise<void> {
 }
 
 /**
- * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there only while it is the record the dropping note names ({@link putNotedRecordBack}), and any other file stays there, named; when it is only another name of the file at the record's name, that name goes; when the note proves it to be the old version of a rewrite that stopped right after it published the new record the note names, it goes while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have deleted it; beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. A dropping note beside an empty dropping name names nothing and goes. Called by {@link settleDroppedRecords}.
+ * Settles what a rewrite or delete of a tracked record left at its dropping name ({@link moveTrackedAside}) when the run stopped inside that step: beside an empty record name the file goes back there only while it is the record the dropping note names ({@link putNotedRecordBack}), and any other file stays there, named; when it is only another name of the file at the record's name, that name goes; when the note proves it to be the old version of a rewrite that stopped right after it published the new record the note names, it goes while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have deleted it, and when it proves it to be Codebook's record of the entry that a delete moved there, it goes whatever stands at `receipt.json` ({@link finishProvenStep}); beside any other file, even one with the same bytes on another inode, both stay and the run refuses, naming both, so neither is ever deleted. A dropping note beside an empty dropping name names nothing and goes. Called by {@link settleDroppedRecords}.
  * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last, right before its unlink.
  * Limit: a swap at either name between the last look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run; its pending path is the record.
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when another file stands at the record's name; what {@link putNotedRecordBack} and {@link dropAsideRecord} throw; what a look or the unlink throws other than for a missing name.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when another file stands at the record's name; what {@link putNotedRecordBack} and {@link finishProvenStep} throw; what a look or the unlink throws other than for a missing name.
  * @example
  * await settleDroppedRecord(rollbackContextOf(context)) // pending.json.rollback stands again after a stop right after its move
  * await settleDroppedRecord(rollbackContextOf(context)) // pending.json.rollback.codebook-dropping is gone after a stop right after a rewrite published its new record
@@ -3915,17 +3933,41 @@ async function settleDroppedRecord(context: Context): Promise<void> {
     })
     return dropDroppingNote(context)
   }
-  const proof = await provenDroppedRecord(context)
-  // The old version a rewrite moved there, beside the new record it names: a rewrite that stopped right after its publication, whose old version now goes, while the record's name still shows that new record.
-  if (proof?.published) {
-    await dropAsideRecord(
-      context,
-      { droppingPath, moved: proof.moved },
-      proof.published,
-    )
+  // A step the dropping note proves is finished as that step would have ended; any other file beside the record keeps both.
+  if (await finishProvenStep(context, droppingPath))
     return dropDroppingNote(context)
-  }
   throw bothRecordNamesError(context)
+}
+
+/**
+ * Finishes at the run start the step that the dropping note proves stopped with its record at the dropping name beside a file at the record's name; called only by {@link settleDroppedRecord}, once that file is no second name of the moved one.
+ * A rewrite that stopped right after it published the new record the note names deletes its old version while a read of the record's name finds that new record, its inode and bytes ({@link dropAsideRecord}), as that rewrite would have. A delete of Codebook's record of the entry ({@link dropReceipt}), whose note names no published record, deletes the moved record, the very file the note names, and leaves the file at `receipt.json` as it stands (for example one an older Codebook version, which knows no dropping name, wrote at the emptied name), since that delete rests on no other record, at a synchronous look right after an awaited one that still finds that file there ({@link unlinkMovedRecord}). Any other step is not finished: the deletes of the rollback record and of the setup record, and a rollback record's hold ({@link whileJournalHeld}), keep the moved file, which may be the only proof of a take-back.
+ * @param context - The run; its pending path is the record.
+ * @param droppingPath - The dropping name ({@link droppingPathOf}).
+ * @returns `true` once that step is finished and nothing of it stands at the dropping name; `false` when the note proves no such step, so both files stay.
+ * @throws What {@link dropAsideRecord} and {@link unlinkMovedRecord} throw.
+ * @example
+ * await finishProvenStep(rollbackContextOf(context), droppingPath) // => true; the old version a rewrite moved there is gone beside the new record it published
+ * await finishProvenStep(receiptTrackedContextOf(context), droppingPath) // => true; the record a removal's delete moved there is gone, the receipt an older window wrote at receipt.json stays
+ */
+async function finishProvenStep(
+  context: Context,
+  droppingPath: string,
+): Promise<boolean> {
+  const proof = await provenDroppedRecord(context)
+  if (!proof) return false
+  const aside: AsideRecord = { droppingPath, moved: proof.moved }
+  // The old version a rewrite moved there, beside the new record it names: a rewrite that stopped right after its publication, whose old version now goes, while the record's name still shows that new record.
+  if (proof.published) {
+    await dropAsideRecord(context, aside, proof.published)
+    return true
+  }
+  // Only Codebook's record of the entry has a delete that rests on no other record; any other moved record stays.
+  if (context.pendingPath !== context.receiptPath) return false
+  // That delete goes on, whatever stands at receipt.json: a storage that already stalls holds this step here, not at the synchronous look before the unlink.
+  await lookAheadAt([droppingPath])
+  await unlinkMovedRecord(context, aside)
+  return true
 }
 
 /**
