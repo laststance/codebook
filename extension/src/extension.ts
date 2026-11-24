@@ -1637,6 +1637,7 @@ export function activate(
   /**
    * Waits, without reading storage, while the late mark waits for a run of this window ({@link isLateMarkWaitingForRun}): until no Devin Desktop setup, take-back or removal of this window runs, the window got marked, `server` is no longer the one running (a stop or a new start ends the wait, and the late mark then ends), or a newer late mark of this window took over ({@link lateMarksScheduled}); called by {@link markLateUntilAnswered} before each of its turns, because the run that ran a sync, or one started while a read of the late mark was in flight, may still be settling when that read answered.
    * Why polled: a setup or removal whose command answered at a lapse goes on as {@link devinBackgroundWork}, which keeps no promise of its run here.
+   * Bound: none of its own, because a run that settles late (a setup refused at its Node check once storage answers) still leaves the mark to the late mark; behind a run whose storage call never returns it keeps one timer of {@link DEVIN_LATE_MARK_RUN_CHECK_MS}, reads no storage and holds no turn of {@link inDescriptorQueue}, until the server stops (Stop Agent Server, or {@link stop} at the window's {@link deactivate}), a new start replaces it, the window gets marked or a newer late mark takes over.
    * @param server - The server the late mark is for.
    * @param lateMark - The number {@link markDevinChatLate} gave this late mark.
    * @returns Whether it waited, so the late mark decides with a fresh read: an answer read before or during that run may be stale.

@@ -404,8 +404,12 @@ async function devinWindow(
   }
   // How many reads of the setup receipts the window started; a test reads it to see that a hung read is not asked again.
   let receiptReadCount = 0
+  // When each read of the setup receipts started (`performance.now()`), in order; a test measures a late mark's fresh read from its first attempt.
+  const receiptReadStartsMs: number[] = []
   // What each late mark's continuation answered once it settled (whether it marked, or its failure's message), in order; a test waits for it instead of for the start of the fresh read.
   const lateMarkDecisions: unknown[] = []
+  // When each of those answers settled (`performance.now()`), in the same order.
+  const lateMarkDecisionTimesMs: number[] = []
   // How many looks for an owed take-back have answered; the window's load makes the first.
   let owedTakeBackReads = 0
   // How many looks for an owed take-back have started, so `holdOwedTakeBackLookAt` holds the one at its position.
@@ -805,6 +809,7 @@ async function devinWindow(
       './utils/readStandingDevinInstallationId': {
         readStandingDevinInstallationId: async (storageRoot: string) => {
           receiptReadCount += 1
+          receiptReadStartsMs.push(performance.now())
           // The held read answers what it read before it waited, so a continuation that trusted it would see the setup standing.
           if (receiptReadCount === options.holdReceiptReadAt) {
             const standsBeforeHold =
@@ -876,8 +881,14 @@ async function devinWindow(
             return apply()
           })
           void decision.then(
-            (isMarked) => lateMarkDecisions.push(isMarked),
-            (error: Error) => lateMarkDecisions.push(error.message),
+            (isMarked) => {
+              lateMarkDecisionTimesMs.push(performance.now())
+              lateMarkDecisions.push(isMarked)
+            },
+            (error: Error) => {
+              lateMarkDecisionTimesMs.push(performance.now())
+              lateMarkDecisions.push(error.message)
+            },
           )
           return decision
         },
@@ -1095,8 +1106,12 @@ async function devinWindow(
     changeFolder,
     /** How many reads of the setup receipts the window started. */
     receiptReadCount: (): number => receiptReadCount,
+    /** When each read of the setup receipts started (`performance.now()`), in order. */
+    receiptReadStartsMs,
     /** What each late mark's continuation settled with, in order: `true` when it marked the descriptor, `false` when it left it as it was, or its failure's message. */
     lateMarkDecisions,
+    /** When each answer of {@link lateMarkDecisions} settled (`performance.now()`), in the same order. */
+    lateMarkDecisionTimesMs,
     /** How many looks for an owed take-back have answered; the window's load makes the first. */
     owedTakeBackReads: (): number => owedTakeBackReads,
     /** Makes the next `count` looks for an owed take-back get no answer from their read of the record, as under descriptor exhaustion. */
@@ -6051,7 +6066,7 @@ test("a sync's late Devin mark whose fresh read answers while a setup of this wi
   }
 })
 
-// Value: protects=a late mark whose fresh read gets no answer for its whole budget (every read fails at once, as while the machine stays out of open files) while no setup, take-back or removal of this window runs ends after that one fresh read: the window stays unmarked, the Devin bridge refuses it (403), nothing is shown and no read starts afterwards, so the late mark does not hold the descriptor queue for up to 5 s per fresh read for as long as the server runs (Cycle 0148 review round, OCR L1 at extension.ts:1706); fails_when=the turn gives way after the empty answer and the late mark reads afresh again and again (no decision, the read count keeps growing), or it marks the window; no_claim=reads that answer only after their budget (the four-read test), a run of this window during the fresh read (the next test), a read that never answers; the server start's read reads the real records and waits at its gate until the test saw the unmarked descriptor, every later read gives no answer at once, the server is the real one
+// Value: protects=a late mark whose fresh read gets no answer for its whole budget (every read fails at once, as while the machine stays out of open files) while no setup, take-back or removal of this window runs ends after that one fresh read: the decision stays pending through that read's whole 5-second budget and comes at its end, before a second budget could end, the window stays unmarked, the Devin bridge refuses it (403), nothing is shown and no read starts afterwards, so the late mark does not hold the descriptor queue for up to 5 s per fresh read for as long as the server runs (Cycle 0148 review round, OCR L1 at extension.ts:1706; Cycle 0148 ship review, structured P2 at this test: the decision's time is measured from the fresh read's first attempt); fails_when=the turn gives way after the empty answer and the late mark reads afresh again and again (no decision, the read count keeps growing), it ends at the fresh read's first failed attempt instead of asking again until the budget ends, it reads afresh with a second budget before it ends, or it marks the window; no_claim=reads that answer only after their budget (the four-read test), a run of this window during the fresh read (the next test), a read that never answers, the 500 ms spacing of the fresh read's attempts; the server start's read reads the real records and waits at its gate until the test saw the unmarked descriptor, every later read gives no answer at once, the server is the real one
 test('a late Devin mark whose fresh read gets no answer for its whole budget while no setup of this window runs ends after that read and leaves the Devin bridge refusing the window', async (context) => {
   // Arrange
   const window = await devinWindow(context, {
@@ -6080,6 +6095,11 @@ test('a late Devin mark whose fresh read gets no answer for its whole budget whi
       (error: Error) => error.message,
     )
     const readsAtDecision = window.receiptReadCount()
+    // The second read is the fresh read's first attempt: the first is the server start's, held at its gate.
+    const decidedAfterFreshReadMs = Math.round(
+      (window.lateMarkDecisionTimesMs[0] ?? Number.NaN) -
+        (window.receiptReadStartsMs[1] ?? Number.NaN),
+    )
     // A fresh read asks again every 500 ms, so a read the late mark still started would come within this wait.
     const quietWait = await waitUntil(
       () => window.receiptReadCount() > readsAtDecision,
@@ -6097,6 +6117,15 @@ test('a late Devin mark whose fresh read gets no answer for its whole budget whi
     assert.ok(
       readsAtDecision > 1,
       `the late mark read afresh before it ended (${readsAtDecision} reads)`,
+    )
+    // The budget's timer fires on the event loop's clock, which can trail `performance.now()` by a few milliseconds, so the lower bound allows 100 ms.
+    assert.ok(
+      decidedAfterFreshReadMs >= DEVIN_MARK_READ_RETRY_BUDGET_MS - 100,
+      `the late mark decided ${decidedAfterFreshReadMs} ms after its fresh read's first attempt, before that read's ${DEVIN_MARK_READ_RETRY_BUDGET_MS} ms budget ended`,
+    )
+    assert.ok(
+      decidedAfterFreshReadMs < 2 * DEVIN_MARK_READ_RETRY_BUDGET_MS,
+      `the late mark decided ${decidedAfterFreshReadMs} ms after its fresh read's first attempt, as late as a second ${DEVIN_MARK_READ_RETRY_BUDGET_MS} ms budget`,
     )
     assert.equal(
       quietWait,
