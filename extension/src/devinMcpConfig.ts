@@ -3683,7 +3683,7 @@ async function settleVacatedName(
 }
 
 /**
- * Deletes a tracked record's dropping name while it is only a second name of the file at the record's name, so a step that leaves the record at its name leaves no second name that the next move would refuse; called by {@link vacateRecordName} when its rename failed after the link.
+ * Deletes a tracked record's dropping name while it is only a second name of the file at the record's name, so a step that leaves the record at its name leaves no second name that the next move would refuse; called by {@link vacateRecordName} when its rename failed after the link, and by {@link whileJournalHeld} and {@link holdJournal} for a rollback journal's hold.
  * After an awaited look at both names, synchronous looks right before the unlink find the record's name showing that inode and the dropping name showing it with another name.
  * Limits: a swap at the dropping name between those looks and the unlink is not seen (no Node primitive unlinks by inode). A stall that starts between the awaited looks and the synchronous ones holds the extension host's thread.
  * @param context - The run; its pending path is the record.
@@ -9536,6 +9536,7 @@ async function settleRollbackJournal(
   const [reported] = unsettled
   const decision = await markTakeBackOwed(
     context,
+    rollbackContext,
     pending.publishGeneration,
     legacy,
   ).catch((error: unknown) => {
@@ -10517,7 +10518,10 @@ function unmatchedLeftoverSentence(
 /**
  * Records in this config's publish record that its entry must be taken back; called by {@link settleRollbackJournal} before it retires the journal that proves the rollback was cut short, so a run that fails later still finds the intent (a first setup's own take-back marks through {@link markBeforeTakeBack}, which rests on the version that run wrote instead).
  * Only the publish of the given generation is marked: another installation's pending publish stays as it is. The mark replaces only the version of the record this call read ({@link writeTakeBackMark}): a record a backup or sync tool put at that name meanwhile stays, one it moved away is not written back at the empty name, and the run stops.
+ * That write empties the record's name for a moment ({@link replaceThroughDroppingName}), and Codebook 0.2.142.0, 0.2.143.0 and 0.2.144.0 retire a rollback journal of this config that stands beside an empty `pending.json` without marking anything; so the journal keeps a second name at its dropping name, named by its dropping note, while the mark is written ({@link whileJournalHeld}), and a stop inside that write followed by such a version's run leaves the journal there, which the next run of this build proves and puts back before it reads either record ({@link settleDroppedRecord}), so it marks the setup record and takes the failed setup back instead of adopting it.
+ * Limit: where the storage gives no file a second name the journal has none, and such a version's run in that moment retires it.
  * @param context - The run.
+ * @param journal - The rollback journal's context as {@link settleRollbackJournal} settles it, tracking the version it read ({@link Context.journalVersion}).
  * @param publishGeneration - The generation of the publish being rolled back. A journal of an older build names none: it marks only when {@link legacyBelonging} finds that it belongs to the publish record.
  * @param legacy - Only for a journal of an older build: the journal (its displaced file's inode and hash), the config its recovery put back and the first leftover it could not settle.
  * @returns
@@ -10526,10 +10530,11 @@ function unmatchedLeftoverSentence(
  * - undefined when the publish record's name is empty
  * @throws The {@link unmatchedJournalRefusal} when an older build's journal cannot be matched to the publish record, or cannot be matched yet because the restored config could not be read or is no valid JSON config yet, its `record-reread` sentence when the record's name no longer shows the version this call read as the mark is written, and its `record-gone` sentence when that name is found empty then ({@link publishRecordConflict}); nothing is written then. What reading or writing the record throws otherwise.
  * @example
- * await markTakeBackOwed(context, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
+ * await markTakeBackOwed(context, rollbackContext, generation) // => { belonging: 'belongs', publishVersion: { ino: 42n, sha256: 'ab…' }, markVersion: { ino: 43n, sha256: 'cd…' } }; pending.json now holds takeBack: true
  */
 async function markTakeBackOwed(
   context: Context,
+  journal: Context,
   publishGeneration: string | undefined,
   legacy?: LegacyJournalEvidence,
 ): Promise<PublishDecision | undefined> {
@@ -10564,13 +10569,67 @@ async function markTakeBackOwed(
   // Contradicting, unread or half-saved evidence keeps both records: the learner or the next run decides.
   if (belonging !== 'belongs')
     throw unmatchedJournalRefusal(context, belonging, legacy)
-  // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, one it moved away is not written back, and the run stops.
-  const markVersion = await writeTakeBackMark(context, read).catch(
-    (error: unknown) => {
-      throw publishRecordConflict(context, legacy, error)
-    },
-  )
+  // The mark replaces only the version this decision read: a record another program put at that name meanwhile stays, one it moved away is not written back, and the run stops. The journal keeps a second name while that write runs.
+  const markVersion = await whileJournalHeld(journal, () =>
+    writeTakeBackMark(context, read),
+  ).catch((error: unknown) => {
+    throw publishRecordConflict(context, legacy, error)
+  })
   return { ...decision, markVersion }
+}
+
+/**
+ * Runs a step while a rollback journal also stands at its dropping name ({@link holdJournal}), and drops that second name again once the step ended, while it is still only a second name of the journal ({@link dropTrackedSecondName}); called by {@link markTakeBackOwed} around the take-back mark's write, whose move empties the setup record's name for a moment.
+ * The journal's dropping note names the version this run settled before the hold links it, and goes once the dropping name is empty again ({@link withDroppingNote}). Codebook 0.2.142.0, 0.2.143.0 and 0.2.144.0 know neither name: a run of theirs after a stop inside that step retires the journal at its own name and leaves the hold and the note, so the next run of this build proves the held file and puts it back at the journal's empty name before it reads either record ({@link putNotedRecordBack}); after a stop without such a run the hold is only a second name of the journal, which that run drops ({@link settleDroppedRecord}).
+ * Limit: where the storage gives no file a second name no hold stands, and such a run retires the journal.
+ * @param journal - The rollback journal's context, tracking the version this run settled ({@link Context.journalVersion}).
+ * @param step - The step that runs while the journal is held.
+ * @returns What `step` returns.
+ * @throws What `step` throws, once the hold went (or stayed, when it is no longer a second name of the journal; the journal's retirement then names both names).
+ * @example
+ * await whileJournalHeld(rollbackContext, () => writeTakeBackMark(context, read)) // => { ino: 43n, sha256: 'cd…' }; '…/pending.json.rollback.codebook-dropping' and its note are gone again
+ */
+async function whileJournalHeld<Result>(
+  journal: Context,
+  step: () => Promise<Result>,
+): Promise<Result> {
+  const settled = journal.journalVersion?.current
+  // No version is tracked: there is nothing to hold.
+  if (settled === undefined) return step()
+  return withDroppingNote(journal, { moved: settled }, async () => {
+    const heldIno = await holdJournal(journal, settled)
+    try {
+      return await step()
+    } finally {
+      // The hold goes only while it is still a second name of the journal's file.
+      if (heldIno !== undefined) await dropTrackedSecondName(journal, heldIno)
+    }
+  })
+}
+
+/**
+ * Gives a rollback journal a second name at its dropping name with a link, which never replaces a file, so the file that proves a take-back survives a run of an older version that deletes the journal at its own name; called only by {@link whileJournalHeld}, once the journal's dropping note names that version.
+ * @param journal - The rollback journal's context.
+ * @param settled - The version this run settled ({@link Context.journalVersion}), which the note names.
+ * @returns The journal's inode once its dropping name shows that version; undefined when no hold stands: the link failed (storage without hard links, a file at the dropping name, an empty journal name, or another failure), or it reached another file than that version, whose second name goes again ({@link dropTrackedSecondName}).
+ * @example
+ * await holdJournal(rollbackContext, { ino: 43n, sha256: 'cd…' }) // => 43n; '…/pending.json.rollback.codebook-dropping' is another name of the journal's file
+ */
+async function holdJournal(
+  journal: Context,
+  settled: RecordVersion,
+): Promise<bigint | undefined> {
+  const droppingPath = droppingPathOf(journal)
+  const isLinked = await link(journal.pendingPath, droppingPath).then(
+    () => true,
+    () => false,
+  )
+  if (!isLinked) return undefined
+  const held = await lstatOrAbsent(droppingPath).catch(() => undefined)
+  if (held?.ino === settled.ino) return settled.ino
+  // The link reached another file than the version this run settled: that second name holds nothing of this run, and goes again.
+  if (held) await dropTrackedSecondName(journal, held.ino)
+  return undefined
 }
 
 /**

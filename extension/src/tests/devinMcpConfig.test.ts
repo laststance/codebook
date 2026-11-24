@@ -10408,6 +10408,145 @@ test('A setup record a stopped run left at its dropping name, beside another set
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("An older build's rollback record that a released Codebook retires, while a refresh that stopped inside marking its setup record left that record at its dropping name, still leads the next refresh to take the failed first setup back instead of keeping it", async (context) => {
+  // Value: protects=while a refresh writes the take-back mark over an older build's unmarked setup record (whose name its move empties for a moment), the rollback record that proves the take-back keeps a second name at its dropping name, which its dropping note names (Cycle 0149 task 35), so when the refresh stops there and Codebook 0.2.142.0, 0.2.143.0 or 0.2.144.0 then finds pending.json empty and retires that rollback record, the next refresh of this build puts both records back, marks the setup record and takes the failed first setup back instead of adopting it (Cycle 0149 task 38; ship review: Codex structured P1 on the move at :3107); fails_when=the stop is not reached, the stop leaves the setup record anywhere but at its dropping name, the next refresh answers anything but not-managed, writes a receipt, leaves the entry in the config or the learner's other server out of it, or leaves a record or a dropping name of either; no_claim=a real process end (the config module is loaded so that the first link of a staged file to pending.json, the mark's publication, and every later link, rename, unlink, removal and write fail as after the process ended), a real run of a released version (the test deletes pending.json.rollback, as each of them does when it settles a rollback record of this config beside an empty pending.json: 0.2.142.0 at 583d70e7 extension/src/devinMcpConfig.ts:3879 marks nothing and :3659 retires it, 0.2.143.0 at 76f0a07c :5274 and :4910 the same, and 0.2.144.0 at 2a381de0 :7325 returns no decision and :6667 unlinks it), storage without hard links (no second name stands there: a stated residual), a released version that also runs a new setup meanwhile (the next refresh then refuses, naming both setup-record names), the stopped run's staged mark (it stays under its fresh private name, as after any stop)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, () => undefined)
+  const recordsPath = dirname(pendingPath)
+  let isEnded = false
+  /**
+   * Throws as the module's file system would answer once its process ended.
+   * @example
+   * failIfEnded() // throws 'process ended' once the mark's publication was reached
+   */
+  const failIfEnded = (): void => {
+    if (isEnded) throw new Error('process ended')
+  }
+  const endingAtMarkPublication = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          failIfEnded()
+          // The process ends right as the take-back mark's staged file is to be published at pending.json, after the setup record moved to its dropping name.
+          if (to === pendingPath && from.endsWith('.tmp')) {
+            isEnded = true
+            failIfEnded()
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir: async (...args: Parameters<typeof mkdir>) => {
+          failIfEnded()
+          return mkdir(...args)
+        },
+        open: async (...args: Parameters<typeof open>) => {
+          // Reads still answer; nothing is written once the process ended.
+          if (args[1] !== undefined && args[1] !== 'r') failIfEnded()
+          return open(...args)
+        },
+        rename: async (from: string, to: string) => {
+          failIfEnded()
+          return rename(from, to)
+        },
+        rm: async (...args: Parameters<typeof rm>) => {
+          failIfEnded()
+          return rm(...args)
+        },
+        unlink: async (path: string) => {
+          failIfEnded()
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await endingAtMarkPublication
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .catch(() => undefined)
+  const isSetupRecordAtItsName = existsSync(pendingPath)
+  const isSetupRecordAtDroppingName = existsSync(
+    `${pendingPath}.codebook-dropping`,
+  )
+  // A released Codebook in another window finds pending.json empty and retires the rollback record beside it.
+  rmSync(journalPath)
+
+  // Act
+  const refresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(isEnded, true)
+  assert.equal(isSetupRecordAtItsName, false)
+  assert.equal(isSetupRecordAtDroppingName, true)
+  assert.equal(refresh.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  // The stopped run's staged mark stays under its fresh private name, as after any stop; no build reads such a name.
+  assert.deepEqual(
+    readdirSync(recordsPath).filter(
+      (name) => name.startsWith('pending.json') && !name.endsWith('.tmp'),
+    ),
+    [],
+  )
+})
+
+test("An older build's rollback record whose take-back mark cannot be written keeps no second name at its dropping name, so the next refresh marks that setup record and takes the failed first setup back", async (context) => {
+  // Value: protects=the second name a rollback record holds at its dropping name while its setup record's take-back mark is written goes again when that write fails, so the run leaves both records as they stood and no name the next move of that rollback record would refuse, nor a dropping note naming a move, and the next refresh takes the failed first setup back (Cycle 0149 task 38); fails_when=the write's failure is not injected, the first refresh resolves, either record changes or is gone, a dropping name or dropping note of either record stays, or the second refresh answers anything but not-managed, writes a receipt or leaves the entry or a record; no_claim=a real full disk (seam.beforeRecordWrite fails the take-back mark's write once with ENOSPC, after its bytes were flushed), the wording of the first refusal, storage without hard links (no second name stands there)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, () => undefined)
+  const recordsPath = dirname(pendingPath)
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const journalText = readFileSync(journalPath, 'utf8')
+  let hasFailedMark = false
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path, record }) => {
+      // Only the write of the take-back mark, as the write puts it on disk.
+      if (path !== pendingPath || hasFailedMark) return
+      if (JSON.parse(JSON.stringify(record)).takeBack !== true) return
+      hasFailedMark = true
+      throw Object.assign(new Error('no space left on device'), {
+        code: 'ENOSPC',
+      })
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A record the first refresh deleted reads as 'absent', so the assertions below name it.
+  const pendingAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const droppingNamesAfterFirst = readdirSync(recordsPath).filter((name) =>
+    name.includes('.codebook-dropping'),
+  )
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasFailedMark, true)
+  assert.notEqual(firstError, undefined)
+  assert.equal(pendingAfterFirst, pendingText)
+  assert.equal(journalAfterFirst, journalText)
+  assert.deepEqual(droppingNamesAfterFirst, [])
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.deepEqual(
+    readdirSync(recordsPath).filter((name) => name.startsWith('pending.json')),
+    [],
+  )
+})
+
 test('A rollback record a sync tool moves away and puts back while a refresh retires it, on a run that adopts nothing, stops that refresh with the record intact, and the next refresh settles it', async (context) => {
   // Value: protects=a run that found its settled rollback record's name empty as it went to delete it goes on as after a delete only while that name is still empty at a last synchronous look after its awaited looks, so a rollback record a sync tool puts back during that await stops the run and stays byte for byte, and the next run settles it (Cycle 0149 task 2, the release-head CLI pass's note on the empty name); fails_when=the first refresh resolves or says anything but the rollback record's changed sentence, the restored record changes or is gone, the config or the receipt changes, or the second refresh answers anything but current or leaves the rollback record; no_claim=a real sync tool (seam.afterStat moves the rollback record away once, at its read, whose open file still reads it, and the config module is loaded with an lstat that moves it back once, at the next awaited look at pending.json or the rollback record's name), a restore between that last look and the run's next step, what an adopting run does (the two adoption tests of task 2)
   // Arrange
