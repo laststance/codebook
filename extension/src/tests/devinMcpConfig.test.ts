@@ -20136,6 +20136,51 @@ test("A removal that stopped right after it moved Codebook's record of the entry
   )
 })
 
+test("A refresh that stopped right after it published Codebook's record of the entry with the installation id leaves the next refresh to delete the version it replaced and find the entry current", async (context) => {
+  // Value: protects=a rewrite of Codebook's record of the entry notes, before it moves the old version to receipt.json's private name, the new version it publishes, so a run that really stops between that publication and the old version's delete leaves the next run the proof to finish the rewrite: the old version goes while receipt.json shows that new record, which stays, instead of every later run refusing both names (Cycle 0149 task 56, task 36's rule for Codebook's record of the entry); fails_when=the stop is not reached, the stop leaves anything but a record with an installation id at receipt.json or anything but the older record at its private name, the next refresh answers anything but current, receipt.json then holds anything but the record the stopped refresh published, or a private name of the record or its dropping note stays; no_claim=a real process end (the config module is loaded so that the link which publishes the backfilled record at receipt.json, and every later link, rename, unlink, removal and write, fail as after the process ended), a real older build (the receipt is rewritten without its installation id), storage without hard links (the new record is published by a rename there), the stopped run's staged and vacated names (they stay under their fresh private names, as after any stop; no build reads such a name)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const droppingPath = `${receiptPath}.codebook-dropping`
+  const olderReceipt = await readRecordFile(storage, 'receipt.json')
+  // A receipt of an older build holds no installation id, so the refresh rewrites it.
+  delete olderReceipt.installationId
+  const olderReceiptText = JSON.stringify(olderReceipt)
+  writeFileSync(receiptPath, olderReceiptText)
+  const endingAfterPublish = await loadEndingAfterStep(
+    // The link that publishes the backfilled record's staged file at receipt.json, after the older record moved to its private name.
+    ({ step, from, to }) =>
+      step === 'link' && to === receiptPath && from.endsWith('.tmp'),
+  )
+  await endingAfterPublish.module
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .catch(() => undefined)
+  // A name the stopped refresh left empty reads as 'absent', so the assertions below name it.
+  const receiptAfterStop = existsSync(receiptPath)
+    ? readFileSync(receiptPath, 'utf8')
+    : 'absent'
+  const droppingAfterStop = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+
+  // Act
+  const result = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(endingAfterPublish.hasEnded(), true)
+  assert.match(receiptAfterStop, /"installationId":"[0-9a-f-]{36}"/)
+  assert.equal(droppingAfterStop, olderReceiptText)
+  assert.deepEqual(result, { status: 'current', path: configPath })
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptAfterStop)
+  // The stopped run's staged and vacated names stay under their fresh private names, as after any stop; no build reads such a name.
+  assert.deepEqual(
+    (await recordsIn(storage)).filter((name) => !name.endsWith('.tmp')),
+    ['receipt.json'],
+  )
+})
+
 test("A removal that finds a file at its record of the entry's private name keeps both, names both in its notice, and still answers removed", async (context) => {
   // Value: protects=a removal that took the entry out never deletes Codebook's record of the entry, nor the file another program put at that record's private name, when it cannot move that record aside, and its notice gives that step's own sentence naming both files instead of asking to delete the record by hand (Cycle 0149 task 50); fails_when=the removal answers anything but removed with the both-names sentence, receipt.json is gone or changes, or the file at the private name is gone or changes; no_claim=a real backup or sync tool (seam.afterRead writes a file at receipt.json.codebook-dropping once, at the removal's read of the config before it takes the entry out), what the next run does with both files (the tracked records' both-names refusal)
   // Arrange
