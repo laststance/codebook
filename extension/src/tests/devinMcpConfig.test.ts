@@ -9266,6 +9266,101 @@ test("A file another program swaps in at the staged name of a take-back's first 
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A file another program renames over a take-back's first rollback record while that write deletes its staged name stops the take-back before the config moves, and the next refresh takes the entry back", async (context) => {
+  // Value: protects=a take-back's first rollback-record write hands its version back only once the journal's name, looked at again after the staged name's cleanup, still shows the file the claim linked there, so the config never moves to a private name while another file stands where the record that names that private name was (Cycle 0148 ship review); fails_when=the first refresh says anything but the journal-taken refusal, the config moves aside or changes, the file renamed in is gone from the journal name or changes, the setup's record loses its take-back mark, or the second refresh leaves the entry or the journal; no_claim=a real sync tool (the config module is loaded with an unlink that renames another journal over the journal name once, right before it deletes the claim's staged name), a swap while the look after the link reads the journal through its handle (the same later look covers it), a swap after that last look (stated limit), what a process end after the move would leave
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const foreignJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000000162',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000000163',
+  })}\n`
+  let claimedStagedPath = ''
+  let isSwapped = false
+  const replacingAtCleanup = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The take-back's first record write links its staged name to the journal name.
+          if (to === journalPath && claimedStagedPath === '')
+            claimedStagedPath = from
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (path: string) => {
+          // A sync tool renames its file over the journal name while the claim deletes its staged name.
+          if (path === claimedStagedPath && !isSwapped) {
+            isSwapped = true
+            swapFile(journalPath, foreignJournalText)
+          }
+          return unlink(path)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+  let moveAsideCountInFirst = 0
+
+  // Act
+  const firstError = await replacingAtCleanup
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: () => {
+        moveAsideCountInFirst += 1
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the first refresh left empty reads as 'absent', so the assertion below names it.
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = JSON.parse(readFileSync(configPath, 'utf8'))
+  const isTakeBackMarkedAfterFirst =
+    JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack === true
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, but something already stands at ${journalPath}, the name Codebook's take-back writes first (a backup or sync tool may have put an older file there), and Codebook never writes over it, so it left ${configPath} unchanged; the next run reads ${journalPath} before it takes the entry out (if what stands there is not Codebook's for ${configPath}, move it to another folder first); then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(isSwapped, true)
+  assert.equal(moveAsideCountInFirst, 0)
+  assert.equal(journalAfterFirst, foreignJournalText)
+  assert.deepEqual(configAfterFirst, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(isTakeBackMarkedAfterFirst, true)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A file another program puts at the staged name of a take-back's rewritten rollback record is never renamed over that record, so the record still names the copy of the previous config", async (context) => {
   // Value: protects=a rewrite of a tracked rollback record renames only the file it wrote and flushed itself, checked by inode and bytes right before the rename, so a file another program put at the staged name never replaces the record that names the displaced copy of the learner's config (Cycle 0148 ship review); fails_when=the journal name holds anything but the record the take-back's claim wrote, the displaced copy that record names is gone, the file put at the staged name is deleted or changed, the first refresh says anything but the not-taken-out refusal, or the second refresh does not end with the config without the entry and no journal; no_claim=a real sync tool (seam.beforeRecordWrite renames another file over the staged name once, at the take-back's write of its completed record), a swap between the last look at the staged name and the rename (the check after the rename sees it)
   // Arrange

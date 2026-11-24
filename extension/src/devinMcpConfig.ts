@@ -2551,15 +2551,16 @@ async function writeTrackedJournal(
 
 /**
  * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file; called by {@link writeTrackedJournal} when no version is known or the name was found empty.
- * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}).
- * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
+ * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}). That look after the link reads the journal through its open handle, and the cleanup awaits the file system after it, so the journal is read again after the cleanup and its name looked at once more, synchronously, as the last step ({@link assertTrackedJournalStill}): the version goes back to the caller, whose next step may move the config to the private name that journal names ({@link deleteConfig}, {@link publishRoot}), only while the name still shows that file.
+ * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A file put at the journal's name, or a move of the journal, after the last look is not seen. A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
  * @param assertStill - What else must still hold, looked at right after the seam and before the link, after an awaited look at its names ({@link writeRecord}).
  * @returns The version the link published: the inode of the file this call wrote and the hash of its bytes.
- * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the link throws otherwise.
+ * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link or at the last look, and (`gone`) when it shows nothing then; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the link throws otherwise.
  * @example
  * await claimJournal(rollbackContext, journal) // => { ino: 44n, sha256: 'ef…' }; pending.json.rollback holds `journal`, or the call throws and the name stays as it was
+ * await claimJournal(rollbackContext, journal) // throws a `changed` JournalConflictError once a sync tool renamed another journal over pending.json.rollback while the staged name was deleted
  */
 async function claimJournal(
   context: Context,
@@ -2586,6 +2587,10 @@ async function claimJournal(
     // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened, while it shows the file this call wrote.
     await dropStagedRecord(staged)
   }
+  // The look after the link read the journal through its open handle, and the cleanup awaited the file system since: the name is read again and looked at once more, synchronously, so a journal another program moved away or replaced meanwhile never lets the caller move the config. The read comes after the cleanup's unlink, which changes the file's change time. A storage that already stalls holds this step at the awaited looks, not at the synchronous one.
+  const published = await assertPublishedRecord(context, staged.version)
+  await lookAheadAt([path])
+  assertTrackedJournalStill(context, published)
   return staged.version
 }
 
@@ -2657,6 +2662,7 @@ function assertStagedRecordStill(
  * Checks right after a tracked record's rename or link that its name shows the file this run wrote, inode and bytes; called by {@link writeTrackedJournal} and {@link claimJournal} before they hand that version back, so nothing that rests on the record (a move of the config, a delete of a copy) follows a file another program put at either name meanwhile.
  * @param context - The run; its pending path is the record.
  * @param version - The version this run wrote ({@link stageRecord}).
+ * @returns The record as this read saw it through its open handle (inode, hash, size and times), which {@link claimJournal}'s last synchronous look at the name compares with after its cleanup.
  * @throws A {@link JournalConflictError}: `gone` when the name is empty (another program moved the record away right after it was published), `changed` when it shows another file or other bytes, `unread` when it cannot be read; the run's tracked version does not move then ({@link writeRecord}).
  * @example
  * await assertPublishedRecord(rollbackContext, staged.version) // throws once a sync tool's file was linked in place of the staged record
@@ -2664,10 +2670,11 @@ function assertStagedRecordStill(
 async function assertPublishedRecord(
   context: Context,
   version: RecordVersion,
-): Promise<void> {
+): Promise<InspectedCopy> {
+  const published = await lookAtTrackedJournal(context, version)
   // An empty name right after this run published there: another program moved that record away.
-  if (!(await lookAtTrackedJournal(context, version)))
-    throw journalConflictError(context, 'gone')
+  if (!published) throw journalConflictError(context, 'gone')
+  return published
 }
 
 /**
@@ -6424,7 +6431,7 @@ async function lookAtTrackedJournal(
 }
 
 /**
- * Looks synchronously, once more, at a tracked rollback journal's name right before the rename or unlink that writes or deletes it; called by {@link writeTrackedJournal} inside its publish step and by {@link dropTrackedJournal}.
+ * Looks synchronously, once more, at a tracked rollback journal's name right before the rename or unlink that writes or deletes it; called by {@link writeTrackedJournal} inside its publish step, by {@link dropTrackedJournal}, and by {@link claimJournal} as its last step, right before it hands the version it linked back.
  * Limit: a file put at the name between this look and the syscall that follows is not seen.
  * @param context - The run; its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
  * @param look - The journal as {@link lookAtTrackedJournal} read it: its inode, size and times must still show.
