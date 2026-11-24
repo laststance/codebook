@@ -1330,6 +1330,51 @@ test('a Devin Desktop window whose setup was removed elsewhere reconnects nothin
   }
 })
 
+// Value: protects=a Devin Desktop window that loads while Codebook's record of the entry stands only at its private dropping name (a run stopped while it moved receipt.json there to rewrite or delete it) still runs the locked entry refresh, whose run start puts that record back, instead of calling the setup removed when its skill check fails too (Cycle 0149 ship review pass 2, red team 1 on extension.ts:2588); fails_when=the window writes the removed-setup line, or never refreshes the entry, so the record a stopped run left there is never put back at window load; no_claim=what the real refresh does with that record (the config module's own tests: the run start puts it back while its dropping note proves it), a real stop (the test writes the record at receipt.json.codebook-dropping and nothing at receipt.json, as such a stop leaves them); seam=module stand-ins of the skill (its check fails), config, Node and server, and the real records in a temporary storage
+test("a Devin Desktop window whose skill check fails while Codebook's record of the entry stands only at its dropping name refreshes the entry instead of calling the setup removed", async (context) => {
+  // Arrange
+  const storageDirectory = await mkdtemp(join(tmpdir(), 'codebook-devin-'))
+  context.after(() => removeTestFolder(storageDirectory))
+  await mkdir(join(storageDirectory, 'devin-mcp'), { recursive: true })
+  await writeFile(
+    join(storageDirectory, 'devin-mcp/receipt.json.codebook-dropping'),
+    MCP_RECEIPT_TEXT,
+    { mode: 0o600 },
+  )
+  const window = await devinWindow(context, {
+    savedSetup: true,
+    skillManaged: false,
+    entryReceipt: false,
+    storageDirectory,
+  })
+  try {
+    // Act
+    await waitUntil(
+      () =>
+        window.steps.includes('start server') ||
+        window.outputLines.includes(
+          "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again.",
+        ),
+      'the reconnect at activation, or the Output line of a removed setup',
+    )
+    // Assert
+    assert.deepEqual(window.steps, [
+      'verify Devin skill',
+      'resolve Node',
+      'refresh MCP entry',
+      'start server',
+    ])
+    assert.equal(
+      window.outputLines.includes(
+        "Codebook's Devin Desktop setup was removed, so this window did not reconnect Devin Local. Run Codebook: Set Up AI Chat to set it up again.",
+      ),
+      false,
+    )
+  } finally {
+    await window.loaded.deactivate()
+  }
+})
+
 // Value: protects=Remove Devin Desktop Setup removes Codebook's skill and entry after the learner confirms, clears this window's setup and offers the reload that stops the bridge; fails_when=the removal leaves the entry, keeps the setup saved so the next window writes everything back, or never asks before touching files shared by every Devin Desktop window; why_new=Devin Desktop removal command (Cycle 0143); seam=module stand-ins of the skill, config, Node and server
 test('Remove Devin Desktop Setup removes the skill and the MCP entry, clears the setup and offers a reload', async (context) => {
   // Arrange

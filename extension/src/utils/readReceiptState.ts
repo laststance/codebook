@@ -34,8 +34,8 @@ const MCP_RECEIPT_FOLDER = 'devin-mcp'
 /** The publish record beside the MCP entry's receipt, which Codebook's config module writes while a setup, refresh or removal is not settled. */
 const PUBLISH_RECORD_FILE = 'pending.json'
 
-/** What the config module appends to the name of that record, and of the MCP entry's receipt, for its dropping name (its `DROPPING_SUFFIX`): every rewrite or delete moves the record there first and only then writes the new record at its name or deletes the moved one, so during each such step, and after a run that stopped inside one until the next run puts it back, the record stands only there. */
-const DROPPING_NAME_SUFFIX = '.codebook-dropping'
+/** What the config module appends to the name of that record, and of the MCP entry's receipt, for its dropping name (its `DROPPING_SUFFIX`): every rewrite or delete moves the record there first and only then writes the new record at its name or deletes the moved one, so during each such step, and after a run that stopped inside one until the next run puts it back, the record stands only there; the presence check of the entry's record looks there too (`hasDevinEntryReceipt`). */
+export const DROPPING_NAME_SUFFIX = '.codebook-dropping'
 
 /** The part of that publish record that notes a file a put-back left at `receipt.json` without Codebook verifying it (`retiresReceipt.receiptUnverified`), with the hash of the old record's bytes it names, if any: the config module's record names none after it rewrote an older version's record (`retiresReceipt: {}`), and then no bytes pass ({@link unverifiedVerdictOf}); every other field is the config module's and is not read here. */
 const unverifiedNoteSchema = z.object({

@@ -28,7 +28,7 @@ async function hasInstalledSkillReceipt(receiptPath: string): Promise<boolean> {
 
 /**
  * Says whether Codebook's records of both its Devin Desktop skill and its MCP entry are left, so a connection descriptor is marked for the Devin bridge only while the setup stands; called when a window writes or marks its descriptor, and by the activation reconnect right before it starts the server.
- * The skill's record is `devin-skill/receipt.json` of the global storage and counts only while it says `installed: true`, the entry's is `devin-mcp/receipt.json` ({@link hasDevinEntryReceipt}).
+ * The skill's record is `devin-skill/receipt.json` of the global storage and counts only while it says `installed: true`, the entry's is `devin-mcp/receipt.json`, or its dropping name while a rewrite or delete holds it there ({@link hasDevinEntryReceipt}).
  * @param storageRoot - Codebook's global storage folder.
  * @returns `true` when both records stand; `false` when either is missing, a link, unparsable, uninstalled or cannot be inspected.
  * @example
