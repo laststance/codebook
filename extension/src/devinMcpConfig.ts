@@ -2979,8 +2979,8 @@ const NO_LINK_CODES: ReadonlySet<unknown> = new Set([
 
 /**
  * Claims a tracked record's empty name where the storage's file system gives no file a second name: the complete bytes {@link stageRecord} flushed are renamed there, so the name shows nothing or the whole record at every instant and a stop never leaves an empty or partial record that every run would refuse; called by {@link publishAtEmptyName} when its link failed.
- * The link was awaited, so the staged name is read again, and the caller's names, the staged name and the record's name are looked at through the thread pool and then synchronously right before the rename: the staged name must still show the file this call wrote ({@link assertStagedRecordStill}), the caller's look must hold, and the record's name must be empty.
- * Limit: on such storage a file another program puts at the record's name between that last look and the rename is replaced; no Node primitive publishes complete bytes without replacing where links fail, and an exclusive create in place would leave the name with part of the bytes for the time of one write.
+ * The link was awaited, so the staged name is read again, and the caller's names, the staged name and the record's name are looked at through the thread pool and then synchronously right before the rename ({@link renameIntoEmptyName}): the staged name must still show the file this call wrote ({@link assertStagedRecordStill}), the caller's look must hold, and the record's name must be empty.
+ * Limit: those of {@link renameIntoEmptyName}.
  * @param context - The run; its pending path is the record.
  * @param staged - The staged bytes ({@link stageRecord}).
  * @param linkError - Why the link failed.
@@ -3001,12 +3001,36 @@ async function claimWithoutLinks(
   if (codeOf(linkError) === 'EEXIST')
     throw journalConflictError(context, 'changed', linkError)
   if (!NO_LINK_CODES.has(codeOf(linkError))) throw linkError
+  return renameIntoEmptyName(path, staged, assertStill, () =>
+    journalConflictError(context, 'changed'),
+  )
+}
+
+/**
+ * Publishes a record's flushed staged bytes at its empty name where the storage's file system gives no file a second name: a rename, so the name shows nothing or the whole record at every instant and a stop never leaves an empty or partial record that every run would refuse; the shared end of {@link claimWithoutLinks} (tracked records) and {@link claimReceiptName} (`receipt.json`) once their link was refused for lack of support.
+ * The refused link was awaited, so the staged name is read again, and the caller's names, the staged name and the record's name are looked at through the thread pool and then synchronously right before the rename, nothing awaited in between: the caller's look must hold, the staged name must still show the file the caller wrote ({@link assertStagedRecordStill}), and the record's name must be empty ({@link isNameEmptyNow}).
+ * Limit: a file another program puts at the record's name between that last look and the rename is replaced; no Node primitive publishes complete bytes without replacing where links fail, and an exclusive create in place would leave the name with part of the bytes for the time of one write.
+ * @param path - The record's name.
+ * @param staged - The staged bytes ({@link stageRecord}).
+ * @param assertStill - The caller's look, looked at again right before the rename.
+ * @param conflict - Builds the caller's refusal for a name that is no longer empty.
+ * @returns The version the rename published: the staged file's.
+ * @throws What `conflict` builds when something stands at the record's name (it stays as it is); a {@link leftoverReplacedError} naming the staged name when it no longer shows the file the caller wrote; what `assertStill` or the rename throws. Nothing is published then.
+ * @example
+ * await renameIntoEmptyName(receiptPath, staged, assertStill, () => receiptConflictError(context, 'changed')) // => staged.version once a link in an exFAT storage folder answered ENOTSUP
+ */
+async function renameIntoEmptyName(
+  path: string,
+  staged: StagedRecord,
+  assertStill: StillLook | undefined,
+  conflict: () => Error,
+): Promise<RecordVersion> {
   // The refused link was awaited: the staged file, the caller's names and the record's empty name are looked at again right before the rename.
   const source = await lookAtStagedRecord(staged)
   await lookAheadAt([...(assertStill?.names ?? []), staged.staged, path])
   assertStill?.assert()
   assertStagedRecordStill(staged, source)
-  if (!isNameEmptyNow(path)) throw journalConflictError(context, 'changed')
+  if (!isNameEmptyNow(path)) throw conflict()
   await rename(staged.staged, path)
   return staged.version
 }
@@ -3435,7 +3459,7 @@ async function readReceiptWithVersion(
     : { version }
 }
 
-/** The codes a link answers on storage whose file system gives no file a second name (macOS exFAT answers `ENOTSUP`, Linux vfat `EPERM`); only these let {@link claimReceiptName} create `receipt.json` in place instead. */
+/** The codes a link answers on storage whose file system gives no file a second name (macOS exFAT answers `ENOTSUP`, Linux vfat `EPERM`); only these let {@link claimReceiptName} rename the staged receipt into `receipt.json` instead ({@link renameIntoEmptyName}). */
 const UNSUPPORTED_LINK_CODES: ReadonlySet<unknown> = new Set([
   'ENOTSUP',
   'EOPNOTSUPP',
@@ -3449,7 +3473,7 @@ const UNSUPPORTED_LINK_CODES: ReadonlySet<unknown> = new Set([
  * Limits: a file put at the name between the synchronous look and the rename is replaced (no Node primitive renames over a name only while it shows an inode); one put there right after the rename or link is not looked at again here, and the next write or delete of this run finds it.
  * @param context - The run; its seam is called after the bytes were flushed and before the look at the name.
  * @param value - The complete receipt.
- * @param assertStill - What else must still hold, looked at right before the rename or link, after an awaited look at its names (and again before an exclusive create, {@link claimReceiptName}).
+ * @param assertStill - What else must still hold, looked at right before the rename or link, after an awaited look at its names (and again before the rename that publishes where links fail, {@link claimReceiptName}).
  * @throws The {@link receiptConflictError} when the name shows another file or other bytes than the version this run read, any file while none was read or this run moved it aside, or cannot be read again; what the write, the seam, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the claim throws. Nothing is published then, and what stands at the name stays.
  * @example
  * await writeReceipt(context, written) // receipt.json holds `written`, or the call throws once a backup put another record there after the run read it
@@ -3474,7 +3498,7 @@ async function writeReceipt(
     // The version this run read is replaced; an empty name is claimed, never replacing what lands there meanwhile.
     context.receiptVersion.current = standing
       ? await rename(staged.staged, path).then(() => staged.version)
-      : await claimReceiptName(context, staged, value, assertStill)
+      : await claimReceiptName(context, staged, assertStill)
   } finally {
     // After a rename the staged name is gone; after a link it is a second name of the receipt, which goes while it shows this call's file.
     await dropStagedRecord(staged)
@@ -3507,21 +3531,19 @@ async function receiptNameState(
 }
 
 /**
- * Publishes a receipt at an empty `receipt.json` without replacing anything: with a link of the staged file, or, where the storage's file system gives no file a second name ({@link UNSUPPORTED_LINK_CODES}), with an exclusive create of that name, which never replaces a file either; called only by {@link writeReceipt}.
- * Limit: on such storage the receipt stands with only part of its bytes for the time of one write, so a process that ends then leaves a record every build refuses to read, naming it, until it is removed; a write that fails deletes that name ({@link stageConfigFile}).
+ * Publishes a receipt at an empty `receipt.json` without replacing what stands there: with a link of the staged file, or, where the storage's file system gives no file a second name ({@link UNSUPPORTED_LINK_CODES}), with a rename of the flushed staged file right after a synchronous look still finds that name empty ({@link renameIntoEmptyName}), so the name shows nothing or the whole receipt at every instant and a stop never leaves a partial receipt that every run refuses; called only by {@link writeReceipt}.
+ * Limit: on such storage a file another program puts at the name between that last look and the rename is replaced (no Node primitive publishes complete bytes without replacing where links fail).
  * @param context - The run; its receipt path is the name.
  * @param staged - The flushed staged receipt and its version ({@link stageRecord}).
- * @param value - The complete receipt, written again for an exclusive create.
- * @param assertStill - What else must still hold, looked at again after a link that failed for lack of support, right before the exclusive create.
- * @returns The version published: the staged file's for a link, the created file's inode and the same bytes' hash for an exclusive create.
- * @throws The {@link receiptConflictError} (`changed`) when something stands at the name, which stays as it is; what `assertStill`, the create or its write throws; any other failure of the link.
+ * @param assertStill - What else must still hold, looked at again after a link that failed for lack of support, right before the rename.
+ * @returns The version published: the staged file's.
+ * @throws The {@link receiptConflictError} (`changed`) when something stands at the name, which stays as it is; what {@link renameIntoEmptyName} throws; any other failure of the link.
  * @example
- * await claimReceiptName(context, staged, written) // => { ino: 44n, sha256: 'ef…' }; receipt.json is a second name of the staged file
+ * await claimReceiptName(context, staged) // => { ino: 44n, sha256: 'ef…' }; receipt.json is a second name of the staged file
  */
 async function claimReceiptName(
   context: Context,
   staged: StagedRecord,
-  value: Receipt,
   assertStill?: StillLook,
 ): Promise<RecordVersion> {
   const path = context.receiptPath
@@ -3532,23 +3554,12 @@ async function claimReceiptName(
     // Something stands at the name: it is never replaced.
     if (codeOf(error) === 'EEXIST')
       throw receiptConflictError(context, 'changed', error)
-    // Only storage that gives no file a second name is written in place; any other failure is the write's.
+    // Only storage that gives no file a second name takes the rename; any other failure is the write's.
     if (!UNSUPPORTED_LINK_CODES.has(codeOf(error))) throw error
   }
-  // The looks before the failed link are stale by now: what else must hold is looked at again right before the create.
-  await lookAheadAt(assertStill?.names ?? [])
-  assertStill?.assert()
-  const created = await stageConfigFile(
-    path,
-    JSON.stringify(value),
-    PRIVATE_FILE_MODE,
-  ).catch((error: unknown) => {
-    // A file put at the name since the link failed is never replaced either.
-    throw codeOf(error) === 'EEXIST'
-      ? receiptConflictError(context, 'changed', error)
-      : error
-  })
-  return { ino: created.ino, sha256: staged.version.sha256 }
+  return renameIntoEmptyName(path, staged, assertStill, () =>
+    receiptConflictError(context, 'changed'),
+  )
 }
 
 /**

@@ -15806,7 +15806,7 @@ test("A first setup leaves a record a backup restores at receipt.json together w
 })
 
 test('On storage that cannot give a file a second name, a first setup never writes its record of the entry over a record a backup puts at receipt.json as the setup publishes it, and takes its entry back', async (context) => {
-  // Value: protects=where the storage folder's file system gives no file a second name, a first setup's record of the entry is created at receipt.json with an exclusive create, never renamed over that name, so a record a backup puts there as that record is published stays, and the setup takes its own entry back (Cycle 0149 task 12, D5's unsupported link); fails_when=the setup resolves or says anything but the took-out refusal, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, its record of the entry, the take-back mark, the take-back's rollback record and its rewrite) is tried in the storage folder, the record the backup put there changes, or the config keeps the entry; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, for receipt.json, first puts the backup's record there), a file put there between the exclusive create's open and its write
+  // Value: protects=where the storage folder's file system gives no file a second name, a first setup's record of the entry goes to receipt.json only while a look after the refused link still finds that name empty (Cycle 0149 tasks 12 and 19), never over a record a backup puts there as that record is published, which stays, and the setup takes its own entry back (Cycle 0149 task 12, D5's unsupported link); fails_when=the setup resolves or says anything but the took-out refusal, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, its record of the entry, the take-back mark, the take-back's rollback record and its rewrite) is tried in the storage folder, the record the backup put there changes, or the config keeps the entry; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP and, for receipt.json, first puts the backup's record there), a file put there between the last synchronous look and the rename (stated residual on such storage)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -15880,8 +15880,8 @@ test('On storage that cannot give a file a second name, a first setup never writ
   })
 })
 
-test('On storage that cannot give a file a second name, a first setup creates its record of the entry in place and answers installed', async (context) => {
-  // Value: protects=where the storage folder's file system gives no file a second name, a first setup still writes its record of the entry, created in place at its empty name, so Devin Desktop setup keeps working on such storage, and no staged name of that record stays (Cycle 0149 task 12, regression guard of the exclusive create); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, then its record of the entry) is tried in the storage folder, or a staged name of the receipt stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), what a process end inside that in-place write leaves (stated residual)
+test('On storage that cannot give a file a second name, a first setup moves its complete record of the entry to its empty name and answers installed', async (context) => {
+  // Value: protects=where the storage folder's file system gives no file a second name, a first setup still writes its record of the entry, its flushed staged file renamed to its empty name, so Devin Desktop setup keeps working on such storage, and no staged name of that record stays (Cycle 0149 task 12, regression guard of the route without links, which task 19 made a rename); fails_when=the setup answers anything but installed, its receipt is missing or of another generation, a link other than the one each record write tries first (Cycle 0149 task 13: the setup's own record and its rewrite, then its record of the entry) is tried in the storage folder, or a staged name of the receipt stays; no_claim=a real file system without hard links (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP), what a process end inside that write leaves (its own test)
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
@@ -15989,6 +15989,81 @@ for (const noLinkCode of ['EPERM', 'ENOSYS'] as const) {
     assert.deepEqual(readdirSync(recordsPath), ['receipt.json'])
   })
 }
+
+test("A first setup that stops inside the write of its record of the entry where Codebook's storage folder cannot give a file a second name leaves no partial record at receipt.json, so the next refresh takes the entry out instead of refusing every run", async (context) => {
+  // Value: protects=on storage without hard links a first setup's record of the entry appears at receipt.json only complete (a rename of its flushed staged file at a name a synchronous look found empty), so a stop inside that write never leaves a record every run refuses (Cycle 0149 task 19); fails_when=the stop hook never runs, anything stands at receipt.json after the setup, a staged name of the receipt stays, the next refresh refuses or answers anything but not-managed, or the config keeps the entry; no_claim=a real process end or exFAT (the config module is loaded with a link that refuses every name in the storage folder with ENOTSUP, an open that ends the write right after an exclusive create of receipt.json, before any byte is in it, and a rename that ends it right before publishing at that name; the setup's own take-out of its entry still runs after that stop, where a real process end leaves the entry to the next run's take-back), a file another program puts at that name between the last look and the rename (stated residual on such storage)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const recordsPath = join(storage, 'devin-mcp')
+  const receiptPath = join(recordsPath, 'receipt.json')
+  let hasStopped = false
+  const endingInsideReceiptWrite = await loadModule<
+    typeof DevinMcpConfigModule
+  >(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          // The storage folder's file system gives no file a second name; the config's folder does.
+          if (dirname(to) === recordsPath)
+            throw Object.assign(
+              new Error(`ENOTSUP: operation not supported, link '${from}'`),
+              { code: 'ENOTSUP' },
+            )
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open: async (...args: Parameters<typeof open>) => {
+          // The write ends right after an exclusive create of receipt.json itself, before any byte is in it.
+          if (args[0] === receiptPath && args[1] === 'wx') {
+            hasStopped = true
+            await (await open(...args)).close()
+            throw new Error('process ended')
+          }
+          return open(...args)
+        },
+        rename: async (from: string, to: string) => {
+          // The write ends right before the receipt's bytes are published at its name.
+          if (to === receiptPath) {
+            hasStopped = true
+            throw new Error('process ended')
+          }
+          return rename(from, to)
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+  await endingInsideReceiptWrite
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .catch(() => undefined)
+  // A name the setup left empty reads as 'absent', so the assertion below names what stands there.
+  const receiptAfterSetup = existsSync(receiptPath)
+    ? `${statSync(receiptPath).size} bytes`
+    : 'absent'
+
+  // Act
+  const refresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home).then(
+    ({ status }) => status,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(hasStopped, true)
+  assert.equal(receiptAfterSetup, 'absent')
+  assert.equal(refresh, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.deepEqual(
+    readdirSync(recordsPath).filter((name) => name.startsWith('receipt.json')),
+    [],
+  )
+})
 
 test('An update never writes its record of the entry over a record a backup restored at receipt.json after the update read it, says so, and the next setup records the updated entry', async (context) => {
   // Value: protects=an update replaces receipt.json only while that name still shows the record the update read there, so a record a backup put back at another inode stays, the update says so, and the next setup records the updated entry from the update's own record (Cycle 0149 task 12, D5's existing-receipt writers); fails_when=the update resolves or says anything but the changed-record sentence of receipt.json, receipt.json changes, the config loses the updated entry, or the next setup answers anything but current with a receipt of the update's generation; no_claim=a real backup tool (seam.beforeRecordWrite puts a copy of the record the update read back at receipt.json, at another inode, once, right before the update writes its own), a file put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode)
