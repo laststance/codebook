@@ -19129,6 +19129,202 @@ test("A later setup after an older version's put-back that stopped between its l
   assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
 })
 
+test("A later setup never drops the old record's second name when one file stands at it and at receipt.json while the publish record, as this version rewrote it after keeping a file there it did not verify, names no bytes: it keeps both names, says that what stands at receipt.json is unverified and notes that in the publish record", async (context) => {
+  // Value: protects=the drop of only the private name beside one file at both names holds only for an older version's original record (retiresReceipt true), whose put-back stopped after its link; this version's record without bytes (retiresReceipt {}), written once it kept a file at the private name it did not verify, means that one file at both names is that unverified file at receipt.json too, so the setup never takes it for its record (Cycle 0149 task 44; Codex structured P1 on devinMcpConfig.ts:6525, native adversarial note 1, specialist cell empty × compare): it refuses with the unverified sentence, keeps that file at both names and notes receipt.json unverified in the publish record; fails_when=the setup answers current or another sentence, either name is gone or holds other bytes, pending.json is gone or lacks that note, or a released reader accepts it; no_claim=how the file came to stand at both names (the test links the private file to receipt.json by hand, as a restore of both names as hard links leaves it, and writes this version's record without bytes by hand), the window's descriptor mark and the bridge's reading of a note that names no bytes (Cycle 0149 task 40, readReceiptState.ts), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const keptRecord = {
+    ...(await readRecordFile(storage, 'pending.json')),
+    retiresReceipt: {},
+  }
+  writeFileSync(pendingPath, JSON.stringify(keptRecord))
+  linkSync(retiredPath, receiptPath)
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  const recordAfterRefusal = existsSync(pendingPath)
+    ? await readRecordFile(storage, 'pending.json')
+    : 'absent'
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.deepEqual(recordAfterRefusal, {
+    ...keptRecord,
+    retiresReceipt: { receiptUnverified: true },
+  })
+  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+})
+
+test("A later setup never drops the old record's second name when one file stands at it and at receipt.json while the publish record is the one Codebook 0.2.144.0 kept as foreign: it keeps both names, says that what stands at receipt.json is unverified and notes that in a publish record 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse", async (context) => {
+  // Value: protects=a publish record 0.2.144.0 kept as foreign (no bytes named, and the file at the private name one that version did not verify) never takes the older version's exception that drops only the private name beside one file at both names (Cycle 0149 task 44; Codex structured P1 on devinMcpConfig.ts:6525, native adversarial note 1, specialist cell foreign × compare): one file at both names, as 0.2.144.0's own unverified put-back or a restore of both names as hard links leaves it, is that unverified file at receipt.json too, so the setup refuses with the unverified sentence, keeps that file at both names, rewrites the record with the note that receipt.json is unverified in a shape all three released readers refuse; fails_when=the setup answers current or another sentence, either name is gone or holds other bytes, pending.json is gone or lacks that note, or a released reader accepts it; no_claim=running 0.2.144.0 (the test writes its record by hand: this version's record with retiresReceipt foreign and the mark that nothing was linked, and links the private file to receipt.json by hand), the window's descriptor mark and the bridge's reading of a note that names no bytes (Cycle 0149 task 40, readReceiptState.ts), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const keptRecord = {
+    ...(await readRecordFile(storage, 'pending.json')),
+    retiresReceipt: 'foreign',
+  }
+  writeFileSync(pendingPath, JSON.stringify(keptRecord))
+  linkSync(retiredPath, receiptPath)
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  const recordAfterRefusal = existsSync(pendingPath)
+    ? await readRecordFile(storage, 'pending.json')
+    : 'absent'
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.deepEqual(recordAfterRefusal, {
+    ...keptRecord,
+    retiresReceipt: { receiptUnverified: true },
+  })
+  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+})
+
+test("A later setup keeps both files when a copy of the file at the old record's private name stands at receipt.json while the publish record, as this version rewrote it after keeping a file there it did not verify, names no bytes, and names that file as one Codebook cannot tell is its old record", async (context) => {
+  // Value: protects=beside a record of this config at receipt.json that is another file (a copy with the same bytes at another inode), this version's record without bytes (retiresReceipt {}) drops nothing and puts nothing back (Cycle 0149 task 44, specialist cell empty × compare, the case of two files): the setup keeps both files and that record as it was and names the file at the private name as one it cannot tell is its old record; fails_when=either file is gone or holds other bytes, the private name is dropped, pending.json is gone or changed, or the refusal is another sentence; no_claim=how the copy came to stand at receipt.json (the test writes it by hand, as a restore of each name as its own file leaves it, and writes this version's record without bytes by hand), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const keptRecord = {
+    ...(await readRecordFile(storage, 'pending.json')),
+    retiresReceipt: {},
+  }
+  writeFileSync(pendingPath, JSON.stringify(keptRecord))
+  writeFileSync(receiptPath, retiredText, { mode: 0o600 })
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there), and its record of that config stands at ${receiptPath} again; it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.deepEqual(await readRecordFile(storage, 'pending.json'), keptRecord)
+})
+
+test("A later setup keeps both files when a copy of the file at the old record's private name stands at receipt.json while the publish record is the one Codebook 0.2.144.0 kept as foreign, names that file as one Codebook cannot tell is its old record and rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse", async (context) => {
+  // Value: protects=beside a record of this config at receipt.json that is another file (a copy with the same bytes at another inode), a publish record 0.2.144.0 kept as foreign drops nothing and puts nothing back (Cycle 0149 task 44, specialist cell foreign × compare, the case of two files): the setup keeps both files, names the file at the private name as one it cannot tell is its old record, and rewrites that record without bytes in a shape all three released readers refuse, so no window of those versions puts that file back; fails_when=either file is gone or holds other bytes, the private name is dropped, pending.json is gone or holds anything but that rewrite, a released reader accepts it, or the refusal is another sentence; no_claim=running 0.2.144.0 (the test writes its record by hand: this version's record with retiresReceipt foreign and the mark that nothing was linked, and writes the copy at receipt.json by hand), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const keptRecord = {
+    ...(await readRecordFile(storage, 'pending.json')),
+    retiresReceipt: 'foreign',
+  }
+  writeFileSync(pendingPath, JSON.stringify(keptRecord))
+  writeFileSync(receiptPath, retiredText, { mode: 0o600 })
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  const recordAfterRefusal = await readRecordFile(storage, 'pending.json')
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there), and its record of that config stands at ${receiptPath} again; it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(await recordsIn(storage), [
+    'pending.json',
+    'receipt.json',
+    retiredName,
+  ])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), retiredText)
+  assert.deepEqual(recordAfterRefusal, { ...keptRecord, retiresReceipt: {} })
+  assert.deepEqual(releasesReading(recordAfterRefusal), [])
+})
+
 test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads to rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, so no window of those versions puts that file back", async (context) => {
   // Value: protects=a publish record 0.2.144.0 kept as foreign (no bytes of the old record named, and 0.2.144.0 itself puts back whatever record of this config stands at the private name on its word) is rewritten by this version, which keeps that file, in a shape all three released readers refuse, so a window of 0.2.144.0 not reloaded after the update never links that file into receipt.json (Cycle 0149 task 4); fails_when=the record left passes the fields of any of the three releases, it changes in any other way than that shape, a file appears at receipt.json, the file at the private name changes or is gone, or the refusal is another sentence; no_claim=running those releases (the test checks the record against their field rules, RELEASED_RECORD_FIELDS), 0.2.144.0's record (the test writes it by hand: this version's record with retiresReceipt foreign and the mark that nothing was linked), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
   // Arrange
