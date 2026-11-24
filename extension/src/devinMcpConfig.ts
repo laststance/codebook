@@ -2550,14 +2550,14 @@ async function writeTrackedJournal(
 }
 
 /**
- * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file; called by {@link writeTrackedJournal} when no version is known or the name was found empty.
+ * Publishes a tracked rollback journal at a name that holds nothing of this run with a link, which never replaces a file, or, where the storage's file system gives no file a second name, with an exclusive create, which never replaces one either ({@link createJournalInPlace}); called by {@link writeTrackedJournal} when no version is known or the name was found empty.
  * The bytes are first written and flushed under a fresh private name beside the journal ({@link stageRecord}); that name is looked at right before the link, so only the file this call wrote is linked ({@link lookAtStagedRecord}), the journal's name must show that file right after the link ({@link assertPublishedRecord}), and the staged name goes afterwards only while it still shows that file ({@link dropStagedRecord}). That look after the link reads the journal through its open handle, and the cleanup awaits the file system after it, so the journal is read again after the cleanup and its name looked at once more, synchronously, as the last step ({@link assertTrackedJournalStill}): the version goes back to the caller, whose next step may move the config to the private name that journal names ({@link deleteConfig}, {@link publishRoot}), only while the name still shows that file.
  * Limit: a file put at the staged name between its last look and the link is linked; the look after the link then refuses before anything that rests on the journal moves. A file put at the journal's name, or a move of the journal, after the last look is not seen. A stall of storage that starts between the awaited looks and the synchronous ones holds the extension host's thread.
  * @param context - The run; its pending path is the journal, its seam is called right before the link.
  * @param value - The complete journal.
  * @param assertStill - What else must still hold, looked at right after the seam and before the link, after an awaited look at its names ({@link writeRecord}).
- * @returns The version the link published: the inode of the file this call wrote and the hash of its bytes.
- * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link or at the last look, and (`gone`) when it shows nothing then; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the link throws otherwise.
+ * @returns The version the link or the create published: the inode of the file at the journal's name and the hash of its bytes.
+ * @throws A {@link JournalConflictError} (`changed`) when something already stands at the journal's name, which stays as it is, or when that name shows another file than this call's right after the link or at the last look, and (`gone`) when it shows nothing then; what the write, the look at the staged name ({@link leftoverReplacedError}), `assertStill` or the create in place throws otherwise.
  * @example
  * await claimJournal(rollbackContext, journal) // => { ino: 44n, sha256: 'ef…' }; pending.json.rollback holds `journal`, or the call throws and the name stays as it was
  * await claimJournal(rollbackContext, journal) // throws a `changed` JournalConflictError once a sync tool renamed another journal over pending.json.rollback while the staged name was deleted
@@ -2569,6 +2569,7 @@ async function claimJournal(
 ): Promise<RecordVersion> {
   const path = context.pendingPath
   const staged = await stageRecord(path, value)
+  let version: RecordVersion
   try {
     context.seam?.beforeRecordWrite?.({ path, record: value })
     // A storage that already stalls holds this step here, in the thread pool, not at the synchronous looks below, which come in the same order.
@@ -2576,22 +2577,56 @@ async function claimJournal(
     const source = await lookAtStagedRecord(staged)
     assertStill?.assert()
     assertStagedRecordStill(staged, source)
-    await link(staged.staged, path).catch((error: unknown) => {
-      // Something stands at the name already: it is never replaced.
-      throw codeOf(error) === 'EEXIST'
-        ? journalConflictError(context, 'changed', error)
-        : error
-    })
-    await assertPublishedRecord(context, staged.version)
+    version = await link(staged.staged, path).then(
+      () => staged.version,
+      (error: unknown) =>
+        createJournalInPlace(context, value, staged.version.sha256, error),
+    )
+    await assertPublishedRecord(context, version)
   } finally {
     // Once linked the journal keeps its bytes under its own name; the staged name goes whatever happened, while it shows the file this call wrote.
     await dropStagedRecord(staged)
   }
   // The look after the link read the journal through its open handle, and the cleanup awaited the file system since: the name is read again and looked at once more, synchronously, so a journal another program moved away or replaced meanwhile never lets the caller move the config. The read comes after the cleanup's unlink, which changes the file's change time. A storage that already stalls holds this step at the awaited looks, not at the synchronous one.
-  const published = await assertPublishedRecord(context, staged.version)
+  const published = await assertPublishedRecord(context, version)
   await lookAheadAt([path])
   assertTrackedJournalStill(context, published)
-  return staged.version
+  return version
+}
+
+/**
+ * Creates a tracked rollback journal at its empty name in place, where the storage's file system gives no file a second name; called by {@link claimJournal} when its link fails for another reason than a file at that name, as {@link placeStorageLock} does for the storage lock.
+ * An exclusive create never replaces a file either, and the bytes are flushed before the call returns, so the look after it checks that file's inode and bytes as after a link ({@link assertPublishedRecord}).
+ * Limit: for the time of one write the journal stands with only part of its bytes, so a process that ends then leaves a record every build refuses to read, naming it, until it is removed; a write that fails deletes that name ({@link stageConfigFile}).
+ * @param context - The run; its pending path is the journal.
+ * @param value - The complete journal, as {@link stageRecord} wrote it at the staged name.
+ * @param sha256 - The hash of those bytes ({@link stageRecord}).
+ * @param linkError - Why the link failed.
+ * @returns The version the create published: the inode of the file it created and the hash of its bytes.
+ * @throws A {@link JournalConflictError} (`changed`) when something stands at the journal's name, which stays as it is; what the create or its write throws otherwise.
+ * @example
+ * await createJournalInPlace(rollbackContext, journal, staged.version.sha256, linkError) // => { ino: 45n, sha256: 'ef…' } once a link in an exFAT storage folder answered ENOTSUP
+ */
+async function createJournalInPlace(
+  context: Context,
+  value: unknown,
+  sha256: string,
+  linkError: unknown,
+): Promise<RecordVersion> {
+  // Something stands at the name already: it is never replaced.
+  if (codeOf(linkError) === 'EEXIST')
+    throw journalConflictError(context, 'changed', linkError)
+  const { ino } = await stageConfigFile(
+    context.pendingPath,
+    JSON.stringify(value),
+    PRIVATE_FILE_MODE,
+  ).catch((error: unknown) => {
+    // A file put at the name since the link failed is never replaced either.
+    throw codeOf(error) === 'EEXIST'
+      ? journalConflictError(context, 'changed', error)
+      : error
+  })
+  return { ino, sha256 }
 }
 
 /** A tracked record's bytes staged under a fresh private name beside it, and the version they publish there ({@link stageRecord}). */
