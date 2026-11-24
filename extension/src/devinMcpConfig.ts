@@ -6128,7 +6128,7 @@ type HeldJournal = {
   legacy: LegacyJournalEvidence
   /** Deletes the journal, only while its name still shows the version this run settled or last wrote ({@link dropTrackedJournal}) and the given synchronous look at the publish record's name, made right after that name's last look and before the unlink, passes ({@link publishLeftCheck}); rejects with a {@link JournalConflictError} or what that look throws, and leaves the journal as it is otherwise. */
   retire: (assertPublishStill: StillLook) => Promise<void>
-  /** Looks at the journal's name without holding the extension host's thread ({@link lookAtTrackedJournal}) and gives the synchronous look that must still find what it found there right before the publish record this journal rests on is deleted or rewritten ({@link settlePending}), so a journal a backup restores at that name meanwhile keeps the record it may need to take its setup back ({@link assertHeldJournalLeft}); the record's delete or rewrite looks at the journal's name through the thread pool once more right before ({@link StillLook}); rejects with a {@link JournalConflictError} when the name shows another file or cannot be read. */
+  /** Looks at the journal's name without holding the extension host's thread ({@link lookAtTrackedJournal}) and gives the synchronous look that must still find what it found there right before the publish record this journal rests on is deleted or rewritten ({@link settlePending}), so a journal a backup restores at that name meanwhile keeps the record it may need to take its setup back ({@link assertHeldJournalLeft}); the record's delete or rewrite looks at the journal's name through the thread pool once more right before ({@link StillLook}); rejects with a {@link JournalConflictError} when the name shows another file or cannot be read, and with a `gone` one when it is empty (another program moved the journal away, which may bring it back), before the publish record changes. */
   lookStill: () => Promise<StillLook>
 }
 
@@ -6169,6 +6169,8 @@ async function holdLegacyJournal(
       dropTrackedJournal(rollbackContext, assertPublishStill),
     lookStill: async (): Promise<StillLook> => {
       const look = await lookAtTrackedJournal(rollbackContext)
+      // Another program moved the held journal away: the publish record it rests on stays for the run that finds the journal back.
+      if (!look) throw journalConflictError(rollbackContext, 'gone')
       return {
         names: [rollbackContext.pendingPath],
         assert: (): void => assertHeldJournalLeft(rollbackContext, look),
@@ -6181,17 +6183,17 @@ async function holdLegacyJournal(
  * Looks once more, synchronously, at a held legacy journal's name right before the publish record it rests on is deleted or rewritten; the look {@link HeldJournal.lookStill} gives, which {@link settleAfterRecovery} passes to {@link settlePending}.
  * Limit: a journal put at that name between this look and the record's unlink or rename, or after it, is decided without that record, like one restored after the run; a storage stall that starts between the asynchronous look and this one holds the extension host's thread until it ends.
  * @param rollbackContext - The rollback's context ({@link rollbackContextOf}); its pending path is the journal, its seam is called around the look ({@link isLeftoverStill}).
- * @param look - What the asynchronous look found there: the journal this run held, or undefined for an empty name.
- * @throws A {@link HeldJournalConflictError} when the name no longer shows that journal (or shows a file where it was empty) or cannot be looked at; the publish record then stays as it is.
+ * @param look - What the asynchronous look found there: the journal this run held (a name found empty there already ended the run, {@link HeldJournal.lookStill}).
+ * @throws A {@link HeldJournalConflictError} when the name no longer shows that journal, is empty or cannot be looked at ({@link assertTrackedJournalStill}); the publish record then stays as it is.
  * @example
  * assertHeldJournalLeft(rollbackContext, look) // throws once a backup renamed another journal over pending.json.rollback
  */
 function assertHeldJournalLeft(
   rollbackContext: Context,
-  look: InspectedCopy | undefined,
+  look: InspectedCopy,
 ): void {
   try {
-    assertNameLeft(rollbackContext, look)
+    assertTrackedJournalStill(rollbackContext, look)
   } catch (error) {
     // A conflict here is the journal's own, never the publish record's.
     if (!(error instanceof JournalConflictError)) throw error
@@ -6559,7 +6561,7 @@ function assertPublishStillLeft(
 }
 
 /**
- * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record and by {@link assertHeldJournalLeft} for a held legacy journal, which word what it throws as that name's own refusal.
+ * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal.
  * @param context - The run; its pending path is the name, its seam is called around the look ({@link isLeftoverStill}).
  * @param left - What the earlier look found: a file (its inode, size and times must still show), or undefined for a name that must still be empty.
  * @throws A {@link JournalConflictError}: `changed` when the name no longer shows that file or shows a file where it was empty, `unread` when the look itself fails.

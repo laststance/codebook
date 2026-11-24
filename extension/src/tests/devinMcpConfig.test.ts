@@ -7646,6 +7646,66 @@ test("Another rollback journal a backup restores at a held legacy journal's name
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A held legacy rollback journal a sync tool moves away before the refresh ends the setup's own record keeps that record, so the setup is taken back once the journal and the original config are back", async (context) => {
+  // Value: protects=a run that holds a legacy journal ends the setup record that journal was decided on only while the journal's name still shows that journal, so a journal a sync tool moved away keeps the record it needs, the refresh stops and says the rollback record was removed, and the next refresh takes the setup back once the journal and the original config are back (Cycle 0148 final-range review); fails_when=the first refresh resolves or answers anything but the refusal that names the removed journal, deletes or changes the setup record, changes the moved journal or writes a receipt, or the second refresh installs the setup or leaves the entry; no_claim=a real sync tool (seam.afterStat rewrites the config in place once, at the read that decides the journal, and renames the journal away once, at the read of the config right after it, which comes after the hold and before the run's look at the journal; the test puts the journal and the config's bytes back before the second refresh), a journal moved away after that look and before the setup record's unlink (the look right before that unlink sees it), or after the setup record ended
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const journalText = readFileSync(journalPath, 'utf8')
+  const movedJournalPath = join(home, 'journal-moved-away.json')
+  let savedText = ''
+  let configReadCount = 0
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      if (path !== configPath) return
+      configReadCount += 1
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      if (configReadCount === 1) {
+        savedText = readFileSync(configPath, 'utf8')
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+      }
+      // A sync tool moves the journal away after the journal was held.
+      if (configReadCount === 2) renameSync(journalPath, movedJournalPath)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A record the first refresh retired reads as 'absent', so the assertion below names it.
+  const pendingAfterFirst = existsSync(pendingPath)
+    ? readFileSync(pendingPath, 'utf8')
+    : 'absent'
+  const isJournalAfterFirst = existsSync(journalPath)
+  const movedJournalAfterFirst = readFileSync(movedJournalPath, 'utf8')
+  const isReceiptAfterFirst = existsSync(receiptPath)
+  // The sync tool puts the journal back, and the original config comes back in place.
+  renameSync(movedJournalPath, journalPath)
+  writeFileSync(configPath, savedText)
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(configReadCount >= 2, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(pendingAfterFirst, pendingText)
+  assert.equal(isJournalAfterFirst, false)
+  assert.equal(movedJournalAfterFirst, journalText)
+  assert.equal(isReceiptAfterFirst, false)
+  assert.equal(second.status, 'not-managed')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+})
+
 test("A refresh beside a held legacy rollback journal that meets another journal a backup restored at that journal's name still names the private file of the setup record it could not settle", async (context) => {
   // Value: protects=a run that holds a legacy journal and stops because another journal stands at that journal's name names the private file recovery could not settle after that conflict, so the refusal never hides where that file is (Cycle 0148 ship review); fails_when=the refusal is anything but the replaced-journal sentence followed by the staged file's sentence, the restored journal changes, or a receipt is written; no_claim=a real backup tool (seam.afterStat rewrites the config in place once, at the read that decides the journal, and renames another journal over the journal's name once, at the read of the config right after it), what the next run does with the restored journal; seam=folders at the setup record's staged and probe names stand for two private files recovery cannot settle
   // Arrange
