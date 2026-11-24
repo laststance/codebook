@@ -136,6 +136,33 @@ test('an installed MCP receipt answers removed with the reason unverified while 
   })
 })
 
+// Value: protects=a publish record's note that receipt.json is unverified counts for the bridge and the window's mark also when it names no bytes (`retiresReceipt: { receiptUnverified: true }`, the form a put-back that kept an older version's record leaves, in which only an empty receipt.json passes), as every setup, refresh and removal refuses that file (Cycle 0149 task 40; /ship pass 1 outside voice 10); fails_when=the receipt answers installed, or removed with another reason; no_claim=how the note came to be (the test writes the publish record by hand), and a note whose hash is no string (it never equals the receipt's hash either)
+test('an installed MCP receipt answers removed with the reason unverified while its publish record notes receipt.json unverified without naming any bytes', async (context) => {
+  // Arrange
+  const storage = await arrangeStorage(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  await writePrivate(
+    receiptPath,
+    JSON.stringify({ installed: true, installationId: 'installation-b' }),
+  )
+  await writePrivate(
+    join(storage, 'devin-mcp', 'pending.json'),
+    JSON.stringify({
+      targetPath: '/home/lume/.config/devin/mcp_config.json',
+      createdFile: false,
+      retiresReceipt: { receiptUnverified: true },
+    }),
+  )
+  // Act
+  const state = await readReceiptState(receiptPath)
+  // Assert
+  assert.deepEqual(state, {
+    state: 'removed',
+    reason: 'unverified',
+    receiptPath,
+  })
+})
+
 // Value: protects=the note that receipt.json is unverified passes the very bytes it names, as every setup, refresh and removal does (Cycle 0149 task 32, the same rule as the config module's), so the old record put back with those bytes still stands for the bridge; fails_when=that receipt answers anything but installed with its fields; no_claim=how the note came to be (the test writes the publish record by hand with the hash of the receipt's own bytes)
 test('an installed MCP receipt that holds the very bytes its publish record names answers installed although that record notes receipt.json unverified', async (context) => {
   // Arrange

@@ -28,10 +28,11 @@ const MCP_RECEIPT_FOLDER = 'devin-mcp'
 /** The publish record beside the MCP entry's receipt, which Codebook's config module writes while a setup, refresh or removal is not settled. */
 const PUBLISH_RECORD_FILE = 'pending.json'
 
-/** The part of that publish record that notes a file a put-back left at `receipt.json` without Codebook verifying it (`retiresReceipt.receiptUnverified`), with the hash of the old record's bytes it names; every other field is the config module's and is not read here. */
+/** The part of that publish record that notes a file a put-back left at `receipt.json` without Codebook verifying it (`retiresReceipt.receiptUnverified`), with the hash of the old record's bytes it names, if any: the config module's record names none after it rewrote an older version's record (`retiresReceipt: {}`), and then no bytes pass ({@link unverifiedVerdictOf}); every other field is the config module's and is not read here. */
 const unverifiedNoteSchema = z.object({
   retiresReceipt: z.object({
-    sha256: z.unknown(),
+    // Optional: Zod 4 refuses an object that lacks a key of a plain `z.unknown()`, which would read a note without bytes as no note.
+    sha256: z.unknown().optional(),
     receiptUnverified: z.literal(true),
   }),
 })
