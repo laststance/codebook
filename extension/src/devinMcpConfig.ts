@@ -3312,7 +3312,10 @@ async function settleDroppedRecord(context: Context): Promise<void> {
     (await isNameStill(context, context.pendingPath, { ino })) &&
     (await isNameStill(context, droppingPath, { ino, isShared: true }))
   ) {
-    await unlink(droppingPath)
+    await unlink(droppingPath).catch((error: unknown) => {
+      // A second name another program removed first is gone as this step wanted.
+      if (codeOf(error) !== 'ENOENT') throw error
+    })
     return
   }
   throw bothRecordNamesError(context)
@@ -8474,14 +8477,7 @@ async function dropTrackedJournal(
   // Nothing stands at the name: nothing is deleted, and a publish record that disappeared ends the run.
   if (!look) {
     if (isEmptiedByAnother(context)) throw journalConflictError(context, 'gone')
-    // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, then `assertStill`'s names.
-    if (assertStill)
-      await lookAheadAt([context.pendingPath, ...assertStill.names])
-    // The caller goes on as after a delete, so the name must still be empty at this last look, on every route: a journal a sync tool put back during the awaited looks stays and ends the run.
-    assertNameLeft(context, undefined)
-    // So must the names it rests on: a setup record a backup put back without its mark while it moved this journal away is never adopted.
-    assertStill?.assert()
-    return
+    return assertLeftEmpty(context, assertStill)
   }
   // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the journal's name, `assertStill`'s names, the dropping name.
   await lookAheadAt([
@@ -8508,7 +8504,7 @@ async function dropTrackedJournal(
  * @param look - The record as the last look saw it: this run's version.
  * @param assertStill - The caller's look; undefined when nothing else must hold.
  * @returns `true` once this run deleted the record; `false` when its name was empty at the move or the moved file was gone at the delete (another program removed it first), so this run did not empty it.
- * @throws What {@link moveTrackedAside} and {@link assertAfterMove} throw (the record stands at its name again then, unless a refusal names where it stands); what the unlink throws other than for a missing name, once the record went back.
+ * @throws What {@link moveTrackedAside} and {@link assertAfterMove} throw (the record stands at its name again then, unless a refusal names where it stands); for a name the move found empty, what {@link assertLeftEmpty} throws, unless the caller ends the run as `gone` itself ({@link isEmptiedByAnother}); what the unlink throws other than for a missing name, once the record went back.
  * @example
  * await deleteThroughDroppingName(rollbackContext, look, undefined) // => true; pending.json.rollback is gone
  */
@@ -8519,7 +8515,12 @@ async function deleteThroughDroppingName(
 ): Promise<boolean> {
   const aside = await moveTrackedAside(context, look)
   // Another program removed the record first: the name is empty, as the delete wanted, but this run did not empty it.
-  if (!aside) return false
+  if (!aside) {
+    // A publish record a decision read ends the run as gone at the caller; for any other record the caller goes on as after a delete, so the same last looks as for a name found empty first hold here.
+    if (!isEmptiedByAnother(context))
+      await assertLeftEmpty(context, assertStill)
+    return false
+  }
   await renewOrPutBack(context, aside, () =>
     assertAfterMove(context, aside, assertStill),
   )
@@ -8533,6 +8534,27 @@ async function deleteThroughDroppingName(
       throw error
     },
   )
+}
+
+/**
+ * Stops unless a tracked record's name that a delete found empty is still empty at a last synchronous look, and the caller's names still hold, after an awaited look at them; called by {@link dropTrackedJournal} when its first look finds the name empty and by {@link deleteThroughDroppingName} when its move does, because the caller goes on as after a delete on both routes.
+ * Limit: a record put back between these looks and the caller's next step is not seen here.
+ * @param context - The run; its pending path is the record.
+ * @param assertStill - The caller's look; undefined when nothing else must hold.
+ * @throws A `changed` {@link JournalConflictError} when a file stands at the record's name again, an `unread` one when that look fails ({@link assertNameLeft}); what `assertStill` throws.
+ * @example
+ * await assertLeftEmpty(rollbackContext, undefined) // throws once a sync tool put pending.json.rollback back right after it moved it away
+ */
+async function assertLeftEmpty(
+  context: Context,
+  assertStill: StillLook | undefined,
+): Promise<void> {
+  // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the record's name, then `assertStill`'s names.
+  await lookAheadAt([context.pendingPath, ...(assertStill?.names ?? [])])
+  // The name must still be empty at this last look: a record a sync tool put back during the awaited looks stays and ends the run.
+  assertNameLeft(context, undefined)
+  // So must the names it rests on: a setup record a backup put back without its mark while it moved this record away is never adopted.
+  assertStill?.assert()
 }
 
 /**
@@ -8748,7 +8770,7 @@ function assertPublishStillLeft(
 }
 
 /**
- * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal, by the looks {@link adoptedRecordCheck} and {@link journalLeftCheck} give right before an adoption's receipt is published and its record ends, and by {@link dropTrackedJournal} for a name its first look found empty.
+ * Looks synchronously at a tracked record's name ({@link Context.journalVersion}) and stops unless it still shows what an earlier look found there; called by {@link assertPublishStillLeft} for the publish record, which words what it throws as that record's own refusal, by the looks {@link adoptedRecordCheck} and {@link journalLeftCheck} give right before an adoption's receipt is published and its record ends, and by {@link assertLeftEmpty} for a name a delete found empty.
  * @param context - The run; its pending path is the name, its seam is called around the look ({@link isLeftoverStill}).
  * @param left - What the earlier look found: a file (its inode, size and times must still show), or undefined for a name that must still be empty.
  * @throws A {@link JournalConflictError}: `changed` when the name no longer shows that file or shows a file where it was empty, `unread` when the look itself fails.

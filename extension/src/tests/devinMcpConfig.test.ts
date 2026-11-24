@@ -9279,6 +9279,56 @@ test("A dropping name that is only a second name of the rollback record's file g
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A dropping name that is only a second name of the rollback record's file and that another program removes right as the next refresh deletes it is no failure, so that refresh still settles the record and takes the failed first setup back", async (context) => {
+  // Value: protects=the run start's delete of a dropping name that is only a second name of the record's file treats a name already gone as deleted, so a second name another program removed first never ends the run with a raw file-system error (Cycle 0149 review round, L1 P3); fails_when=the removal does not fire, the refresh answers anything but not-managed, the config is not the learner's own without the entry, or the dropping name, the rollback record, the setup record or a receipt stays; no_claim=a real sync tool (the test gives the rollback record its dropping name as a second name, as a put-back that stopped before its unlink leaves it, and the config module is loaded with an unlink that, once, removes that name itself right before Codebook's unlink of it)
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  linkSync(journalPath, droppingPath)
+  let hasRemovedFirst = false
+  const removingFirst = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink: async (...args: Parameters<typeof unlink>) => {
+          // Another program removes the second name right before Codebook's own unlink of it.
+          if (args[0] === droppingPath && !hasRemovedFirst) {
+            hasRemovedFirst = true
+            rmSync(droppingPath)
+          }
+          return unlink(...args)
+        },
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refresh = await removingFirst.refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(hasRemovedFirst, true)
+  assert.equal(refresh.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(droppingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A file at a rollback record's dropping name beside a byte-identical record on another inode stays, and so does that record: the refresh refuses, naming both, and changes nothing", async (context) => {
   // Value: protects=the run start never deletes a file at a tracked record's dropping name that is not a second name of the record's own file, even one holding the same bytes, and never settles that record beside it, so a learner's only restored record is never lost (Cycle 0149 task 13, acceptance criterion 13's third state; D5 review); fails_when=the refresh resolves or says anything but the sentence naming both names, either file changes or is gone, the setup record or the config changes, or a receipt appears; no_claim=a real backup tool (the test copies the rollback record's bytes to its dropping name, a file of its own)
   // Arrange
@@ -9443,6 +9493,90 @@ test('A rollback record a sync tool moves away and puts back while a refresh ret
   // Assert
   assert.equal(hasMovedJournal, true)
   assert.equal(hasPutJournalBack, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(journalAfterFirst, journalText)
+  assert.equal(configAfterFirst, configText)
+  assert.equal(receiptAfterFirst, receiptText)
+  assert.equal(existsSync(movedPath), false)
+  assert.equal(second.status, 'current')
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(readFileSync(configPath, 'utf8'), configText)
+  assert.equal(readFileSync(receiptPath, 'utf8'), receiptText)
+  assert.equal(existsSync(pendingPath), false)
+})
+
+test('A rollback record a sync tool moves away right as a refresh moves it aside to retire it, and puts back right after, stops that refresh with the record intact, and the next refresh settles it', async (context) => {
+  // Value: protects=a delete whose move to the dropping name finds the record's name empty goes on as after a delete only while that name is still empty at a last synchronous look after an awaited look, so a rollback record a sync tool puts back right after that move stops the run and stays byte for byte, and the next run settles it (Cycle 0149 review round, L1 P3: the last looks of the route where nothing moved); fails_when=the sync tool's move does not fire, the first refresh resolves or says anything but the rollback record's changed sentence, the restored record changes or is gone, the config or the receipt changes, or the second refresh answers anything but current or leaves the rollback record; no_claim=a real sync tool (the config module is loaded with a rename that, for the retirement's move of pending.json.rollback to its dropping name, moves that record away once, so the move finds the name empty, and moves it back right after), a restore between that last look and the run's next step
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  await writeManagedDevinMcpEntry(storage, ENTRY, home)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  const configText = readFileSync(configPath, 'utf8')
+  const receiptText = readFileSync(receiptPath, 'utf8')
+  // A rollback record of an earlier setup whose own record is gone names no private file, so its settlement changes nothing beside it.
+  const journalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001498',
+    publishGeneration: 'c0ffee00-0000-4000-8000-000000001499',
+  })}\n`
+  writeFileSync(journalPath, journalText)
+  const movedPath = join(home, 'journal-moved-away.json')
+  let hasMovedJournal = false
+  const movingAroundMove = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat,
+        mkdir,
+        open,
+        rename: async (from: string, to: string) => {
+          if (
+            from !== journalPath ||
+            to !== `${journalPath}.codebook-dropping` ||
+            hasMovedJournal
+          )
+            return rename(from, to)
+          // A sync tool moves the rollback record away right before the retirement moves it to its dropping name, and puts it back right after.
+          hasMovedJournal = true
+          renameSync(journalPath, movedPath)
+          try {
+            return await rename(from, to)
+          } finally {
+            renameSync(movedPath, journalPath)
+          }
+        },
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const firstOutcome = await movingAroundMove
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+  // A rollback record the first refresh deleted reads as 'absent', so the assertion below names it.
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = readFileSync(configPath, 'utf8')
+  const receiptAfterFirst = readFileSync(receiptPath, 'utf8')
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(hasMovedJournal, true)
   assert.equal(
     firstOutcome,
     `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
