@@ -8249,6 +8249,113 @@ test("Another record a backup puts at pending.json after a refresh's take-back o
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A setup record a sync tool moves away while a refresh takes a cut-short first setup back keeps the entry and the learner's other server in the config, and the next refresh takes that setup back once the record is back", async (context) => {
+  // Value: protects=a take-back of a failed first setup changes the config only while the setup record it rests on still stands at pending.json as the run read it, so a record a sync tool moves away before the config changes leaves the config as it was, the refusal says that record disappeared and Codebook went no further, and the record put back lets the next refresh take the setup back (Cycle 0148 task 36); fails_when=the first refresh resolves or says anything but the disappearance sentence of pending.json, the config loses the entry or the other server, a rollback record, staged file or receipt is left, the moved record changes, or the second refresh does not take the entry out; no_claim=a real sync tool (seam.afterRead moves pending.json away once, at the take-back's read of the config before it writes its own rollback record), a move after the take-back's last look right before it moves the config aside, a record replaced or made unreadable instead
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const movedPath = join(home, 'pending-moved-away.json')
+  let movedPendingText = ''
+
+  // Act
+  const firstRefresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterRead: () => {
+      if (movedPendingText) return
+      movedPendingText = readFileSync(pendingPath, 'utf8')
+      renameSync(pendingPath, movedPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(firstRefresh, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program moved it away or deleted it (a backup or sync tool may be moving it), so Codebook did not write it back and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.deepEqual(readdirSync(dirname(configPath)), ['mcp_config.json'])
+  assert.equal(readFileSync(movedPath, 'utf8'), movedPendingText)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+
+  // Act
+  renameSync(movedPath, pendingPath)
+  const secondRefresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(secondRefresh.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('A setup record a sync tool moves away while a refresh takes back a cut-short first setup that created the config keeps that config, and the next refresh removes it once the record is back', async (context) => {
+  // Value: protects=a take-back never deletes the config a failed first setup created while the setup record it rests on no longer stands at pending.json as the run read it, so the refusal says that record disappeared and Codebook went no further, and the record put back lets the next refresh remove that config (Cycle 0148 task 36); fails_when=the first refresh resolves or says anything but the disappearance sentence of pending.json, the config is gone or changes, a rollback record, private copy or receipt is left, the moved record changes, or the second refresh leaves the config; no_claim=a real sync tool (seam.afterRead moves pending.json away once, at the take-back's read of the config before it writes its own rollback record), a move after the take-back's last look right before it renames the config away, a record replaced or made unreadable instead
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  await assert.rejects(
+    writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterPublish: () => {
+        throw new Error('process ended')
+      },
+    }),
+    /process ended/,
+  )
+  const movedPath = join(home, 'pending-moved-away.json')
+  let movedPendingText = ''
+
+  // Act
+  const firstRefresh = refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterRead: () => {
+      if (movedPendingText) return
+      movedPendingText = readFileSync(pendingPath, 'utf8')
+      renameSync(pendingPath, movedPath)
+    },
+  })
+
+  // Assert
+  await assert.rejects(firstRefresh, {
+    message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program moved it away or deleted it (a backup or sync tool may be moving it), so Codebook did not write it back and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  })
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { codebook: ENTRY },
+  })
+  assert.deepEqual(readdirSync(dirname(configPath)), ['mcp_config.json'])
+  assert.equal(readFileSync(movedPath, 'utf8'), movedPendingText)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+
+  // Act
+  renameSync(movedPath, pendingPath)
+  const secondRefresh = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(secondRefresh.status, 'not-managed')
+  assert.equal(existsSync(configPath), false)
+  assert.equal(existsSync(pendingPath), false)
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A copy of the previous config that a finished change left is not deleted when a backup puts back that change's record handing the copy to you while recovery reads it, and the refresh says the record changed", async (context) => {
   // Value: protects=recovery deletes a copy of the previous config on a finished change's word only while the record it read still stands at its name right before the unlink, so a record of that change a backup or sync tool put back as handing the copy to the learner keeps the copy (Cycle 0148 ship review); fails_when=the copy is gone or changes, the restored record is gone or changes, the config changes, or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (seam.afterStat renames the handed record over pending.json once, at recovery's second read of the copy, the one right before its unlink), a swap after the last look before the unlink, what the next run says about the handed copy
   // Arrange
