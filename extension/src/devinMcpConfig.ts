@@ -2591,14 +2591,8 @@ function assertStagedRecordStill(
   { staged }: StagedRecord,
   source: InspectedCopy,
 ): void {
-  let now: BigIntStats | undefined
-  try {
-    now = lstatSync(staged, { bigint: true, throwIfNoEntry: false })
-  } catch {
-    // A look that fails proves nothing: nothing is published.
-    now = undefined
-  }
-  if (!showsChecked(now, source)) throw leftoverReplacedError(staged)
+  // A look that fails proves nothing: nothing is published.
+  if (!isStagedNameStill(staged, source)) throw leftoverReplacedError(staged)
 }
 
 /**
@@ -2619,21 +2613,44 @@ async function assertPublishedRecord(
 }
 
 /**
- * Deletes a tracked record's staged name while it still shows the file this run wrote there; called by {@link writeTrackedJournal} after a write that published nothing and by {@link claimJournal} after its link, so a file another program put at that name stays.
- * Limit: a file put there between this look and the unlink is deleted; no Node primitive unlinks by inode.
+ * Deletes a tracked record's staged name while it still shows the file this run wrote there with the bytes it wrote; called by {@link writeTrackedJournal} after a write that published nothing and by {@link claimJournal} after its link, so a file another program put at that name, or bytes it wrote into this run's file in place, stay.
+ * The name is read through the thread pool first (inode and hash, {@link inspectCopy}), then looked at once more synchronously right before the unlink, after an awaited look at it ({@link lookAheadAt}), so an in-place write after that read is seen by its size and times.
+ * Limits: a file put there, or a write into it, between the last look and the unlink is deleted; no Node primitive unlinks by inode or content. A stall that starts between the awaited look and the synchronous one holds the extension host's thread.
  * @param staged - The staged name and the version written there ({@link stageRecord}).
- * @returns Nothing; best effort: a staged name that cannot be deleted stays, and no build reads it.
+ * @returns Nothing; best effort: a staged name that cannot be read, holds other bytes or cannot be deleted stays, and no build reads it.
  * @example
- * await dropStagedRecord(staged) // '…/pending.json.rollback.<uuid>.tmp' is gone while it held this run's file
+ * await dropStagedRecord(staged) // '…/pending.json.rollback.<uuid>.tmp' is gone while it held this run's file and bytes
  */
 async function dropStagedRecord({
   staged,
   version,
 }: StagedRecord): Promise<void> {
-  const now = await lstatOrAbsent(staged).catch(() => undefined)
-  // Another program's file at the staged name, or none, is never deleted.
-  if (now?.ino !== version.ino) return
+  const now = await inspectCopy(staged).catch(() => undefined)
+  // Another program's file or bytes at the staged name, none, or a read that failed: nothing is deleted.
+  if (now?.ino !== version.ino || now.sha256 !== version.sha256) return
+  // A storage that already stalls holds this step here, not at the synchronous look below.
+  await lookAheadAt([staged])
+  if (!isStagedNameStill(staged, now)) return
   await unlink(staged).catch(() => undefined)
+}
+
+/**
+ * Tells, by one synchronous look, whether a staged name still shows the file as a read of it found it (inode, size and times); called by {@link assertStagedRecordStill} right before a rename or link publishes that file, and by {@link dropStagedRecord} right before its unlink, each after an awaited look at that name.
+ * @param staged - The staged name.
+ * @param read - That file as {@link inspectCopy} read it.
+ * @returns `true` when the name shows that file; `false` when it shows another file, size or times, nothing, or the look failed.
+ * @example
+ * isStagedNameStill(stagedPath, read) // => false once a sync tool wrote into the staged file after the read
+ */
+function isStagedNameStill(staged: string, read: InspectedCopy): boolean {
+  try {
+    return showsChecked(
+      lstatSync(staged, { bigint: true, throwIfNoEntry: false }),
+      read,
+    )
+  } catch {
+    return false
+  }
 }
 
 /** The receipt, when it covers this run's config path. */

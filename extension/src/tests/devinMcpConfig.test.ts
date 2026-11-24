@@ -8571,6 +8571,79 @@ test("A first setup that cannot write its completed record or its receipt and wh
   )
 })
 
+test("Bytes another program writes in place into the staged file of a take-back's first rollback record are neither published as that record nor deleted with the staged name, and the next refresh takes the entry out", async (context) => {
+  // Value: protects=a take-back's first rollback-record write deletes its staged name only while that file still holds the bytes it wrote, so another program's in-place write there (same inode) is neither linked as the rollback record nor deleted, and nothing moves (Cycle 0148 final-range review); fails_when=the staged file is gone or holds other bytes than that program wrote, anything stands at the journal name after the first refresh, the config changes, the setup's record loses its take-back mark, the first refresh says anything but the not-taken-out refusal, or the second refresh leaves the entry; no_claim=a real sync tool (seam.beforeRecordWrite rewrites the staged file in place once, at the take-back's first journal write), a write between the delete's last look and its unlink, what a later run does with the file at the staged name
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const journalPath = `${pendingPath}.rollback`
+  let moveAsideCount = 0
+  await writeManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterPublish: () => mkdirSync(receiptPath, { recursive: true }),
+    afterMoveAside: () => {
+      moveAsideCount += 1
+      // The first move-aside is the setup's own; the second is the rollback's.
+      if (moveAsideCount === 2) throw new Error('process ended')
+    },
+  }).catch(() => undefined)
+  rmSync(receiptPath, { recursive: true })
+  const editedText = '{"edited":"in place"}\n'
+  let stagedPath = ''
+  let stagedInode = 0
+
+  // Act
+  const firstError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    beforeRecordWrite: ({ path }) => {
+      if (path !== journalPath || stagedPath !== '') return
+      // The take-back's first journal write has flushed its bytes under a fresh name beside the journal: another program writes into that file in place.
+      const [stagedName] = readdirSync(join(storage, 'devin-mcp')).filter(
+        (name) =>
+          name.startsWith('pending.json.rollback.') && name.endsWith('.tmp'),
+      )
+      stagedPath = join(storage, 'devin-mcp', String(stagedName))
+      stagedInode = statSync(stagedPath).ino
+      writeFileSync(stagedPath, editedText)
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  // A name the first refresh left empty reads as 'absent', so the assertions below name it.
+  const stagedAfterFirst = existsSync(stagedPath)
+    ? readFileSync(stagedPath, 'utf8')
+    : 'absent'
+  const isSameStagedFile =
+    existsSync(stagedPath) && statSync(stagedPath).ino === stagedInode
+  const journalAfterFirst = existsSync(journalPath)
+    ? readFileSync(journalPath, 'utf8')
+    : 'absent'
+  const configAfterFirst = JSON.parse(readFileSync(configPath, 'utf8'))
+  const isTakeBackMarkedAfterFirst =
+    JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack === true
+  const second = await refreshManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, and could not take that entry out again, so remove the "codebook" entry from that file by hand if it is still there; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(stagedAfterFirst, editedText)
+  assert.equal(isSameStagedFile, true)
+  assert.equal(journalAfterFirst, 'absent')
+  assert.deepEqual(configAfterFirst, {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.equal(isTakeBackMarkedAfterFirst, true)
+  assert.equal(second.status, 'not-managed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' } },
+  })
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A file another program puts at the staged name of a take-back's first rollback record never becomes that record, so the take-back moves nothing and the next refresh takes the entry out", async (context) => {
   // Value: protects=a take-back's first rollback-record write links only the file it wrote and flushed itself, checked by inode and bytes right before the link, so a file another program put at that record's staged name never stands at the journal name while the take-back moves the config (Cycle 0148 ship review); fails_when=anything stands at the journal name after the first refresh, the file at the staged name is deleted or changed, the config changes, the setup's record loses its take-back mark, the first refresh says anything but the not-taken-out refusal, or the second refresh leaves the entry; no_claim=a real sync tool (seam.beforeRecordWrite renames another file over the staged name once, at the take-back's first journal write), a swap between the last look at the staged name and the link (its own test), what a later run does with the file at the staged name
   // Arrange
