@@ -14905,6 +14905,162 @@ test('A file another program swaps in at the staged name of a setup’s new conf
 })
 
 /**
+ * Loads the config module with an `openWithoutFollowing` that fails the first `failures` opens of the config with EMFILE once the setup read its staged config right before the link, the way a process out of file handles fails the read of the config right after its link; every other open is the real one.
+ * @param configPath - The config file.
+ * @param failures - How many opens of the config fail from then on.
+ * @returns The config module and how many opens failed.
+ * @example
+ * const { module, failed } = await loadWithFailingConfigReadsAfterLink(configPath, 1)
+ */
+async function loadWithFailingConfigReadsAfterLink(
+  configPath: string,
+  failures: number,
+): Promise<{
+  module: typeof DevinMcpConfigModule
+  failed: { count: number }
+}> {
+  const failed = { count: 0 }
+  let isStagedRead = false
+  const module = await loadWithWrappedOpen(async (path, openReal) => {
+    // The setup's last read of its staged config comes right before its link, so every open of the config after it is a read after the link.
+    if (basename(path).startsWith('mcp_config.json.') && path.endsWith('.tmp'))
+      isStagedRead = true
+    else if (path === configPath && isStagedRead && failed.count < failures) {
+      failed.count += 1
+      throw Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+    }
+    return openReal()
+  })
+  return { module, failed }
+}
+
+/**
+ * Gives the refusal of a setup that put its new config in place but could not read that config again right afterwards ({@link writeManagedDevinMcpEntry}).
+ * @param configPath - The config file.
+ * @param pendingPath - The setup's record of its change.
+ * @returns The refusal's message, without the sentence about a moved-aside copy.
+ * @example
+ * unreadAfterLinkRefusalText(configPath, pendingPath) // => 'Codebook put its new version of Devin Desktop's MCP config in place at … but could not read that file again right afterwards …'
+ */
+function unreadAfterLinkRefusalText(
+  configPath: string,
+  pendingPath: string,
+): string {
+  return `Codebook put its new version of Devin Desktop's MCP config in place at ${configPath} but could not read that file again right afterwards (for example for lack of file handles), so it did not record that change as finished and went no further; its record of that change at ${pendingPath} stays, and the next run reads it first; make that config readable by you if it is not, then run Codebook: Set Up AI Chat again.`
+}
+
+test('A setup that cannot read its new config again right after putting it in place for lack of file handles never hands your previous config over or blames another program, and the next run finishes the setup', async (context) => {
+  // Value: protects=a read of the config that fails right after the link (EMFILE, EIO) is told apart from another file or other bytes there: it is tried once more, and when it fails again the setup refuses with the could-not-read sentence, keeps its record of the change as it stood before the link and the moved-aside copy as one that record still tracks, writes no receipt and hands nothing over, so the next run settles that change on its own checks and the setup then stands (Cycle 0149 ship review, pass 2 red team on task 51's read after the link); fails_when=the refusal is the changed-file one or names the copy as handed over, the copy is gone or changed, the record is handed or gone, a receipt stands, the reads after the link are not two, or the next run does not end installed with the old servers and the entry; no_claim=a real EMFILE (the config module is loaded with an openWithoutFollowing that fails every open of the config with EMFILE once the setup read its staged config right before the link), the next run's steps in between (it takes the first setup's entry back out and sets it up again, or keeps it; only its end is asserted)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const configText = '{"mcpServers":{"alpha":{"command":"a"}}}\n'
+  await writeConfig(configPath, configText)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { module: failingRead, failed } =
+    await loadWithFailingConfigReadsAfterLink(configPath, Infinity)
+  let displacedPath = ''
+
+  // Act
+  const error = await failingRead
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterMoveAside: (path) => {
+        displacedPath = path
+      },
+    })
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // A name the setup left empty reads as 'absent', so the assertions below name it.
+  const copyAfter = existsSync(displacedPath)
+    ? readFileSync(displacedPath, 'utf8')
+    : 'absent'
+  const recordAfter = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+  const isReceiptAfter = existsSync(receiptPath)
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    `${unreadAfterLinkRefusalText(configPath, pendingPath)} Codebook kept a private copy of your previous Devin MCP config at ${displacedPath} (it holds the settings of your other servers), but Codebook still tracks that copy, so a later run of Codebook deletes it while it still holds exactly your previous config; copy it elsewhere to keep it.`,
+  )
+  assert.equal(failed.count, 2)
+  assert.equal(copyAfter, configText)
+  assert.equal(recordAfter.keptName, basename(displacedPath))
+  assert.equal(recordAfter.phase, undefined)
+  assert.equal(isReceiptAfter, false)
+  assert.equal(next.status, 'installed')
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.deepEqual(await leftoversBeside(configPath), [])
+})
+
+test('A setup whose first read of its new config right after putting it in place fails for lack of file handles reads it once more and installs', async (context) => {
+  // Value: protects=a read of the config that fails right after the link is tried once more before anything is decided, so one failed read under descriptor pressure never turns a publish that succeeded into a refusal (Cycle 0149 ship review, pass 2 red team on task 51's read after the link); fails_when=the setup is not installed, names a kept file, leaves a file beside the config or a record in Codebook's storage, or the config is not the old servers with the entry; no_claim=a real EMFILE (the config module is loaded with an openWithoutFollowing that fails the first open of the config with EMFILE once the setup read its staged config right before the link), a read that keeps failing (its own test)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(configPath, '{"mcpServers":{"alpha":{"command":"a"}}}\n')
+  const { module: failingOnce, failed } =
+    await loadWithFailingConfigReadsAfterLink(configPath, 1)
+
+  // Act
+  const result = await failingOnce.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  )
+
+  // Assert
+  assert.equal(failed.count, 1)
+  assert.equal(result.status, 'installed')
+  assert.equal(result.cleanupFailure, undefined)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { alpha: { command: 'a' }, codebook: ENTRY },
+  })
+  assert.deepEqual(await leftoversBeside(configPath), [])
+  assert.deepEqual(await readdir(join(storage, 'devin-mcp')), ['receipt.json'])
+})
+
+test('A setup that cannot read the config it creates again right after putting it in place for lack of file handles keeps its record of that change and blames no other program', async (context) => {
+  // Value: protects=a create whose read of the config fails twice right after its link refuses with the could-not-read sentence, not the changed-file one, keeps its record of the change as it stood before the link and writes no receipt, so the next run settles that change on its own checks (Cycle 0149 ship review, pass 2 red team on task 51's read after the link, the create route); fails_when=the refusal is any other, the record is gone or no longer the one written before the link, a receipt stands, or the reads after the link are not two; no_claim=a real EMFILE (the config module is loaded with an openWithoutFollowing that fails every open of the config with EMFILE once the setup read its staged config right before the link), what the next run does with that record
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  const receiptPath = join(storage, 'devin-mcp', 'receipt.json')
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  const { module: failingRead, failed } =
+    await loadWithFailingConfigReadsAfterLink(configPath, Infinity)
+
+  // Act
+  const error = await failingRead
+    .writeManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+  // A record the setup deleted reads as 'absent', so the assertions below name it.
+  const recordAfter = existsSync(pendingPath)
+    ? JSON.parse(readFileSync(pendingPath, 'utf8'))
+    : 'absent'
+
+  // Assert
+  assert.equal(
+    error instanceof Error ? error.message : error,
+    unreadAfterLinkRefusalText(configPath, pendingPath),
+  )
+  assert.equal(failed.count, 2)
+  assert.equal(recordAfter.phase, undefined)
+  assert.equal(typeof recordAfter.stagedName, 'string')
+  assert.equal(existsSync(receiptPath), false)
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    mcpServers: { codebook: ENTRY },
+  })
+})
+
+/**
  * Gives the sentence that names the staged name of a setup's new config which the setup kept because it holds changes written into that config after its link while another file, or none, stands at the config path ({@link writeManagedDevinMcpEntry}'s `cleanupFailure`).
  * @param stagedPath - The staged name.
  * @returns The sentence.
