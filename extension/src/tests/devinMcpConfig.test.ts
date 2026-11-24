@@ -6250,6 +6250,105 @@ test("A setup record a backup restores after a legacy rollback journal was found
   })
 })
 
+test("A file that is no record a backup puts at the setup record's name after a legacy rollback journal was found to be another setup's keeps both records and that file, and is never called a record to remove", async (context) => {
+  // Value: protects=a run that holds a legacy journal compares the bytes and the inode at the setup record's name with the version its decision read before it parses them, so another file a backup put there, whatever it holds, ends the refresh with the refusal that keeps both records as they stand, never with advice to remove that file (Cycle 0148 ship review); fails_when=the refresh says anything but the changed-record sentence, changes that file or the journal, or writes a receipt; no_claim=a real backup tool (seam.afterStat rewrites the config in place once, at the read that decides the journal, and renames a file that is no JSON over pending.json once, at the read of it that follows, whose open handle still reads the record the journal is decided on), what the next run says about that file
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const journalText = readFileSync(journalPath, 'utf8')
+  const otherFileText = 'notes a sync tool keeps here\n'
+  const backupPath = join(home, 'file-from-backup.txt')
+  let hasEmptied = false
+  let hasRestoredFile = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      if (path === configPath && !hasEmptied) {
+        hasEmptied = true
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+        return
+      }
+      // A backup puts another file at the setup record's name while the read the journal is decided on still reads the record it opened.
+      if (path === pendingPath && hasEmptied && !hasRestoredFile) {
+        hasRestoredFile = true
+        writeFileSync(backupPath, otherFileText)
+        renameSync(backupPath, pendingPath)
+      }
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestoredFile, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${pendingPath}, ${journalPath}), so the next run decides on them again; wait until that tool is done, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(readFileSync(pendingPath, 'utf8'), otherFileText)
+  assert.equal(readFileSync(journalPath, 'utf8'), journalText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A link a sync tool puts at the setup record's name after a legacy rollback journal was found to be another setup's keeps both records and that link, and is never called a record to remove", async (context) => {
+  // Value: protects=a run that holds a legacy journal and cannot read the setup record's name as a record any more ends the refresh with the refusal that keeps both records as they stand, never with advice to remove what stands there, and follows no link (Cycle 0148 ship review); fails_when=the refresh says anything but the changed-record sentence, changes the link, the file it points to or the journal, or writes a receipt; no_claim=a real sync tool (seam.afterStat rewrites the config in place once, at the read that decides the journal, and renames a link to another file over pending.json once, at the read of it that follows, whose open handle still reads the record the journal is decided on), what the next run says about that link
+  if (process.platform === 'win32') {
+    context.skip('symlinks need privileges on Windows')
+    return
+  }
+  // Arrange
+  const { home, storage, configPath, receiptPath, pendingPath, journalPath } =
+    await leaveLegacyCutShortSetup(context, (journal, { keptPath }) => {
+      appendFileSync(keptPath, '\n')
+      journal.keptSha256 = sha256(readFileSync(keptPath, 'utf8'))
+    })
+  const journalText = readFileSync(journalPath, 'utf8')
+  const linkedPath = join(home, 'synced-pending.json')
+  const linkedText = readFileSync(pendingPath, 'utf8')
+  writeFileSync(linkedPath, linkedText)
+  const backupLinkPath = join(home, 'link-from-sync.json')
+  let hasEmptied = false
+  let hasRestoredLink = false
+
+  // Act
+  const refreshError = await refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+    afterStat: (path) => {
+      // The read that decides the journal finds the restored config without the entry, and so do the later reads.
+      if (path === configPath && !hasEmptied) {
+        hasEmptied = true
+        writeFileSync(configPath, '{"mcpServers":{}}\n')
+        return
+      }
+      // A sync tool puts a link at the setup record's name while the read the journal is decided on still reads the record it opened.
+      if (path === pendingPath && hasEmptied && !hasRestoredLink) {
+        hasRestoredLink = true
+        symlinkSync(linkedPath, backupLinkPath)
+        renameSync(backupLinkPath, pendingPath)
+      }
+    },
+  }).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(hasRestoredLink, true)
+  assert.equal(
+    refreshError instanceof Error ? refreshError.message : refreshError,
+    `Codebook found a record of a setup that ended early and a record of its rollback, but the record of that setup at ${pendingPath} changed while Codebook was settling it (a backup or sync tool may have put another one there), so Codebook stopped before it adopted that setup or deleted the record of its rollback. Codebook kept both records as they stand now (${pendingPath}, ${journalPath}), so the next run decides on them again; wait until that tool is done, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(lstatSync(pendingPath).isSymbolicLink(), true)
+  assert.equal(readFileSync(linkedPath, 'utf8'), linkedText)
+  assert.equal(readFileSync(journalPath, 'utf8'), journalText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
 test("A setup record a sync tool moves away after a legacy rollback journal was found to be another setup's keeps that journal, so the record it puts back before the next refresh is taken back, not installed", async (context) => {
   // Value: protects=a held legacy journal outlives a setup record that disappears before the run's own read of it, so the next run still decides that record together with the journal (Cycle 0148 task 2); fails_when=the first refresh resolves, deletes or changes the journal or writes a receipt, or the second refresh adopts the record or leaves the entry; no_claim=a real sync tool (seam.afterStat rewrites the config in place once, at the read that decides the journal, and renames pending.json away once, at the read of it that follows, whose open handle still reads the record the journal is decided on; the test writes another setup record back before the second refresh), a record put back after the journal's retirement
   // Arrange

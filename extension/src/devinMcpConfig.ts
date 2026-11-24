@@ -5855,13 +5855,13 @@ function assertHeldJournalStill(
  * A backup or sync tool may put another record at that name, or move it away, after the decision read it: the run then stops instead of adopting or ending a record the journal was never decided on, and the held journal stays for the next run. From here on the run tracks the version it read ({@link Context.journalVersion}), so every later write or delete of that record goes on only while its name still shows what this run read or last wrote ({@link writeRecord}, {@link removeRecord}), and a write never puts that record back at a name found empty (`refusesEmptyName`).
  * @param context - The run.
  * @param held - The held journal; undefined when none is held.
- * @param version - The version of `pending.json` that {@link inspect}'s read saw; undefined when the name was empty.
+ * @param version - The version of `pending.json` that {@link inspect}'s read saw, which {@link readPublishRecord} found to be the one the decision read; undefined when the name was empty.
  * @returns
  * - `context` itself when no journal is held
  * - the run tracking that version as its publish record's ({@link Context.journalVersion}) otherwise
- * @throws The `record-gone` {@link unmatchedJournalRefusal} when the record is gone, the `record-reread` one when it has another inode or other bytes than the decision read; nothing is written or retired then, so the next run decides on both records again.
+ * @throws The `record-gone` {@link unmatchedJournalRefusal} when the record is gone; nothing is written or retired then, so the next run decides on both records again.
  * @example
- * const run = heldPublishContext(context, held, read?.version) // throws once a backup put another setup record at pending.json after the journal was decided
+ * const run = heldPublishContext(context, held, read?.version) // throws once a sync tool moved pending.json away after the journal was decided
  */
 function heldPublishContext(
   context: Context,
@@ -5871,14 +5871,41 @@ function heldPublishContext(
   if (!held) return context
   if (!version)
     throw unmatchedJournalRefusal(context, 'record-gone', held.legacy)
-  const decided = held.publishVersion
-  // Another inode or other bytes: not the record the journal was decided on.
-  if (version.ino !== decided.ino || version.sha256 !== decided.sha256)
-    throw unmatchedJournalRefusal(context, 'record-reread', held.legacy)
   // An empty name later means this record disappeared: it is never written back there.
   return {
     ...context,
     journalVersion: { current: version, refusesEmptyName: true },
+  }
+}
+
+/**
+ * Reads the publish record for {@link inspect}. Beside a held legacy rollback journal ({@link HeldJournal}) the bytes and the inode at that name are compared with the version that journal's decision read before they are parsed, so another file a backup or sync tool put there meanwhile, whatever it holds, ends the run with the refusal that keeps both records as they stand, never with advice to remove that file.
+ * @param context - The run; its seam is called as for every record read ({@link readRecordFile}).
+ * @param held - The held journal; undefined when none is held.
+ * @returns The record and its version ({@link readVersionedRecord}); undefined when the name is empty, which {@link heldPublishContext} words beside a held journal.
+ * @throws What {@link readVersionedRecord} throws when no journal is held. Beside a held journal the `record-reread` {@link unmatchedJournalRefusal} when the name shows another inode or other bytes than the decision read, or cannot be read as a record now (a link, a folder, a file too large or a failed read): nothing is parsed, written or retired then, so the next run decides on both records again.
+ * @example
+ * const read = await readPublishRecord(context, held) // throws the record-reread refusal once a backup put a file that is no record at pending.json
+ */
+async function readPublishRecord(
+  context: Context,
+  held: HeldJournal | undefined,
+): Promise<{ record: Pending; version: RecordVersion } | undefined> {
+  const { pendingPath, retry, seam } = context
+  if (!held) return readVersionedRecord(pendingPath, pendingSchema, retry, seam)
+  const read = await readRecordFile(pendingPath, retry, seam).catch(() => {
+    // The decision read a record at this name: one that cannot be read as a record now is another file, and both records stay as they stand.
+    throw unmatchedJournalRefusal(context, 'record-reread', held.legacy)
+  })
+  if (!read) return undefined
+  const version = { ino: read.ino, sha256: bytesSha256(read.bytes) }
+  const decided = held.publishVersion
+  // Another inode or other bytes: not the record the journal was decided on, whatever they hold.
+  if (version.ino !== decided.ino || version.sha256 !== decided.sha256)
+    throw unmatchedJournalRefusal(context, 'record-reread', held.legacy)
+  return {
+    record: parseRecord(pendingPath, pendingSchema, retry, read.bytes),
+    version,
   }
 }
 
@@ -6002,7 +6029,7 @@ function publishRecordConflict(
 type JournalBelonging =
   'belongs' | 'another' | 'another-config' | 'unmatched' | 'unread' | 'invalid'
 
-/** Why a rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, `reread` when the config changed between the read that decided an older build's journal and the run's own look ({@link assertHeldJournalStill}), `record-reread` when the publish record a decision read changed before the run adopted, marked or ended it ({@link markTakeBackOwed}, {@link heldPublishContext}, {@link publishRecordConflict}), or `record-gone` when it disappeared before a held journal could go ({@link heldPublishContext}, {@link publishLeftCheck}). */
+/** Why a rollback journal is refused and kept with the publish record ({@link unmatchedJournalRefusal}): one of {@link legacyBelonging}'s refusing answers, `reread` when the config changed between the read that decided an older build's journal and the run's own look ({@link assertHeldJournalStill}), `record-reread` when the publish record a decision read changed before the run adopted, marked or ended it ({@link markTakeBackOwed}, {@link readPublishRecord}, {@link publishRecordConflict}), or `record-gone` when it disappeared before a held journal could go ({@link heldPublishContext}, {@link publishLeftCheck}). */
 type UnmatchedReason =
   | Extract<JournalBelonging, 'unmatched' | 'unread' | 'invalid'>
   | 'reread'
@@ -6140,7 +6167,7 @@ function legacyBelonging(
 
 /**
  * Builds the refusal for a rollback journal of an older build that {@link legacyBelonging} cannot match to the publish record (`unmatched`), or cannot match yet because the config that decides could not be read (`unread`), is no valid JSON config yet (`invalid`) or changed between the read that decided the journal and the run's own look (`reread`); thrown by {@link markTakeBackOwed} and {@link assertHeldJournalStill} before any record is written or retired, so both records stay: the learner decides about the entry, or the next run reads the config again.
- * It also refuses a run whose publish record changed (`record-reread`) or disappeared (`record-gone`) after a decision on a journal read it, before that record was adopted, marked or ended and before the journal is deleted ({@link markTakeBackOwed}, {@link heldPublishContext}, {@link publishLeftCheck}, {@link assertPublishStillLeft}); the journal may be of either build then.
+ * It also refuses a run whose publish record changed (`record-reread`) or disappeared (`record-gone`) after a decision on a journal read it, before that record was adopted, marked or ended and before the journal is deleted ({@link markTakeBackOwed}, {@link readPublishRecord}, {@link heldPublishContext}, {@link publishLeftCheck}, {@link assertPublishStillLeft}); the journal may be of either build then.
  * The journal's recovery already ran (a displaced file may be back at the config name), so the sentence claims only what stays: the entry or the file's bytes, both records, and a leftover that recovery could not settle, which is named here because this refusal comes before its own ({@link unmatchedLeftoverSentence}).
  * @param context - The run; its config path, publish record path and retry are named, and the journal path beside the record ({@link rollbackContextOf}).
  * @param belonging - Which of the three answers {@link legacyBelonging} gave, `reread`, `record-reread` or `record-gone`.
@@ -6512,19 +6539,14 @@ type Inspection = {
  * Every leftover is settled on its own; an entry an interrupted run published is adopted even when a leftover cannot be settled, and the record keeps only the leftovers that stay. A leftover that stays is named in a refusal after that; a refusal of the steps after recovery names it too when it was handed over in this run or its own text names both files ({@link mergeWithLeftover}).
  * @param context - The run.
  * @returns The {@link Inspection}.
- * @throws What {@link recoverLeftovers} and {@link settleAfterRecovery} throw, a refusal naming the first leftover that could not be settled, and what {@link heldPublishContext} throws for a publish record that is gone or is no longer the one a held legacy journal was decided on.
+ * @throws What {@link recoverLeftovers} and {@link settleAfterRecovery} throw, a refusal naming the first leftover that could not be settled, and what {@link readPublishRecord} and {@link heldPublishContext} throw for a publish record that is gone or is no longer the one a held legacy journal was decided on.
  * @example
  * const { look, current, receipt } = await inspect(context)
  */
 async function inspect(context: Context): Promise<Inspection> {
   // A rollback cut short comes first: its original may be the only copy of the learner's other servers. A legacy journal decided as another publish's is held until the publish record is settled.
   const held = await settleRollbackJournal(context)
-  const read = await readVersionedRecord(
-    context.pendingPath,
-    pendingSchema,
-    context.retry,
-    context.seam,
-  )
+  const read = await readPublishRecord(context, held)
   // A held journal was decided on one read of the publish record: the run goes on only with that version, and every later write or delete of it checks its name.
   const run = heldPublishContext(context, held, read?.version)
   const pending = read?.record
