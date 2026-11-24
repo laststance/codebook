@@ -68,6 +68,31 @@ const RELEASED_PUT_BACK_FIELDS = z.object({
   retiresReceipt: z.boolean().optional(),
   notLinked: z.literal(true).optional(),
 })
+/** The fields of the publish record that each released reader parses before it acts on an old record's private name, read from its pendingSchema: 0.2.142.0 at 583d70e7 (extension/src/devinMcpConfig.ts:118, no notLinked), 0.2.143.0 at 76f0a07c (:119, :121) and 0.2.144.0 at 2a381de0 (:119, :121). A record that fails a release's fields makes every run of that release refuse it as unreadable before it puts back or deletes anything on its word. */
+const RELEASED_RECORD_FIELDS = {
+  '0.2.142.0': z.object({ retiresReceipt: z.boolean().optional() }),
+  '0.2.143.0': z.object({
+    retiresReceipt: z.boolean().optional(),
+    notLinked: z.literal(true).optional(),
+  }),
+  '0.2.144.0': z.object({
+    retiresReceipt: z.union([z.boolean(), z.literal('foreign')]).optional(),
+    notLinked: z.literal(true).optional(),
+  }),
+}
+
+/**
+ * Names the released versions whose reader would accept a publish record ({@link RELEASED_RECORD_FIELDS}), so a test can require that none of them acts on it.
+ * @param record - The publish record as parsed from its file.
+ * @returns The versions whose fields it passes, in release order.
+ * @example
+ * releasesReading({ retiresReceipt: true }) // => ['0.2.142.0', '0.2.143.0', '0.2.144.0']
+ */
+function releasesReading(record: unknown): string[] {
+  return Object.entries(RELEASED_RECORD_FIELDS)
+    .filter(([, fields]) => fields.safeParse(record).success)
+    .map(([release]) => release)
+}
 const OTHER_ENTRY: DevinMcpEntry = {
   command: '/opt/node',
   args: ['/ext-2/dist/devinMcpBridge.js', '/storage/agent'],
@@ -15165,6 +15190,70 @@ test("A first setup never deletes another installation's record that a sync tool
   )
 })
 
+test('A first setup that moves its old record aside writes its publish record, from its first write on, in a shape Codebook 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, and a full disk at every later write of that record leaves that shape', async (context) => {
+  // Value: protects=no publish record this version writes before or after it moves the old record aside can lead a window of 0.2.142.0, 0.2.143.0 or 0.2.144.0 (one not reloaded after the update) to put the file at the old record's private name back at receipt.json or delete it, also when every later write of that record fails (Cycle 0149 task 4, D5 on devinMcpConfig.ts:119), and this version still reads that record; fails_when=the record on disk at the config's link or after the setup passes the fields of any of the three releases, the setup answers anything but installed, the next setup answers anything but current, or the file another program put at the private name changes or is gone; no_claim=running those releases (the test checks the records against their field rules, RELEASED_RECORD_FIELDS, read from their code), a real full disk (seam.beforeRecordWrite fails every write of pending.json after its first with ENOSPC), and a real sync tool (the config module is loaded with a link that, for the config's link, notes the record on disk and puts another program's file at the private name at another inode, then links)
+  // Arrange
+  const { home, storage, configPath } = await arrangeMovedAwayConfig(context)
+  const recordsFolder = join(storage, 'devin-mcp')
+  const pendingPath = join(recordsFolder, 'pending.json')
+  const otherProgramText = '{"note":"a settings file of another program"}'
+  let retiredName = 'no private name'
+  let recordAtLink: unknown = 'no link'
+  const swappingDuringLink = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          if (to === configPath) {
+            // The record on disk is the setup's first write; another program's file takes the old record's private name.
+            recordAtLink = JSON.parse(readFileSync(pendingPath, 'utf8'))
+            retiredName =
+              readdirSync(recordsFolder).find((name) =>
+                name.endsWith('.retired'),
+              ) ?? retiredName
+            swapFile(join(recordsFolder, retiredName), otherProgramText)
+          }
+          return link(from, to)
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const result = await swappingDuringLink.writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+    {
+      beforeRecordWrite: ({ path }) => {
+        // Every write of the publish record after its first meets a full disk.
+        if (path === pendingPath && recordAtLink !== 'no link')
+          throw noSpaceLeft()
+      },
+    },
+  )
+  const recordAfterSetup = await readRecordFile(storage, 'pending.json')
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home)
+
+  // Assert
+  assert.equal(result.status, 'installed')
+  assert.deepEqual(releasesReading(recordAtLink), [])
+  assert.deepEqual(recordAfterSetup, recordAtLink)
+  assert.deepEqual(releasesReading(recordAfterSetup), [])
+  assert.equal(next.status, 'current')
+  assert.equal(
+    readFileSync(join(recordsFolder, retiredName), 'utf8'),
+    otherProgramText,
+  )
+})
+
 test("A first setup that cannot write its own record after another program's file took its old record's private name keeps the record that leads there when it takes its entry out, and the next setup still names that file", async (context) => {
   // Value: protects=a first setup whose config stood while the old record's private name no longer showed the record it moved there (another program's file), and whose own record then could not be written, keeps its publish record after it took its entry out again, as a setup whose own record was written does, so the next run still reaches that private name and names that file instead of leaving it there unnamed (Cycle 0148 final-range review), and that publish record is in the shape 0.2.142.0 and 0.2.143.0 refuse to read (retiresReceipt in this version's form, which names the old record's bytes), so an older window, whose put-back of a setup with nothing of it left in the config links whatever stands at that name, never links that unread file into receipt.json (Cycle 0148 task 34); fails_when=pending.json is gone after the setup or lacks that form, 0.2.143.0's field rules accept it, the file at the private name changes or is gone, the setup answers another sentence, or the next setup answers anything but the refusal that names that file; no_claim=0.2.143.0 itself (the test checks the record against that build's field rules, RELEASED_PUT_BACK_FIELDS), a real sync tool (the config module is loaded with a link that, for the config's link, first puts another program's file at the private name at another inode, then links), and a real full disk (seam.beforeRecordWrite fails the write of receipt.json with ENOSPC)
   // Arrange
@@ -16161,6 +16250,48 @@ test("A later setup never puts back the file an older version's publish record l
     setupAnswer,
     `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
   )
+  assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
+  assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test("A later setup that keeps the file Codebook 0.2.144.0's kept record leads to rewrites that record in a shape 0.2.142.0, 0.2.143.0 and 0.2.144.0 all refuse, so no window of those versions puts that file back", async (context) => {
+  // Value: protects=a publish record 0.2.144.0 kept as foreign (no bytes of the old record named, and 0.2.144.0 itself puts back whatever record of this config stands at the private name on its word) is rewritten by this version, which keeps that file, in a shape all three released readers refuse, so a window of 0.2.144.0 not reloaded after the update never links that file into receipt.json (Cycle 0149 task 4); fails_when=the record left passes the fields of any of the three releases, it changes in any other way than that shape, a file appears at receipt.json, the file at the private name changes or is gone, or the refusal is another sentence; no_claim=running those releases (the test checks the record against their field rules, RELEASED_RECORD_FIELDS), 0.2.144.0's record (the test writes it by hand: this version's record with retiresReceipt foreign and the mark that nothing was linked), and why the first put-back failed (a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    pendingPath,
+    retiredName,
+    retiredPath,
+    retiredText,
+  } = await arrangeFailedPutBack(context)
+  const keptRecord = {
+    ...(await readRecordFile(storage, 'pending.json')),
+    retiresReceipt: 'foreign',
+  }
+  writeFileSync(pendingPath, JSON.stringify(keptRecord))
+
+  // Act
+  const setupAnswer = await writeManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  const recordAfterRefusal = await readRecordFile(storage, 'pending.json')
+
+  // Assert
+  assert.equal(
+    setupAnswer,
+    `Codebook did not put back the file at ${retiredPath}, where it had moved what stood at ${receiptPath} for a setup, because Codebook cannot tell that file is the record of Devin Desktop's MCP config at ${configPath} that it moved there (another program may have put it there); it kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again. Unless a record of Codebook's stands at ${receiptPath} by then, that run takes a "codebook" entry that the config holds for one of your own and leaves it as it is.`,
+  )
+  assert.deepEqual(recordAfterRefusal, { ...keptRecord, retiresReceipt: {} })
+  assert.deepEqual(releasesReading(recordAfterRefusal), [])
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
   assert.equal(readFileSync(retiredPath, 'utf8'), retiredText)
   assert.equal(existsSync(receiptPath), false)
@@ -18254,7 +18385,7 @@ test("A refresh beside a held legacy rollback journal never puts a first setup's
 })
 
 test("A setup whose put-back finds another file at the old record's private name right after the record went back keeps that file and its publish record and names both", async (context) => {
-  // Value: protects=after a put-back's link stood, the old record's private name goes only while it still shows the file that was linked, so a file a sync tool puts there right after the link is never deleted unread (Cycle 0148 task 4); fails_when=the swapped-in file or the publish record is gone, pending.json lacks the mark that nothing was linked, receipt.json does not hold the old record, or the refusal names no file that stays; no_claim=a real sync tool (the config module is loaded with a link that, for the put-back's link, links and then saves another entry's record at the private name at another inode; seam.afterCheck moves the config back right before the config's link), and a file put there between the last look and the unlink (residual a; no Node primitive closes it)
+  // Value: protects=after a put-back's link stood, the old record's private name goes only while it still shows the file that was linked, so a file a sync tool puts there right after the link is never deleted unread (Cycle 0148 task 4), and the refusal names the old record that went back to receipt.json and that other file apart, never calling that file Codebook's old record (Cycle 0149 task 4, D5 on devinMcpConfig.ts:4959); fails_when=the swapped-in file or the publish record is gone, pending.json lacks the mark that nothing was linked, receipt.json does not hold the old record's own bytes, or the refusal is another sentence (the could-not-delete sentence that calls that file its own old record included); no_claim=a real sync tool (the config module is loaded with a link that, for the put-back's link, links and then saves another entry's record at the private name at another inode; seam.afterCheck moves the config back right before the config's link), and a file put there between the last look and the unlink (residual a; no Node primitive closes it)
   // Arrange
   const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
     await arrangeMovedAwayConfig(context)
@@ -18306,7 +18437,7 @@ test("A setup whose put-back finds another file at the old record's private name
   // Assert
   assert.equal(
     setupError instanceof Error ? setupError.message : setupError,
-    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook could not delete ${retiredPath}, its own old record of a setup whose entry is gone (the delete failed, or Codebook could not tell that this file is still the record it read), so it kept that file and the publish record at ${pendingPath}, and the next run looks at that file again; make the folder that holds them writable by you if it is not, then run Codebook: Set Up AI Chat again.`,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put its own old record of a setup whose entry is gone back at ${receiptPath}, but right after that another file took ${retiredPath}, which Codebook did not verify as its record of Devin Desktop's MCP config at ${configPath} (another program may have put it there); Codebook kept that file and its publish record at ${pendingPath}, so move that file to another folder, then run Codebook: Set Up AI Chat again.`,
   )
   assert.deepEqual(recordsAfterRefusal, [
     'pending.json',
@@ -18314,7 +18445,7 @@ test("A setup whose put-back finds another file at the old record's private name
     basename(retiredPath),
   ])
   assert.deepEqual(privateFileAfterRefusal, otherEntryReceipt)
-  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+  assert.equal(readFileSync(receiptPath, 'utf8'), JSON.stringify(receiptBefore))
   assert.equal(markAfterRefusal, true)
 })
 
@@ -21234,7 +21365,7 @@ test("A setup that keeps another program's file at the old record's private name
 })
 
 test("A setup that keeps another program's file at the old record's private name never writes over a setup record a backup puts back while Codebook rewrites that record for older versions, and the next setup rewrites the record it reads then", async (context) => {
-  // Value: protects=the later run's rewrite of an older version's publish record (retiresReceipt true, as 0.2.143.0 writes it) that leads to a private name holding another program's file, in the shape older versions refuse, replaces only the version of that record it read, so a record a backup or sync tool renames over pending.json while the rewrite is flushed stays as that program left it, byte for byte and at its own inode, and the run still refuses with the same sentence; the record the backup put back still leads 0.2.142.0 and 0.2.143.0 to that file, and the next setup of this version, which reads that record, rewrites it in the shape they refuse while the file stays (Cycle 0148 ship review, final-range review); fails_when=pending.json holds another record or another inode than the one the backup put there after the first setup, the next setup leaves a record 0.2.143.0's field rules accept or changes it in any other way than that shape, the file at the private name changes or is gone, a file appears at receipt.json, or either refusal is another sentence; no_claim=0.2.143.0 itself (the test writes its record by hand in that build's shape and checks the rewrite against its field rules), a real backup tool (seam.beforeRecordWrite renames a copy of the record as it stood before that run over pending.json once, at the rewrite whose bytes were just flushed), what a window of 0.2.142.0 or 0.2.143.0 does with the record the backup put back before this version's next run (it may put that file back: that record is another program's, which this version never writes over unread, and a backup may put such a record back at any later time too), a record put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode), and why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
+  // Value: protects=the later run's rewrite of an older version's publish record (retiresReceipt true, as 0.2.143.0 writes it) that leads to a private name holding another program's file, in the shape older versions refuse, replaces only the version of that record it read, so a record a backup or sync tool renames over pending.json while the rewrite is flushed stays as that program left it, byte for byte and at its own inode, and the run still refuses with the same sentence; the record the backup put back still leads 0.2.142.0 and 0.2.143.0 to that file, and the next setup of this version, which reads that record, rewrites it in the shape they refuse while the file stays (Cycle 0148 ship review, final-range review); fails_when=pending.json holds another record or another inode than the one the backup put there after the first setup, the next setup leaves a record the field rules of 0.2.142.0, 0.2.143.0 or 0.2.144.0 accept or changes it in any other way than that shape (retiresReceipt as an object without bytes), the file at the private name changes or is gone, a file appears at receipt.json, or either refusal is another sentence; no_claim=0.2.143.0 itself (the test writes its record by hand in that build's shape and checks the rewrite against its field rules), a real backup tool (seam.beforeRecordWrite renames a copy of the record as it stood before that run over pending.json once, at the rewrite whose bytes were just flushed), what a window of 0.2.142.0 or 0.2.143.0 does with the record the backup put back before this version's next run (it may put that file back: that record is another program's, which this version never writes over unread, and a backup may put such a record back at any later time too), a record put there between the last look and the rename (no Node primitive renames over a name only while it shows an inode), and why the first put-back failed (the config module is loaded with a link that fails with EIO whenever its target is receipt.json, and seam.afterCheck moves the config back right before the config's link)
   // Arrange
   const { home, storage, configPath, receiptPath, moveBack } =
     await arrangeMovedAwayConfig(context)
@@ -21321,12 +21452,9 @@ test("A setup that keeps another program's file at the old record's private name
   )
   assert.deepEqual(recordAfterNext, {
     ...JSON.parse(pendingBefore),
-    retiresReceipt: 'foreign',
+    retiresReceipt: {},
   })
-  assert.equal(
-    RELEASED_PUT_BACK_FIELDS.safeParse(recordAfterNext).success,
-    false,
-  )
+  assert.deepEqual(releasesReading(recordAfterNext), [])
   assert.deepEqual(await recordsIn(storage), ['pending.json', retiredName])
   assert.equal(readFileSync(retiredPath, 'utf8'), otherProgramText)
 })
