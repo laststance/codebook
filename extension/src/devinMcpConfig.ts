@@ -4941,14 +4941,14 @@ async function dropLinkedPrivateName(
 
 /**
  * Ends a put-back whose link stood while `receipt.json` shows another file than the record that was read at the private name, so no unverified file stays at the live receipt name; called only by {@link dropLinkedPrivateName}, right after its looks (no Node primitive links by inode, so another program may have replaced the file at the private name between the last look and the link).
- * While the private name still shows the record that was read, the link put that record at `receipt.json` and another program replaced `receipt.json` after it: the private name is that record's last name, and nothing is undone. While both names show one file, that file is what the link put at `receipt.json`, and `receipt.json` goes again, so that file stays only at the private name as before the link. The synchronous looks come right after {@link dropLinkedPrivateName}'s look through the thread pool, the private name first and `receipt.json` last, right before its unlink. Limit: a file put at `receipt.json` between that last look and the unlink is not seen; no Node primitive unlinks by inode.
+ * While the private name still shows the record that was read, the link put that record at `receipt.json` and another program replaced `receipt.json` after it: the private name is that record's last name, and nothing is undone. While both names show one file other than the one that was read, that file is what the link put at `receipt.json`, and `receipt.json` goes again, so that file stays only at the private name as before the link. While both names show the file that was read, changed in place since (its bytes or only its times), the link put that very file at `receipt.json`: nothing is undone, so `receipt.json`, the only name the bridge reads, never goes on such a change. The synchronous looks come right after {@link dropLinkedPrivateName}'s look through the thread pool, the private name first and `receipt.json` last, right before its unlink. Limit: a file put at `receipt.json` between that last look and the unlink is not seen; no Node primitive unlinks by inode.
  * @param context - The run; its seam is called around the looks ({@link nameStateNow}).
  * @param retiredPath - The private name of the old record.
  * @param failure - What made the setup's put-back necessary; undefined at a later run.
  * @param linkedFile - The record that was read at the private name before the link: its inode, size and modification time, and the change time of the look before {@link dropLinkedPrivateName}'s read after the link when that read found that record in that file at `receipt.json`.
  * @param mark - What the publish record tells about the setup's link ({@link PutBackOptions.mark}).
  * @returns Never: the put-back did not put that record back.
- * @throws An {@link UnrestoredReceiptError}, which keeps the publish record: with `undeleted` while the private name still shows the record that was read; with `moved-changed` once `receipt.json` went again and the file the link put there stays only at the private name; with `linked-unverified` when the looks no longer show one file at both names, or that delete failed, so the file at `receipt.json` is unverified and both names stay.
+ * @throws An {@link UnrestoredReceiptError}, which keeps the publish record: with `undeleted` while the private name still shows the record that was read; with `moved-changed` once `receipt.json` went again and the file the link put there stays only at the private name; with `linked-unverified` when the looks no longer show one file at both names, that file is the one that was read, changed in place since, or that delete failed, so the file at `receipt.json` is unverified and both names stay.
  * @example
  * await undoUnverifiedLink(context, retiredPath, linkError, linkedFile, 'marked') // throws '… because the file at … changed while Codebook read it. …' once receipt.json went again
  */
@@ -4975,9 +4975,10 @@ async function undoUnverifiedLink(
   if (nameStateNow(context, retiredPath, linkedFile) === 'still')
     throw unrestored('undeleted')
   const atPrivate = privateNameNow(retiredPath)
-  // receipt.json last, right before its unlink: it must still be a second name of the file at the private name, which the link made.
+  // receipt.json last, right before its unlink: it must still be a second name of the file at the private name, which the link made. The file that was read, changed in place since, is what the link put there: receipt.json, the name the bridge reads, stays beside the private name.
   const isLinkedHere =
     atPrivate !== undefined &&
+    atPrivate.ino !== linkedFile.ino &&
     nameStateNow(context, context.receiptPath, {
       ino: atPrivate.ino,
       size: atPrivate.size,

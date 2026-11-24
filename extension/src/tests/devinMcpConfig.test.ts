@@ -14838,6 +14838,86 @@ test("A setup whose put-back links another program's file to receipt.json, becau
   )
 })
 
+test("A setup keeps receipt.json, the old record's private file and its publish record when only the modification time of the record that went back changes right after the put-back, and the next setup finds that entry current", async (context) => {
+  // Value: protects=a put-back whose link put the very file Codebook read at the private name at receipt.json never deletes receipt.json when that file changes in place afterwards, even only in its times: both names still show that inode, so receipt.json stays for the bridge, which never reads the private name, and the next run settles both names (Cycle 0148 task 45); fails_when=receipt.json or the private file is gone or holds another record than the old one, pending.json is gone or lacks the mark that nothing was linked, the refusal is another sentence, or the next setup answers anything but current with the old record as the only record; no_claim=a real sync tool (the config module is loaded with a link that notes the put-back's link; seam.beforeLeftoverCheck moves the modification time of receipt.json to a whole second years back once, at the first last look after that link; seam.afterCheck moves the config back right before the config's link), and a change in the syscall gap after the last look (no Node primitive closes it)
+  // Arrange
+  const { home, storage, configPath, receiptPath, receiptBefore, moveBack } =
+    await arrangeMovedAwayConfig(context)
+  const pendingPath = join(storage, 'devin-mcp', 'pending.json')
+  let putBackFrom: string | undefined
+  let hasTouched = false
+  const notingPutBack = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link: async (from: string, to: string) => {
+          await link(from, to)
+          // The put-back's link stood: the next last look at receipt.json finds its times moved.
+          if (to === receiptPath && putBackFrom === undefined)
+            putBackFrom = from
+        },
+        lstat,
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const setupError = await notingPutBack
+    .writeManagedDevinMcpEntry(storage, ENTRY, home, {
+      afterCheck: moveBack,
+      beforeLeftoverCheck: (path) => {
+        if (path !== receiptPath || putBackFrom === undefined || hasTouched)
+          return
+        // A sync tool changes only the modification time of the record that went back.
+        hasTouched = true
+        utimesSync(receiptPath, 1_700_000_000, 1_700_000_000)
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  const retiredPath = putBackFrom ?? 'no put-back'
+  const recordsAfterRefusal = await recordsIn(storage)
+  const receiptAfterRefusal = existsSync(receiptPath)
+    ? await readRecordFile(storage, 'receipt.json')
+    : 'absent'
+  const privateFileAfterRefusal = existsSync(retiredPath)
+    ? JSON.parse(readFileSync(retiredPath, 'utf8'))
+    : 'absent'
+  const markAfterRefusal = existsSync(pendingPath)
+    ? (await readRecordFile(storage, 'pending.json')).notLinked
+    : 'absent'
+  const next = await writeManagedDevinMcpEntry(storage, ENTRY, home).then(
+    (result) => result.status,
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+
+  // Assert
+  assert.equal(hasTouched, true)
+  assert.equal(
+    setupError instanceof Error ? setupError.message : setupError,
+    `Codebook found a file that changed while Codebook was working on it in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at the file, then run Codebook: Set Up AI Chat again. Codebook put the file at ${retiredPath} back at ${receiptPath} for a setup, but by then that file was no longer the record of Devin Desktop's MCP config at ${configPath} that Codebook had read there (another program may have replaced it), and Codebook could not take that put-back back, so what stands at ${receiptPath} is unverified; Codebook kept both files and its publish record at ${pendingPath}, and the next run looks at both names again; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.deepEqual(recordsAfterRefusal, [
+    'pending.json',
+    'receipt.json',
+    basename(retiredPath),
+  ])
+  assert.deepEqual(receiptAfterRefusal, receiptBefore)
+  assert.deepEqual(privateFileAfterRefusal, receiptBefore)
+  assert.equal(markAfterRefusal, true)
+  assert.equal(next, 'current')
+  assert.deepEqual(await recordsIn(storage), ['receipt.json'])
+  assert.deepEqual(await readRecordFile(storage, 'receipt.json'), receiptBefore)
+})
+
 test("A setup whose put-back links a replaced file to receipt.json and then finds a third file at the old record's private name keeps both files and its publish record and says that what stands at receipt.json is unverified", async (context) => {
   // Value: protects=a put-back whose link put another file at receipt.json than the record it read, and that can no longer show both names on that one file, never deletes either file and tells the learner that the file at the live receipt name is unverified, naming both paths and the publish record (Cycle 0148 ship review), and leaves that record in the shape 0.2.142.0 and 0.2.143.0 refuse to read (retiresReceipt "foreign"), so an older window never links the unverified file at the private name into receipt.json once receipt.json is gone (Cycle 0148 task 34); fails_when=either file changes or is gone, pending.json is gone or lacks the mark that nothing was linked or retiresReceipt "foreign", 0.2.143.0's field rules accept it, or the refusal is another sentence; no_claim=0.2.143.0 itself (the test checks the record against that build's field rules, RELEASED_PUT_BACK_FIELDS), a real sync tool (the config module is loaded with a link that, for the put-back's link, puts another program's file at the private name at another inode, links, and then puts a third file there; seam.afterCheck moves the config back right before the config's link)
   // Arrange
