@@ -1509,24 +1509,24 @@ type Replacement = {
  * Links the staged file in at the config name, the step that exposes a publish; called by {@link createConfig} and {@link linkInStaged}.
  * A first setup's stale receipt ({@link isFirstSetup}) moves to its private name right before the link ({@link retireStaleReceipt}), so it goes only once this setup's own publish record, which names that move, is written, and no reader takes the new entry for that receipt's. When the link fails nothing of this setup stands, so that receipt goes back ({@link putBackRetiredReceipt}): a config that came back meanwhile is still owned by it, and an unrecorded removal's retry still answers `removed`. That put-back needs no free space, never replaces a newer receipt and puts back only a record of this config that it read at the private name; a private name it finds empty, or holding another program's file, keeps the publish record, which is then marked, so the next run looks there again. Once the link stands the private name is deleted only while it still shows the record this setup moved there and verified ({@link dropMovedAfterLink}); a name that shows another file then, or cannot be looked at or deleted, stays, and so does the publish record, so the next run settles that name with its own checks ({@link settleRetiredReceipt}); for another file there, which Codebook never read, the caller writes that record from then on in the shape older builds refuse ({@link foreignKeptRecordOf}), so a take-back after a failed receipt write never leaves a record that leads them to put that file at `receipt.json`.
  * @param context - The run.
- * @param temporary - The staged file.
+ * @param staged - The staged file and the inode and bytes this run wrote there, which the last looks before the link must still show ({@link assertStagedConfigStill}).
  * @param staleReceipt - The receipt of an entry that is gone, which a first setup retires; undefined for an update, a removal, a rollback and a first setup without a receipt.
  * @param journal - The publish record as written; its generation names the receipt's private name ({@link retiredReceiptPathOf}).
  * @returns The publish record the caller writes from now on and whether the old record's private name stayed after the link ({@link LinkedRecord}).
- * @throws A {@link staleReceiptRefusal} when that receipt cannot be moved aside, a {@link changedRecordRefusal} when another receipt stood at its name by then (nothing was linked); what the link throws, once the receipt is back. An {@link UnrestoredReceiptError} carrying that failure when the receipt could not go back; the publish record is then marked {@link Pending.notLinked}, best effort, so the next run puts the receipt back whatever inode the config shows. When that mark cannot be written, the error promises no put-back: the next run cannot tell that nothing was linked and decides again ({@link retiredReceiptFateOf}).
+ * @throws A {@link staleReceiptRefusal} when that receipt cannot be moved aside, a {@link changedRecordRefusal} when another receipt stood at its name by then (nothing was linked); a {@link stagedConfigRefusal} when the staged name no longer showed the file this run wrote there right before the link, and what the link throws, each once the receipt is back. An {@link UnrestoredReceiptError} carrying that failure when the receipt could not go back; the publish record is then marked {@link Pending.notLinked}, best effort, so the next run puts the receipt back whatever inode the config shows. When that mark cannot be written, the error promises no put-back: the next run cannot tell that nothing was linked and decides again ({@link retiredReceiptFateOf}).
  * @example
- * await linkWithoutStaleReceipt(context, temporary, staleReceipt, journal) // => { journal, isRetiredKept: false }: the config stands and receipt.json is gone
+ * await linkWithoutStaleReceipt(context, staged, staleReceipt, journal) // => { journal, isRetiredKept: false }: the config stands and receipt.json is gone
  */
 async function linkWithoutStaleReceipt(
   context: Context,
-  temporary: string,
+  staged: StagedRecord,
   staleReceipt: Receipt | undefined,
   journal: Pending,
 ): Promise<LinkedRecord> {
   try {
     return await linkRetiringStaleReceipt(
       context,
-      temporary,
+      staged,
       staleReceipt,
       journal,
     )
@@ -1642,18 +1642,19 @@ function retiringIdentityOf(
 
 /**
  * Moves the stale receipt aside, links the staged file in and settles that receipt's private name; the steps of {@link linkWithoutStaleReceipt}, which marks the record when the receipt could not go back.
+ * The staged name is read once more right before the link and looked at synchronously right after that read ({@link assertStagedConfigStill}), after every awaited step of the receipt's move, so nothing is awaited between that last look and the link.
  * @param context - The run.
- * @param temporary - The staged file.
+ * @param staged - The staged file and the inode and bytes this run wrote there.
  * @param staleReceipt - The receipt a first setup retires; undefined otherwise.
  * @param journal - The publish record as written.
  * @returns What {@link linkWithoutStaleReceipt} returns.
  * @throws What {@link linkWithoutStaleReceipt} throws.
  * @example
- * await linkRetiringStaleReceipt(context, temporary, staleReceipt, journal) // => { journal, isRetiredKept: false }: the config stands and receipt.json is gone
+ * await linkRetiringStaleReceipt(context, staged, staleReceipt, journal) // => { journal, isRetiredKept: false }: the config stands and receipt.json is gone
  */
 async function linkRetiringStaleReceipt(
   context: Context,
-  temporary: string,
+  staged: StagedRecord,
   staleReceipt: Receipt | undefined,
   journal: Pending,
 ): Promise<LinkedRecord> {
@@ -1664,7 +1665,9 @@ async function linkRetiringStaleReceipt(
       ? await retireStaleReceipt(context, identity, journal.generation)
       : undefined
   try {
-    await link(temporary, context.path)
+    // A file another program swapped in at the staged name since this run wrote it is never linked in as the config.
+    await assertStagedConfigStill(context, staged)
+    await link(staged.staged, context.path)
   } catch (error) {
     // Nothing of this setup stands at the config name: the old receipt stands again, or the failure says where it is.
     if (moved)
@@ -1680,6 +1683,74 @@ async function linkRetiringStaleReceipt(
     journal: retiredEnd === 'replaced' ? foreignKeptRecordOf(journal) : journal,
     isRetiredKept: retiredEnd !== 'gone',
   }
+}
+
+/**
+ * Reads the config's staged name once more right before the link that puts it in place, through one open file ({@link lookAtStagedRecord}: inode and bytes), and looks at it synchronously right after that read ({@link isStagedNameStill}: inode, size and times), so a file another program swapped in at that name, or bytes it wrote into this run's file, while the setup compared the moved-aside config or moved an old record aside, are never linked in as the config; called only by {@link linkRetiringStaleReceipt}, right before its link, with nothing awaited between this synchronous look and that link.
+ * The read is the awaited look at that name, so a storage that already stalls holds this step in the thread pool, where the step's budget answers. Limits: a file swapped in between the synchronous look and the link is linked (no Node primitive links by inode), and the read of the config right after the link answers that ({@link isLinkedStaged}); a stall that starts between the read and the synchronous look holds the extension host's thread.
+ * @param context - The run; its config path and the command to run again are named in the refusal.
+ * @param staged - The staged name and the version this run wrote there.
+ * @throws When the name shows another file, other bytes, size or times, nothing, or cannot be read or looked at (nothing is linked then, and the caller's cleanup deletes that name only while it still shows the file and bytes this run wrote there, {@link dropStagedRecord}): a {@link stagedConfigRefusal} while nothing stands at the config name; the {@link configNameTakenError} once a file stands there too, or that name cannot be looked at, so the caller answers as for the link that a file which appeared meanwhile refuses (that file is kept, and a replacement's moved-aside copy is handed over, {@link linkInStaged}).
+ * @example
+ * await assertStagedConfigStill(context, staged) // throws once a sync tool swapped its file in at '…/mcp_config.json.<generation>.tmp' during the comparison
+ */
+async function assertStagedConfigStill(
+  context: Context,
+  staged: StagedRecord,
+): Promise<void> {
+  const source = await lookAtStagedRecord(staged).catch(() => undefined)
+  // A read or a look that fails proves nothing: nothing is linked.
+  if (source && isStagedNameStill(staged.staged, source)) return
+  const isConfigNameEmpty = await lstatOrAbsent(context.path).then(
+    (status) => status === undefined,
+    () => false,
+  )
+  // A file at the config name too: the link would have refused it as one that appeared meanwhile, which the caller already answers.
+  throw isConfigNameEmpty
+    ? stagedConfigRefusal(context, staged.staged)
+    : configNameTakenError()
+}
+
+/** The error a link at a taken config name throws (`EEXIST`), for a staged config whose last look failed while a file stands at the config name or that name cannot be looked at ({@link assertStagedConfigStill}): {@link createConfig} and {@link linkInStaged} answer it as the link's own, keeping that file. */
+function configNameTakenError(): Error {
+  return Object.assign(
+    new Error('A file stands at the config name, so nothing was linked.'),
+    { code: 'EEXIST' },
+  )
+}
+
+/**
+ * The refusal for a publish whose staged config no longer showed, right before the link that puts it in place, the file this run wrote there ({@link assertStagedConfigStill}): nothing was linked, so the config is as it was (a replacement's moved-aside config went back first, {@link linkInStaged}), and a file another program put at the staged name, or wrote into it, stays.
+ * @param context - The run; gives the config path and the command to run again.
+ * @param stagedPath - The staged name.
+ * @returns The error, not thrown yet.
+ * @example
+ * stagedConfigRefusal(context, stagedPath) // => 'Codebook did not put its new version of Devin Desktop's MCP config in place at …, because right before that step the file it had written for it at … was no longer the file it wrote …'
+ */
+function stagedConfigRefusal(
+  { path, retry }: Context,
+  stagedPath: string,
+): Error {
+  return new Error(
+    `Codebook did not put its new version of Devin Desktop's MCP config in place at ${path}, because right before that step the file it had written for it at ${stagedPath} was no longer the file it wrote (another program replaced or changed it, or Codebook could not read it again); Codebook changed nothing at ${path} and did not delete a file another program put at or wrote to ${stagedPath}, so look at that file, if one stands there, before you delete it, ${retry}.`,
+  )
+}
+
+/**
+ * Reads the config right after the link that put the staged file in place, through one open file, and tells whether it is the file this run wrote there with the bytes it wrote; called by {@link createConfig} and {@link replaceConfig} before anything rests on that publish: the completed record, the delete of the moved-aside original, the staged name's cleanup and the receipt.
+ * The last look before the link ({@link assertStagedConfigStill}) leaves a file another program swapped in at the staged name between that look and the link; the link then published that file, and this read sees it at the config name. It equally refuses bytes another program wrote into the config in place right after the link, which nothing can tell from such a swap.
+ * @param context - The run; its config path is read.
+ * @param staged - The inode and bytes this run wrote at the staged name.
+ * @returns `true` when the config shows that inode with those bytes; `false` when it shows another file, other bytes or nothing, or cannot be read.
+ * @example
+ * await isLinkedStaged(context, stagedVersion) // => false once a sync tool swapped its file in at the staged name right before the link
+ */
+async function isLinkedStaged(
+  context: Context,
+  staged: RecordVersion,
+): Promise<boolean> {
+  const published = await inspectCopy(context.path).catch(() => undefined)
+  return published?.ino === staged.ino && published.sha256 === staged.sha256
 }
 
 /** What a first setup's link left at its old record's private name ({@link dropMovedAfterLink}): `gone` once nothing of the old record is left there, `kept` when that name stays while it may still show the record the setup moved there and verified (the look or the delete failed), `replaced` when it stays because it showed another file, which Codebook never read. */
@@ -2158,7 +2229,7 @@ function withUnrestoredNote(refusal: unknown, error: unknown): unknown {
  * @param journal - The record as it was written before the link-in; turns to completed once the config stands, in the shape older builds refuse when the old record's private name showed another file by then ({@link LinkedRecord}).
  * @param staleReceipt - The receipt a first setup moves aside right before the link and puts back when the link fails ({@link linkWithoutStaleReceipt}); undefined otherwise.
  * @returns The inode, the staged name when it may still show the published config and could not be looked at or unlinked afterwards (its pending record stays then; recovery unlinks that name, which is another link to the config); that name is dropped whether or not the completed record was written, because a record another program put at the record's name, or none, never names it, so no later run would unlink it and every later update or removal would refuse a config with two names ({@link assertSingleLink}), and after a full disk the record written before the link then has nothing left to settle; whether the old record's private name stayed ({@link Published.isRetiredKept}; the pending record stays then too), and what stood at the record's name when another program kept the completed record from being written ({@link Published.recordConflict}).
- * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back.
+ * @throws A {@link refusal} when a file stands at the config name by then (it is left as it is); a {@link staleReceiptRefusal} or {@link changedRecordRefusal} when the stale receipt cannot be moved aside; a {@link stagedConfigRefusal} when the staged name no longer showed the file and bytes this run wrote there right before the link; nothing was published then. Each with the {@link UnrestoredReceiptError}'s sentence appended when that receipt could not go back; the pending record then stays, so the next run puts it back. {@link changedWhileWorking} when the config right after the link is not the file this run wrote with its bytes ({@link isLinkedStaged}): nothing rests on it (no completed record, no cleanup of the staged name, no receipt), and the record written before the link stays, so the next run settles that change as after a stop right after the link.
  */
 async function createConfig(
   context: Context,
@@ -2168,18 +2239,19 @@ async function createConfig(
   journal: Pending,
   staleReceipt: Receipt | undefined,
 ): Promise<Published> {
+  const staged: StagedRecord = { staged: temporary, version: stagedVersion }
   let linked: LinkedRecord
   try {
     context.seam?.afterCheck?.()
     linked = await linkWithoutStaleReceipt(
       context,
-      temporary,
+      staged,
       staleReceipt,
       journal,
     )
   } catch (error) {
     // Nothing was linked: the staged name goes only while it still shows the file and bytes this run wrote there.
-    await dropStagedRecord({ staged: temporary, version: stagedVersion })
+    await dropStagedRecord(staged)
     const failure = failureOf(error)
     // A receipt that could not go back keeps the record that names its private name.
     if (failure === error) await dropPending(context)
@@ -2189,6 +2261,9 @@ async function createConfig(
       error,
     )
   }
+  // The config is not the file this run wrote (a file swapped in at the staged name right before the link): nothing rests on it, and the record stays as written before the link, so the next run settles that change as after a stop right there.
+  if (!(await isLinkedStaged(context, stagedVersion)))
+    throw changedWhileWorking(context)
   context.seam?.afterPublish?.(undefined)
   // The config stands: the record says so, in the shape the link left it, and the staged name is only another name of it.
   const completion = await markCompleted(context, linked.journal)
@@ -2267,23 +2342,19 @@ function mismatchRefusal(
  * @param replacement - The staged file with the inode and bytes this run wrote there, the displaced file (whose bytes equal what was read), the record and the stale receipt.
  * @param opened - The displaced copy's handle and own mode.
  * @returns The publish record the caller writes from now on and whether the old record's private name stayed after the link ({@link LinkedRecord}), so the publish record stays.
- * @throws Whatever failed, the staged name goes first, only while it still shows the file and bytes this run wrote there ({@link dropStagedRecord}). {@link newConfigRefusal} when a config appeared: the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal} and a {@link changedRecordRefusal} put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
+ * @throws Whatever failed, the staged name goes first, only while it still shows the file and bytes this run wrote there ({@link dropStagedRecord}). {@link newConfigRefusal} when a config appeared: the displaced copy is kept (a writer may still hold it open) and named, and the record turns to handed, so no later run deletes that copy; when that cannot be recorded, the refusal says that a later run puts the copy back once the config name is empty. Any other link failure, a {@link staleReceiptRefusal}, a {@link changedRecordRefusal} and a {@link stagedConfigRefusal} (the staged name no longer showed the file this run wrote right before the link) put the displaced file back with its own permissions and rethrow it, or throw a {@link leftCopyRefusal} naming the displaced file when it cannot go back. Each with the {@link UnrestoredReceiptError}'s sentence appended when the stale receipt could not go back; the record then stays, so the next run puts it back.
  */
 async function linkInStaged(
   context: Context,
   { temporary, stagedVersion, displaced, journal, staleReceipt }: Replacement,
   opened: DisplacedHandle | undefined,
 ): Promise<LinkedRecord> {
+  const staged: StagedRecord = { staged: temporary, version: stagedVersion }
   try {
-    return await linkWithoutStaleReceipt(
-      context,
-      temporary,
-      staleReceipt,
-      journal,
-    )
+    return await linkWithoutStaleReceipt(context, staged, staleReceipt, journal)
   } catch (error) {
     // Nothing was linked: the staged name goes only while it still shows the file and bytes this run wrote there.
-    await dropStagedRecord({ staged: temporary, version: stagedVersion })
+    await dropStagedRecord(staged)
     const failure = failureOf(error)
     if (codeOf(failure) === 'EEXIST') {
       // A save created the config after the move-aside: it is kept, and the displaced copy is handed to the learner, never deleted by a later run. A receipt that could not go back keeps its mark that nothing was linked.
@@ -2380,7 +2451,7 @@ async function dropPublishedStage(
  * @param replacement - The staged file, the probe name, the private name, the identity the config had when it was read and the record.
  * @param config - The inode the config will have.
  * @returns The inode, the files that stay afterwards, if any (the pending record stays then), and whether the completed record was written.
- * @throws The refusals of {@link moveConfigAside}, {@link putDisplacedBack} and {@link linkInStaged}.
+ * @throws The refusals of {@link moveConfigAside}, {@link putDisplacedBack} and {@link linkInStaged}; a {@link newConfigRefusal} naming the displaced copy when the config right after the link is not the file this run wrote with its bytes ({@link isLinkedStaged}): that copy is handed to the learner ({@link handOver}), the config is left as it is, and nothing else follows (no delete, no cleanup of the staged name, no receipt).
  */
 async function replaceConfig(
   context: Context,
@@ -2401,6 +2472,11 @@ async function replaceConfig(
       return await putDisplacedBack(context, replacement, opened)
     context.seam?.afterCompare?.()
     const linked = await linkInStaged(context, replacement, opened)
+    // The config is not the file this run wrote (a file swapped in at the staged name right before the link): the moved-aside original, maybe the only copy of the other servers' settings, is handed to the learner, and no receipt follows.
+    if (!(await isLinkedStaged(context, replacement.stagedVersion))) {
+      const isHanded = await handOver(context, linked.journal)
+      throw newConfigRefusal(context, displaced.path, isHanded)
+    }
     context.seam?.afterPublish?.(displaced.path)
     // From here the config is published; cleanup failures are reported and leave the pending record, written in the shape the link left it.
     return {
@@ -2475,7 +2551,7 @@ function journalOf(
 
 /**
  * Publishes the config. The new bytes are staged first and their inode read from the open handle; the pending record then names the staged file, its inode, the probe name and the private name for the displaced file before anything is moved; the record stays from the first move on, because only the next run can tell how far a crash got.
- * A create links the staged file in ({@link createConfig}). A replacement moves the config aside, compares it and links the new file in ({@link replaceConfig}), so no file is replaced without being compared. The new file keeps the owner's permission bits only (`mode & 0o600`), so a rewrite never widens access.
+ * A create links the staged file in ({@link createConfig}). A replacement moves the config aside, compares it and links the new file in ({@link replaceConfig}), so no file is replaced without being compared. Either link goes only while the staged name still shows the file and bytes this run wrote there ({@link assertStagedConfigStill}), and nothing rests on it until a read right after it finds that file with those bytes at the config name ({@link isLinkedStaged}). The new file keeps the owner's permission bits only (`mode & 0o600`), so a rewrite never widens access.
  * Documented limit: between the move-aside and the link-in the config name holds nothing, so a Devin Desktop window that loads its MCP config in that instant starts without MCP servers until its next reload.
  * Every cleanup of the staged name in this run deletes it only while it still shows the file this run wrote there: before the link its inode and bytes ({@link dropStagedRecord}), after the link its inode, whatever was written into the published config in place since ({@link dropPublishedStage}); a file another program put there stays untouched.
  * Other limits: a writer that still holds the old file open may write into the displaced file after the comparison, which is then kept and reported, never deleted; a crash leaves the staged, probe and displaced names, which the next run settles only when each is a name Codebook made with the inode it recorded ({@link recoverLeftovers}).
