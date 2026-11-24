@@ -3180,24 +3180,31 @@ async function renewOrPutBack(
 }
 
 /**
- * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, only while synchronous looks right before the unlink find the record's name still showing the version just published there and the dropping name still showing the moved file; called by {@link replaceThroughDroppingName}, so a new record another program moves away or replaces right after its publication never takes the old one with it: the old one stays at the dropping name, which the next run puts back or names ({@link settleDroppedRecord}).
- * Limit: a swap at either name between these looks and the unlink is not seen (no Node primitive unlinks by inode); the look at the record's name compares its inode only, and the read after the cleanup checks its bytes ({@link confirmPublished}).
+ * Deletes the record a rewrite moved to its dropping name once the new one stands at the record's name, only while a read of the record's name through one open file finds the version just published there, its inode and the hash of its bytes, and synchronous looks right before the unlink find the record's name still showing the file that read found (its inode, size and times) and the dropping name still showing the moved file; called by {@link replaceThroughDroppingName}, so a new record another program moves away, replaces or rewrites in place right after its publication never takes the old one with it: the old one stays at the dropping name, which the next run puts back or names ({@link settleDroppedRecord}).
+ * The read waits for the file system without holding the extension host's thread, and an awaited look at both names comes right before their synchronous looks, so a storage that already stalls holds this step in the thread pool; a stall that starts between those awaited looks and the synchronous ones still holds that thread.
+ * Limit: a swap at either name, or a write into the new record, between these looks and the unlink is not seen (no Node primitive unlinks by inode or content); the read after the cleanup checks the record's bytes once more ({@link confirmPublished}).
  * @param context - The run; its pending path is the record.
  * @param aside - The record at its dropping name ({@link moveTrackedAside}).
  * @param published - The version just published at the record's name ({@link publishMovedRecord}).
- * @throws A `gone` {@link JournalConflictError} when the record's name is empty; the refusal naming both names ({@link bothRecordNamesError}) when it shows another file or cannot be looked at, or when the dropping name shows another file or cannot be deleted: both stay, and the next run names them again. A dropping name another program emptied is no failure.
+ * @throws A `gone` {@link JournalConflictError} when the record's name is empty; the refusal naming both names ({@link bothRecordNamesError}) when it shows another file or other bytes or cannot be read or looked at, or when the dropping name shows another file or cannot be deleted: both stay, and the next run names them again. A dropping name another program emptied is no failure.
  * @example
  * await dropAsideRecord(rollbackContext, aside, version) // '…/pending.json.rollback.codebook-dropping' is gone
+ * await dropAsideRecord(rollbackContext, aside, version) // throws the refusal naming both names once a sync tool rewrote pending.json.rollback in place right after its link; the old version stays at its dropping name
  */
 async function dropAsideRecord(
   context: Context,
   { droppingPath, moved }: AsideRecord,
   published: RecordVersion,
 ): Promise<void> {
+  // The new record's bytes, read through one open file: another file there, other bytes in the same file, or a read that fails keeps the old version at the dropping name.
+  const standing = await lookAtTrackedJournal(context, published).catch(() => {
+    throw bothRecordNamesError(context)
+  })
+  if (!standing) throw journalConflictError(context, 'gone')
   // A storage that already stalls holds this step here, not at the synchronous looks below, which come in the same order: the record's name, then the dropping name.
   await lookAheadAt([context.pendingPath, droppingPath])
-  // The new version moved away or replaced right after its publication: the old one stays at the dropping name.
-  if (!isStagedNameStill(context.pendingPath, { ino: published.ino }))
+  // The new version moved away, replaced or written into right after that read: the old one stays at the dropping name.
+  if (!isStagedNameStill(context.pendingPath, standing))
     throw isNameEmptyNow(context.pendingPath)
       ? journalConflictError(context, 'gone')
       : bothRecordNamesError(context)

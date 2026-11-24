@@ -9230,6 +9230,89 @@ test("A take-back's rollback record a sync tool moves away right after Codebook 
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A take-back's rollback record a sync tool rewrites in place right after Codebook published its rewrite keeps the version it replaced at its dropping name, so the record that names the copy of the previous config is never lost", async (context) => {
+  // Value: protects=a rewrite deletes the version it moved to the dropping name only while the record's name, read through one open file right before that delete, holds the very bytes it just published, so a sync tool that rewrites the new record in place right after its link (same inode, other bytes) never takes the old one, which names the moved-aside copy of the learner's config, with it, and the next refresh keeps both (Cycle 0149 task 34); fails_when=the in-place write does not fire or the record's name shows another inode afterwards, the dropping name is empty or holds anything but the record as it stood before that rewrite, the copy it names is gone, the first refresh says anything but the not-taken-out refusal, or the next refresh says anything but the sentence naming both names or changes either file; no_claim=a real sync tool (seam.beforeRecordWrite arms at the take-back's write of its completed record and reads the record as it stands then, and the config module is loaded with a link that, once armed, rewrites pending.json.rollback in place, in other bytes, right after the link that published that rewrite resolved), a write between the last synchronous look and the unlink (no Node primitive unlinks by content), what the learner does with both files next
+  // Arrange
+  const { home, storage, configPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  let isArmed = false
+  let replacedJournalText = ''
+  let rewrittenJournalText = ''
+  let publishedIno = 0
+  const rewritingAfterLink = await loadWithAfterRename((from, to) => {
+    // A sync tool rewrites the rollback record in place, in other bytes, right after the link that published its rewrite.
+    if (
+      !isArmed ||
+      rewrittenJournalText !== '' ||
+      to !== journalPath ||
+      !from.endsWith('.tmp')
+    )
+      return
+    publishedIno = statSync(journalPath).ino
+    rewrittenJournalText = `${JSON.stringify(
+      JSON.parse(readFileSync(journalPath, 'utf8')),
+      null,
+      2,
+    )}\n`
+    writeFileSync(journalPath, rewrittenJournalText)
+  })
+
+  // Act
+  const firstError = await rewritingAfterLink
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home, {
+      beforeRecordWrite: ({ path, record }) => {
+        // Only the take-back's completed record, a rewrite of the record its claim wrote, which stands at that name now.
+        if (path !== journalPath || isArmed) return
+        if (JSON.parse(JSON.stringify(record)).phase !== 'completed') return
+        isArmed = true
+        replacedJournalText = readFileSync(journalPath, 'utf8')
+      },
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+  // A name the first refresh left empty reads as 'absent', so the assertions below name it.
+  const droppingAfterFirst = existsSync(droppingPath)
+    ? readFileSync(droppingPath, 'utf8')
+    : 'absent'
+  const keptPath =
+    replacedJournalText === ''
+      ? ''
+      : join(
+          dirname(configPath),
+          String(JSON.parse(replacedJournalText).keptName),
+        )
+  const isNamedCopyAfterFirst = keptPath !== '' && existsSync(keptPath)
+  // The inode at the record's name after the first refresh, or 0 for an empty name.
+  const journalInoAfterFirst = existsSync(journalPath)
+    ? statSync(journalPath).ino
+    : 0
+  const secondOutcome = await refreshManagedDevinMcpEntry(
+    storage,
+    ENTRY,
+    home,
+  ).then(
+    ({ status }) => `resolved: ${status}`,
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.notEqual(rewrittenJournalText, '')
+  assert.equal(droppingAfterFirst, replacedJournalText)
+  assert.equal(journalInoAfterFirst, publishedIno)
+  assert.equal(isNamedCopyAfterFirst, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `A setup of Codebook that ended early left its "codebook" entry in ${configPath}, and could not take that entry out again, so remove the "codebook" entry from that file by hand if it is still there; then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(secondOutcome, bothRecordNamesRefusal(journalPath))
+  assert.equal(readFileSync(journalPath, 'utf8'), rewrittenJournalText)
+  assert.equal(readFileSync(droppingPath, 'utf8'), replacedJournalText)
+  assert.equal(existsSync(keptPath), true)
+})
+
 test('A rollback record a stopped run left at its dropping name is put back by the next refresh, which settles it and takes the failed first setup back', async (context) => {
   // Value: protects=the run start finds a rollback record that a run which stopped inside its move left at the dropping name and puts it back at the empty record name before anything reads that record, so the moved-aside copy of the learner's config it names comes back and the failed first setup is taken back (Cycle 0149 task 13, acceptance criterion 13's first state); fails_when=the refresh answers anything but not-managed, the config is not the learner's own without the entry, or the dropping name, the rollback record, the copy it names, the setup record or a receipt stays; no_claim=a real process end (the test renames the rollback record to its dropping name, as a stop right after that move leaves it)
   // Arrange
@@ -11281,7 +11364,7 @@ function loadWithWrappedOpen(
 }
 
 test("A copy of the previous config that only its bytes prove is not put back at the empty config name when a backup puts back that change's record handing the copy to you after recovery recorded the put-back as unchecked, and the refresh says the record changed", async (context) => {
-  // Value: protects=a put-back by bytes links the copy only while the record it just wrote still stands at a synchronous look right before the link, so a record of that change a backup puts back handing the copy to the learner once that write is done keeps the copy at its private name and the config name empty (README line 95; Cycle 0149 tasks 3 and 22); fails_when=a file stands at the config name, the copy's name is gone or holds other bytes, the restored record is gone or changes, the backup lands at another open of the unchecked record than the second (the record check's read after the write's own), or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (the config module is loaded with an openWithoutFollowing that renames the handed record over pending.json once, right after the first open of the unchecked record that follows the write's last look at its name, seam.beforeLeftoverCheck), a restore between the last look and the link, what the next run says about the handed copy
+  // Value: protects=a put-back by bytes links the copy only while the record it just wrote still stands at a synchronous look right before the link, so a record of that change a backup puts back handing the copy to the learner once that write is done keeps the copy at its private name and the config name empty (README line 95; Cycle 0149 tasks 3 and 22); fails_when=a file stands at the config name, the copy's name is gone or holds other bytes, the restored record is gone or changes, the backup lands at another open of the unchecked record than the third (the record check's read after the write's own two), or the refresh says anything but the changed-record sentence followed by the copy's sentence; no_claim=a real backup tool (the config module is loaded with an openWithoutFollowing that renames the handed record over pending.json once, right after the first open of the unchecked record that follows the write's last look at its name, seam.beforeLeftoverCheck), a restore between the last look and the link, what the next run says about the handed copy
   // Arrange
   const { home, storage, configPath } = await arrange(context)
   const keptPath = await arrangeBytesOnlyDisplaced(storage, configPath)
@@ -11333,8 +11416,8 @@ test("A copy of the previous config that only its bytes prove is not put back at
     message: `While Codebook settled its record of an earlier change at ${pendingPath}, another program changed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first. Codebook found a copy of your config that Codebook kept at ${keptPath} and could not settle in Devin Desktop's MCP config at ${configPath} and left that file untouched; look at both files before you use either: if no file stands at the config path, move that copy back there; otherwise compare the two, move only the settings you need from that copy into the config, never that copy over the config, and afterwards delete that copy or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
   })
   assert.equal(hasRestoredPending, true)
-  // The write's own read after its publication, then the record check's read right before the link.
-  assert.equal(uncheckedOpensAtRestore, 2)
+  // The write's own two reads after its publication (before its old version goes, and after its cleanup), then the record check's read right before the link.
+  assert.equal(uncheckedOpensAtRestore, 3)
   assert.equal(existsSync(configPath), false)
   // A file the refresh deleted reads as 'absent', so the assertions name it.
   assert.equal(
