@@ -2911,7 +2911,7 @@ function publishMovedRecord(
  * @param aside - The record at its dropping name.
  * @param error - What the link or the rename route ({@link claimWithoutLinks}) threw.
  * @returns Never.
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file came to the emptied name (the link's `EEXIST`, or a file a synchronous look finds there now): that file stays, and so does the record at the dropping name. Otherwise `error`, once the record went back to its name ({@link putTrackedBack}), or what that put-back throws.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file came to the emptied name (the link's `EEXIST`, or a file a synchronous look finds there now): that file stays, and so does the record at the dropping name. Otherwise `error`, once the version this run moved went back to its name ({@link putTrackedBack}), or what that put-back throws.
  * @example
  * await refuseMovedPublish(rollbackContext, aside, linkError) // throws EIO once pending.json.rollback stands again
  */
@@ -2924,7 +2924,7 @@ async function refuseMovedPublish(
   if (codeOf(error) === 'EEXIST' || !isNameEmptyNow(context.pendingPath))
     throw bothRecordNamesError(context)
   // Nothing was published: the record goes back to its name.
-  await putTrackedBack(context, aside.droppingPath)
+  await putTrackedBack(context, aside.droppingPath, aside.moved)
   throw error
 }
 
@@ -3128,7 +3128,7 @@ async function moveTrackedAside(
  * @param aside - The record at its dropping name ({@link moveTrackedAside}).
  * @param assertStill - The caller's look; undefined when nothing else must hold.
  * @param staged - The staged bytes of a rewrite ({@link stageRecord}); undefined for a delete.
- * @throws What `assertStill` throws; a {@link leftoverReplacedError} naming the staged name when it no longer shows the file this call wrote; a `changed` {@link JournalConflictError} when the dropping name no longer shows the moved file's inode, size and times.
+ * @throws What `assertStill` throws; a {@link leftoverReplacedError} naming the staged name when it no longer shows the file this call wrote; the {@link droppingChangedError} (`changed`) when the dropping name no longer shows the moved file's inode, size and times.
  * @example
  * await assertAfterMove(rollbackContext, aside, assertStill, staged) // throws once a backup put the setup record back without its mark while the record moved
  */
@@ -3146,16 +3146,18 @@ async function assertAfterMove(
   ])
   assertStill?.assert()
   if (staged && source) assertStagedRecordStill(staged, source)
+  // Another file, or none, at the dropping name: it is not this run's record, so the refusal names that name.
   if (!isStagedNameStill(aside.droppingPath, aside.moved))
-    throw journalConflictError(context, 'changed')
+    throw droppingChangedError(context)
 }
 
 /**
- * Runs a look that must hold after a tracked record moved to its dropping name, and puts the record back first when it fails; called by {@link replaceThroughDroppingName} and {@link deleteThroughDroppingName}.
+ * Runs a look that must hold after a tracked record moved to its dropping name, and puts the version this run moved there back first when it fails ({@link putTrackedBack}), never another file found at that name; called by {@link replaceThroughDroppingName} and {@link deleteThroughDroppingName}.
+ * The look's own refusal is what the run throws even when the put-back fails as well, so a caller that tells a rollback record that came back apart from any other failure ({@link adoptPending}) still does; the put-back's failure becomes that refusal's cause, for diagnosis only.
  * @param context - The run; its pending path is the record.
  * @param aside - The record at its dropping name.
  * @param renew - The look ({@link assertAfterMove}).
- * @throws What `renew` throws, once the record stands at its name again; what {@link putTrackedBack} throws when it cannot.
+ * @throws What `renew` throws, once the record stands at its name again, or with the put-back's failure as its cause when it could not.
  * @example
  * await renewOrPutBack(rollbackContext, aside, () => assertAfterMove(rollbackContext, aside, assertStill))
  */
@@ -3166,9 +3168,14 @@ async function renewOrPutBack(
 ): Promise<void> {
   try {
     await renew()
-  } catch (error) {
-    await putTrackedBack(context, aside.droppingPath)
-    throw error
+  } catch (renewError) {
+    await putTrackedBack(context, aside.droppingPath, aside.moved).catch(
+      (putBackError: unknown) => {
+        // The look's refusal stays what the run says; the failed put-back is kept beside it.
+        if (renewError instanceof Error) renewError.cause = putBackError
+      },
+    )
+    throw renewError
   }
 }
 
@@ -3195,35 +3202,40 @@ async function dropAsideRecord(
 }
 
 /**
- * Puts a file at a tracked record's dropping name back at the record's empty name with a link, which never replaces a file that appeared there, and deletes the dropping name only once both names show that file; where the storage gives no file a second name ({@link NO_LINK_CODES}), by a rename right after a synchronous look finds the record's name empty ({@link renameTrackedBack}). Called by {@link moveTrackedAside} and {@link renewOrPutBack} for a record this run moved, by {@link refuseMovedPublish} after a failed publication, and by {@link settleDroppedRecord} for a record a stopped run left there.
+ * Puts a file at a tracked record's dropping name back at the record's empty name with a link, which never replaces a file that appeared there, and deletes the dropping name only once both names show that file; where the storage gives no file a second name ({@link NO_LINK_CODES}), by a rename right after a synchronous look finds the record's name empty ({@link renameTrackedBack}). Called by {@link renewOrPutBack}, {@link refuseMovedPublish} and {@link deleteThroughDroppingName} for the version this run moved there, which alone goes back, by {@link moveTrackedAside} for what its move took from the record's name, and by {@link settleDroppedRecord} for whatever a stopped run left there.
  * The looks wait for the file system without holding the extension host's thread ({@link isNameStill}), the record's name first and the dropping name last.
- * Limit: on storage without hard links a file another program puts at the record's name between the rename's last look and the rename is replaced, the residual {@link claimWithoutLinks} accepts (no Node primitive moves a name there without replacing what stands at the other).
+ * Limits: a file swapped in at the dropping name between its first look and the link or rename goes back in its place; on storage without hard links a file another program puts at the record's name between the rename's last look and the rename is replaced, the residual {@link claimWithoutLinks} accepts (no Node primitive moves a name there without replacing what stands at the other).
  * @param context - The run; its pending path is the record.
  * @param droppingPath - The dropping name ({@link droppingPathOf}).
- * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason than storage without hard links; what {@link renameTrackedBack} throws; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
+ * @param moved - The version this run moved there ({@link AsideRecord}): the dropping name must show its inode, size and times; undefined when whatever stands there goes back.
+ * @throws A `gone` {@link JournalConflictError} when nothing stands at the dropping name; the {@link droppingChangedError} when it shows another file than `moved`, which stays there; the refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name or a look after the link finds either name changed; the {@link recordNotBackError} when the link failed for another reason than storage without hard links; what {@link renameTrackedBack} throws; what a look throws other than for a missing name. Nothing is deleted then. A failed unlink of the dropping name after the link is no failure: it is only another name of that file, which the next run drops.
  * @example
- * await putTrackedBack(rollbackContext, `${rollbackContext.pendingPath}.codebook-dropping`) // pending.json.rollback stands again, also on an exFAT storage folder
+ * await putTrackedBack(rollbackContext, aside.droppingPath, aside.moved) // pending.json.rollback stands again, also on an exFAT storage folder
  */
 async function putTrackedBack(
   context: Context,
   droppingPath: string,
+  moved?: InspectedCopy,
 ): Promise<void> {
-  const moved = await lstatOrAbsent(droppingPath)
+  const dropping = await lstatOrAbsent(droppingPath)
   // The moved file is gone from the dropping name too: another program took it, and nothing is left to put back.
-  if (!moved) throw journalConflictError(context, 'gone')
+  if (!dropping) throw journalConflictError(context, 'gone')
+  // Only the version this run moved goes back: another file at the dropping name stays there, named.
+  if (moved && !showsChecked(dropping, moved))
+    throw droppingChangedError(context)
   try {
     await link(droppingPath, context.pendingPath)
   } catch (linkError) {
     // Storage that gives no file a second name: the moved file goes back by a rename once a last look finds the record's name empty.
     if (NO_LINK_CODES.has(codeOf(linkError)))
-      return renameTrackedBack(context, droppingPath, moved)
+      return renameTrackedBack(context, droppingPath, dropping)
     // A file at the record's name stays, and so does the moved one; a link that failed otherwise leaves the moved file at the dropping name.
     throw isNameEmptyNow(context.pendingPath)
       ? recordNotBackError(context)
       : bothRecordNamesError(context)
   }
   // Both names must show the moved file before the dropping name goes.
-  const { ino } = moved
+  const { ino } = dropping
   if (
     !(await isNameStill(context, context.pendingPath, { ino })) ||
     !(await isNameStill(context, droppingPath, { ino, isShared: true }))
@@ -3239,7 +3251,7 @@ async function putTrackedBack(
  * @param context - The run; its pending path is the record, its seam is called around the dropping name's look ({@link nameStateNow}).
  * @param droppingPath - The dropping name ({@link droppingPathOf}).
  * @param moved - The dropping name as the put-back's first look saw it: its inode, size and times must still show.
- * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name, which stays, and so does the moved one; a `changed` {@link JournalConflictError} when the dropping name no longer shows that file or cannot be looked at, which stays; what the rename throws.
+ * @throws The refusal naming both names ({@link bothRecordNamesError}) when a file stands at the record's name, which stays, and so does the moved one; the {@link droppingChangedError} when the dropping name no longer shows that file or cannot be looked at, which stays; what the rename throws.
  * @example
  * await renameTrackedBack(rollbackContext, droppingPath, moved) // pending.json.rollback stands again on an exFAT storage folder; its dropping name is gone
  */
@@ -3254,7 +3266,7 @@ async function renameTrackedBack(
   if (!isNameEmptyNow(context.pendingPath)) throw bothRecordNamesError(context)
   // Only the file the first look found at the dropping name goes back.
   if (nameStateNow(context, droppingPath, moved) !== 'still')
-    throw journalConflictError(context, 'changed')
+    throw droppingChangedError(context)
   await rename(droppingPath, context.pendingPath)
 }
 
@@ -3328,6 +3340,22 @@ function recordNotBackError(context: Context): JournalConflictError {
   return new DroppingNameConflictError(
     `Codebook moved its record at ${pendingPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and could not move it back (the file system refused to give it that name again), so it left it at ${droppingPath} and went no further; move the file at ${droppingPath} back to ${pendingPath} if nothing stands there, ${retry}.`,
     'gone',
+  )
+}
+
+/**
+ * The refusal of a tracked record whose dropping name no longer shows the version this run moved there ({@link assertAfterMove}, {@link putTrackedBack}): another program replaced or moved that file, so what stands there is never put back at the record's name as Codebook's record; it stays, named, and the run goes no further. The next run's start reads that name as any file left there ({@link settleDroppedRecord}).
+ * @param context - The run; its pending path is the record, its retry ends the sentence.
+ * @returns The `changed` {@link JournalConflictError}, not thrown yet.
+ * @example
+ * throw droppingChangedError(rollbackContext) // 'Codebook moved its record at …/pending.json.rollback to …/pending.json.rollback.codebook-dropping, …, and then found another file there or none …'
+ */
+function droppingChangedError(context: Context): JournalConflictError {
+  const { pendingPath, retry } = context
+  const droppingPath = droppingPathOf(context)
+  return new JournalConflictError(
+    `Codebook moved its record at ${pendingPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and then found another file there or none (a backup or sync tool may have replaced or moved it), so it did not move what stands there back and went no further; look at ${droppingPath} before you use it, ${retry}, and that run puts the file at ${droppingPath} back at ${pendingPath} if nothing stands there.`,
+    'changed',
   )
 }
 
@@ -8493,7 +8521,7 @@ async function deleteThroughDroppingName(
       // Another program took the moved record first: this run did not delete it.
       if (codeOf(error) === 'ENOENT') return false
       // The delete failed: the record goes back to its name, as before the move.
-      await putTrackedBack(context, aside.droppingPath)
+      await putTrackedBack(context, aside.droppingPath, aside.moved)
       throw error
     },
   )

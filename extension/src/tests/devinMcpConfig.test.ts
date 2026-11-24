@@ -9046,6 +9046,125 @@ test("A record a backup renames over a take-back's rollback record at the moment
   assert.equal(existsSync(receiptPath), false)
 })
 
+test("A file another program swaps in at a rollback record's dropping name while Codebook deletes that record there is never put back at the record's name: it stays where it is, and the refresh names it and goes no further", async (context) => {
+  // Value: protects=a put-back after a failed look puts back only the version this run moved to the dropping name, so a file a sync tool swapped in there is never linked to the record's name as Codebook's record, and the refusal names the dropping name (Cycle 0149 task 23); fails_when=the swap does not fire, the first refresh resolves or says anything but the sentence naming the dropping name, anything stands at the rollback record's name, the swapped file at the dropping name changes or is gone, the setup record loses its take-back mark, or a receipt appears; no_claim=a real sync tool (the config module is loaded with an lstat that, once, swaps another file in at pending.json.rollback.codebook-dropping at the first awaited look at that name after Codebook moved the settled rollback record there to delete it and read it), a swap before the move's own read of that name (that file went back as what moved from the record's name), a swap between the put-back's first look and its link, what the next refresh does with that file (acceptance criterion 13's first state puts it back and reads it as any record)
+  // Arrange
+  const { home, storage, receiptPath, pendingPath, journalPath } =
+    await leaveCutShortTakeBack(context)
+  const droppingPath = `${journalPath}.codebook-dropping`
+  const swappedText = '{"swapped":"by a sync tool"}\n'
+  let isSwapped = false
+  const swappingAfterMove = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...args: Parameters<typeof lstat>) => {
+          // A sync tool swaps its own file in at the dropping name once Codebook moved the settled record there and read it, right as the look before the delete waits.
+          if (
+            args[0] === droppingPath &&
+            !isSwapped &&
+            existsSync(droppingPath)
+          ) {
+            isSwapped = true
+            swapFile(droppingPath, swappedText)
+          }
+          return lstat(...args)
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const firstError = await swappingAfterMove
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+  // Assert
+  assert.equal(isSwapped, true)
+  assert.equal(
+    firstError instanceof Error ? firstError.message : firstError,
+    `Codebook moved its record at ${journalPath} to ${droppingPath}, the private name it moves that record to while it rewrites or deletes it, and then found another file there or none (a backup or sync tool may have replaced or moved it), so it did not move what stands there back and went no further; look at ${droppingPath} before you use it, then run Codebook: Set Up AI Chat again, and that run puts the file at ${droppingPath} back at ${journalPath} if nothing stands there.`,
+  )
+  assert.equal(existsSync(journalPath), false)
+  assert.equal(readFileSync(droppingPath, 'utf8'), swappedText)
+  assert.equal(JSON.parse(readFileSync(pendingPath, 'utf8')).takeBack, true)
+  assert.equal(existsSync(receiptPath), false)
+})
+
+test('An adoption whose setup record, moved aside to end it, cannot go back beside a rollback record a backup restored still takes its receipt back out, so the next refresh takes the failed setup back instead of keeping it', async (context) => {
+  // Value: protects=when the look after a tracked record's move aside fails and the put-back fails too, the run throws the look's own refusal, so an adoption still tells a rollback record that came back from any other failure and takes the receipt it published back out (Cycle 0149 task 23, review round L1 P2: the renew error stays the thrown error, the put-back's failure its cause); fails_when=the restore does not fire, the first refresh says anything but the rollback record's changed sentence, the receipt stays, the restored rollback record or either setup record changes or is gone; no_claim=a real backup tool (the config module is loaded with a rename that, once, restores the rollback record at pending.json.rollback and another copy of the setup record at pending.json right after Codebook moved that record to its dropping name to end it), what the next refresh does beside both setup-record names (acceptance criterion 13's third state refuses, naming both), the older build's record itself (written by hand without the first-setup marks, as a build before them wrote it)
+  // Arrange
+  const { home, storage, configPath } = await arrange(context)
+  await writeConfig(
+    configPath,
+    `${JSON.stringify({ mcpServers: { alpha: { command: 'a' }, codebook: ENTRY } })}\n`,
+  )
+  const folder = join(storage, 'devin-mcp')
+  const receiptPath = join(folder, 'receipt.json')
+  const pendingPath = join(folder, 'pending.json')
+  const pendingDroppingPath = `${pendingPath}.codebook-dropping`
+  const journalPath = `${pendingPath}.rollback`
+  await mkdir(folder, { recursive: true })
+  const olderRecord = {
+    targetPath: configPath,
+    entrySha256: ENTRY_HASH,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001496',
+    stagedIno: (await stat(configPath)).ino,
+  }
+  const olderRecordText = JSON.stringify(olderRecord)
+  await writeFile(pendingPath, olderRecordText)
+  // The rollback record of that same setup names no private file, so its settlement changes nothing beside the config.
+  const restoredJournalText = `${JSON.stringify({
+    targetPath: configPath,
+    createdFile: false,
+    generation: 'c0ffee00-0000-4000-8000-000000001497',
+    publishGeneration: olderRecord.generation,
+  })}\n`
+  const journalBackupPath = join(home, 'journal-from-backup.json')
+  const recordBackupPath = join(home, 'record-from-backup.json')
+  let hasRestored = false
+  const restoring = await loadWithAfterRename((from, to) => {
+    if (from !== pendingPath || to !== pendingDroppingPath || hasRestored)
+      return
+    hasRestored = true
+    // A backup restores the folder right after the adoption moved its setup record aside to end it: the rollback record, and the setup record at its own name.
+    writeFileSync(journalBackupPath, restoredJournalText)
+    renameSync(journalBackupPath, journalPath)
+    writeFileSync(recordBackupPath, olderRecordText)
+    renameSync(recordBackupPath, pendingPath)
+  })
+
+  // Act
+  const firstOutcome = await restoring
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      ({ status }) => `resolved: ${status}`,
+      (error: Error) => error.message,
+    )
+
+  // Assert
+  assert.equal(hasRestored, true)
+  assert.equal(
+    firstOutcome,
+    `While Codebook settled its rollback record at ${journalPath} (a rollback that ended early), another program changed, removed or replaced it (a backup or sync tool may have put an older one back), so Codebook left that name as it is and went no further; wait until that tool is done, then run Codebook: Set Up AI Chat again, and that run reads that name first.`,
+  )
+  assert.equal(existsSync(receiptPath), false)
+  assert.equal(readFileSync(journalPath, 'utf8'), restoredJournalText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), olderRecordText)
+  assert.equal(readFileSync(pendingDroppingPath, 'utf8'), olderRecordText)
+})
+
 test('A rollback record a stopped run left at its dropping name is put back by the next refresh, which settles it and takes the failed first setup back', async (context) => {
   // Value: protects=the run start finds a rollback record that a run which stopped inside its move left at the dropping name and puts it back at the empty record name before anything reads that record, so the moved-aside copy of the learner's config it names comes back and the failed first setup is taken back (Cycle 0149 task 13, acceptance criterion 13's first state); fails_when=the refresh answers anything but not-managed, the config is not the learner's own without the entry, or the dropping name, the rollback record, the copy it names, the setup record or a receipt stays; no_claim=a real process end (the test renames the rollback record to its dropping name, as a stop right after that move leaves it)
   // Arrange
