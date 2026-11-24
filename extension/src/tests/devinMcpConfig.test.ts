@@ -9944,6 +9944,7 @@ test('A put-back that cannot tell which name its link made keeps both names and 
           if (from.endsWith('.codebook-displaced'))
             swapFile(from, '{"swapped again":true}\n')
         },
+        lstat,
         mkdir,
         open,
         rename,

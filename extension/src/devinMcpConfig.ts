@@ -847,7 +847,7 @@ async function handOver(context: Context, journal: Pending): Promise<boolean> {
 }
 
 /**
- * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards; {@link writeTrackedJournal} also awaits it right before a synchronous last look, whose answer alone decides, so a storage that already stalls holds that step in the thread pool, and {@link dropStagedRecord} looks at a staged name only this run made.
+ * Looks at a name without following a link and without holding the extension host's thread; called where a look only decides what a record says, which way a step goes or what a notice names ({@link isUnverifiedSecondName}, {@link settleRetiredReceipt}, {@link handOverCopy}), never right before a link or unlink it guards; {@link dropStagedRecord} looks at a staged name only this run made.
  * @param path - The name to look at.
  * @returns Its status with bigint numbers; undefined when nothing stands there.
  * @throws Any other failure of the look.
@@ -2460,7 +2460,7 @@ async function writeTrackedJournal(
     context.seam?.beforeRecordWrite?.({ path, record: value })
     const source = await lookAtStagedRecord(staged)
     // A storage that already stalls holds this step here, in the thread pool, not at the synchronous look below.
-    await lstatOrAbsent(path).catch(() => undefined)
+    await lookAheadAt([path])
     assertTrackedJournalStill(context, look)
     assertStill?.()
     assertStagedRecordStill(staged, source)
@@ -2874,7 +2874,7 @@ function nameStateNow(
 }
 
 /**
- * Looks at names one after another through the thread pool and drops the answers, right before the synchronous last looks at those names decide a delete or the end of a record ({@link nameStateNow}, {@link isConfigUnchanged}, {@link isNameEmptyNow}), so a storage that already stalls stalls here, where the step's 10-second budget still answers, instead of on the extension host's thread; called by {@link standingReceiptOf}, {@link dropLinkedPrivateName}, {@link dropMovedAfterLink} and {@link retiredNameCheck}.
+ * Looks at names one after another through the thread pool and drops the answers, right before the synchronous last looks at those names decide a delete or the end of a record ({@link nameStateNow}, {@link isConfigUnchanged}, {@link isNameEmptyNow}), so a storage that already stalls stalls here, where the step's 10-second budget still answers, instead of on the extension host's thread; called by {@link standingReceiptOf}, {@link dropLinkedPrivateName}, {@link dropMovedAfterLink}, {@link retiredNameCheck} and {@link writeTrackedJournal} (before its last look at a tracked record, {@link assertTrackedJournalStill}).
  * The synchronous looks still decide: only they leave nothing awaited between them and the step they guard. Limit: a stall that starts between these looks and the synchronous ones still holds the thread.
  * @param paths - The names, in the order of the synchronous looks that follow.
  * @returns Resolves once every look answered, whatever it answered.
