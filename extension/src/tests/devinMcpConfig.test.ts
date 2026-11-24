@@ -21849,6 +21849,78 @@ test("A refresh never drops the old record beside another installation's record 
   assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
 })
 
+test("A refresh never deletes the old record on the word of a record of that setup's generation that a sync tool puts at receipt.json after the look that found that name empty, while the publish record notes receipt.json unverified: it keeps the old record, that file and the publish record and asks to move that file", async (context) => {
+  // Value: protects=the read of receipt.json whose generation authorizes the delete of the old record (that setup's own receipt) is itself held against the publish record's note that receipt.json is unverified (Cycle 0149 task 42; Codex structured P1 and outside voice 5 on devinMcpConfig.ts:7039), so a file another program puts there after the first look found the name empty never costs the old record before the note refuses it: the refresh refuses with the unverified sentence, which says it deleted nothing, and the old record stays at its private name; fails_when=the old record's private file is gone or holds other bytes, receipt.json is gone or holds other bytes, pending.json is gone or changed, or the refusal is another sentence; no_claim=a real sync tool (the config module is loaded with an lstat that, right after the first look at receipt.json found it empty, writes there once a record of this config with the publish record's generation and another installation id), the learner moving the unverified file away and a backup putting the old record back at its private name (rmSync, writeFileSync), and a file put there between the delete's last look and its unlink (no Node primitive unlinks by inode)
+  // Arrange
+  const {
+    home,
+    storage,
+    configPath,
+    receiptPath,
+    receiptBefore,
+    pendingPath,
+    retiredPath,
+  } = await arrangeUnverifiedPutBack(context)
+  rmSync(receiptPath)
+  rmSync(retiredPath)
+  const retiredText = JSON.stringify(receiptBefore)
+  writeFileSync(retiredPath, retiredText, { mode: 0o600 })
+  const pendingText = readFileSync(pendingPath, 'utf8')
+  const { generation } = await readRecordFile(storage, 'pending.json')
+  const sameGenerationText = JSON.stringify({
+    ...receiptBefore,
+    generation,
+    installationId: 'c0ffee00-0000-4000-8000-000000149421',
+  })
+  let hasSwappedIn = false
+  const swappingAfterLook = await loadModule<typeof DevinMcpConfigModule>(
+    resolve(__dirname, '../devinMcpConfig.js'),
+    {
+      'node:fs/promises': {
+        link,
+        lstat: async (...parameters: Parameters<typeof lstat>) => {
+          try {
+            return await lstat(...parameters)
+          } finally {
+            if (parameters[0] === receiptPath && !hasSwappedIn) {
+              // A record of that setup's generation with other bytes lands at receipt.json right after the look that found that name empty.
+              hasSwappedIn = true
+              writeFileSync(receiptPath, sameGenerationText, { mode: 0o600 })
+            }
+          }
+        },
+        mkdir,
+        open,
+        rename,
+        rm,
+        unlink,
+      },
+    },
+    { Error, TextDecoder },
+  )
+
+  // Act
+  const refreshAnswer = await swappingAfterLook
+    .refreshManagedDevinMcpEntry(storage, ENTRY, home)
+    .then(
+      (result) => result.status,
+      (error: unknown) => (error instanceof Error ? error.message : error),
+    )
+
+  // Assert
+  assert.equal(hasSwappedIn, true)
+  assert.equal(
+    refreshAnswer,
+    `Codebook's publish record at ${pendingPath} notes that a put-back for a setup left a file at ${receiptPath} that Codebook did not verify as its record of Devin Desktop's MCP config at ${configPath} (another program may have replaced the record Codebook read at ${retiredPath}), and that file still stands there, so Codebook did not take it for its record, deleted nothing and kept that publish record; move the file at ${receiptPath} to another folder, then run Codebook: Set Up AI Chat again.`,
+  )
+  assert.equal(
+    existsSync(retiredPath) ? readFileSync(retiredPath, 'utf8') : 'absent',
+    retiredText,
+  )
+  assert.equal(readFileSync(receiptPath, 'utf8'), sameGenerationText)
+  assert.equal(readFileSync(pendingPath, 'utf8'), pendingText)
+})
+
 test("Neither the window's descriptor mark nor the Devin bridge's check takes the installation of another installation's record that a put-back's link left unverified at receipt.json while the publish record notes it", async (context) => {
   // Value: protects=the installation-id read that marks a window's descriptor and the bridge's receipts check refuse receipt.json while the publish record notes that a put-back left it unverified (Cycle 0149 task 32; CLI passes 1 and 3 Major on this file's :18789 and :18769), so a refresh's refusal is not the only guard: no window is marked for that installation and a descriptor marked for it does not stand; fails_when=the read gives that installation's id, or the check answers stands or another reason; no_claim=the window's own mark write in extension.ts (it marks only with what this read gives) and the bridge process (the same check runs there), the skill's receipt and the descriptor (written by hand, private), and a sync tool keeping the private mode (receipt.json is made private by chmodSync)
   // Arrange
